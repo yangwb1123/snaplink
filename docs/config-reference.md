@@ -108,7 +108,7 @@ Values below are exactly what the binary's boot-time dispatch accepts
 | OAuth expiry cleanup | `oauth.{auth_code,refresh_token,device_code,par}.reap_interval` | Positive cadence starts background cleanup for memory and SQLite stores; Redis relies on native key TTL. SQLite cleanup uses each table's `expires_at` index. Refresh cleanup also expires the consumed-token family ledger after the token validity window, preventing unbounded reuse-history growth without weakening live-token replay detection. `0` disables background cleanup. |
 | Refresh rotation grace | `oauth.refresh_token.rotation_grace_backend` | `memory` · `sqlite` · `redis` |
 | CIBA requests | `ciba.backend` | `memory` · `sqlite` · `redis` |
-| MFA challenge | `mfa.challenge.backend` | `memory` · `sqlite` · `redis` |
+| MFA challenge and login transactions | `mfa.challenge.backend` | `memory` · `sqlite` · `redis`; the configured shared backend is reused for the one-use federated hosted-login transaction, even if MFA is disabled. Redis also backs it automatically whenever Redis is configured. |
 | MFA push approvals | `mfa.provider.push.backend` | `memory` · `sqlite` |
 | TOTP enrollment | `authenticators.totp.backend` | `memory` · `sqlite` · `postgres` (empty infers sqlite when `sqlite_dsn` set, else memory) |
 | WebAuthn passkey credentials | `webauthn.storage.users.backend` | `memory` · `sqlite` · `postgres` |
@@ -123,6 +123,7 @@ Values below are exactly what the binary's boot-time dispatch accepts
 | Self-service password credentials | `self_service.password.backend` | off · `memory` · `sqlite` · `postgres` |
 | Password reset tokens | `self_service.password_reset.backend` | off · `memory` · `sqlite` · `redis` |
 | Tenants + Domains | `tenant.backend` | `memory` · `sqlite` · `postgres` |
+| Tenant resource quotas | `tenant.resource_quota.backend` | off (`disabled`/empty) · `memory` (single replica) · `postgres` (shared pool) |
 | Tenant usage metering | `tenant.usage_metering.backend` | off · `memory` · `sqlite` (reads the audit DB) |
 | B2B connections | `connections.backend` | `memory` · `sqlite` |
 | Audit primary sink | `audit.backend` | `memory` · `sqlite` · `postgres` |
@@ -389,6 +390,11 @@ does not do so today.
 | Key | Effect |
 |---|---|
 | `tenant.suspension_check.cache_ttl` | Cache TTL for suspension checks (default 30s); admin SetStatus MUST call `InvalidateTenantSuspensionCache` |
+| `tenant.resource_quota.backend` | `disabled`/empty leaves the server unlimited and starts no worker; `memory` is allowed only for a single replica; `postgres` reuses the top-level shared pool and is the required backend for `server.topology.mode: multi`. The multi-replica memory rejection is not weakened by `allow_per_pod_state` because independent commercial counters can oversell an entitlement. |
+| `tenant.resource_quota.cleanup_interval` | Cadence for removing expired rolling token-rate buckets. `0` uses 1 minute; negative durations fail validation. The worker starts only after successful server assembly, participates in bounded graceful shutdown, and PostgreSQL reachability is included in `/readyz`. |
+| `tenant.resource_quota.limits[]` | Boot-time legacy limit seeds keyed by unique, non-empty `tenant_id`: `max_clients`, `max_users`, `max_sessions`, and `max_token_rate`; every limit is non-negative and `0` means unlimited. `max_token_rate` bounds the one-minute rolling average across all of the tenant's clients. A commercial hard zero is intentionally not encoded by this legacy YAML shape: entitlement delivery uses `TenantQuotaProjectionStore` and its explicit `*Limited` flags. Once a positive-revision entitlement projection exists, an unversioned `SetQuota` seed is rejected rather than overwriting newer billing state. |
+| Tenant quota consistency and projection | Memory and PostgreSQL implement idempotent resource leases keyed by `(tenant, resource, resource_id)` and advance a per-resource generation on every first transition. `TenantQuotaResourceSetStore.ReconcileResourceSet` replaces the counter and exact active lease set in one generation CAS; removed identities remain tombstones, so a late duplicate release cannot decrement a rebuilt counter. At startup existing clients are reconciled before routes are served. Known session tenants are also reconciled, and an apparent session cap triggers another exact scan so TTL-expired sessions are reclaimed. `TenantQuotaProjectionStore` applies entitlement revisions monotonically, ignores older revisions, and rejects same-revision content changes. PostgreSQL persists leases, tombstones, generations, explicit hard-zero flags, and projection revision in the shared pool. |
+| Tenant quota enforcement coverage | The stock request path reserves tenant clients by generated `client_id` before DCR persistence and releases the exact lease on failed persistence or successful RFC 7592/admin deletion. For sessions, the stock memory/SQLite/PostgreSQL/Redis managers are wrapped with a two-phase lifecycle: a new row is stored as internal `quota_pending`, its exact session-ID lease is reserved, and only then is it published; pending rows are invisible to Get/List/Refresh, over-limit candidates are destroyed, and abandoned pending rows are drained after a bounded recovery grace. Every logout, bulk tenant revocation, account erasure, and other `SessionManager.Destroy` path releases the same lease idempotently; exact-set CAS repairs natural expiry and crash drift without losing concurrent creates/deletes. Break-glass impersonation sessions stay outside commercial quota. Authenticated tenant-matched `/token` dispatches are charged after idempotency replay lookup; exhaustion is `429 rate_limited` + `Retry-After` with no-store headers. Operational quota-store errors preserve the documented fail-open login posture and are logged; a definitive hard limit is `403 quota_exceeded`. Exact SSO membership/user leasing remains intentionally unwired because `TenantUserStore.Add` is an upsert in a separate transaction; Aero ID owns the commercial account/user quota lifecycle. |
 | `region.{serving_region,header_name,allowed_regions,residency_check_cache_ttl}` | Multi-region residency; write-gate on login mint, read-gate on resource access; admin mutation MUST call `InvalidateTenantResidencyCache` |
 | `geo.backend` | IP → geo enrichment middleware's `geo.Provider`: `static` (default; in-process operator-curated CIDR table, see `geo.static.*`) |
 
@@ -757,3 +763,184 @@ framework" for the wire error codes each mechanism returns.
 | `feature_gates.web_spa` | Deprecated alias of `feature_gates.branding`, parsed with a startup warning. Setting BOTH keys is a startup error. Removed with the next schema-version bump. |
 | GET `/api/v1/admin/endpoints` | Admin-gated (`admin:read`) runtime inventory: method + path + `feature_gates` surface (or `core`) for every route THIS replica actually registered |
 | Startup visibility | Any explicitly-disabled gate emits a `feature_gates_disabled` audit event + log line + sets `sso_feature_gate_enabled{feature=...}` to 0 (1 for every enabled gate) — attack-surface changes are security-relevant |
+
+## Standalone Billing Automatic Renewals
+
+These environment variables and equivalent `--renewals-*` flags configure the
+API-only `snaplink-billing` composition root, not `sso-server` YAML. The worker
+uses the same Snaplink-authenticated commerce service, PostgreSQL store and
+tenant-scoped Audit Governance outbox as the billing APIs.
+
+| Environment / flag | Effect |
+|---|---|
+| `SNAPLINK_BILLING_RENEWALS_ENABLED` / `--renewals-enabled` | Explicit enable switch; default `false`. A disabled process neither claims nor settles subscriptions. |
+| `SNAPLINK_BILLING_RENEWALS_OWNER` / `--renewals-owner` | Unique lease owner. When enabled and empty, defaults to hostname-PID plus `-renewal`. Newlines are rejected. |
+| `SNAPLINK_BILLING_RENEWALS_INTERVAL` / `--renewals-interval` | Due-subscription scan cadence; default `1m`, must be positive and less than the fixed 15-minute readiness tolerance when enabled. An enabled worker also scans immediately at startup. |
+| `SNAPLINK_BILLING_RENEWALS_LEASE` / `--renewals-lease` | Persistent claim duration; default `2m`, must be positive. Exact owner and lease generation are checked before commit. |
+| `SNAPLINK_BILLING_RENEWALS_RETRY_DELAY` / `--renewals-retry-delay` | Delay after insufficient wallet balance; default `1h`, capped by the fixed subscription `grace_until`. |
+| `SNAPLINK_BILLING_RENEWALS_BATCH_SIZE` / `--renewals-batch-size` | Claim batch size; default `50`, valid range `1..500`. Full batches are drained before the worker waits for the next scan. |
+
+Renewal interval, price, currency and grace days are snapshotted onto each
+subscription at creation or explicit plan change. A successful paid renewal
+commits the wallet debit, immutable `subscription` ledger entry, next contract
+period, Entitlement snapshot and outbox facts in one serializable transaction.
+Insufficient funds writes no debit; it commits `past_due`, a retry schedule and
+`snaplink.billing.subscription.renewal_failed`. The first failure fixes
+`grace_until`; retries never extend it, and settlement at the boundary expires
+the subscription and deactivates Entitlement. PostgreSQL uses
+`FOR UPDATE SKIP LOCKED`, persistent leases and deterministic per-period ledger
+idempotency keys, so multiple replicas may run safely. Memory storage implements
+the same state contract but is not restart-safe and remains development-only.
+
+`snaplink-billing` exposes bounded renewal telemetry at `GET /metrics` and adds
+`subscription_renewals` to `/readyz` when this worker is enabled. A cycle error
+does not immediately withdraw readiness. Readiness fails only after the oldest
+durable due row exceeds the fixed 15-minute tolerance, or no fully successful
+cycle has completed for 15 minutes (including the startup grace window). The
+worker continues running while unready so it can drain a recovered backlog.
+
+## Standalone Billing Audit Relay Hot Activation
+
+These settings affect only the independently deployed `snaplink-billing`
+process. The relay executable is selected by the cold `billing` build profile;
+runtime state can activate or drain only that already-compiled background
+module.
+
+| Environment / flag | Effect |
+|---|---|
+| `SNAPLINK_BILLING_AUDIT_RUNTIME_FILE` / `--audit-runtime-file` | Optional strict desired-state file containing exactly `revision` (positive integer) and `enabled` (boolean). Empty means activate revision 1 at boot. A path requires the Audit base URL and relay credentials to be configured. |
+| File watch / `SIGHUP` | The process polls every 5 seconds; `SIGHUP` requests an immediate read. A higher revision activates a fresh blue/green generation or drains the active one. Equal revision/equal value is idempotent; equal revision/different value and lower revisions are rejected without replacing the active generation. |
+
+The file is bounded to 4 KiB, must be a regular file, and must not be writable
+by group or other. It contains no endpoint or credential. Audit URL, OAuth
+client credentials, scope, resource, source prefix and HTTP timeouts remain
+cold startup configuration. A rejected reload makes the static
+`audit_relay_module` readiness check fail until the applied state is restored
+or a valid newer revision is applied. Each generation has a distinct outbox lease owner; old generations
+stop claiming new batches and finish an in-flight batch before shutdown.
+Authentication, token issuance, quota enforcement, the primary audit sink,
+redaction and hash chaining are not hot-swappable through this mechanism.
+
+## Standalone Billing Quota Projection Relay
+
+This precompiled worker belongs to the cold `billing` profile. It uses the
+commerce store's independent quota-delivery cursor to project the latest
+Entitlement revision into a separately deployed `sso-server`; it never shares
+delivery state or credentials with Audit Governance or a payment adapter.
+
+| Environment / flag | Effect |
+|---|---|
+| `SNAPLINK_BILLING_QUOTA_BASE_URL` / `--quota-base-url` | SSO base URL. Empty disables construction of the relay. HTTPS is required except for explicit loopback development. If the base is empty, any other non-default quota relay setting is rejected as partial configuration. |
+| `SNAPLINK_BILLING_QUOTA_TOKEN_URL` / `--quota-token-url` | Snaplink client-credentials endpoint; defaults to the configured issuer plus `/token` only when the relay is enabled. HTTPS/loopback policy is identical to the base URL. |
+| `SNAPLINK_BILLING_QUOTA_CLIENT_ID` / `--quota-client-id` | Dedicated, pre-registered machine client. Runtime validation rejects reuse of the Billing Audit Governance client ID; do not reuse a payment-adapter client either. |
+| `SNAPLINK_BILLING_QUOTA_CLIENT_SECRET` | Environment-only secret; there is deliberately no command-line flag. When both relays are enabled, runtime validation also rejects reuse of the Audit Governance client secret. |
+| `SNAPLINK_BILLING_QUOTA_SOURCE_PREFIX` / `--quota-source-prefix` | Tenant source derivation prefix; default `snaplink-billing-quota`. The exact source is `prefix + "." + base64url(SHA-256(tenant_id))` and must be pre-registered in SSO. |
+| `SNAPLINK_BILLING_QUOTA_SCOPE` / `--quota-scope` | Must be exactly `tenant-quota:projection:write`; extra scopes are rejected at startup. |
+| `SNAPLINK_BILLING_QUOTA_RESOURCE` / `--quota-resource` | Required exact RFC 8707 resource/audience. It must equal `tenant.resource_quota.projection_ingress.audience` in SSO and be allowed by the OAuth client. |
+| `SNAPLINK_BILLING_QUOTA_RELAY_OWNER` / `--quota-relay-owner` | Unique durable claim owner; enabled relays default to hostname-PID plus `-quota`. Deployments inject a Pod/host-specific value. |
+| `SNAPLINK_BILLING_QUOTA_HTTP_TIMEOUT` / `--quota-http-timeout` | Token and projection request timeout; default `5s`, positive. |
+| `SNAPLINK_BILLING_QUOTA_LEASE` / `--quota-lease` | Per-delivery claim lease; default `30s`. It must exceed two quota HTTP windows plus, when enabled, two retention HTTP windows so cold token acquisition and both writes remain fenced. |
+| `SNAPLINK_BILLING_QUOTA_BATCH_SIZE` / `--quota-batch-size` | Maximum claims per scan; default `100`, valid range `1..500`. |
+| `SNAPLINK_BILLING_QUOTA_INITIAL_BACKOFF` / `--quota-initial-backoff` | First persisted delivery retry delay; default `1s`. |
+| `SNAPLINK_BILLING_QUOTA_MAX_BACKOFF` / `--quota-max-backoff` | Exponential retry ceiling before deterministic jitter; default `1m`, not less than the initial delay. |
+| `SNAPLINK_BILLING_QUOTA_POLL_INTERVAL` / `--quota-poll-interval` | Idle outbox scan cadence; default `500ms`. |
+| `SNAPLINK_BILLING_QUOTA_MAX_LAG` / `--quota-max-lag` | Oldest independent pending cursor age that changes Billing readiness to `tenant_quota_projection: error`; default `5m`. |
+| `SNAPLINK_BILLING_QUOTA_ERROR_PAUSE` / `--quota-error-pause` | Worker-level pause after claim/storage/authorization errors; default `5s`. The persisted event backoff remains authoritative and the worker retries indefinitely. |
+
+SSO must cold-enable `tenant.resource_quota.backend` and
+`tenant.resource_quota.projection_ingress`, then configure a revisioned source
+for every commercial tenant. Each source's `client_id` equals the dedicated
+Billing quota client, `source_system` equals the derived value, and
+`tenant_id` is immutable. Only source records support safe SIGHUP updates;
+route enablement, backend and audience remain cold. Inactive, expired or
+`core_sso`-disabled Entitlements are deliberately delivered as an explicit
+hard-zero projection with all four `*Limited` flags set, preserving the
+difference from legacy zero-as-unlimited seeds.
+
+## Standalone Billing Audit Retention Projection
+
+This optional cold configuration extends the same leased Entitlement cursor;
+it is enabled only together with SSO quota projection. A delivery is complete
+only after both SSO quota and Audit Governance retention policy accept the
+latest revision.
+
+| Environment / flag | Effect |
+|---|---|
+| `SNAPLINK_BILLING_RETENTION_BASE_URL` / `--retention-base-url` | Audit Governance control base URL. Empty disables retention projection. HTTPS is required except explicit loopback development. |
+| `SNAPLINK_BILLING_RETENTION_TOKEN_URL` / `--retention-token-url` | Snaplink client-credentials endpoint; defaults to issuer plus `/token` when enabled. |
+| `SNAPLINK_BILLING_RETENTION_CLIENT_ID` / `--retention-client-id` | Dedicated platform policy client. Runtime rejects reuse of either Billing event-relay or SSO quota client identity. |
+| `SNAPLINK_BILLING_RETENTION_CLIENT_SECRET` | Environment-only secret with no command-line flag. Runtime also rejects reuse of either other relay secret. |
+| `SNAPLINK_BILLING_RETENTION_RESOURCE` / `--retention-resource` | Exact Audit Governance RFC 8707 resource; defaults to `audit-governance` when enabled. |
+| `SNAPLINK_BILLING_RETENTION_HTTP_TIMEOUT` / `--retention-http-timeout` | Bounded token and policy request timeout; default `5s`, positive. |
+
+The client requests exactly
+`audit:platform:cross_tenant audit:policy:write`. Each current finite
+`audit_retention_days` hard grant becomes an idempotent policy: hot is capped at
+7 days, warm at 30 days, and `standard`-class archive eligibility uses the full grant. Missing,
+unlimited, non-positive or over-100-year grants are rejected and retried rather
+than acknowledged. The policy never deletes Audit Governance's immutable
+ledger, legal holds remain authoritative, and `security`, `billing_7y`,
+`account_7y` or other compliance classes are not shortened.
+
+## Standalone Stripe Payment Adapter
+
+These environment variables configure the optional, independently deployed
+`snaplink-stripe-adapter`; they are not `sso-server` YAML and are not loaded
+into `snaplink-billing`. See
+[`stripe-payment-adapter.md`](stripe-payment-adapter.md) for the complete trust,
+replay, deployment, and disaster-recovery model.
+
+| Environment | Effect |
+|---|---|
+| `SNAPLINK_STRIPE_LISTEN` | Listener address; default `127.0.0.1:8091`. A non-loopback address is rejected unless both TLS file settings are present. |
+| `SNAPLINK_STRIPE_TLS_CERT_FILE` / `SNAPLINK_STRIPE_TLS_KEY_FILE` | Built-in server TLS pair. They must be configured together. |
+| `SNAPLINK_STRIPE_POSTGRES_DSN` | Required durable PostgreSQL DSN for checkout mappings, minimal event facts, retries, and claim fencing. There is no memory production mode. |
+| `SNAPLINK_STRIPE_ISSUER` / `SNAPLINK_STRIPE_JWKS_URL` / `SNAPLINK_STRIPE_AUDIENCE` | Required Snaplink issuer, JWKS source, and exact checkout API audience used by the local resource-server verifier. |
+| `SNAPLINK_STRIPE_BILLING_BASE_URL` / `SNAPLINK_STRIPE_TOKEN_URL` / `SNAPLINK_STRIPE_BILLING_RESOURCE` | Required Billing API, Snaplink client-credentials token endpoint, and exact Billing OAuth resource. Order reads and event delivery request separate fixed scopes. |
+| `SNAPLINK_STRIPE_BINDINGS_FILE` | Required strict desired-state JSON mapping checkout clients and Billing clients to tenants. Maximum 2 MiB; must be a regular non-symlink file and not group/world writable. |
+| Binding `billing_client_secret_env` | Names the environment variable containing that tenant binding's Billing OAuth secret. Names must be uppercase environment identifiers; secret values are never accepted in the file. |
+| `SNAPLINK_STRIPE_API_BASE_URL` | Stripe API base; default `https://api.stripe.com`. |
+| `SNAPLINK_STRIPE_API_VERSION` | Required explicitly pinned Stripe API version sent on checkout requests. |
+| `SNAPLINK_STRIPE_API_KEY` | Required Stripe API key. Supply through a secret manager/environment, never a desired-state file or flag. |
+| `SNAPLINK_STRIPE_WEBHOOK_SECRETS` | Required comma-separated Stripe endpoint secrets. Multiple values provide overlap during rotation; every value is checked against every accepted `v1` signature. |
+| `SNAPLINK_STRIPE_RETURN_ORIGINS` | Required comma-separated exact Console return origins. Caller URLs may add paths under an origin but cannot change scheme/host or include userinfo/control characters. |
+| `SNAPLINK_STRIPE_HTTP_TIMEOUT` | Hard timeout for Stripe, Billing, token, and JWKS HTTP calls; default `10s`, minimum `1s`. Redirects are rejected. |
+| `SNAPLINK_STRIPE_READY_TIMEOUT` | Dependency readiness deadline; default `2s`, minimum `100ms`. |
+| `SNAPLINK_STRIPE_POLL_INTERVAL` | Durable inbox claim cadence; default `1s`, minimum `100ms`. |
+| `SNAPLINK_STRIPE_CLAIM_LEASE` | Per-claim lease; default `45s` and must be at least twice the HTTP timeout plus two seconds. |
+| `SNAPLINK_STRIPE_SHUTDOWN_DRAIN` | Separate HTTP and relay drain bound; default `50s` and must be at least the claim lease. |
+| `SNAPLINK_STRIPE_BATCH_SIZE` | Maximum facts claimed per scan; default `50`, valid range `1..500`. |
+| `SNAPLINK_STRIPE_DELIVERY_CONCURRENCY` | Per-replica in-flight delivery bound; default `8`, valid range `1..100`. |
+| `SNAPLINK_STRIPE_MAX_BACKLOG` / `SNAPLINK_STRIPE_MAX_BACKLOG_AGE` | Readiness safety thresholds; defaults `10000` undelivered facts and `15m` oldest age. |
+| `SNAPLINK_STRIPE_ALLOW_INSECURE_LOOPBACK` | Default `false`. When true, permits HTTP only for explicit loopback service URLs and return origins; it never permits non-loopback plaintext. |
+
+Every service URL must otherwise use HTTPS and cannot contain userinfo, query,
+or fragment. Binding identities reject whitespace, control characters, slash,
+and backslash. Startup performs the database migration before listening and
+fails closed on any invalid trust/configuration boundary.
+
+## Standalone Audit Governance Provisioner
+
+These variables configure the independently deployed
+`snaplink-audit-provisioner`; they are not `sso-server` YAML and are separate
+from every event relay credential.
+
+| Environment / flag | Effect |
+|---|---|
+| `SNAPLINK_AUDIT_PROVISIONER_MANIFEST_FILE` / `--manifest-file` | Strict create-only tenant/source/schema desired-state JSON. The regular file is limited to 1 MiB, rejects unknown fields, and cannot be writable by group/other. |
+| `SNAPLINK_AUDIT_PROVISIONER_BASE_URL` / `--audit-base-url` | Audit Governance HTTPS base URL. Redirects are rejected. |
+| `SNAPLINK_AUDIT_PROVISIONER_TOKEN_URL` / `--token-url` | Snaplink OAuth token endpoint. HTTPS is mandatory except explicit loopback development. |
+| `SNAPLINK_AUDIT_PROVISIONER_CLIENT_ID` / `--client-id` | Dedicated platform-control client; do not reuse an ingestion relay client. |
+| `SNAPLINK_AUDIT_PROVISIONER_CLIENT_SECRET` | Direct secret environment source. Mutually exclusive with the file source; there is deliberately no secret flag. |
+| `SNAPLINK_AUDIT_PROVISIONER_CLIENT_SECRET_FILE` | Regular secret file up to 64 KiB, not group/other writable, with optional single trailing newline. |
+| `SNAPLINK_AUDIT_PROVISIONER_RESOURCE` / `--resource` | Exactly one Audit Governance OAuth resource. |
+| `SNAPLINK_AUDIT_PROVISIONER_LISTEN` / `--listen` | Operations-only probe/metrics listener; default `:8092`. |
+| `SNAPLINK_AUDIT_PROVISIONER_POLL_INTERVAL` / `--poll-interval` | Reconciliation interval, minimum `1s`, default `30s`; SIGHUP also reloads immediately. |
+| `SNAPLINK_AUDIT_PROVISIONER_REQUEST_TIMEOUT` / `--request-timeout` | Bounded OAuth and control request timeout; default `5s`, maximum `1m`. |
+| `SNAPLINK_AUDIT_PROVISIONER_ONE_SHOT` / `--one-shot` | Apply once and return an explicit automation exit code. |
+| `SNAPLINK_AUDIT_PROVISIONER_ALLOW_INSECURE_LOOPBACK` / `--allow-insecure-loopback` | Permit HTTP only for an explicit loopback host; never permits non-loopback plaintext. |
+
+The OAuth scope is intentionally not configurable. It is exactly
+`audit:platform:cross_tenant audit:policy:read audit:policy:write` and is sent
+with exactly the configured resource. See the command README for revision and
+exit-code semantics.

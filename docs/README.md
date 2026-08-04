@@ -49,6 +49,9 @@ feature, gate, configuration, or error tables into another guide.
 
 ## Reference
 
+- [commercial-model.md](commercial-model.md) — separation of build editions,
+  tenant subscriptions and deployment topology, with the recommended plan and
+  quota bands.
 - [config-reference.md](config-reference.md) — curated stock-binary YAML reference.
 - [error-codes.md](error-codes.md) — the wire error-code catalogue.
 - [feature-matrix.md](feature-matrix.md) — supported RFCs / features and their wiring.

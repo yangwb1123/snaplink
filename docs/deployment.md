@@ -28,8 +28,13 @@ python cli.py build            # -> ./bin/{sso-server, sso-ctl}   (make/Taskfile
 python cli.py configure --profile prototype --version v1.1.1 --build
 python cli.py configure --profile minimal --version v1.1.1 --build
 python cli.py configure --profile full --version v1.1.1 --build
+python cli.py configure --profile billing --version v1.1.1 --build
 python cli.py configure --profile standard-kafka --build  # compatibility composition
 docker build -t snaplink/sso-server .      # the root Dockerfile
+docker build --target snaplink-billing -t snaplink/billing .
+docker build --target snaplink-stripe-adapter -t snaplink/stripe-adapter .
+docker build --target snaplink-audit-provisioner -t snaplink/audit-provisioner .
+CGO_ENABLED=0 go build -trimpath -o bin/snaplink-audit-provisioner ./cmd/snaplink-audit-provisioner
 sso-server version                          # version / build time / Git hash / Go version
 sso-server modules                          # compiled profile/inventory; configured builds include a lock digest
 ```
@@ -60,6 +65,11 @@ not the new edition hierarchy.
 | `prototype` | Preview; buildable | Loopback/memory SSO + OAuth Code/mandatory PKCE, password and reusable OP-session login, JSON logs, and one stable `default` tenant. OIDC surfaces are excluded. |
 | `minimal` | Preview; buildable | Extends `prototype` with OIDC discovery, ID Token, UserInfo and logout plus request tracing. |
 | `full` | Supported; buildable | Extends `minimal` with the full current stock `sso-server` composition and registered Kafka audit cold module. Durable backend and topology choices remain operator configuration. |
+
+The separate preview `billing` profile builds
+`dist/modules/billing/snaplink-billing`. It selects only locked core plus the
+standalone billing composition, is not inherited by `full`, and does not imply
+that billing can be hot-loaded into an SSO process.
 
 For source version `v1.1.1`, the three binaries report
 `snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, and
@@ -170,7 +180,60 @@ must externalize every enabled stateful concern. The canonical
 blockers and required external services.
 
 `ops/deploy/compose/` runs the same image with Prometheus + Grafana
-(dashboards/alerts provisioned) for a local/observability stack.
+(dashboards/alerts provisioned) for a local/observability stack. Its explicit
+`commerce` profile starts PostgreSQL, the loopback-only Billing process, and a
+same-namespace TLS edge:
+
+```bash
+docker compose -f ops/deploy/compose/compose.yaml --profile commerce up
+```
+
+The opt-in `payment` profile includes that commerce tier plus an isolated
+adapter PostgreSQL database and a second loopback-only TLS edge:
+
+```bash
+docker compose -f ops/deploy/compose/compose.yaml --profile payment up
+```
+
+Its checked-in `sk_test_`/`whsec_` values are deliberately non-production
+placeholders. Live keys must come from an external secret store and require an
+explicit, reviewed `SNAPLINK_STRIPE_LIVE_MODE=true` change.
+
+Production Billing has two independently renderable Kubernetes choices:
+
+```bash
+kubectl kustomize ops/deploy/billing/
+helm lint --strict ops/deploy/helm/snaplink-billing
+helm template billing ops/deploy/helm/snaplink-billing --namespace snaplink-sso
+```
+
+Both default to three replicas, HPA/PDB/topology spread, an external PostgreSQL
+DSN and secrets, and an unprivileged same-Pod TLS edge. Port 8090 is never a
+Service/container port; only the edge's named HTTPS port is routable. Automatic
+renewal remains explicitly off until operators complete financial restore and
+reconciliation drills.
+
+The Stripe adapter has separate Kustomize and Helm forms:
+
+```bash
+kubectl kustomize ops/deploy/billing/stripe-adapter/
+helm lint --strict ops/deploy/helm/snaplink-stripe-adapter
+helm template stripe-adapter ops/deploy/helm/snaplink-stripe-adapter --namespace snaplink-sso
+```
+
+These manifests default to three active-active replicas,
+HPA/PDB/topology spreading and end-to-end TLS. Its Helm chart requires external
+application/TLS Secrets and an external binding ConfigMap, mounts the binding
+as one read-only `subPath` file, and accepts an immutable `sha256:` image
+digest. PostgreSQL stores checkout mappings, event receipts and the delivery
+inbox; it is the only shared state required by adapter replicas.
+
+[`ops/deploy/baremetal-ha`](../ops/deploy/baremetal-ha) is the corresponding
+three-node Patroni/Redis/etcd/VRRP reference. Its Compose model is executable on
+one host for validation and runs one loopback Billing and Stripe adapter process
+inside each edge network namespace. Production use still requires real host separation,
+authenticated backend TLS, persistent disks, immutable images, off-site backup,
+and rehearsal of the included failure drills.
 
 ## 6. Distributed architecture
 
@@ -329,10 +392,96 @@ The natural and supported split is **token *issuance* vs token *consumption***:
 - The **gRPC control plane** *could* run on a separate exposure from the OAuth
   data plane (same binary), e.g. an internal-only admin Service.
 
+The commercial suite adds independently deployable resource and governance
+planes; it does not change that OAuth boundary:
+
+| Component | Owns | Authentication and scaling boundary |
+|---|---|---|
+| `sso-server` | Login, OAuth/OIDC issuance, authorization and tenant identity | N replicas with shared Redis/Postgres/etcd as described in §6. |
+| `snaplink-billing` | Immutable plans, snapshotted subscription renewals, entitlement projections, wallet/payment ledger, usage reservations and durable audit outboxes | N stateless API/relay/optional-renewal-worker replicas on one PostgreSQL cluster. Each process is loopback-only and sits behind the trusted TLS edge. |
+| `snaplink-stripe-adapter` | Stripe Checkout creation, signed webhook normalization, immutable event/effect receipts and fenced delivery inbox | N active-active API/relay replicas on one dedicated PostgreSQL database. Checkout clients and per-tenant Billing clients are separate least-privilege OAuth identities; no raw Stripe payload or card data is retained. |
+| Audit Governance | Append-only governance ledger, source registration, retention, query and export | Separate durable database and recovery policy. Billing outboxes bridge outages but never replace this system of record. |
+| `snaplink-audit-provisioner` | Create-only Audit Governance tenant, source allow-list and schema desired state | One independent controller per desired-state authority. It uses a dedicated platform OAuth client and never shares relay credentials. |
+| Aero ID / IM / Vault | Account, notification/chat and file resource transactions | Verify Snaplink access tokens locally. Reserve/commit metered work against the billing API using a pre-registered machine `client_id`; enforce gauges such as stored bytes in the resource owner's transaction. |
+| `snaplink-console` and Aero UIs | Browser presentation only | Independently built static assets. The edge may mount them on one origin; no Go API process becomes a static host. |
+
+A same-origin edge can route the suite without sharing process memory:
+
+```text
+https://id.example.com/{oauth,oidc,api/v1/admin/identity/*} -> sso-server
+https://id.example.com/api/v1/admin/commerce/*             -> snaplink-billing
+https://id.example.com/api/v1/metering/*                    -> snaplink-billing
+https://id.example.com/api/v1/checkout/sessions             -> snaplink-stripe-adapter
+https://id.example.com/webhooks/stripe                      -> snaplink-stripe-adapter
+https://id.example.com/admin/                               -> snaplink-console assets
+
+internal Aero service -> cached Snaplink JWKS validation
+internal Aero service -> billing machine API (client_credentials + source binding)
+billing durable outbox -> Audit Governance (client_credentials + registered source)
+billing entitlement cursor -> Audit Governance retention policy (dedicated platform client)
+Stripe adapter -> billing payment API (per-tenant client_credentials + binding)
+audit provisioner -> Audit Governance control API (dedicated platform client)
+```
+
+The edge must strip and re-set forwarding headers, enforce TLS, keep probes on
+an operations-only path, and route a given API prefix to exactly one owner.
+Business APIs validate issuer, audience, signature and exact scope again at the
+service boundary; trusting the edge alone is insufficient. A metering request
+never supplies its own tenant or source identity: the signed `client_id` maps to
+one server-owned binding containing tenant, source and allowed dimensions.
+
+Keep the service availability decisions independent:
+
+- scaling `sso-server` requires shared OAuth/session stores and invalidation;
+- scaling `snaplink-billing` requires one serializable commerce/usage database
+  plus unique Audit, quota-projection and renewal lease owners, but no sticky sessions; all
+  replicas may run the opt-in renewal worker because claims use
+  `FOR UPDATE SKIP LOCKED` and settlement rechecks the exact lease generation;
+- scaling `snaplink-stripe-adapter` requires one PostgreSQL inbox/mapping store
+  and identical immutable bindings across replicas. Claims use `SKIP LOCKED`,
+  an expiring lease and generation fencing; event-id receipts plus unique
+  normalized effect keys prevent both same-event and same-effect replay. Keep
+  backlog thresholds as alerts, not readiness eviction, and cap aggregate
+  delivery concurrency against Billing and Stripe limits;
+- entitlement-to-SSO quota delivery uses a cursor independent from Audit
+  Governance. Register a dedicated least-privilege OAuth client, deploy the
+  exact SSO audience and per-tenant derived source bindings first, then enable
+  Billing. Inactive/expired/core-disabled snapshots still send explicit
+  hard-zero, so an SSO outage cannot accidentally reopen legacy unlimited
+  limits. Cursor lag has its own Billing readiness check and recovers by replay;
+- when commercial audit retention is enabled, that same entitlement cursor
+  also writes the latest finite retention grant through a distinct client with
+  exactly `audit:platform:cross_tenant audit:policy:write`. The cursor is not
+  acknowledged until both SSO and Audit Governance succeed; retries are
+  idempotent, and retention changes archive eligibility without deleting the
+  immutable governance ledger or overriding legal holds;
+- the optional Billing audit-relay desired-state file must be rolled out with
+  one monotonic revision across replicas before sending `SIGHUP`; each process
+  derives generation-specific lease owners and reports a rejected revision via
+  readiness, while endpoint and OAuth credential rotation remains a restart;
+- the Audit Governance provisioner polls and accepts SIGHUP, but only creates
+  exact records. Omission never deletes, 409 is followed by exact comparison,
+  and stale/equivocal/remote-drift state degrades its own readiness while
+  preserving the last applied revision;
+- scaling an Aero resource service requires its own durable resource database
+  and idempotency contract. A successful remote quota pre-check alone cannot
+  make a local file or message transaction atomic.
+
 **Do not** carve the OAuth protocol itself into per-endpoint services
 (login/token/userinfo): it would add latency and break the shared-session and
 oracle-leak invariants for no benefit. Scale by *replicas + shared store*, not
 by splitting the protocol.
+
+Deploy the provisioner only after SSO and Audit Governance are reachable and
+before enabling the event relays. Production examples are provided for
+Kustomize (`ops/deploy/audit-provisioner`), Helm
+(`ops/deploy/helm/snaplink-audit-provisioner`), Compose's optional
+`audit-provisioning` profile, and host-native systemd. Desired state contains no
+secret. Mount the dedicated client secret read-only, grant exactly
+`audit:platform:cross_tenant audit:policy:read audit:policy:write` for one
+resource, and keep the status listener on an operations-only network.
+Secret rotation is a rolling restart: SIGHUP reloads the desired manifest, not
+startup endpoint or credential configuration.
 
 ## 9. Operational invariants
 

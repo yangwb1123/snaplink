@@ -8,6 +8,9 @@ availability on every deployment:
 
 - An `interfaces/sso` `With*` option is an **SDK** capability.
 - A `config.yaml` key is a **stock `sso-server`** capability.
+- A separately deployed command such as `snaplink-billing`, the Stripe adapter,
+  or the Audit Governance provisioner is a **standalone binary** capability; it
+  is not linked into `sso-server` merely because both ship from this repository.
 - A row naming a nested module (SAML, LDAP, Kerberos, RADIUS, ext-authz,
   Kafka, MQTT or selected KMS/HSM adapters) requires that module to be built or
   registered by the composition root. `full` and the historical
@@ -41,12 +44,14 @@ Generated from [`ops/build/capabilities.json`](../ops/build/capabilities.json); 
 |---|---|---|---|---|---|
 | Admin control plane (`admin.control-plane`) | `sdk`<br>`stock-binary` | `conditional` | `feature_gates.admin_api` | `AdminTokenStore` | `/api/v1/admin/*` |
 | Embedded API docs viewer (`api.docs-viewer`) | `sdk` | `disabled` | `feature_gates.admin_api` | — | `/api/v1/admin/docs` |
+| Audit Governance desired-state provisioner (`audit.governance-provisioner`) | `standalone-binary` | `disabled` | — | `Audit Governance control API` | `/livez`<br>`/readyz`<br>`/metrics`<br>`Audit Governance control API` |
 | Kafka audit sink (`audit.kafka`) | `stock-binary`<br>`module-only` | `disabled` | — | — | `audit sink` |
 | Fine-grained authorization (`authorization.fga`) | `sdk`<br>`stock-binary` | `disabled` | — | `RebacStore`<br>`RebacEngine` | `/authz/*` |
 | Public tenant branding (`branding.public`) | `sdk`<br>`stock-binary` | `conditional` | `feature_gates.branding` | `TenantStore` | `/branding` |
 | CAEP and Shared Signals (`caep.shared-signals`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.caep` | `CAEPStreamStore`<br>`JTIReplayStore` | `/.well-known/ssf-configuration`<br>`/ssf/*` |
 | OpenID Connect CIBA (`ciba.core`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.ciba` | `CIBAStore` | `/backchannel-authentication`<br>`/token` |
 | Cluster and HA coordination (`cluster.ha`) | `sdk`<br>`stock-binary` | `disabled` | — | `cluster.Bus`<br>`shared durable stores` | `/readyz`<br>`cross-replica bus` |
+| Tenant commerce and billing (`commerce.tenant`) | `sdk`<br>`standalone-binary` | `conditional` | — | `commerce.Store`<br>`commerce.PaymentStore`<br>`commerce.RenewalStore` | `/api/v1/admin/commerce/*`<br>`/api/v1/commerce/*/payments/*`<br>`/readyz`<br>`/metrics` |
 | OpenID Federation (`federation.openid`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.federation` | `FederationEntity` | `/.well-known/openid-federation*`<br>`/auth/home-realm` |
 | Admin console (`frontend.admin`) | `external-frontend` | `external` | — | — | `/admin/*` |
 | Developer portal (`frontend.developer`) | `external-frontend` | `external` | — | — | `/developer/*` |
@@ -58,14 +63,17 @@ Generated from [`ops/build/capabilities.json`](../ops/build/capabilities.json); 
 | Password authentication (`identity.password`) | `sdk`<br>`stock-binary` | `enabled` | — | `UserProvider`<br>`PasswordCredentialStore` | `/auth/login` |
 | Identity self-service APIs (`identity.self-service`) | `sdk`<br>`stock-binary` | `conditional` | `feature_gates.self_service` | `UserProvider`<br>`feature-specific stores` | `/me/*`<br>`/sessions/me/*`<br>`/consents/me/*` |
 | Signing-key lifecycle (`keys.lifecycle`) | `sdk`<br>`stock-binary` | `conditional` | — | `signing key Registry` | `/.well-known/jwks.json`<br>`/readyz` |
+| Machine usage and entitlement API (`metering.usage`) | `sdk`<br>`standalone-binary` | `conditional` | — | `usageledger.Store`<br>`usageledger.SourceBindingStore`<br>`commerce.EntitlementReader` | `/api/v1/metering/usage`<br>`/api/v1/metering/reservations*`<br>`/api/v1/metering/entitlement` |
 | Advanced OAuth security (`oauth.advanced`) | `sdk`<br>`stock-binary` | `conditional` | — | `feature-specific OAuth stores` | `/par`<br>`/token`<br>`/auth/login` |
 | OAuth client credentials (`oauth.client-credentials`) | `sdk`<br>`stock-binary` | `enabled` | — | `ClientStore` | `/token` |
 | OAuth SSO core (`oauth.sso`) | `sdk`<br>`stock-binary` | `enabled` | — | `AuthCodeStore`<br>`SessionManager` | `/auth/login`<br>`/token` |
 | Observability (`observability.core`) | `sdk`<br>`stock-binary` | `enabled` | — | — | `/livez`<br>`/readyz`<br>`/metrics` |
 | OpenID Connect core (`oidc.core`) | `sdk`<br>`stock-binary` | `enabled` | `feature_gates.oidc` | `IDTokenIssuer` | `/.well-known/openid-configuration`<br>`/userinfo`<br>`/end_session` |
+| Stripe top-up payment adapter (`payment.stripe`) | `standalone-binary` | `disabled` | — | `Stripe adapter PostgreSQL inbox`<br>`Snaplink Billing API` | `/api/v1/checkout/sessions`<br>`/webhooks/stripe`<br>`/readyz`<br>`/metrics` |
 | SCIM provisioning (`provisioning.scim`) | `sdk`<br>`stock-binary` | `disabled` | — | `UserProvider` | `/api/v1/scim/v2/*` |
 | Production storage backends (`storage.production`) | `stock-binary` | `conditional` | — | — | `storage SPI` |
 | Tenant platform (`tenant.platform`) | `sdk`<br>`stock-binary` | `conditional` | — | `TenantStore` | `/api/v1/admin/tenants/*`<br>`tenant middleware` |
+| Tenant quota projection ingress (`tenant.quota-projection`) | `sdk`<br>`stock-binary` | `conditional` | — | `TenantQuotaProjectionStore` | `/api/v1/internal/tenant-quota/projection`<br>`/readyz` |
 | Threat detection and response (`threat.detection-response`) | `sdk`<br>`stock-binary` | `disabled` | — | `ThreatPolicyStore`<br>`anomaly stores` | `/api/v1/admin/threat-policies/*`<br>`/api/v1/admin/tokens/suspicious` |
 <!-- END GENERATED CAPABILITY AVAILABILITY -->
 

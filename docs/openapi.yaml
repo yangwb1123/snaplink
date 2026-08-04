@@ -21,8 +21,10 @@
 # netpolicy CRUD + classify surface (/api/v1/netpolicy/...), and the full
 # admin gRPC service surface exposed via grpc-gateway under /api/v1/admin/* —
 # Snapshot, Release, Tenant, Domain, Client, User, Token, Permission.
-# Coverage scope is now complete for every endpoint cmd/sso-server
-# registers in its reference configuration.
+# Coverage scope is complete for every endpoint cmd/sso-server registers in
+# its reference configuration. It also includes the opt-in tenant-commerce
+# and machine-metering SDK surfaces; `cmd/snaplink-billing` mounts both while
+# the stock `sso-server` does not.
 #
 # Validate locally:    make docs-validate
 # Serve swagger-ui:    make docs-serve   (then open http://localhost:8088)
@@ -113,6 +115,30 @@ tags:
       AdminMiddleware (Bearer-validated, scoped to `admin:read` /
       `admin:write`). Open SDK-internal counterparts exist on the
       gRPC layer too — `grpcserver/admin_*.go`.
+  - name: commerce
+    description: |
+      Opt-in tenant-commerce SDK surface. These routes are not mounted by the
+      stock `sso-server`. A composition mounting the admin operations must add
+      the admin bearer policy described by each operation. The normalized
+      payment-event route must be registered separately with a fail-closed
+      client-credentials scope gate; it is not a raw provider webhook. Every
+      response written by a commerce handler carries `Cache-Control: no-store`
+      and `Pragma: no-cache`.
+  - name: metering
+    description: |
+      Opt-in API-only machine usage and narrow entitlement SDK surface. An
+      outer resource-server middleware validates the access token; every route
+      then requires `sub == client_id`, its exact machine scope, and a unique
+      enabled server-side client binding. Tenant and source identity are never
+      accepted from a path, query, body, or forwarded header. Every response
+      carries `Cache-Control: no-store` and `Pragma: no-cache`.
+  - name: quota-projection
+    description: |
+      Internal machine-to-machine entitlement projection into the stock SSO
+      server. The bearer must be a client-credentials access token for the
+      configured audience with `tenant-quota:projection:write`. Tenant
+      authority comes only from the server-side `(client_id, source_system)`
+      binding; the body tenant is an exact consistency assertion.
 
 paths:
 
@@ -1039,6 +1065,16 @@ paths:
         client side too, otherwise an intermediary cache may serve
         the response cross-user.
 
+        **Tenant token quota** — when `tenant.resource_quota` is wired, an
+        authenticated request whose client is bound to the resolved tenant is
+        charged immediately before real grant dispatch. A successful
+        `Idempotency-Key` replay is served before the charge and therefore
+        counts only once. Exhaustion returns the generic `429 rate_limited`
+        response with `Retry-After`, `Cache-Control: no-store`, and
+        `Pragma: no-cache`; it never returns a tenant identifier. A quota-store
+        operational error fails open and is recorded internally as
+        `tenant_quota_store_failure`.
+
         **Oracle-leak hardening** — unknown / expired / consumed /
         client-mismatch code or refresh-token failures, PKCE
         verifier mismatches, and RFC 9449 §10 DPoP-bound-code jkt
@@ -1140,6 +1176,23 @@ paths:
             (the resolved tenant ≠ `Client.TenantID`). Wire code:
             `tenant_mismatch`; a fail-closed pre-token Hook may instead return
             `hook_rejected` or another explicitly configured 403 code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: |
+            The authenticated tenant exhausted its configured rolling token
+            issuance quota. Wire code: `rate_limited`; no tenant identifier is
+            included. A general edge/request rate limiter may use the same
+            stable code.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+            Pragma:
+              schema: { type: string, example: no-cache }
+            Retry-After:
+              schema: { type: integer, minimum: 1, example: 1 }
           content:
             application/json:
               schema:
@@ -3413,6 +3466,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReadinessResponse"
+
+  /metrics:
+    get:
+      tags: [operational]
+      summary: Bounded-cardinality Prometheus metrics for the active composition root.
+      description: |
+        The stock `sso-server` exports its `sso_*` series. The independently
+        deployed `snaplink-billing` composition exports process metrics plus
+        bounded `snaplink_billing_renewal_*` cycle, backlog, and readiness
+        series. Neither composition adds tenant, subscription, owner, or raw
+        error values as metric labels.
+      operationId: getMetrics
+      responses:
+        "200":
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema:
+                type: string
 
   /.well-known/openid-configuration:
     get:
@@ -12021,6 +12093,785 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/admin/commerce/plans:
+    get:
+      tags: [commerce]
+      summary: List immutable commerce plan versions.
+      description: |
+        SDK-only management operation. The mounting composition must require
+        `admin:read`; the handler itself assumes that upstream authorization.
+      operationId: listCommercePlans
+      x-required-scope: admin:read
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Published plan versions, including retired versions.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommercePlanListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+    post:
+      tags: [commerce]
+      summary: Publish one immutable plan version.
+      description: |
+        Requires `admin:write`. `(id, version)` is immutable: changed terms
+        must be published as a new version, never overwritten.
+      operationId: publishCommercePlan
+      x-required-scope: admin:write
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommercePlan" }
+      responses:
+        "201":
+          description: Plan version published.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommercePlanResponse" }
+        "400": { $ref: "#/components/responses/CommerceBadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "409": { $ref: "#/components/responses/CommerceConflict" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/admin/commerce/tenants/{tenant_id}/subscriptions:
+    parameters:
+      - $ref: "#/components/parameters/CommerceTenantID"
+    get:
+      tags: [commerce]
+      summary: List a tenant's subscriptions.
+      description: SDK-only management operation requiring `admin:read`.
+      operationId: listTenantCommerceSubscriptions
+      x-required-scope: admin:read
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Tenant-scoped subscription list.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommerceSubscriptionListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+    post:
+      tags: [commerce]
+      summary: Create a tenant subscription.
+      description: |
+        Requires `admin:write`. If `tenant_id` is supplied in the body it must
+        equal the path tenant. At most one live subscription is allowed.
+      operationId: createTenantCommerceSubscription
+      x-required-scope: admin:write
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommerceCreateSubscriptionRequest" }
+      responses:
+        "201":
+          description: Subscription and its local entitlement snapshot.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommerceSubscriptionResult" }
+        "400": { $ref: "#/components/responses/CommerceBadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "404": { $ref: "#/components/responses/CommerceNotFound" }
+        "409": { $ref: "#/components/responses/CommerceConflict" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/admin/commerce/subscriptions/{id}/status:
+    patch:
+      tags: [commerce]
+      summary: Transition a subscription status.
+      description: Requires `admin:write`; optimistic concurrency uses `expected_revision`.
+      operationId: transitionCommerceSubscription
+      x-required-scope: admin:write
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CommerceSubscriptionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommerceTransitionSubscriptionRequest" }
+      responses:
+        "200":
+          description: Updated subscription and entitlement snapshot.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommerceSubscriptionResult" }
+        "400": { $ref: "#/components/responses/CommerceBadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "404": { $ref: "#/components/responses/CommerceNotFound" }
+        "409": { $ref: "#/components/responses/CommerceConflict" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/admin/commerce/subscriptions/{id}/plan:
+    patch:
+      tags: [commerce]
+      summary: Change the plan pinned by a subscription.
+      description: Requires `admin:write`; optimistic concurrency uses `expected_revision`.
+      operationId: changeCommerceSubscriptionPlan
+      x-required-scope: admin:write
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CommerceSubscriptionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommerceChangePlanRequest" }
+      responses:
+        "200":
+          description: Updated subscription and entitlement snapshot.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommerceSubscriptionResult" }
+        "400": { $ref: "#/components/responses/CommerceBadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "404": { $ref: "#/components/responses/CommerceNotFound" }
+        "409": { $ref: "#/components/responses/CommerceConflict" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/admin/commerce/subscriptions/{id}/renew:
+    post:
+      tags: [commerce]
+      summary: Renew a subscription period.
+      description: |
+        Requires `admin:write`; send `{}` when no revision precondition is
+        needed. This is an administrative period repair and does not debit the
+        wallet. Normal paid renewal is performed by the opt-in automatic
+        settlement worker from snapshotted subscription terms.
+      operationId: renewCommerceSubscription
+      x-required-scope: admin:write
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CommerceSubscriptionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommerceRenewSubscriptionRequest" }
+      responses:
+        "200":
+          description: Renewed subscription and entitlement snapshot.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommerceSubscriptionResult" }
+        "400": { $ref: "#/components/responses/CommerceBadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "404": { $ref: "#/components/responses/CommerceNotFound" }
+        "409": { $ref: "#/components/responses/CommerceConflict" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/admin/commerce/tenants/{tenant_id}/entitlement:
+    get:
+      tags: [commerce]
+      summary: Read a tenant's current entitlement snapshot.
+      description: |
+        Requires `admin:read`. This is the local versioned projection used on
+        request paths; no payment provider is called by this operation.
+      operationId: getTenantCommerceEntitlement
+      x-required-scope: admin:read
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CommerceTenantID"
+      responses:
+        "200":
+          description: Current entitlement snapshot.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommerceEntitlementResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "404": { $ref: "#/components/responses/CommerceNotFound" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/admin/commerce/tenants/{tenant_id}/wallet:
+    get:
+      tags: [commerce]
+      summary: Read a tenant wallet materialized view.
+      description: Requires `admin:read`; immutable ledger entries remain the source of truth.
+      operationId: getTenantCommerceWallet
+      x-required-scope: admin:read
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CommerceTenantID"
+        - $ref: "#/components/parameters/CommerceCurrency"
+      responses:
+        "200":
+          description: Wallet balance and status.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommerceWalletResponse" }
+        "400": { $ref: "#/components/responses/CommerceBadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/admin/commerce/tenants/{tenant_id}/wallet/entries:
+    get:
+      tags: [commerce]
+      summary: List immutable tenant wallet entries newest first.
+      description: Requires `admin:read`; `limit` defaults to 100 and is capped at 1000.
+      operationId: listTenantCommerceWalletEntries
+      x-required-scope: admin:read
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CommerceTenantID"
+        - $ref: "#/components/parameters/CommerceCurrency"
+        - $ref: "#/components/parameters/CommerceLedgerLimit"
+      responses:
+        "200":
+          description: Tenant wallet entries.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommerceLedgerListResponse" }
+        "400": { $ref: "#/components/responses/CommerceBadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/admin/commerce/tenants/{tenant_id}/wallet/adjustments:
+    post:
+      tags: [commerce]
+      summary: Post an immutable manual wallet adjustment.
+      description: |
+        Requires `admin:write`. The idempotency key may be supplied in the body
+        or through `Idempotency-Key`; a non-empty body value wins.
+      operationId: postTenantCommerceWalletAdjustment
+      x-required-scope: admin:write
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CommerceTenantID"
+        - $ref: "#/components/parameters/CommerceIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommerceAdjustmentRequest" }
+      responses:
+        "201":
+          description: Created ledger entry and updated wallet.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommerceLedgerMutationResponse" }
+        "400": { $ref: "#/components/responses/CommerceBadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "409": { $ref: "#/components/responses/CommerceConflict" }
+        "423": { $ref: "#/components/responses/CommerceLocked" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/admin/commerce/tenants/{tenant_id}/payments/orders:
+    parameters:
+      - $ref: "#/components/parameters/CommerceTenantID"
+    get:
+      tags: [commerce]
+      summary: List a tenant's top-up payment orders.
+      description: Requires `admin:read`.
+      operationId: listTenantCommercePaymentOrders
+      x-required-scope: admin:read
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Tenant-scoped top-up order list.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommercePaymentOrderListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+    post:
+      tags: [commerce]
+      summary: Create a local top-up payment order.
+      description: |
+        Requires `admin:write`. Only provider identifiers are stored; payment
+        credentials, provider secrets, bearer tokens and card data are not accepted.
+      operationId: createTenantCommerceTopUpOrder
+      x-required-scope: admin:write
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CommerceIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommerceCreateTopUpRequest" }
+      responses:
+        "201":
+          description: Pending local top-up order.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommercePaymentOrderResponse" }
+        "400": { $ref: "#/components/responses/CommerceBadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "409": { $ref: "#/components/responses/CommerceConflict" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/admin/commerce/tenants/{tenant_id}/payments/orders/{order_id}:
+    get:
+      tags: [commerce]
+      summary: Read one tenant top-up order.
+      description: |
+        Requires `admin:read`. A missing order and an order owned by another
+        tenant both return `commerce_payment_not_found`.
+      operationId: getTenantCommercePaymentOrder
+      x-required-scope: admin:read
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CommerceTenantID"
+        - $ref: "#/components/parameters/CommerceOrderID"
+      responses:
+        "200":
+          description: Tenant top-up order.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommercePaymentOrderResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "404": { $ref: "#/components/responses/CommerceNotFound" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/admin/commerce/tenants/{tenant_id}/payments/orders/{order_id}/events:
+    get:
+      tags: [commerce]
+      summary: List normalized facts applied to a top-up order.
+      description: Requires `admin:read`.
+      operationId: listTenantCommercePaymentEvents
+      x-required-scope: admin:read
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CommerceTenantID"
+        - $ref: "#/components/parameters/CommerceOrderID"
+      responses:
+        "200":
+          description: Applied normalized payment facts.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommercePaymentEventListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "404": { $ref: "#/components/responses/CommerceNotFound" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/admin/commerce/tenants/{tenant_id}/payments/reconcile:
+    post:
+      tags: [commerce]
+      summary: Reconcile local orders with wallet ledger totals.
+      description: |
+        Requires `admin:write`. The body may be omitted; when `tenant_id` is
+        present it must equal the path tenant.
+      operationId: reconcileTenantCommercePayments
+      x-required-scope: admin:write
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CommerceTenantID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommerceReconcileRequest" }
+      responses:
+        "200":
+          description: Local reconciliation report; issues are data, not an HTTP failure.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommerceReconciliationResponse" }
+        "400": { $ref: "#/components/responses/CommerceBadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommerceAdminForbidden" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/commerce/tenants/{tenant_id}/payments/orders/{order_id}:
+    get:
+      tags: [commerce]
+      summary: Read one provider-bound top-up order for a payment adapter.
+      description: |
+        Machine-only SDK operation. It is absent until explicitly registered
+        with a fail-closed gate. The stock gate requires a validated
+        client-credentials identity (`sub == client_id`) and the exact
+        `billing:payment:order:read` scope. Its signed `client_id` must resolve
+        to a unique enabled server-owned binding for the path tenant and a
+        dimensionless `payment:<provider>` source. The returned order must use
+        that same provider. Unknown, disabled, cross-tenant, cross-provider,
+        malformed, or dimensioned bindings are indistinguishable `403
+        insufficient_scope`; a missing order and a provider mismatch are the
+        same `404 commerce_payment_not_found` response.
+      operationId: readCommercePaymentOrderForAdapter
+      x-required-scope: billing:payment:order:read
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CommerceTenantID"
+        - $ref: "#/components/parameters/CommerceOrderID"
+      responses:
+        "200":
+          description: Trusted provider-bound top-up order snapshot.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommercePaymentOrderResponse" }
+        "401": { $ref: "#/components/responses/CommerceBillingUnauthorized" }
+        "403": { $ref: "#/components/responses/CommercePaymentOrderReadForbidden" }
+        "404": { $ref: "#/components/responses/CommerceNotFound" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/commerce/tenants/{tenant_id}/payments/orders/{order_id}/events:
+    post:
+      tags: [commerce]
+      summary: Apply one normalized provider payment fact.
+      description: |
+        Machine-only SDK operation. It is absent until explicitly registered
+        with a fail-closed gate. The stock gate requires a validated
+        client-credentials identity (`sub == client_id`) and the exact
+        `billing:payment:write` scope. Its signed `client_id` must resolve to a
+        unique enabled server-owned binding for the path tenant and exact
+        `payment:<provider>` source, with empty `allowed_dimensions`. Binding
+        id and revision are revalidated with `FOR SHARE` inside the same
+        serializable financial transaction. Unknown, disabled, revised,
+        cross-tenant, or cross-provider bindings are indistinguishable `403
+        insufficient_scope` responses. Provider signature verification happens
+        in the out-of-process adapter before this call. Only the documented
+        normalized JSON fields are accepted; unknown fields and raw webhook or
+        secret material are rejected.
+      operationId: ingestNormalizedCommercePaymentEvent
+      x-required-scope: billing:payment:write
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CommerceTenantID"
+        - $ref: "#/components/parameters/CommerceOrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommerceNormalizedPaymentEventRequest" }
+      responses:
+        "200":
+          description: Idempotently applied order, optional ledger entry, and wallet view.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+            Pragma: { $ref: "#/components/headers/CommercePragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommercePaymentEventResult" }
+        "400": { $ref: "#/components/responses/CommerceBadRequest" }
+        "401": { $ref: "#/components/responses/CommerceBillingUnauthorized" }
+        "403": { $ref: "#/components/responses/CommerceBillingForbidden" }
+        "404": { $ref: "#/components/responses/CommerceNotFound" }
+        "409": { $ref: "#/components/responses/CommerceConflict" }
+        "423": { $ref: "#/components/responses/CommerceLocked" }
+        "500": { $ref: "#/components/responses/CommerceInternalError" }
+        "503": { $ref: "#/components/responses/CommerceUnavailable" }
+
+  /api/v1/metering/usage:
+    post:
+      tags: [metering]
+      summary: Append one invoice-grade usage fact.
+      description: |
+        Requires a validated client-credentials token with the exact
+        `metering:write` scope. The server resolves tenant and source from the
+        signed `client_id`, revalidates binding evidence in the usage write
+        transaction, and derives a canonical monthly period from `occurred_at`
+        (or the server clock). Callers cannot select a period.
+      operationId: appendMachineUsage
+      x-required-scope: metering:write
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MeteringIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MeteringAppendRequest" }
+      responses:
+        "201":
+          description: Usage fact appended or idempotently replayed.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
+            Pragma: { $ref: "#/components/headers/MeteringPragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeteringUsageResponse" }
+        "400": { $ref: "#/components/responses/MeteringBadRequest" }
+        "401": { $ref: "#/components/responses/MeteringUnauthorized" }
+        "403": { $ref: "#/components/responses/MeteringForbidden" }
+        "409": { $ref: "#/components/responses/MeteringConflict" }
+        "413": { $ref: "#/components/responses/MeteringTooLarge" }
+        "500": { $ref: "#/components/responses/MeteringInternalError" }
+        "503": { $ref: "#/components/responses/MeteringUnavailable" }
+
+  /api/v1/metering/reservations:
+    post:
+      tags: [metering]
+      summary: Reserve usage capacity atomically.
+      description: |
+        Requires `metering:write`. The current server month is authoritative;
+        no period field is accepted. Capacity and binding authorization are
+        checked in the same durable transaction.
+      operationId: reserveMachineUsage
+      x-required-scope: metering:write
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MeteringIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MeteringReserveRequest" }
+      responses:
+        "201":
+          description: Capacity reservation created or idempotently replayed.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
+            Pragma: { $ref: "#/components/headers/MeteringPragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeteringReservationCounterResponse" }
+        "400": { $ref: "#/components/responses/MeteringBadRequest" }
+        "401": { $ref: "#/components/responses/MeteringUnauthorized" }
+        "403": { $ref: "#/components/responses/MeteringForbidden" }
+        "409": { $ref: "#/components/responses/MeteringConflict" }
+        "413": { $ref: "#/components/responses/MeteringTooLarge" }
+        "500": { $ref: "#/components/responses/MeteringInternalError" }
+        "503": { $ref: "#/components/responses/MeteringUnavailable" }
+
+  /api/v1/metering/reservations/{reservation_id}/commit:
+    post:
+      tags: [metering]
+      summary: Commit a capacity reservation as usage.
+      description: |
+        Requires `metering:write`. Tenant/source binding is revalidated in the
+        commit transaction. Dimension, quantity, period, and occurrence time
+        come from the reservation and are not accepted from the request.
+      operationId: commitMachineUsageReservation
+      x-required-scope: metering:write
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MeteringReservationID"
+        - $ref: "#/components/parameters/MeteringIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MeteringCommitRequest" }
+      responses:
+        "200":
+          description: Reservation committed or idempotently replayed.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
+            Pragma: { $ref: "#/components/headers/MeteringPragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeteringReservationCounterResponse" }
+        "400": { $ref: "#/components/responses/MeteringBadRequest" }
+        "401": { $ref: "#/components/responses/MeteringUnauthorized" }
+        "403": { $ref: "#/components/responses/MeteringForbidden" }
+        "404": { $ref: "#/components/responses/MeteringNotFound" }
+        "409": { $ref: "#/components/responses/MeteringConflict" }
+        "413": { $ref: "#/components/responses/MeteringTooLarge" }
+        "500": { $ref: "#/components/responses/MeteringInternalError" }
+        "503": { $ref: "#/components/responses/MeteringUnavailable" }
+
+  /api/v1/metering/reservations/{reservation_id}:
+    delete:
+      tags: [metering]
+      summary: Release a pending usage reservation.
+      description: |
+        Requires `metering:write`. The route accepts no body. A missing ID and
+        an ID belonging to another tenant/source both return the same not-found
+        error; binding evidence is revalidated in the release transaction.
+      operationId: releaseMachineUsageReservation
+      x-required-scope: metering:write
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MeteringReservationID"
+      responses:
+        "200":
+          description: Reservation released or terminal release replayed.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
+            Pragma: { $ref: "#/components/headers/MeteringPragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeteringReservationResponse" }
+        "400": { $ref: "#/components/responses/MeteringBadRequest" }
+        "401": { $ref: "#/components/responses/MeteringUnauthorized" }
+        "403": { $ref: "#/components/responses/MeteringForbidden" }
+        "404": { $ref: "#/components/responses/MeteringNotFound" }
+        "409": { $ref: "#/components/responses/MeteringConflict" }
+        "500": { $ref: "#/components/responses/MeteringInternalError" }
+        "503": { $ref: "#/components/responses/MeteringUnavailable" }
+
+  /api/v1/metering/entitlement:
+    get:
+      tags: [metering]
+      summary: Read the calling machine's tenant entitlement snapshot.
+      description: |
+        Requires a validated client-credentials token with the exact
+        `billing:entitlement:read` scope. The path has no tenant parameter and
+        rejects query parameters and bodies. The source binding is re-resolved
+        before the snapshot is returned so a concurrent disable/rebind cannot
+        disclose the prior tenant projection.
+      operationId: getMachineEntitlement
+      x-required-scope: billing:entitlement:read
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current tenant entitlement projection.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
+            Pragma: { $ref: "#/components/headers/MeteringPragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeteringEntitlementResponse" }
+        "400": { $ref: "#/components/responses/MeteringBadRequest" }
+        "401": { $ref: "#/components/responses/MeteringUnauthorized" }
+        "403": { $ref: "#/components/responses/MeteringForbidden" }
+        "404": { $ref: "#/components/responses/MeteringNotFound" }
+        "500": { $ref: "#/components/responses/MeteringInternalError" }
+        "503": { $ref: "#/components/responses/MeteringUnavailable" }
+
+  /api/v1/internal/tenant-quota/projection:
+    put:
+      tags: [quota-projection]
+      summary: Apply a monotonic tenant quota projection.
+      description: |
+        Conditionally mounted by the stock `sso-server` when
+        `tenant.resource_quota.projection_ingress.enabled` is true and a
+        projection-capable quota backend is configured. The bearer must have
+        client-credentials claim shape, the configured exact audience, and
+        `tenant-quota:projection:write`. The validated `client_id` and exact
+        `source_system` resolve one enabled server-owned tenant binding;
+        `tenant_id` in the body cannot grant authority.
+
+        Revisions are monotonic. An older or byte-equivalent replay is a 200
+        no-op (`applied: false`); different content at the current revision is
+        rejected. The explicit `*_limited` flags distinguish a hard zero from
+        legacy zero-as-unlimited semantics. Every response is non-cacheable.
+      operationId: applyTenantQuotaProjection
+      x-required-scope: tenant-quota:projection:write
+      x-required-audience: tenant.resource_quota.projection_ingress.audience
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantQuotaProjectionRequest" }
+      responses:
+        "200":
+          description: Projection applied or accepted as a monotonic no-op.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/QuotaProjectionCacheControl" }
+            Pragma: { $ref: "#/components/headers/QuotaProjectionPragma" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantQuotaProjectionReceipt" }
+        "400": { $ref: "#/components/responses/QuotaProjectionBadRequest" }
+        "401": { $ref: "#/components/responses/QuotaProjectionUnauthorized" }
+        "403": { $ref: "#/components/responses/QuotaProjectionForbidden" }
+        "409": { $ref: "#/components/responses/QuotaProjectionConflict" }
+        "503": { $ref: "#/components/responses/QuotaProjectionUnavailable" }
+
 components:
 
   securitySchemes:
@@ -12049,6 +12900,56 @@ components:
       schema:
         type: string
         example: v1
+    CommerceTenantID:
+      name: tenant_id
+      in: path
+      required: true
+      description: Tenant identifier resolved by the mounting composition.
+      schema: { type: string, minLength: 1 }
+    CommerceSubscriptionID:
+      name: id
+      in: path
+      required: true
+      description: Subscription identifier.
+      schema: { type: string, minLength: 1 }
+    CommerceOrderID:
+      name: order_id
+      in: path
+      required: true
+      description: Local top-up payment-order identifier.
+      schema: { type: string, minLength: 1 }
+    CommerceCurrency:
+      name: currency
+      in: query
+      required: true
+      description: Three-letter uppercase wallet currency code.
+      schema: { type: string, pattern: "^[A-Z]{3}$", example: USD }
+    CommerceLedgerLimit:
+      name: limit
+      in: query
+      required: false
+      description: Maximum entries returned; defaults to 100.
+      schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+    CommerceIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Command idempotency key used only when `idempotency_key` is empty in
+        the JSON body. A non-empty body value takes precedence.
+      schema: { type: string, minLength: 1 }
+    MeteringReservationID:
+      name: reservation_id
+      in: path
+      required: true
+      description: Opaque reservation identifier, always resolved with the server-side tenant/source binding.
+      schema: { type: string, minLength: 1, maxLength: 256 }
+    MeteringIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Immutable command/fact idempotency key; retries must preserve request semantics.
+      schema: { type: string, minLength: 1, maxLength: 256 }
 
   headers:
     Deprecation:
@@ -12077,6 +12978,24 @@ components:
       schema:
         type: string
         example: '<https://example.com/migrate>; rel="sunset"'
+    CommerceCacheControl:
+      description: Commerce handlers always prevent storage of private business data.
+      schema: { type: string, enum: [no-store] }
+    CommercePragma:
+      description: HTTP/1.0 companion to the no-store directive.
+      schema: { type: string, enum: [no-cache] }
+    MeteringCacheControl:
+      description: Metering handlers always prevent storage of tenant usage and entitlement data.
+      schema: { type: string, enum: [no-store] }
+    MeteringPragma:
+      description: HTTP/1.0 companion to the metering no-store directive.
+      schema: { type: string, enum: [no-cache] }
+    QuotaProjectionCacheControl:
+      description: Tenant quota projection responses are never cacheable.
+      schema: { type: string, enum: [no-store] }
+    QuotaProjectionPragma:
+      description: HTTP/1.0 companion to the projection no-store directive.
+      schema: { type: string, enum: [no-cache] }
 
   responses:
     BadRequest:
@@ -12111,8 +13030,1005 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    CommerceAdminForbidden:
+      description: The upstream admin bearer lacks the operation's required scope.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    CommerceBadRequest:
+      description: Invalid commerce request or aggregate input.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+        Pragma: { $ref: "#/components/headers/CommercePragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CommerceErrorResponse" }
+    CommerceNotFound:
+      description: The requested plan, subscription, entitlement, order, or event was not found.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+        Pragma: { $ref: "#/components/headers/CommercePragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CommerceErrorResponse" }
+    CommerceConflict:
+      description: Immutable identity, idempotency, revision, lifecycle, wallet, or payment-state conflict.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+        Pragma: { $ref: "#/components/headers/CommercePragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CommerceErrorResponse" }
+    CommerceLocked:
+      description: The tenant wallet is frozen.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+        Pragma: { $ref: "#/components/headers/CommercePragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CommerceErrorResponse" }
+    CommerceUnavailable:
+      description: The commerce operation was canceled or exceeded its deadline.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+        Pragma: { $ref: "#/components/headers/CommercePragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CommerceErrorResponse" }
+    CommerceInternalError:
+      description: An unclassified commerce dependency failure.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+        Pragma: { $ref: "#/components/headers/CommercePragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CommerceErrorResponse" }
+    CommerceBillingUnauthorized:
+      description: No validated access-token claims reached the machine route.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+        Pragma: { $ref: "#/components/headers/CommercePragma" }
+        WWW-Authenticate:
+          description: RFC 6750 bearer challenge for the billing realm.
+          schema:
+            type: string
+            example: 'Bearer realm="billing", error="invalid_token"'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CommerceErrorResponse" }
+    CommerceBillingForbidden:
+      description: |
+        The bearer is not a client-credentials identity, lacks the exact
+        machine scope, or its server-owned payment source binding is unknown,
+        disabled, stale, cross-tenant, cross-provider, or declares dimensions.
+        Binding causes are deliberately indistinguishable.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+        Pragma: { $ref: "#/components/headers/CommercePragma" }
+        WWW-Authenticate:
+          description: Challenge naming the required exact scope.
+          schema:
+            type: string
+            example: 'Bearer realm="billing", error="insufficient_scope", scope="billing:payment:write"'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CommerceErrorResponse" }
+    CommercePaymentOrderReadForbidden:
+      description: |
+        The bearer is not a client-credentials identity, lacks the exact order
+        read scope, or its server-owned payment source binding is unknown,
+        disabled, cross-tenant, cross-provider, or declares dimensions.
+        Binding causes are deliberately indistinguishable.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/CommerceCacheControl" }
+        Pragma: { $ref: "#/components/headers/CommercePragma" }
+        WWW-Authenticate:
+          description: Challenge naming the required exact scope.
+          schema:
+            type: string
+            example: 'Bearer realm="billing", error="insufficient_scope", scope="billing:payment:order:read"'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CommerceErrorResponse" }
+    MeteringBadRequest:
+      description: Malformed/overspecified JSON, invalid usage input, or an unsupported body/query parameter.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
+        Pragma: { $ref: "#/components/headers/MeteringPragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MeteringErrorResponse" }
+    MeteringUnauthorized:
+      description: No validated access-token claims reached the machine route.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
+        Pragma: { $ref: "#/components/headers/MeteringPragma" }
+        WWW-Authenticate:
+          description: RFC 6750 challenge for the metering realm.
+          schema:
+            type: string
+            example: 'Bearer realm="metering", error="invalid_token"'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MeteringErrorResponse" }
+    MeteringForbidden:
+      description: Wrong identity shape/scope, unauthorized source binding, or disallowed dimension.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
+        Pragma: { $ref: "#/components/headers/MeteringPragma" }
+        WWW-Authenticate:
+          description: RFC 6750 challenge naming the exact required scope.
+          schema:
+            type: string
+            example: 'Bearer realm="metering", error="insufficient_scope", scope="metering:write"'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MeteringErrorResponse" }
+    MeteringNotFound:
+      description: Entitlement or tenant/source-bound reservation was not found.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
+        Pragma: { $ref: "#/components/headers/MeteringPragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MeteringErrorResponse" }
+    MeteringConflict:
+      description: Idempotency/state/closed-period conflict, counter overflow, or quota exhaustion.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
+        Pragma: { $ref: "#/components/headers/MeteringPragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MeteringErrorResponse" }
+    MeteringTooLarge:
+      description: Strict JSON body exceeded 64 KiB.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
+        Pragma: { $ref: "#/components/headers/MeteringPragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MeteringErrorResponse" }
+    MeteringInternalError:
+      description: An unclassified metering dependency failure.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
+        Pragma: { $ref: "#/components/headers/MeteringPragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MeteringErrorResponse" }
+    MeteringUnavailable:
+      description: A required binding/entitlement/ledger dependency was unavailable or inconsistent.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
+        Pragma: { $ref: "#/components/headers/MeteringPragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MeteringErrorResponse" }
+    QuotaProjectionBadRequest:
+      description: Strict JSON, media type, tenant id, or projection validation failed.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/QuotaProjectionCacheControl" }
+        Pragma: { $ref: "#/components/headers/QuotaProjectionPragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/QuotaProjectionErrorResponse" }
+    QuotaProjectionUnauthorized:
+      description: The bearer is missing, invalid, or fails its DPoP/mTLS binding.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/QuotaProjectionCacheControl" }
+        Pragma: { $ref: "#/components/headers/QuotaProjectionPragma" }
+        WWW-Authenticate:
+          schema:
+            type: string
+            example: 'Bearer realm="tenant-quota-projection", error="invalid_token"'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/QuotaProjectionErrorResponse" }
+    QuotaProjectionForbidden:
+      description: |
+        `insufficient_scope` for a non-machine claim shape, wrong
+        audience/scope, or unknown/disabled exact source binding;
+        `tenant_mismatch` when an authorized binding disagrees with the body
+        tenant. No response contains the bound tenant.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/QuotaProjectionCacheControl" }
+        Pragma: { $ref: "#/components/headers/QuotaProjectionPragma" }
+        WWW-Authenticate:
+          schema:
+            type: string
+            example: 'Bearer realm="tenant-quota-projection", error="insufficient_scope"'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/QuotaProjectionErrorResponse" }
+    QuotaProjectionConflict:
+      description: The current revision already has different quota content.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/QuotaProjectionCacheControl" }
+        Pragma: { $ref: "#/components/headers/QuotaProjectionPragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/QuotaProjectionErrorResponse" }
+    QuotaProjectionUnavailable:
+      description: The projection store could not apply the validated mutation.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/QuotaProjectionCacheControl" }
+        Pragma: { $ref: "#/components/headers/QuotaProjectionPragma" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/QuotaProjectionErrorResponse" }
 
   schemas:
+
+    QuotaProjectionErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid_request
+            - invalid_token
+            - insufficient_scope
+            - tenant_mismatch
+            - quota_revision_conflict
+            - quota_projection_unavailable
+
+    TenantQuotaProjectionRequest:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, source_system, projection]
+      properties:
+        tenant_id:
+          type: string
+          minLength: 1
+          description: Consistency assertion; never an authorization source.
+        source_system:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Exact namespace in the validated client's server-side binding.
+        projection:
+          $ref: "#/components/schemas/TenantQuotaProjection"
+
+    TenantQuotaProjection:
+      type: object
+      additionalProperties: false
+      required: [revision, quota]
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+        quota:
+          $ref: "#/components/schemas/TenantQuotaLimits"
+
+    TenantQuotaLimits:
+      type: object
+      additionalProperties: false
+      description: |
+        Positive limits are always enforced. Zero with the matching
+        `*_limited` flag true is a commercial hard zero; zero with the flag
+        false or absent preserves legacy unlimited behavior.
+      properties:
+        max_clients: { type: integer, minimum: 0 }
+        max_users: { type: integer, minimum: 0 }
+        max_sessions: { type: integer, minimum: 0 }
+        max_token_rate: { type: integer, minimum: 0 }
+        clients_limited: { type: boolean, default: false }
+        users_limited: { type: boolean, default: false }
+        sessions_limited: { type: boolean, default: false }
+        token_rate_limited: { type: boolean, default: false }
+
+    TenantQuotaProjectionReceipt:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, revision, applied]
+      properties:
+        tenant_id: { type: string }
+        revision: { type: integer, format: int64, minimum: 1 }
+        applied:
+          type: boolean
+          description: False for an older or exact idempotent replay.
+
+    MeteringErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid_request
+            - invalid_token
+            - insufficient_scope
+            - internal_error
+            - request_too_large
+            - metering_source_unauthorized
+            - metering_dimension_not_allowed
+            - metering_invalid_fact
+            - metering_invalid_reservation
+            - metering_reservation_not_found
+            - metering_reservation_conflict
+            - metering_idempotency_conflict
+            - metering_quota_exceeded
+            - metering_counter_overflow
+            - metering_period_closed
+            - metering_entitlement_missing
+            - metering_entitlement_not_found
+            - metering_unavailable
+
+    MeteringAppendRequest:
+      type: object
+      additionalProperties: false
+      required: [dimension, quantity]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 256 }
+        dimension: { type: string, minLength: 1, maxLength: 256 }
+        quantity: { type: integer, format: int64, minimum: 1 }
+        occurred_at:
+          type: string
+          format: date-time
+          description: |
+            Defaults to the server clock. Future values and values older than
+            35 days are rejected; the server derives the canonical month.
+        metadata:
+          type: object
+          maxProperties: 16
+          additionalProperties: { type: string, maxLength: 256 }
+
+    MeteringReserveRequest:
+      type: object
+      additionalProperties: false
+      required: [dimension, quantity, ttl_seconds]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 256 }
+        dimension: { type: string, minLength: 1, maxLength: 256 }
+        quantity: { type: integer, format: int64, minimum: 1 }
+        ttl_seconds: { type: integer, format: int64, minimum: 1, maximum: 86400 }
+
+    MeteringCommitRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        fact_id: { type: string, minLength: 1, maxLength: 256 }
+        metadata:
+          type: object
+          maxProperties: 16
+          additionalProperties: { type: string, maxLength: 256 }
+
+    MeteringPeriod:
+      type: object
+      readOnly: true
+      required: [start, end]
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+
+    MeteringUsageFact:
+      type: object
+      required:
+        [id, tenant_id, source_system, dimension, quantity, period,
+         idempotency_key, occurred_at, created_at]
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        source_system: { type: string }
+        dimension: { type: string }
+        quantity: { type: integer, format: int64, minimum: 1 }
+        period: { $ref: "#/components/schemas/MeteringPeriod" }
+        idempotency_key: { type: string }
+        occurred_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+
+    MeteringCounter:
+      type: object
+      required: [tenant_id, dimension, period, committed, reserved, projected, hard_limit]
+      properties:
+        tenant_id: { type: string }
+        dimension: { type: string }
+        period: { $ref: "#/components/schemas/MeteringPeriod" }
+        committed: { type: integer, format: int64, minimum: 0 }
+        reserved: { type: integer, format: int64, minimum: 0 }
+        projected: { type: integer, format: int64, minimum: 0 }
+        hard_limit: { type: integer, format: int64, minimum: 0 }
+        unlimited: { type: boolean }
+        soft_exceeded: { type: boolean }
+        remaining: { type: integer, format: int64, minimum: 0 }
+
+    MeteringReservation:
+      type: object
+      required:
+        [id, tenant_id, source_system, dimension, quantity, period,
+         idempotency_key, status, limit, expires_at, version, created_at, updated_at]
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        source_system: { type: string }
+        dimension: { type: string }
+        quantity: { type: integer, format: int64, minimum: 1 }
+        period: { $ref: "#/components/schemas/MeteringPeriod" }
+        idempotency_key: { type: string }
+        status: { type: string, enum: [pending, committed, released, expired] }
+        limit: { $ref: "#/components/schemas/CommerceLimitGrant" }
+        expires_at: { type: string, format: date-time }
+        fact_id: { type: string }
+        version: { type: integer, format: int64, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    MeteringUsageResponse:
+      type: object
+      required: [fact, counter]
+      properties:
+        fact: { $ref: "#/components/schemas/MeteringUsageFact" }
+        counter: { $ref: "#/components/schemas/MeteringCounter" }
+
+    MeteringReservationCounterResponse:
+      type: object
+      required: [reservation, counter]
+      properties:
+        reservation: { $ref: "#/components/schemas/MeteringReservation" }
+        counter: { $ref: "#/components/schemas/MeteringCounter" }
+
+    MeteringReservationResponse:
+      type: object
+      required: [reservation]
+      properties:
+        reservation: { $ref: "#/components/schemas/MeteringReservation" }
+
+    MeteringEntitlementResponse:
+      type: object
+      required: [entitlement]
+      properties:
+        entitlement: { $ref: "#/components/schemas/CommerceEntitlement" }
+
+    CommerceErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid_request
+            - invalid_token
+            - insufficient_scope
+            - internal_error
+            - commerce_invalid_plan
+            - commerce_invalid_money
+            - commerce_plan_not_found
+            - commerce_plan_conflict
+            - commerce_plan_retired
+            - commerce_invalid_subscription
+            - commerce_subscription_not_found
+            - commerce_entitlement_not_found
+            - commerce_tenant_subscribed
+            - commerce_transition_denied
+            - commerce_revision_conflict
+            - commerce_invalid_ledger_entry
+            - commerce_insufficient_funds
+            - commerce_wallet_overflow
+            - commerce_wallet_frozen
+            - commerce_idempotency_conflict
+            - commerce_invalid_payment
+            - commerce_payment_not_found
+            - commerce_payment_event_not_found
+            - commerce_payment_state_conflict
+            - commerce_unavailable
+
+    CommerceLimitGrant:
+      type: object
+      required: [soft, hard]
+      description: |
+        An explicit finite or unlimited quota grant. When `unlimited` is true,
+        both numeric values must be zero; otherwise `soft <= hard`, including a
+        valid hard limit of zero.
+      properties:
+        soft: { type: integer, format: int64, minimum: 0 }
+        hard: { type: integer, format: int64, minimum: 0 }
+        unlimited: { type: boolean, default: false }
+
+    CommerceMoney:
+      type: object
+      required: [currency, minor_units]
+      properties:
+        currency:
+          type: string
+          pattern: "^[A-Z]{3}$"
+          example: USD
+        minor_units:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Integer minor units; floating-point amounts are never accepted.
+
+    CommercePlanRef:
+      type: object
+      required: [id, version]
+      properties:
+        id: { type: string, minLength: 1 }
+        version: { type: integer, format: int64, minimum: 1 }
+
+    CommerceRenewalTerms:
+      type: object
+      required: [billing_interval, price]
+      description: |
+        Immutable settlement terms copied from the selected plan version when
+        a subscription is created or explicitly changes plan. Automatic
+        renewal never resolves these terms from the current catalog.
+      properties:
+        billing_interval: { type: string, enum: [none, month, year] }
+        price: { $ref: "#/components/schemas/CommerceMoney" }
+        grace_period_days: { type: integer, minimum: 0 }
+
+    CommercePlan:
+      type: object
+      required: [id, version, name, status, billing_interval, price]
+      description: Immutable commercial terms identified by `(id, version)`.
+      properties:
+        id: { type: string, minLength: 1, example: minimal }
+        version: { type: integer, format: int64, minimum: 1, example: 1 }
+        name: { type: string, minLength: 1, example: Minimal }
+        status: { type: string, enum: [active, retired] }
+        billing_interval: { type: string, enum: [none, month, year] }
+        price: { $ref: "#/components/schemas/CommerceMoney" }
+        grace_period_days: { type: integer, minimum: 0 }
+        features:
+          type: object
+          description: |
+            Stable or application-defined feature keys mapped to enabled state.
+            Built-ins include `core_sso`, `multi_tenant`, `audit_governance`,
+            `notifications`, `im`, `account`, `vault`, `scim`, `federation`,
+            and `high_availability`.
+          additionalProperties: { type: boolean }
+        limits:
+          type: object
+          description: |
+            Quota grants keyed by stable or application-defined dimensions.
+            Built-ins include users, clients, sessions, token rate, storage,
+            messages, notifications, audit events, and audit retention.
+          additionalProperties:
+            $ref: "#/components/schemas/CommerceLimitGrant"
+        created_at: { type: string, format: date-time }
+
+    CommerceSubscription:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - plan
+        - renewal
+        - status
+        - current_period_start
+        - current_period_end
+        - revision
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        plan: { $ref: "#/components/schemas/CommercePlanRef" }
+        renewal: { $ref: "#/components/schemas/CommerceRenewalTerms" }
+        status:
+          type: string
+          enum: [pending, trialing, active, past_due, paused, canceled, expired]
+        current_period_start: { type: string, format: date-time }
+        current_period_end: { type: string, format: date-time }
+        trial_end:
+          type: string
+          format: date-time
+          description: >-
+            Future end of the granted trial and first paid settlement boundary;
+            ignored for a non-renewing plan.
+        grace_until: { type: string, format: date-time }
+        cancel_at_period_end: { type: boolean }
+        canceled_at: { type: string, format: date-time }
+        provider:
+          type: string
+          description: Provider identifier only; never a credential or secret.
+        provider_subscription_id: { type: string }
+        renewal_next_attempt_at:
+          type: string
+          format: date-time
+          description: Next eligible automatic-settlement attempt; absent for terminal subscriptions.
+        revision: { type: integer, format: int64, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CommerceEntitlement:
+      type: object
+      required:
+        - tenant_id
+        - subscription_id
+        - plan
+        - revision
+        - active
+        - features
+        - limits
+        - effective_at
+        - generated_at
+      properties:
+        tenant_id: { type: string }
+        subscription_id: { type: string }
+        plan: { $ref: "#/components/schemas/CommercePlanRef" }
+        revision: { type: integer, format: int64, minimum: 1 }
+        active: { type: boolean }
+        features:
+          type: object
+          additionalProperties: { type: boolean }
+        limits:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/CommerceLimitGrant"
+        effective_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        generated_at: { type: string, format: date-time }
+
+    CommerceWallet:
+      type: object
+      required: [tenant_id, currency, balance_minor, status, version, updated_at]
+      description: Materialized view backed by immutable ledger entries.
+      properties:
+        tenant_id: { type: string }
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+        balance_minor: { type: integer, format: int64 }
+        status: { type: string, enum: [active, frozen] }
+        version: { type: integer, format: int64, minimum: 0 }
+        updated_at: { type: string, format: date-time }
+
+    CommerceLedgerEntry:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - currency
+        - kind
+        - amount_minor
+        - balance_after
+        - wallet_version
+        - idempotency_key
+        - occurred_at
+        - created_at
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+        kind:
+          type: string
+          enum: [top_up, usage, subscription, refund, chargeback_reversal, adjustment]
+        amount_minor:
+          type: integer
+          format: int64
+          description: Positive credit or negative debit; never zero.
+        balance_after: { type: integer, format: int64 }
+        wallet_version: { type: integer, format: int64, minimum: 1 }
+        idempotency_key: { type: string }
+        reference: { type: string }
+        occurred_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    CommercePaymentOrder:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - provider
+        - currency
+        - amount_minor
+        - paid_minor
+        - refunded_minor
+        - status
+        - idempotency_key
+        - revision
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        provider:
+          type: string
+          description: External adapter/provider identifier, never its secret.
+        provider_order_id: { type: string }
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+        amount_minor: { type: integer, format: int64, minimum: 1 }
+        paid_minor: { type: integer, format: int64, minimum: 0 }
+        refunded_minor: { type: integer, format: int64, minimum: 0 }
+        status:
+          type: string
+          enum: [pending, succeeded, failed, canceled, partially_refunded, refunded]
+        idempotency_key: { type: string }
+        revision: { type: integer, format: int64, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CommercePaymentEvent:
+      type: object
+      required:
+        - id
+        - provider
+        - provider_order_id
+        - order_id
+        - type
+        - currency
+        - amount_minor
+        - occurred_at
+        - applied_at
+      properties:
+        id: { type: string }
+        provider: { type: string }
+        provider_order_id: { type: string }
+        order_id: { type: string }
+        type:
+          type: string
+          enum: [captured, rejected, refunded, chargeback, chargeback_reversed]
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+        amount_minor: { type: integer, format: int64, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        applied_at: { type: string, format: date-time }
+        ledger_entry_id: { type: string }
+
+    CommerceReconciliationIssue:
+      type: object
+      required: [order_id, expected_minor, ledger_minor]
+      properties:
+        order_id: { type: string }
+        expected_minor: { type: integer, format: int64 }
+        ledger_minor: { type: integer, format: int64 }
+
+    CommerceReconciliationReport:
+      type: object
+      required: [tenant_id, orders_checked, issues]
+      properties:
+        tenant_id: { type: string }
+        orders_checked: { type: integer, minimum: 0 }
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/CommerceReconciliationIssue" }
+
+    CommerceCreateSubscriptionRequest:
+      type: object
+      required: [plan_id, plan_version]
+      properties:
+        id:
+          type: string
+          description: Optional caller-selected id; the service generates one when omitted.
+        tenant_id:
+          type: string
+          description: Optional, but must equal the path tenant when supplied.
+        plan_id: { type: string, minLength: 1 }
+        plan_version: { type: integer, format: int64, minimum: 1 }
+        trial_end: { type: string, format: date-time }
+        provider: { type: string }
+        provider_subscription_id: { type: string }
+
+    CommerceTransitionSubscriptionRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending, trialing, active, past_due, paused, canceled, expired]
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Zero disables the optimistic revision precondition.
+
+    CommerceChangePlanRequest:
+      type: object
+      required: [plan_id, plan_version]
+      properties:
+        plan_id: { type: string, minLength: 1 }
+        plan_version: { type: integer, format: int64, minimum: 1 }
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Zero disables the optimistic revision precondition.
+
+    CommerceRenewSubscriptionRequest:
+      type: object
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Zero disables the optimistic revision precondition.
+
+    CommerceAdjustmentRequest:
+      type: object
+      required: [currency, amount_minor, reference]
+      properties:
+        tenant_id:
+          type: string
+          description: Optional, but must equal the path tenant when supplied.
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+        amount_minor:
+          type: integer
+          format: int64
+          description: Non-zero; positive credits and negative debits are accepted.
+        idempotency_key:
+          type: string
+          description: Required unless supplied through `Idempotency-Key`.
+        reference: { type: string, minLength: 1 }
+        occurred_at:
+          type: string
+          format: date-time
+          description: Defaults to the service clock when omitted.
+
+    CommerceCreateTopUpRequest:
+      type: object
+      required: [provider, currency, amount_minor]
+      properties:
+        id:
+          type: string
+          description: Optional local order id; the service generates one when omitted.
+        tenant_id:
+          type: string
+          description: Optional, but must equal the path tenant when supplied.
+        provider: { type: string, minLength: 1 }
+        provider_order_id: { type: string }
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+        amount_minor: { type: integer, format: int64, minimum: 1 }
+        idempotency_key:
+          type: string
+          description: Required unless supplied through `Idempotency-Key`.
+
+    CommerceReconcileRequest:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+          description: Optional, but must equal the path tenant when supplied.
+
+    CommerceNormalizedPaymentEventRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - tenant_id
+        - id
+        - provider
+        - provider_order_id
+        - order_id
+        - type
+        - currency
+        - amount_minor
+        - occurred_at
+      description: |
+        Strict normalized provider fact. `captured`, `refunded`, `chargeback`,
+        and `chargeback_reversed` require a positive amount; `rejected`
+        requires zero. A chargeback reversal credits the wallet and reduces
+        the order's refunded total; it is not a second capture.
+      properties:
+        tenant_id:
+          type: string
+          description: Must equal the path tenant.
+        id:
+          type: string
+          description: Provider event id, unique within the provider.
+        provider: { type: string, minLength: 1 }
+        provider_order_id: { type: string, minLength: 1 }
+        order_id:
+          type: string
+          description: Must equal the path order id.
+        type:
+          type: string
+          enum: [captured, rejected, refunded, chargeback, chargeback_reversed]
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+        amount_minor: { type: integer, format: int64, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+
+    CommercePlanListResponse:
+      type: object
+      required: [plans, total]
+      properties:
+        plans:
+          type: array
+          items: { $ref: "#/components/schemas/CommercePlan" }
+        total: { type: integer, minimum: 0 }
+
+    CommercePlanResponse:
+      type: object
+      required: [plan]
+      properties:
+        plan: { $ref: "#/components/schemas/CommercePlan" }
+
+    CommerceSubscriptionListResponse:
+      type: object
+      required: [tenant_id, subscriptions, total]
+      properties:
+        tenant_id: { type: string }
+        subscriptions:
+          type: array
+          items: { $ref: "#/components/schemas/CommerceSubscription" }
+        total: { type: integer, minimum: 0 }
+
+    CommerceSubscriptionResult:
+      type: object
+      required: [subscription, entitlement]
+      properties:
+        subscription: { $ref: "#/components/schemas/CommerceSubscription" }
+        entitlement: { $ref: "#/components/schemas/CommerceEntitlement" }
+
+    CommerceEntitlementResponse:
+      type: object
+      required: [entitlement]
+      properties:
+        entitlement: { $ref: "#/components/schemas/CommerceEntitlement" }
+
+    CommerceWalletResponse:
+      type: object
+      required: [wallet]
+      properties:
+        wallet: { $ref: "#/components/schemas/CommerceWallet" }
+
+    CommerceLedgerListResponse:
+      type: object
+      required: [tenant_id, currency, entries, total]
+      properties:
+        tenant_id: { type: string }
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/CommerceLedgerEntry" }
+        total: { type: integer, minimum: 0 }
+
+    CommerceLedgerMutationResponse:
+      type: object
+      required: [entry, wallet]
+      properties:
+        entry: { $ref: "#/components/schemas/CommerceLedgerEntry" }
+        wallet: { $ref: "#/components/schemas/CommerceWallet" }
+
+    CommercePaymentOrderListResponse:
+      type: object
+      required: [tenant_id, orders, total]
+      properties:
+        tenant_id: { type: string }
+        orders:
+          type: array
+          items: { $ref: "#/components/schemas/CommercePaymentOrder" }
+        total: { type: integer, minimum: 0 }
+
+    CommercePaymentOrderResponse:
+      type: object
+      required: [order]
+      properties:
+        order: { $ref: "#/components/schemas/CommercePaymentOrder" }
+
+    CommercePaymentEventListResponse:
+      type: object
+      required: [tenant_id, order_id, events, total]
+      properties:
+        tenant_id: { type: string }
+        order_id: { type: string }
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/CommercePaymentEvent" }
+        total: { type: integer, minimum: 0 }
+
+    CommercePaymentEventResult:
+      type: object
+      required: [order, entry, wallet]
+      properties:
+        order: { $ref: "#/components/schemas/CommercePaymentOrder" }
+        entry:
+          allOf:
+            - $ref: "#/components/schemas/CommerceLedgerEntry"
+          nullable: true
+          description: Absent as JSON `null` when the fact creates no ledger entry or is a replay.
+        wallet:
+          allOf:
+            - $ref: "#/components/schemas/CommerceWallet"
+          nullable: true
+
+    CommerceReconciliationResponse:
+      type: object
+      required: [report]
+      properties:
+        report: { $ref: "#/components/schemas/CommerceReconciliationReport" }
 
     TenantBranding:
       type: object

@@ -11,11 +11,11 @@ segment IS the layer. The dependency direction is **enforced** by
 
 ```
 shared/          dependency-free kernel        core · spi · security · i18n · trust
-domains/         business capabilities         tenant · region · permissions · federation · connections · metering · anomaly · authenticators · conditionalaccess · identitylink · threataction · tokenanomaly · tokenexchange · tokenpolicy · tokenusage · userlifecycle
+domains/         business capabilities         tenant (commerce) · region · permissions · federation · connections · metering (usageledger) · anomaly · authenticators · conditionalaccess · identitylink · threataction · tokenanomaly · tokenexchange · tokenpolicy · tokenusage · userlifecycle
 protocols/       identity-protocol use-cases   oauth · oidc · scim · fapi · caep · selfservice · compliance · lifecyclereactions · scimprovision
 platform/        cross-cutting capabilities    cluster · signingkeys · registry · netpolicy · metrics · tracing · bootstrap · buildinfo · releases · migrate · geo · audit · sse · configaudit · lifecycle (dr · rotation)
-interfaces/      inbound delivery + Server API grpcserver · adapters · admin · apidocs · middleware · cors · ratelimit · ssoclient · snapshot · sso (public API-only Server)
-infrastructure/  concrete SPI impls            defaultimpl · redis · postgres · sms · optional nested ldap/kerberos/radius/saml/extauthz/kafka/mqtt/kms modules
+interfaces/      inbound delivery + Server API grpcserver · adapters · admin · apidocs · commerce · metering · middleware · cors · ratelimit · ssoclient · snapshot · sso (public API-only Server)
+infrastructure/  concrete SPI impls            defaultimpl · auditgovernance · redis · postgres (tenantcommerce, tenantquota, usageledger) · sms · optional nested ldap/kerberos/radius/saml/extauthz/kafka/mqtt/kms modules
 internal/        unexported helpers            internal/auth/* (domains) · internal/{handler,adminuser} (interfaces)
 cmd/ · config/ · docs/ · gen/ · proto/ · test/ · ops/ · checks/  composition/tooling
 ```
@@ -30,6 +30,14 @@ boundary is declared in `ops/build/profile-isolation.json` and proven by
 `python cli.py profiles evidence` (packages, modules, symbols, size; see
 [`profile-isolation.md`](profile-isolation.md)). Neither
 bundles a login UI or represents a production topology.
+
+`cmd/snaplink-billing`, `cmd/snaplink-stripe-adapter`, and
+`cmd/snaplink-audit-provisioner` are separate composition roots. Billing owns
+commerce APIs and durable governance relay work; the optional Stripe adapter
+owns provider signature verification, checkout calls, and its minimal durable
+inbox; the provisioner owns only create-only Audit Governance desired-state
+reconciliation. None is loaded into `sso-server`, and each machine boundary
+uses purpose-specific OAuth clients and scopes.
 
 `ops/build/` owns strict manifests/profiles and `ops/scripts/` materializes an
 alternate module graph under ignored `dist/modules/`. The public hierarchy is

@@ -111,6 +111,39 @@ exact emission site.
 | `hook_timeout`                        | 503  | A fail-closed authentication-pipeline Hook exceeded its independent timeout | Retry later; operator checks Hook health |
 | `profile_incomplete`                  | 403  | The built-in profile-completion Hook found a required authenticated-user attribute empty | Complete the required profile fields, then retry |
 
+Tenant quota storage also exposes `core.ErrInvalidQuotaOperation` as an SDK Go
+sentinel, not an HTTP code. A `TenantQuotaStore` returns it for an empty or
+whitespace-padded tenant ID, an unknown resource dimension, a non-positive or
+unrepresentable delta, a nil quota, a negative limit, or a token-rate limit
+that cannot be expanded safely into the 60-second rolling window. HTTP callers
+must not expose the diagnostic text; the existing `quota_exceeded` wire code is
+reserved for valid operations that cross a configured hard limit.
+
+### Tenant quota projection ingress
+
+`PUT /api/v1/internal/tenant-quota/projection` is mounted only when the stock
+server's projection ingress is enabled. It accepts a client-credentials access
+token for the configured exact audience with
+`tenant-quota:projection:write`. The validated token `client_id` and exact
+`source_system` select a server-owned tenant binding; `tenant_id` in the JSON
+body is only a consistency assertion and can never select a tenant. Every
+success and error carries `Cache-Control: no-store` and `Pragma: no-cache`.
+
+| Code | HTTP | Emitted when | Client should |
+|------|------|--------------|---------------|
+| `invalid_token` | 401 | The bearer is missing/invalid, is not an access token, or fails DPoP/mTLS validation | Obtain a valid machine access token; inspect the `tenant-quota-projection` bearer challenge |
+| `invalid_request` | 400 | The media type/body is invalid or oversized, an unknown JSON field is present, the tenant id is invalid, or the projection has an invalid revision/limit | Correct the strict JSON request |
+| `insufficient_scope` | 403 | The validated token lacks exact client-credentials claim shape, audience, or scope, or its exact source binding is unknown/disabled | Reconcile the machine grant and versioned server-side source binding; binding causes are intentionally hidden |
+| `tenant_mismatch` | 403 | An authorized `(client_id, source_system)` binding resolves a different tenant than the body assertion | Send the entitlement for the tenant bound to that source; the response does not disclose its id |
+| `quota_revision_conflict` | 409 | The current projection revision already exists with different quota content | Stop retrying the equivocated revision and repair the producer's monotonic sequence |
+| `quota_projection_unavailable` | 503 | The projection store failed after authentication, binding, and input validation | Retry with bounded backoff and inspect SSO readiness/storage health |
+
+An older projection or a byte-equivalent replay is not an error: it returns
+HTTP 200 with `applied:false`. Control-plane source updates are batch-atomic and
+monotonic. A stale, same-revision-equivocating, or otherwise invalid desired
+generation leaves the last-good bindings live but degrades `/readyz`; an exact
+current generation or valid next revision clears that degraded state.
+
 ### Code delivery (`/auth/send-code`)
 
 | Code                            | HTTP | Emitted when                                            |
@@ -927,11 +960,153 @@ never gets a `scim+json` body.
 
 ---
 
+## Tenant commerce SDK (`interfaces/commerce`)
+
+The commerce HTTP package is an opt-in SDK surface; the stock `sso-server`
+does not mount it. A composition that calls `RegisterRoutes` MUST put the
+admin bearer middleware (or an equivalent policy gateway) in front of the
+management routes. GET operations require `admin:read`; POST/PATCH operations
+require `admin:write`. The handlers themselves do not duplicate that upstream
+authorization check.
+
+The machine payment routes are separate and remain absent until the composition
+registers each route with a non-nil, fail-closed scope gate. The order snapshot
+route requires `billing:payment:order:read`; the normalized event route requires
+`billing:payment:write`. The stock `ClientCredentialsScopeGate` accepts only a
+validated client-credentials identity (`sub == client_id`) carrying the exact
+route scope. Missing validated claims return `invalid_token` (401); a user
+identity or missing scope returns `insufficient_scope` (403). Both use
+`WWW-Authenticate: Bearer realm="billing"` and name the route's exact scope.
+The event endpoint accepts a normalized JSON fact, not a raw provider webhook;
+unknown fields, provider signatures, secrets, checkout credentials, and card
+data are rejected as `invalid_request`.
+
+Every response written by a commerce handler, success or error, carries
+`Cache-Control: no-store` and `Pragma: no-cache`. The stock payment-event gate
+stamps the same headers on its 401/403 responses. Admin authentication happens
+before the handlers, so the upstream admin middleware owns its own rejection
+headers.
+
+| Code | HTTP | Emitted when | Client should |
+|------|------|--------------|---------------|
+| `commerce_invalid_plan` | 400 | A plan is missing identity/name, has an invalid status or billing interval, a negative grace period, or an invalid limit grant | Correct the immutable plan version and retry |
+| `commerce_invalid_money` | 400 | Currency is not a three-letter uppercase code or minor units are negative | Send integer minor units with an uppercase currency code |
+| `commerce_plan_not_found` | 404 | The requested `(plan_id, version)` does not exist | Select a published plan version |
+| `commerce_plan_conflict` | 409 | The immutable `(plan_id, version)` already exists with different content | Publish a new version; do not overwrite a version |
+| `commerce_plan_retired` | 409 | A subscription operation targets a retired plan | Select an active plan version |
+| `commerce_invalid_subscription` | 400 | Subscription identity, tenant, plan reference, status, revision, or period is invalid | Correct the subscription request |
+| `commerce_subscription_not_found` | 404 | A subscription id does not exist | Refresh the tenant's subscription list |
+| `commerce_entitlement_not_found` | 404 | No entitlement snapshot exists for the tenant | Create or repair the tenant subscription |
+| `commerce_tenant_subscribed` | 409 | The tenant already has a live subscription | Mutate the existing subscription instead of creating another |
+| `commerce_transition_denied` | 409 | The requested subscription status transition is not allowed | Reload state and choose a valid transition |
+| `commerce_revision_conflict` | 409 | `expected_revision` does not match the current aggregate revision | Reload the aggregate and retry with its current revision |
+| `commerce_invalid_ledger_entry` | 400 | Ledger identity/currency/amount/idempotency is invalid, or entry kind and amount sign disagree | Correct the adjustment payload |
+| `commerce_insufficient_funds` | 409 | A debit or negative adjustment would overdraw the wallet | Top up the wallet or reduce the debit |
+| `commerce_wallet_overflow` | 409 | Applying an entry would overflow the integer minor-unit balance | Stop and reconcile the ledger |
+| `commerce_wallet_frozen` | 423 | A debit/adjustment is refused because chargeback handling froze the wallet | Resolve the chargeback before further debits |
+| `commerce_idempotency_conflict` | 409 | An idempotency key or provider event id was replayed with different immutable content | Reuse a key only for the same immutable business command or fact |
+| `commerce_invalid_payment` | 400 | A top-up order or normalized payment fact has invalid identity, provider binding, currency, amount, event type, or occurrence time | Correct the normalized order/event fields |
+| `commerce_payment_not_found` | 404 | The payment order does not exist, or belongs to a different path tenant | Refresh the tenant's order list; cross-tenant details are intentionally hidden |
+| `commerce_payment_event_not_found` | 404 | A requested provider event is absent in the payment store | Refresh payment state before retrying |
+| `commerce_payment_state_conflict` | 409 | A capture/refund/rejection cannot apply to the current order state or totals | Reconcile provider and local order state |
+| `commerce_unavailable` | 503 | The request context was canceled or its deadline expired | Retry with backoff if the caller deadline permits |
+| `insufficient_scope` | 403 | A machine payment bearer is not a client-credentials identity with the route's exact `billing:payment:order:read` or `billing:payment:write` scope, or its server-owned binding is unknown, disabled, stale/revised where applicable, cross-tenant, cross-provider, not `payment:<provider>`, or declares any allowed dimension | Use a dedicated adapter client and reconcile its enabled, dimensionless tenant/provider binding; individual mismatch causes are intentionally hidden |
+| `invalid_request` | 400 | Body/path tenant mismatch, malformed body, invalid currency/query bound, missing required field, wrong payment-event media type, or an unknown normalized-event field | Correct the request without adding raw provider material |
+| `internal_error` | 500 | An unclassified commerce dependency error reached the HTTP adapter | Retry and inspect operator logs/audit records |
+
+Automatic settlement also defines the internal sentinels
+`commerce.ErrInvalidRenewal` and `commerce.ErrRenewalClaimLost`. They are not
+HTTP error codes: the worker logs an invalid command/mutation as an operator
+configuration or invariant failure, while a lost or expired lease leaves the
+subscription and wallet unchanged so a current worker generation can reclaim
+it safely.
+
+`commerce.ErrPaymentSourceUnauthorized` is also an internal domain/store
+sentinel, never a distinct wire code. The HTTP adapter maps it to the same
+`403 insufficient_scope` response used by the pre-transaction identity/scope
+and binding checks. PostgreSQL raises it when the binding id/revision or any
+client, tenant, provider, enabled, or empty-dimensions fact fails its in-
+transaction `FOR SHARE` revalidation; callers cannot distinguish those causes.
+
+---
+
+## Stripe payment adapter (`cmd/snaplink-stripe-adapter`)
+
+This optional process has a separate OpenAPI contract at
+`cmd/snaplink-stripe-adapter/openapi.yaml`. Checkout authentication first uses
+the shared resource-server middleware; its missing/invalid token response is
+`invalid_token` (401). A valid token without the exact
+`billing:checkout:create` scope, or whose `client_id` has no unique tenant
+binding, returns `insufficient_scope` (403). Checkout responses are always
+`no-store`/`no-cache`.
+
+| Code | HTTP | Emitted when | Client should |
+|------|------|--------------|---------------|
+| `invalid_request` | 400 | Checkout JSON is malformed/overspecified, identity is invalid, or a return URL is outside the exact origin allowlist | Correct only `order_id`, `success_url`, and `cancel_url`; never add tenant/amount/provider fields |
+| `billing_unavailable` | 502 | The authoritative Billing order cannot be read or validated | Retry with backoff; inspect Billing/token dependency health |
+| `provider_unavailable` | 502 | Stripe checkout creation fails or returns an invalid response | Retry the exact request; the stable provider idempotency key prevents a second session |
+| `order_not_pending` | 409 | Billing says the order is no longer pending or already has a provider order id | Reload the order and do not create another checkout session |
+| `checkout_conflict` | 409 | An existing order reservation has different return URLs, amount/currency, idempotency identity, or Stripe session facts | Stop and reconcile the immutable order/session mapping |
+| `invalid_signature` | 400 | Stripe raw-body HMAC, signature header, rotation secret, or ±5 minute timestamp window fails | Do not retry from an application client; verify endpoint secret and host clock |
+| `invalid_event` | 400 | A signed supported Stripe event cannot be projected into a complete minimal fact | Inspect bounded operational logs and the Stripe event schema/version |
+| `event_conflict` | 409 | The same Stripe event id already exists with a different raw-payload SHA-256 digest | Treat as a security/integrity incident; do not overwrite the inbox row |
+| `unavailable` | 503 | Durable inbox/mapping persistence or another local dependency failed | Retry with backoff; Stripe may safely redeliver identical events |
+
+A valid but unsupported Stripe event returns 204 and is not stored. A supported
+event that was already stored with the same digest returns the same 200 success
+as its first delivery. Relay failures have no additional wire code: facts stay
+durable and retry forever with a bounded category in operational logs.
+
+---
+
+## Machine usage and entitlement SDK (`interfaces/metering`)
+
+This opt-in API-only surface runs after `rs.HTTPMiddleware`. Every route
+requires a validated client-credentials identity (`sub == client_id`), then an
+exact machine scope: `metering:write` for usage/reservation mutations and
+`billing:entitlement:read` for the narrow current-entitlement read. The signed
+`client_id` must resolve to exactly one enabled server-side binding. Tenant and
+source identity are never accepted from a path, query, body, or forwarded
+header. Unknown, disabled, ambiguous, stale, and concurrently revised bindings
+fail closed; usage mutations revalidate binding revision and allowed dimension
+inside the same Memory/PostgreSQL transaction.
+
+Machine request bodies are strict JSON capped at 64 KiB. Append and reserve do
+not accept a period: append derives a canonical calendar month from a bounded
+`occurred_at` (server time when omitted), while reserve uses the current server
+month. Commit takes dimension, quantity, period, and occurrence time from the
+reservation. Every success and error carries `Cache-Control: no-store` and
+`Pragma: no-cache`; 401/403 authorization failures also carry an RFC 6750
+`WWW-Authenticate: Bearer realm="metering"` challenge.
+
+| Code | HTTP | Emitted when | Client should |
+|------|------|--------------|---------------|
+| `invalid_token` | 401 | The request did not pass the resource-server middleware or validated claims are absent | Obtain and present a valid access token for the billing audience |
+| `insufficient_scope` | 403 | The bearer is not a client-credentials identity or lacks the route's exact scope | Use a dedicated machine client granted the documented exact scope |
+| `metering_source_unauthorized` | 403 | The client binding is unknown, disabled, ambiguous, stale/revised, or fails its in-transaction evidence check | Stop writes and reconcile the server-side source binding; retries with stale evidence cannot succeed |
+| `metering_dimension_not_allowed` | 403 | The resolved binding does not allow the requested usage dimension | Provision that dimension for the machine client or use an authorized client |
+| `metering_invalid_fact` | 400 | Quantity/dimension/time/metadata is invalid, `occurred_at` is future or over 35 days old, or a caller tries invalid period semantics | Correct the usage fact; never send a period |
+| `metering_invalid_reservation` | 400 | Reservation identity, quantity, TTL, or lifetime is invalid | Send a TTL from 1 through 86400 seconds and valid positive quantity |
+| `metering_reservation_not_found` | 404 | The reservation is absent or is owned by another tenant/source binding | Treat the opaque ID as unavailable; cross-tenant details are intentionally hidden |
+| `metering_reservation_conflict` | 409 | Commit/release is incompatible with the reservation state, expiry, or immutable fact | Reload reservation state and stop changing immutable retry fields |
+| `metering_idempotency_conflict` | 409 | An ID or `Idempotency-Key` was reused for different immutable usage semantics | Reuse a key only for the exact same command |
+| `metering_quota_exceeded` | 409 | Committed plus reserved usage would exceed the entitlement hard limit | Reduce/release usage or change the tenant entitlement |
+| `metering_counter_overflow` | 409 | Applying the quantity would overflow the signed usage counter | Stop and inspect/reconcile the usage ledger |
+| `metering_period_closed` | 409 | A fact/reservation/commit targets a finalized monthly period | Do not mutate closed billing periods; use an operator-controlled adjustment workflow |
+| `metering_entitlement_missing` | 403 | The tenant's active entitlement has no grant for the requested dimension | Add the dimension to the subscribed plan/entitlement |
+| `metering_entitlement_not_found` | 404 | The bound tenant has no current entitlement snapshot | Provision or repair the tenant subscription |
+| `request_too_large` | 413 | A strict machine JSON body exceeds 64 KiB | Reduce bounded metadata and retry |
+| `metering_unavailable` | 503 | Binding/entitlement state is unavailable or an entitlement projection is inconsistent with the resolved tenant | Retry with backoff; alert operators if the condition persists |
+| `invalid_request` | 400 | JSON/media type is invalid, an unknown field (including tenant/source/period) is present, a required idempotency header is missing, or GET/DELETE carries unsupported input | Send only the documented fields and required `Idempotency-Key` |
+| `internal_error` | 500 | An unclassified metering dependency error reached the HTTP adapter | Retry and inspect operator logs/audit records |
+
+---
+
 ## Rate limiting + payload
 
 | Code                | HTTP | Emitted when                                          | Headers                  |
 |---------------------|------|-------------------------------------------------------|--------------------------|
-| `rate_limited`      | 429  | `ratelimit.Middleware`/`DynamicMiddleware` blocked the request (`security.rate_limit.*`), OR the narrow `POST /register` client-registration limiter did (`security.client_registration_rate_limit.*`, on by default — see config-reference.md) | `Retry-After: <seconds>` |
+| `rate_limited`      | 429  | `ratelimit.Middleware`/`DynamicMiddleware` blocked the request (`security.rate_limit.*`), the narrow `POST /register` client-registration limiter did (`security.client_registration_rate_limit.*`), or an authenticated tenant exhausted `tenant.resource_quota.limits[].max_token_rate` at `/token` | `Retry-After: <seconds>`; the tenant token-quota response also carries `Cache-Control: no-store` and `Pragma: no-cache` |
 | `payload_too_large` | 413  | `sso.WithBodyLimit(N)` exceeded by Content-Length or stream |                          |
 
 ---

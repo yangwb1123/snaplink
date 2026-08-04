@@ -18,7 +18,7 @@ config keys.
 
 ## 1. Scope: what this framework covers
 
-This SDK draws a hard line between two data tiers, and the DR framework
+This SDK draws a hard line between data tiers, and the in-process DR framework
 below covers only the first one:
 
 1. **Control-plane / operator-managed state** — clients, users (master
@@ -32,11 +32,18 @@ below covers only the first one:
    `interfaces/snapshot` package doc): identity-bearing, short-lived, and
    dangerous to replay across nodes. Losing this tier forces affected users
    to re-authenticate — it does not lose any durable business data.
+3. **Commercial and governance state** — plan versions, subscriptions,
+   entitlement projections, wallets, immutable ledger entries, payment facts,
+   usage reservations/rollups/outboxes, source bindings, Stripe checkout
+   mappings/event inbox/effect receipts, and the external
+   Audit Governance ledger. This state is not an identity snapshot category.
+   It requires backend-native PostgreSQL replication/PITR and the reconciliation
+   procedure in §3; reconstructing it from a control-plane snapshot is unsafe.
 
 The `platform/lifecycle/dr` `SnapshotReplicator` automates tier 1: it periodically
 exports the same sealed snapshot the manual/retention snapshot pipeline
 produces and copies it, checksum-verified, to an off-node DR replica mount.
-Tier 2, and the raw backend bytes behind tier 1's own store (the SQLite
+Tiers 2 and 3, and the raw backend bytes behind tier 1's own store (the SQLite
 file, the Postgres database, the Redis keyspace, the etcd cluster), are
 each backend's own concern — §3 maps every backend this SDK ships to its
 own replication/backup mechanism.
@@ -56,7 +63,7 @@ backups.
 | **1 — Component** | One dependency call fails (authenticator backend timeout, risk scorer unreachable, geo lookup down) | Single request | 0 (no committed data touched) | Seconds | Handled in-process by the documented fail-open/fail-closed behavior per AGENTS.md §3 (e.g. geo/risk fail-open, signature validation fail-closed). No operator action. |
 | **2 — Replica** | One replica process/pod crashes or is evicted | One replica; others keep serving only in a correctly shared-state Tier-B deployment | 0 for shared Postgres/Redis/etcd state; local memory state is lost and per-pod SQLite state may be unavailable | Minutes (orchestrator reschedule + `/readyz` pass) | Kubernetes/orchestrator restarts the pod. `/livez` + `/readyz` gate traffic. If the deployment used local auth state, affected flows must restart; do not describe that topology as HA. |
 | **3 — Durable-store loss (single site)** | A backend's data is lost or corrupted in place: SQLite file corruption, Postgres database/volume loss, Redis keyspace flush, etcd cluster loses quorum | All replicas sharing that backend, one site/cluster | Bounded by that backend's own backup/replication cadence (§3) | Tens of minutes (restore + validate before re-admitting traffic) | Restore the affected backend from its own backup/replica (§3), or restore control-plane state from the newest DR replica (§4) if the loss included clients/users/permissions. Validate via §6 before removing the maintenance page. |
-| **4 — Site/region loss** | The entire cluster — every replica, every backend, and any DR mount colocated with it — is unreachable (region outage, catastrophic infra failure) | Everything at that site | Bounded by DR replication lag to the OFF-site target (`dr.interval`, reported as `sso_dr_snapshot_replication_lag_seconds`) | Hours (stand up a new cluster, restore control-plane state, re-provision or fail over each backend, re-point DNS/LB, validate) | Stand up a fresh cluster in a surviving region. Restore control-plane state from the DR replica (§4/§6). Each backend's own cross-region strategy (§3) governs how much of tier-2/backend data survives; sessions/tokens are expected to be lost (users re-authenticate). |
+| **4 — Site/region loss** | The entire cluster — every replica, every backend, and any DR mount colocated with it — is unreachable (region outage, catastrophic infra failure) | Everything at that site | Bounded by DR replication lag to the OFF-site target (`dr.interval`, reported as `sso_dr_snapshot_replication_lag_seconds`) | Hours (stand up a new cluster, restore control-plane state, re-provision or fail over each backend, re-point DNS/LB, validate) | Stand up a fresh cluster in a surviving region. Restore control-plane state from the DR replica (§4/§6), restore tier-3 commerce/governance databases through their native strategy and reconcile them (§3). Sessions/tokens may be lost and users re-authenticate; financial ledgers may not be discarded. |
 
 RPO/RTO are **targets to configure and measure against**, not guarantees the
 SDK enforces. `dr.rpo_target` / `dr.rto_target` (see
@@ -70,10 +77,115 @@ they do not by themselves make backups happen faster.
 | Backend | Used for (this SDK) | Replication / backup mechanism | Cross-region DR |
 |---|---|---|---|
 | **SQLite** (`infrastructure/defaultimpl/sqlite`, pure-Go, no CGO) | Default durable backend for identity, OAuth hot stores, MFA, audit, permissions, etc. (`*.backend: sqlite`) | Online `VACUUM INTO` via `POST /api/v1/admin/backup` (`backup.dir` / `backup.keep`); pair with filesystem/volume-level snapshots of the WAL-mode DB file for point-in-time coverage | Ship `backup.dir` output (or a volume snapshot) to the DR site on your own schedule; `platform/lifecycle/dr` does NOT replicate the raw SQLite files — only the control-plane subset enumerated by `Snapshotter` (§1) |
-| **PostgreSQL** (`infrastructure/postgres`, shared `*sql.DB` pool) | Durable backend for identity, tenants, audit, permissions, etc. (`*.backend: postgres`) | Operator-managed: native streaming replication to a standby, `pg_dump`/`pg_basebackup`, or a managed Postgres provider's PITR | Cross-region streaming replica or WAL archiving to the DR region — outside this SDK's process; the SDK only needs `postgres.dsn` re-pointed after failover |
+| **PostgreSQL** (`infrastructure/postgres`, shared `*sql.DB` pool) | Durable identity/tenant state plus commerce plans, subscription renewal-term snapshots/schedules/leases, entitlements, wallet/payment ledgers, usage facts/reservations/rollups/outboxes and machine-source bindings; the Stripe adapter's checkout mappings, inbox, event receipts and quarantine state | Operator-managed: native streaming replication to a standby, `pg_dump`/`pg_basebackup`, or a managed Postgres provider's PITR. Financial and adapter tables must be restored to a transactionally consistent boundary. | Cross-region streaming replica or continuous WAL archiving to the DR region — outside this SDK's process; `sso-server`, `snaplink-billing`, the Stripe adapter and Audit Governance are repointed only after their restored databases pass readiness and reconciliation gates |
 | **Redis** (`infrastructure/redis`, shared client) | Hot/ephemeral backend for sessions, OAuth hot stores, rate limiting, JTI replay, MFA challenges (`*.backend: redis`) | Operator-managed: RDB/AOF persistence + a replica (Sentinel/Cluster) for HA within a region | Not recommended cross-region — this tier is intentionally short-lived (§1); a lost Redis keyspace forces re-auth, it does not lose business data. Do not treat Redis as a DR target. |
 | **etcd** (`platform/cluster`, `platform/registry`, `platform/netpolicy`, `keys.signing_key_registry`) | Cross-replica coordination: invalidation bus, service registry, network policy, leaderless signing-key aggregation | `etcdctl snapshot save` on a schedule (etcd's own mechanism); etcd's Raft replication already gives in-region HA across its member set | Restore an etcd snapshot into a fresh cluster at the DR site; coordination state (client cache invalidation, key aggregation) rebuilds itself once replicas reconnect — it is not itself an RPO-sensitive business-data store |
 | **Snapshot control-plane subset** (tenants/domains/connections, clients, users, pairwise subjects, roles/assignments/menus, network policy, bootstrap state — backend-agnostic) | Snapshot schema v2 enumerates categories explicitly; MFA/signing keys/audit rows remain outside it, and v1 stays readable without gaining authority over v2-only categories. A successful non-dry-run restore broadcasts a full control-plane cache invalidation after all selected categories commit. | **`platform/lifecycle/dr.SnapshotReplicator`** (§4) — exports via the SAME `Snapshotter`+`Pipeline` the manual/retention snapshot subsystem uses, copies the sealed+checksummed envelope to `dr.target_dir` on `dr.interval` | This is the ONE tier this framework replicates cross-site by design; point `dr.target_dir` at an off-node/off-region mount and back up omitted durable state natively |
+
+### Commercial and Audit Governance recovery
+
+Use separate databases or independently recoverable schemas for identity,
+commerce and Audit Governance. A recommended baseline is multi-AZ synchronous
+replication in-region, continuous WAL archive off-region, a tested five-minute
+or better commercial RPO, and a 30-minute or better database-recovery RTO.
+Stricter contracts require synchronous cross-region replication and must price
+its latency and availability trade-off explicitly.
+
+After restoring commercial state:
+
+1. keep payment ingestion, subscription renewal and period closing in
+   maintenance while read-only queries and readiness checks run;
+2. restore all commerce and usage tables to the same PostgreSQL recovery
+   target and run schema/version checks;
+3. reconcile every provider order whose provider timestamp is newer than the
+   restored checkpoint, using provider lookup APIs through the typed payment
+   adapter;
+4. verify each wallet materialized balance against its immutable ledger and
+   quarantine any mismatch instead of adjusting it silently;
+5. replay pending/dead outbox events idempotently into Audit Governance and
+   confirm ledgered receipts before marking delivery complete;
+6. keep the quota relay stopped until SSO's restored PostgreSQL quota store and
+   exact client/source registry are ready, then replay the independent quota
+   cursor and verify each tenant's applied Entitlement revision, including
+   explicit hard-zero for inactive tenants;
+7. verify usage reservations, counters and closed-period rollup digests; and
+8. resume writers only after reconciliation produces no unresolved financial
+   differences.
+
+### Stripe adapter inbox, quarantine and replay
+
+Treat `stripe_checkout_mappings`, `stripe_event_inbox`,
+`stripe_event_receipts`, and `stripe_adapter_schema_version` as one recoverable
+unit. `stripe_event_receipts` is the immutable event/effect evidence that
+prevents a redelivered Stripe Event or a second Event representing the same
+provider effect from applying twice; never truncate or regenerate it in
+isolation. When Billing and adapter databases are separate, restore the adapter
+to a point no newer than Billing. When they share a cluster, restore both to the
+same PITR target.
+
+Keep checkout and webhook ingress stopped during restore. Start one adapter,
+wait for `/readyz`, and let pending rows and expired claims replay normally.
+Do not clear `claim_owner` or `claim_until`: wait at least one
+`SNAPLINK_STRIPE_CLAIM_LEASE`; a new process then reclaims work with a higher
+generation and stale acknowledgements cannot commit. Compare Billing order and
+ledger totals with Stripe's retained events, the adapter's receipts/effect keys,
+and Audit Governance receipts before scaling out or reopening checkout.
+
+Quarantined rows are intentionally excluded from automatic claims and Stripe
+redelivery of the same event remains an idempotent receipt replay. There is no
+public unauthenticated replay endpoint. After correcting the immutable
+tenant/order/provider mapping or binding, an authorized database operator may
+requeue one reviewed row in a serializable transaction by locking it, recording
+its identifiers/digest/effect key in the incident record, and clearing only
+`quarantined_at`, `quarantine_code`, and `last_error_code` while setting
+`available_at=clock_timestamp()`, emptying the claim owner/deadline, and
+incrementing `claim_generation`. Preserve the receipt, payload digest, effect
+key, attempt count and financial fields. Never requeue migration quarantine
+codes for obsolete or unverified event semantics; reconcile those manually.
+Require the pending gauge to drain and the quarantined gauge to match the
+reviewed exception register before restoring webhook traffic, then restore
+checkout traffic last.
+
+Keep `SNAPLINK_BILLING_RENEWALS_ENABLED=false` throughout restore and
+reconciliation. Restored lease timestamps are durable fencing state: wait at
+least the configured lease horizon before enabling workers, rather than
+blindly clearing them. A restored subscription whose fixed `grace_until` is
+already past will expire on its next settlement; restoration never grants a
+new grace period. Deterministic renewal idempotency prevents duplicate rows
+inside the restored database, but it cannot recreate transactions newer than
+the recovery point, so compare the restored wallet/ledger/outbox boundary with
+retained Audit Governance receipts before resuming automatic debit.
+
+Do not clear `tenant_commerce_quota_outbox` leases or copy Audit delivery status
+onto it during recovery. Wait at least `SNAPLINK_BILLING_QUOTA_LEASE`, start
+relays with new unique owners, and let fencing reclaim abandoned work. Restore
+the SSO projection store before replaying an older Billing database: SSO
+monotonic revisions make duplicates and older facts no-ops, while a
+same-revision content mismatch is intentional drift that must stop the drill.
+Keep the dedicated quota OAuth secret in the secret manager, rotate it
+independently from Audit Governance, and restore the revisioned per-tenant
+source registry from the deployment repository rather than from request logs.
+
+Audit Governance uses its own native backup/replication and retention policy.
+Its append ledger is not restored from Snaplink commerce outbox rows: those
+rows are delivery evidence and can fill a bounded gap, but they are not a
+replacement for the governance database, hash-chain checkpoints or retained
+query indexes.
+
+Back up the reviewed Audit Governance desired-state manifest in the same
+versioned, off-region configuration repository used for deployment artifacts.
+Do not store its OAuth secret in that backup; escrow and rotate the dedicated
+secret through the platform secret manager. The manifest is declarative
+recovery input, not a backup of the governance ledger.
+
+After a governance database restore, keep event relays paused, restore and
+verify the ledger/checkpoints/indexes, then run `snaplink-audit-provisioner`
+one-shot with the last applied manifest. Exit `0` proves every listed tenant,
+derived source allow-list, and schema exactly matches; exit `3` is a drift
+stop, not permission to update or widen a record. Resume continuous
+provisioning, verify `/readyz` and its applied revision, and only then replay
+relay outboxes. An older manifest is intentionally rejected by a still-running
+controller; restore the applied revision or publish a reviewed higher revision.
 
 ## 4. SnapshotReplicator
 
