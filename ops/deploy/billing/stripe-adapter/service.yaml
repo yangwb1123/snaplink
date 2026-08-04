@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: snaplink-stripe-adapter
+  labels:
+    app.kubernetes.io/name: snaplink-stripe-adapter
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: snaplink-stripe-adapter
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+      protocol: TCP

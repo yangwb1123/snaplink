@@ -1,0 +1,130 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: snaplink-stripe-adapter
+  labels:
+    app.kubernetes.io/name: snaplink-stripe-adapter
+    app.kubernetes.io/component: payment-adapter
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: snaplink-stripe-adapter
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: snaplink-stripe-adapter
+        app.kubernetes.io/component: payment-adapter
+    spec:
+      serviceAccountName: snaplink-stripe-adapter
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: snaplink-stripe-adapter
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: snaplink-stripe-adapter
+      containers:
+        - name: adapter
+          image: snaplink/stripe-adapter:prod
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: snaplink-stripe-adapter-settings
+          env:
+            - name: SNAPLINK_STRIPE_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: snaplink-stripe-adapter-secrets
+                  key: postgres-dsn
+            - name: SNAPLINK_STRIPE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: snaplink-stripe-adapter-secrets
+                  key: stripe-api-key
+            - name: SNAPLINK_STRIPE_WEBHOOK_SECRETS
+              valueFrom:
+                secretKeyRef:
+                  name: snaplink-stripe-adapter-secrets
+                  key: stripe-webhook-secrets
+            - name: SNAPLINK_STRIPE_ACME_BILLING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: snaplink-stripe-adapter-secrets
+                  key: tenant-acme-billing-client-secret
+          startupProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /livez
+              port: https
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /livez
+              port: https
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /readyz
+              port: https
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: bindings
+              mountPath: /etc/snaplink-stripe/bindings/bindings.json
+              subPath: bindings.json
+              readOnly: true
+            - name: tls
+              mountPath: /etc/snaplink-stripe/tls
+              readOnly: true
+      volumes:
+        - name: bindings
+          configMap:
+            name: snaplink-stripe-adapter-bindings
+            defaultMode: 0444
+        - name: tls
+          secret:
+            secretName: snaplink-stripe-adapter-tls
+            defaultMode: 0440

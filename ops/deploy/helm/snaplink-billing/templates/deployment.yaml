@@ -1,0 +1,181 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "snaplink-billing.fullname" . }}
+  labels:
+    {{- include "snaplink-billing.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 1, maxSurge: 1 }
+  selector:
+    matchLabels:
+      {{- include "snaplink-billing.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/settings: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.externalRevision }}
+        snaplink.io/external-revision: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "snaplink-billing.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: commerce
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "snaplink-billing.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- range . }}
+        - maxSkew: {{ .maxSkew }}
+          topologyKey: {{ .topologyKey }}
+          whenUnsatisfiable: {{ .whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "snaplink-billing.selectorLabels" $ | nindent 14 }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: billing
+          image: {{ include "snaplink-billing.image" (dict "image" .Values.image) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - configMapRef: { name: {{ include "snaplink-billing.fullname" . }}-settings }
+          env:
+            - name: SNAPLINK_BILLING_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.existingSecret is required" .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.postgresDSNKey }}
+            {{- if .Values.settings.audit.enabled }}
+            - name: SNAPLINK_BILLING_AUDIT_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.auditClientSecretKey }}
+            {{- end }}
+            {{- if .Values.settings.quota.enabled }}
+            - name: SNAPLINK_BILLING_QUOTA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.quotaExistingSecret is required" .Values.secrets.quotaExistingSecret }}
+                  key: {{ required "secrets.quotaClientSecretKey is required" .Values.secrets.quotaClientSecretKey }}
+            {{- end }}
+            {{- if .Values.settings.retention.enabled }}
+            - name: SNAPLINK_BILLING_RETENTION_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.retentionExistingSecret is required" .Values.secrets.retentionExistingSecret }}
+                  key: {{ required "secrets.retentionClientSecretKey is required" .Values.secrets.retentionClientSecretKey }}
+            {{- end }}
+            - name: SNAPLINK_BILLING_RELAY_OWNER
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: SNAPLINK_BILLING_QUOTA_RELAY_OWNER
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: SNAPLINK_BILLING_RENEWALS_OWNER
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+          resources:
+            {{- toYaml .Values.resources.billing | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            {{- if .Values.settings.catalogConfigMap }}
+            - { name: catalog, mountPath: /etc/snaplink-billing/catalog, readOnly: true }
+            {{- end }}
+            {{- if .Values.settings.bindingsConfigMap }}
+            - { name: bindings, mountPath: /etc/snaplink-billing/bindings, readOnly: true }
+            {{- end }}
+            {{- if and .Values.settings.audit.enabled .Values.settings.audit.runtimeConfigMap }}
+            - { name: audit-runtime, mountPath: /etc/snaplink-billing/audit-runtime, readOnly: true }
+            {{- end }}
+        - name: trusted-edge
+          image: {{ include "snaplink-billing.image" (dict "image" .Values.edge.image) | quote }}
+          imagePullPolicy: {{ .Values.edge.image.pullPolicy }}
+          ports:
+            - { name: https, containerPort: 8443, protocol: TCP }
+          startupProbe:
+            httpGet: { scheme: HTTPS, path: /livez, port: https }
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { scheme: HTTPS, path: /livez, port: https }
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { scheme: HTTPS, path: /readyz, port: https }
+            periodSeconds: 5
+            failureThreshold: 2
+          resources:
+            {{- toYaml .Values.resources.edge | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: edge-config, mountPath: /etc/nginx/conf.d, readOnly: true }
+            - { name: tls, mountPath: /etc/snaplink-billing/tls, readOnly: true }
+            - { name: nginx-cache, mountPath: /var/cache/nginx }
+            - { name: nginx-run, mountPath: /var/run }
+            - { name: nginx-tmp, mountPath: /tmp }
+      volumes:
+        {{- if .Values.settings.catalogConfigMap }}
+        - name: catalog
+          configMap: { name: {{ .Values.settings.catalogConfigMap }} }
+        {{- end }}
+        {{- if .Values.settings.bindingsConfigMap }}
+        - name: bindings
+          configMap: { name: {{ .Values.settings.bindingsConfigMap }} }
+        {{- end }}
+        {{- if and .Values.settings.audit.enabled .Values.settings.audit.runtimeConfigMap }}
+        - name: audit-runtime
+          configMap:
+            name: {{ .Values.settings.audit.runtimeConfigMap }}
+            defaultMode: 0444
+        {{- end }}
+        - name: edge-config
+          configMap: { name: {{ include "snaplink-billing.fullname" . }}-edge }
+        - name: tls
+          secret:
+            secretName: {{ required "edge.tlsSecretName is required" .Values.edge.tlsSecretName }}
+            defaultMode: 0440
+        - { name: nginx-cache, emptyDir: {} }
+        - { name: nginx-run, emptyDir: {} }
+        - { name: nginx-tmp, emptyDir: {} }

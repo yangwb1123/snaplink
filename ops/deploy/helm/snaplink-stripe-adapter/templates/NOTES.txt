@@ -1,0 +1,7 @@
+The Stripe adapter endpoint is available through:
+
+  https://{{ include "snaplink-stripe-adapter.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+
+The chart never creates credentials, TLS material, or tenant bindings. Verify
+the external Secret, TLS Secret, and bindings ConfigMap named in values before
+admitting traffic. Increment externalRevision when any of them changes.

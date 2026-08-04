@@ -1,0 +1,19 @@
+# Apply this non-secret override to the separately installed sso-server chart.
+# Register the OAuth client and its secret through the SSO control plane; never
+# put that secret in this values file or its rendered ConfigMap.
+config:
+  tenant:
+    enabled: true
+    backend: postgres
+    resource_quota:
+      backend: postgres
+      projection_ingress:
+        enabled: true
+        audience: snaplink-sso-quota
+        sources:
+          - id: billing-quota-tenant-example
+            client_id: snaplink-billing-quota-relay
+            tenant_id: tenant-example
+            source_system: snaplink-billing-quota.YJnQgZ29gnt3CF3TKG-8HZ1HLwSmNkYR9MmjuWPZfNg
+            enabled: true
+            revision: 1

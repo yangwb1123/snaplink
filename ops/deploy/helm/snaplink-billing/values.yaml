@@ -1,0 +1,124 @@
+replicaCount: 3
+externalRevision: ""
+
+image:
+  repository: ghcr.io/snaplink/snaplink-billing
+  tag: latest
+  digest: ""
+  pullPolicy: IfNotPresent
+
+edge:
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: stable-alpine
+    digest: ""
+    pullPolicy: IfNotPresent
+  tlsSecretName: snaplink-billing-tls
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+settings:
+  issuer: https://sso.example.com
+  jwksURL: https://sso.example.com/.well-known/jwks.json
+  audience: https://billing.example.com
+  catalogConfigMap: snaplink-billing-catalog
+  bindingsConfigMap: snaplink-billing-bindings
+  postgres:
+    maxOpen: 20
+    maxIdle: 5
+    connMaxLifetime: 30m
+    connMaxIdleTime: 5m
+  audit:
+    enabled: true
+    runtimeConfigMap: ""
+    baseURL: https://audit.example.com
+    tokenURL: https://sso.example.com/token
+    clientID: snaplink-billing-audit-relay
+    sourcePrefix: snaplink-billing
+    scope: audit:event:write
+    resource: audit-governance
+    httpTimeout: 5s
+    authPause: 1m
+    errorPause: 5s
+  quota:
+    enabled: true
+    baseURL: https://sso.example.com
+    tokenURL: https://sso.example.com/token
+    clientID: snaplink-billing-quota-relay
+    sourcePrefix: snaplink-billing-quota
+    scope: tenant-quota:projection:write
+    resource: snaplink-sso-quota
+    httpTimeout: 5s
+    lease: 30s
+    batchSize: 100
+    initialBackoff: 1s
+    maxBackoff: 1m
+    pollInterval: 500ms
+    maxLag: 5m
+    errorPause: 5s
+  retention:
+    enabled: true
+    baseURL: https://audit.example.com
+    tokenURL: https://sso.example.com/token
+    clientID: snaplink-billing-retention-projector
+    resource: audit-governance
+    httpTimeout: 5s
+  renewals:
+    enabled: false
+    interval: 1m
+    lease: 2m
+    retryDelay: 1h
+    batchSize: 50
+  readyTimeout: 3s
+
+secrets:
+  existingSecret: snaplink-billing-secrets
+  postgresDSNKey: postgres-dsn
+  auditClientSecretKey: audit-client-secret
+  quotaExistingSecret: snaplink-billing-quota-secrets
+  quotaClientSecretKey: client-secret
+  retentionExistingSecret: snaplink-billing-retention-secrets
+  retentionClientSecretKey: client-secret
+
+service:
+  type: ClusterIP
+  port: 443
+
+resources:
+  billing:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  edge:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 65
+  targetMemoryUtilizationPercentage: 75
+  scaleDownStabilizationSeconds: 300
+
+pdb:
+  enabled: true
+  minAvailable: 2
+
+terminationGracePeriodSeconds: 60
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}

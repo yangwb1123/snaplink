@@ -1,0 +1,13 @@
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "snaplink-stripe-adapter.fullname" . }}
+  labels:
+    {{- include "snaplink-stripe-adapter.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "snaplink-stripe-adapter.selectorLabels" . | nindent 6 }}
+{{- end }}

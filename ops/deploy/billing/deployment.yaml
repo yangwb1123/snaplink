@@ -1,0 +1,185 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: snaplink-billing
+  labels:
+    app.kubernetes.io/name: snaplink-billing
+    app.kubernetes.io/component: commerce
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: snaplink-billing
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: snaplink-billing
+        app.kubernetes.io/component: commerce
+    spec:
+      serviceAccountName: snaplink-billing
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: snaplink-billing
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: snaplink-billing
+      containers:
+        - name: billing
+          image: snaplink/billing:prod
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: snaplink-billing-settings
+          env:
+            - name: SNAPLINK_BILLING_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: snaplink-billing-secrets
+                  key: postgres-dsn
+            - name: SNAPLINK_BILLING_AUDIT_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: snaplink-billing-secrets
+                  key: audit-client-secret
+            - name: SNAPLINK_BILLING_QUOTA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: snaplink-billing-quota-secrets
+                  key: client-secret
+            - name: SNAPLINK_BILLING_RETENTION_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: snaplink-billing-retention-secrets
+                  key: client-secret
+            - name: SNAPLINK_BILLING_RELAY_OWNER
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SNAPLINK_BILLING_QUOTA_RELAY_OWNER
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: catalog
+              mountPath: /etc/snaplink-billing/catalog
+              readOnly: true
+            - name: bindings
+              mountPath: /etc/snaplink-billing/bindings
+              readOnly: true
+            - name: audit-runtime
+              mountPath: /etc/snaplink-billing/audit-runtime
+              readOnly: true
+        - name: trusted-edge
+          image: nginxinc/nginx-unprivileged:stable-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /livez
+              port: https
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /livez
+              port: https
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /readyz
+              port: https
+            periodSeconds: 5
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: edge-config
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+            - name: tls
+              mountPath: /etc/snaplink-billing/tls
+              readOnly: true
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+            - name: nginx-tmp
+              mountPath: /tmp
+      volumes:
+        - name: catalog
+          configMap:
+            name: snaplink-billing-catalog
+        - name: bindings
+          configMap:
+            name: snaplink-billing-bindings
+        - name: audit-runtime
+          configMap:
+            name: snaplink-billing-audit-runtime
+            defaultMode: 0444
+        - name: edge-config
+          configMap:
+            name: snaplink-billing-edge
+        - name: tls
+          secret:
+            secretName: snaplink-billing-tls
+            defaultMode: 0440
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+        - name: nginx-tmp
+          emptyDir: {}

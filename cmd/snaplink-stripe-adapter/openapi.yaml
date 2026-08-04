@@ -1,0 +1,246 @@
+openapi: 3.1.0
+info:
+  title: Snaplink Stripe Adapter API
+  version: 1.0.0
+  description: |
+    Optional out-of-process Stripe checkout and webhook adapter. Raw provider
+    payloads and secrets never cross into the Snaplink Billing API.
+servers:
+  - url: https://stripe-adapter.example.com
+tags:
+  - name: checkout
+  - name: provider-webhook
+  - name: probes
+  - name: observability
+paths:
+  /api/v1/checkout/sessions:
+    post:
+      tags: [checkout]
+      summary: Create or replay a Stripe Checkout Session for a Billing order.
+      description: |
+        A machine token (`sub == client_id`) requires the exact
+        `billing:checkout:create` scope; its client id selects one server-owned
+        tenant binding and `tenant_id`, when present, must match. A user-shaped
+        token requires exact `admin:write`, an explicit `tenant_id`, and a
+        matching server-owned tenant binding. Amount, currency, and provider
+        are always read from Snaplink Billing.
+      operationId: createStripeCheckoutSession
+      x-required-scopes:
+        machine: billing:checkout:create
+        user: admin:write
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CheckoutRequest" }
+      responses:
+        "201":
+          description: A new Stripe Checkout Session was created and persisted.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/NoStore" }
+            Pragma: { $ref: "#/components/headers/NoCache" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CheckoutResponse" }
+        "200":
+          description: The exact checkout request replayed its persisted session.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/NoStore" }
+            Pragma: { $ref: "#/components/headers/NoCache" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CheckoutResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Order is not pending or immutable checkout facts conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502": { $ref: "#/components/responses/UpstreamUnavailable" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /webhooks/stripe:
+    post:
+      tags: [provider-webhook]
+      summary: Verify and durably accept one Stripe event.
+      description: |
+        Stripe signs the exact raw request body in `Stripe-Signature`. Valid
+        supported events are reduced to minimal facts and inserted before 200.
+        Valid unsupported or intentionally ignored non-financial events return
+        204 and are not stored. Event id/digest receipts and normalized
+        provider-object effects are deduplicated independently.
+      operationId: acceptStripeWebhook
+      security: []
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: { type: string, maxLength: 8192 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Stripe Event object; maximum raw size is 256 KiB.
+              additionalProperties: true
+      responses:
+        "200":
+          description: Supported event inserted, or an identical replay acknowledged.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [received]
+                properties:
+                  received: { type: boolean, const: true }
+        "204":
+          description: Signature was valid but the event is unsupported or has no final financial effect.
+        "400":
+          description: Invalid signature or malformed supported event.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The event id already exists with a different payload digest.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413":
+          description: Request body exceeds 256 KiB.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /livez:
+    get:
+      tags: [probes]
+      summary: Process liveness probe.
+      security: []
+      responses:
+        "200": { $ref: "#/components/responses/Healthy" }
+  /readyz:
+    get:
+      tags: [probes]
+      summary: PostgreSQL and JWKS dependency readiness probe.
+      security: []
+      responses:
+        "200": { $ref: "#/components/responses/Ready" }
+        "503":
+          description: PostgreSQL or JWKS is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Probe" }
+  /metrics:
+    get:
+      tags: [observability]
+      summary: Bounded-cardinality Prometheus metrics.
+      security: []
+      responses:
+        "200":
+          description: Process counters plus pending/quarantined inbox gauges and backlog threshold signal.
+          content:
+            text/plain:
+              schema: { type: string }
+        "503": { $ref: "#/components/responses/Unavailable" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  headers:
+    NoStore:
+      schema: { type: string, const: no-store }
+    NoCache:
+      schema: { type: string, const: no-cache }
+  schemas:
+    CheckoutRequest:
+      type: object
+      additionalProperties: false
+      required: [order_id, success_url, cancel_url]
+      properties:
+        tenant_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Required for user-shaped tokens; omitted or equal to the bound tenant for machine tokens.
+        order_id: { type: string, minLength: 1, maxLength: 256 }
+        success_url: { type: string, format: uri, maxLength: 4096 }
+        cancel_url: { type: string, format: uri, maxLength: 4096 }
+    CheckoutResponse:
+      type: object
+      additionalProperties: false
+      required: [session_id, redirect_url, expires_at]
+      properties:
+        session_id: { type: string }
+        redirect_url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: { type: string }
+    Probe:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, ready, not_ready] }
+  responses:
+    BadRequest:
+      description: Invalid or overspecified request.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing or invalid Snaplink access token.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/NoStore" }
+        Pragma: { $ref: "#/components/headers/NoCache" }
+        WWW-Authenticate:
+          schema: { type: string }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Missing exact scope, unbound tenant/client, or cross-tenant request.
+      headers:
+        Cache-Control: { $ref: "#/components/headers/NoStore" }
+        Pragma: { $ref: "#/components/headers/NoCache" }
+        WWW-Authenticate:
+          schema:
+            type: string
+            example: 'Bearer realm="stripe-adapter", error="insufficient_scope", scope="admin:write"'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Order is not pending or immutable checkout facts conflict.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UpstreamUnavailable:
+      description: Billing or Stripe failed or returned an invalid response.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unavailable:
+      description: Adapter persistence or readiness dependency unavailable.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Healthy:
+      description: Process is live.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Probe" }
+    Ready:
+      description: PostgreSQL and JWKS dependencies are available.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Probe" }

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: snaplink-billing-audit-runtime
+  labels:
+    app.kubernetes.io/name: snaplink-billing
+data:
+  desired.json: |
+    {"revision":1,"enabled":true}

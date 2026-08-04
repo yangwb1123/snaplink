@@ -1,0 +1,33 @@
+{
+	auto_https disable_redirects
+}
+
+https://localhost:8445 {
+	tls internal
+	header {
+		-Server
+	}
+	reverse_proxy 127.0.0.1:8091 {
+		header_up -Forwarded
+		header_up -X-Forwarded-For
+		header_up -X-Forwarded-Host
+		header_up -X-Forwarded-Proto
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Proto https
+	}
+}
+
+http://127.0.0.1:8088 {
+	reverse_proxy sso-server:8080
+}
+
+# Development-only bridge to Billing's local Caddy CA. Production uses
+# authenticated HTTPS with a trusted CA and never disables verification.
+http://127.0.0.1:8089 {
+	reverse_proxy https://billing-edge:8443 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+}

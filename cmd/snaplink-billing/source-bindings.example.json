@@ -1,0 +1,27 @@
+[
+  {
+    "id": "aero-im-tenant-a",
+    "client_id": "aero-im-tenant-a-metering",
+    "tenant_id": "tenant-a",
+    "source_system": "aero-im",
+    "allowed_dimensions": [
+      "messages_per_month",
+      "notifications_per_month"
+    ],
+    "enabled": true,
+    "revision": 1,
+    "created_at": "2026-08-04T00:00:00Z",
+    "updated_at": "2026-08-04T00:00:00Z"
+  },
+  {
+    "id": "stripe-tenant-a",
+    "client_id": "stripe-tenant-a-adapter",
+    "tenant_id": "tenant-a",
+    "source_system": "payment:stripe",
+    "allowed_dimensions": [],
+    "enabled": true,
+    "revision": 1,
+    "created_at": "2026-08-04T00:00:00Z",
+    "updated_at": "2026-08-04T00:00:00Z"
+  }
+]

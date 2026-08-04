@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snaplink-billing.fullname" . }}-settings
+  labels:
+    {{- include "snaplink-billing.labels" . | nindent 4 }}
+data:
+  SNAPLINK_BILLING_LISTEN: "127.0.0.1:8090"
+  SNAPLINK_BILLING_ISSUER: {{ .Values.settings.issuer | quote }}
+  SNAPLINK_BILLING_JWKS_URL: {{ .Values.settings.jwksURL | quote }}
+  SNAPLINK_BILLING_AUDIENCE: {{ .Values.settings.audience | quote }}
+  {{- if .Values.settings.catalogConfigMap }}
+  SNAPLINK_BILLING_CATALOG_FILE: "/etc/snaplink-billing/catalog/catalog.json"
+  {{- end }}
+  {{- if .Values.settings.bindingsConfigMap }}
+  SNAPLINK_BILLING_SOURCE_BINDINGS_FILE: "/etc/snaplink-billing/bindings/bindings.json"
+  {{- end }}
+  SNAPLINK_BILLING_POSTGRES_MAX_OPEN: {{ .Values.settings.postgres.maxOpen | quote }}
+  SNAPLINK_BILLING_POSTGRES_MAX_IDLE: {{ .Values.settings.postgres.maxIdle | quote }}
+  SNAPLINK_BILLING_POSTGRES_CONN_MAX_LIFETIME: {{ .Values.settings.postgres.connMaxLifetime | quote }}
+  SNAPLINK_BILLING_POSTGRES_CONN_MAX_IDLE_TIME: {{ .Values.settings.postgres.connMaxIdleTime | quote }}
+  SNAPLINK_BILLING_RENEWALS_ENABLED: {{ .Values.settings.renewals.enabled | quote }}
+  SNAPLINK_BILLING_RENEWALS_INTERVAL: {{ .Values.settings.renewals.interval | quote }}
+  SNAPLINK_BILLING_RENEWALS_LEASE: {{ .Values.settings.renewals.lease | quote }}
+  SNAPLINK_BILLING_RENEWALS_RETRY_DELAY: {{ .Values.settings.renewals.retryDelay | quote }}
+  SNAPLINK_BILLING_RENEWALS_BATCH_SIZE: {{ .Values.settings.renewals.batchSize | quote }}
+  SNAPLINK_BILLING_READY_TIMEOUT: {{ .Values.settings.readyTimeout | quote }}
+  {{- if .Values.settings.audit.enabled }}
+  SNAPLINK_BILLING_AUDIT_BASE_URL: {{ .Values.settings.audit.baseURL | quote }}
+  {{- if .Values.settings.audit.runtimeConfigMap }}
+  SNAPLINK_BILLING_AUDIT_RUNTIME_FILE: "/etc/snaplink-billing/audit-runtime/desired.json"
+  {{- end }}
+  SNAPLINK_BILLING_AUDIT_TOKEN_URL: {{ .Values.settings.audit.tokenURL | quote }}
+  SNAPLINK_BILLING_AUDIT_CLIENT_ID: {{ .Values.settings.audit.clientID | quote }}
+  SNAPLINK_BILLING_AUDIT_SOURCE_PREFIX: {{ .Values.settings.audit.sourcePrefix | quote }}
+  SNAPLINK_BILLING_AUDIT_SCOPE: {{ .Values.settings.audit.scope | quote }}
+  SNAPLINK_BILLING_AUDIT_RESOURCE: {{ .Values.settings.audit.resource | quote }}
+  SNAPLINK_BILLING_AUDIT_HTTP_TIMEOUT: {{ .Values.settings.audit.httpTimeout | quote }}
+  SNAPLINK_BILLING_AUDIT_AUTH_PAUSE: {{ .Values.settings.audit.authPause | quote }}
+  SNAPLINK_BILLING_AUDIT_ERROR_PAUSE: {{ .Values.settings.audit.errorPause | quote }}
+  {{- end }}
+  {{- if .Values.settings.quota.enabled }}
+  SNAPLINK_BILLING_QUOTA_BASE_URL: {{ .Values.settings.quota.baseURL | quote }}
+  SNAPLINK_BILLING_QUOTA_TOKEN_URL: {{ .Values.settings.quota.tokenURL | quote }}
+  SNAPLINK_BILLING_QUOTA_CLIENT_ID: {{ .Values.settings.quota.clientID | quote }}
+  SNAPLINK_BILLING_QUOTA_SOURCE_PREFIX: {{ .Values.settings.quota.sourcePrefix | quote }}
+  SNAPLINK_BILLING_QUOTA_SCOPE: {{ .Values.settings.quota.scope | quote }}
+  SNAPLINK_BILLING_QUOTA_RESOURCE: {{ .Values.settings.quota.resource | quote }}
+  SNAPLINK_BILLING_QUOTA_HTTP_TIMEOUT: {{ .Values.settings.quota.httpTimeout | quote }}
+  SNAPLINK_BILLING_QUOTA_LEASE: {{ .Values.settings.quota.lease | quote }}
+  SNAPLINK_BILLING_QUOTA_BATCH_SIZE: {{ .Values.settings.quota.batchSize | quote }}
+  SNAPLINK_BILLING_QUOTA_INITIAL_BACKOFF: {{ .Values.settings.quota.initialBackoff | quote }}
+  SNAPLINK_BILLING_QUOTA_MAX_BACKOFF: {{ .Values.settings.quota.maxBackoff | quote }}
+  SNAPLINK_BILLING_QUOTA_POLL_INTERVAL: {{ .Values.settings.quota.pollInterval | quote }}
+  SNAPLINK_BILLING_QUOTA_MAX_LAG: {{ .Values.settings.quota.maxLag | quote }}
+  SNAPLINK_BILLING_QUOTA_ERROR_PAUSE: {{ .Values.settings.quota.errorPause | quote }}
+  {{- end }}
+  {{- if .Values.settings.retention.enabled }}
+  SNAPLINK_BILLING_RETENTION_BASE_URL: {{ .Values.settings.retention.baseURL | quote }}
+  SNAPLINK_BILLING_RETENTION_TOKEN_URL: {{ .Values.settings.retention.tokenURL | quote }}
+  SNAPLINK_BILLING_RETENTION_CLIENT_ID: {{ .Values.settings.retention.clientID | quote }}
+  SNAPLINK_BILLING_RETENTION_RESOURCE: {{ .Values.settings.retention.resource | quote }}
+  SNAPLINK_BILLING_RETENTION_HTTP_TIMEOUT: {{ .Values.settings.retention.httpTimeout | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snaplink-billing.fullname" . }}-edge
+  labels:
+    {{- include "snaplink-billing.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+        listen 8443 ssl;
+        server_name _;
+        server_tokens off;
+        ssl_certificate /etc/snaplink-billing/tls/tls.crt;
+        ssl_certificate_key /etc/snaplink-billing/tls/tls.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        client_max_body_size 2m;
+        proxy_http_version 1.1;
+        proxy_connect_timeout 2s;
+        proxy_read_timeout 30s;
+        proxy_next_upstream off;
+        location / {
+            proxy_pass http://127.0.0.1:8090;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header Forwarded "";
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+    }

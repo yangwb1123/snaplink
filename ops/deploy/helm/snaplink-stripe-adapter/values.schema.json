@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "replicaCount", "externalRevision", "image", "imagePullSecrets",
+    "serviceAccount", "settings", "bindings", "secrets", "tls", "service",
+    "resources", "autoscaling", "pdb", "networkPolicy",
+    "terminationGracePeriodSeconds", "topologySpreadConstraints",
+    "nodeSelector", "tolerations", "affinity", "podAnnotations", "podLabels"
+  ],
+  "properties": {
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "replicaCount": { "type": "integer", "minimum": 2 },
+    "externalRevision": { "type": "string" },
+    "image": { "$ref": "#/definitions/image" },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["name"],
+        "properties": { "name": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "serviceAccount": {
+      "type": "object", "additionalProperties": false,
+      "required": ["create", "name", "annotations"],
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "$ref": "#/definitions/stringMap" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "create": { "const": false } } },
+          "then": { "properties": { "name": { "minLength": 1 } } }
+        }
+      ]
+    },
+    "settings": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "issuer", "jwksURL", "audience", "billingBaseURL", "tokenURL",
+        "billingResource", "stripeAPIBaseURL", "stripeAPIVersion", "liveMode",
+        "account", "webhookAPIVersion", "returnOrigins", "httpTimeout",
+        "handlerTimeout", "readyTimeout", "pollInterval", "claimLease",
+        "shutdownDrain", "batchSize", "deliveryConcurrency", "maxBacklog",
+        "maxBacklogAge"
+      ],
+      "properties": {
+        "issuer": { "$ref": "#/definitions/httpsURL" },
+        "jwksURL": { "$ref": "#/definitions/httpsURL" },
+        "audience": { "type": "string", "minLength": 1 },
+        "billingBaseURL": { "$ref": "#/definitions/httpsURL" },
+        "tokenURL": { "$ref": "#/definitions/httpsURL" },
+        "billingResource": { "type": "string", "minLength": 1 },
+        "stripeAPIBaseURL": { "$ref": "#/definitions/httpsURL" },
+        "stripeAPIVersion": { "$ref": "#/definitions/stripeVersion" },
+        "liveMode": { "type": "boolean" },
+        "account": {
+          "oneOf": [
+            { "const": "platform" },
+            { "type": "string", "pattern": "^acct_[A-Za-z0-9]+$" }
+          ]
+        },
+        "webhookAPIVersion": { "$ref": "#/definitions/stripeVersion" },
+        "returnOrigins": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "$ref": "#/definitions/httpsOrigin" }
+        },
+        "httpTimeout": { "$ref": "#/definitions/duration" },
+        "handlerTimeout": { "$ref": "#/definitions/duration" },
+        "readyTimeout": { "$ref": "#/definitions/duration" },
+        "pollInterval": { "$ref": "#/definitions/duration" },
+        "claimLease": { "$ref": "#/definitions/duration" },
+        "shutdownDrain": { "$ref": "#/definitions/duration" },
+        "batchSize": { "type": "integer", "minimum": 1, "maximum": 500 },
+        "deliveryConcurrency": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "maxBacklog": { "type": "integer", "minimum": 1 },
+        "maxBacklogAge": { "$ref": "#/definitions/duration" }
+      }
+    },
+    "bindings": {
+      "type": "object", "additionalProperties": false,
+      "required": ["existingConfigMap", "key", "mountPath"],
+      "properties": {
+        "existingConfigMap": { "$ref": "#/definitions/dnsLabel" },
+        "key": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+        "mountPath": { "type": "string", "pattern": "^/[^\\n]+$" }
+      }
+    },
+    "secrets": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "existingSecret", "postgresDSNKey", "stripeAPIKeyKey",
+        "webhookSecretsKey", "billingClientSecrets"
+      ],
+      "properties": {
+        "existingSecret": { "$ref": "#/definitions/dnsLabel" },
+        "postgresDSNKey": { "$ref": "#/definitions/secretKey" },
+        "stripeAPIKeyKey": { "$ref": "#/definitions/secretKey" },
+        "webhookSecretsKey": { "$ref": "#/definitions/secretKey" },
+        "billingClientSecrets": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["env", "key"],
+            "properties": {
+              "env": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" },
+              "key": { "$ref": "#/definitions/secretKey" }
+            }
+          }
+        }
+      }
+    },
+    "tls": {
+      "type": "object", "additionalProperties": false,
+      "required": ["existingSecret", "mountPath", "certKey", "privateKeyKey"],
+      "properties": {
+        "existingSecret": { "$ref": "#/definitions/dnsLabel" },
+        "mountPath": { "type": "string", "pattern": "^/[^\\n]+$" },
+        "certKey": { "$ref": "#/definitions/secretKey" },
+        "privateKeyKey": { "$ref": "#/definitions/secretKey" }
+      }
+    },
+    "service": {
+      "type": "object", "additionalProperties": false, "required": ["type", "port"],
+      "properties": {
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "resources": { "$ref": "#/definitions/resources" },
+    "autoscaling": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "enabled", "minReplicas", "maxReplicas",
+        "targetCPUUtilizationPercentage", "scaleDownStabilizationSeconds"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minReplicas": { "type": "integer", "minimum": 2 },
+        "maxReplicas": { "type": "integer", "minimum": 2 },
+        "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "scaleDownStabilizationSeconds": { "type": "integer", "minimum": 0, "maximum": 3600 }
+      }
+    },
+    "pdb": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "minAvailable"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minAvailable": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string", "pattern": "^(100|[1-9]?[0-9])%$" }
+          ]
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "ingress", "egress"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ingress": { "type": "array", "items": { "$ref": "#/definitions/networkPolicyIngressRule" } },
+        "egress": { "type": "array", "items": { "$ref": "#/definitions/networkPolicyEgressRule" } }
+      }
+    },
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 101 },
+    "topologySpreadConstraints": {
+      "type": "array", "minItems": 2,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["maxSkew", "topologyKey", "whenUnsatisfiable"],
+        "properties": {
+          "maxSkew": { "type": "integer", "minimum": 1 },
+          "topologyKey": { "type": "string", "minLength": 1 },
+          "whenUnsatisfiable": { "enum": ["DoNotSchedule", "ScheduleAnyway"] }
+        }
+      }
+    },
+    "nodeSelector": { "$ref": "#/definitions/stringMap" },
+    "tolerations": { "type": "array", "items": { "type": "object" } },
+    "affinity": { "type": "object" },
+    "podAnnotations": { "$ref": "#/definitions/stringMap" },
+    "podLabels": { "$ref": "#/definitions/stringMap" }
+  },
+  "definitions": {
+    "image": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "tag", "digest", "pullPolicy"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string", "minLength": 1 },
+        "digest": { "type": "string", "pattern": "^$|^sha256:[a-f0-9]{64}$" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "stringMap": {
+      "type": "object", "additionalProperties": { "type": "string" }
+    },
+    "httpsURL": { "type": "string", "pattern": "^https://[^/\\s]+(?:/[^\\s]*)?$" },
+    "httpsOrigin": { "type": "string", "pattern": "^https://[^/\\s]+$" },
+    "stripeVersion": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:\\.[A-Za-z0-9_-]+)?$" },
+    "duration": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ns|us|µs|ms|s|m|h)(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|µs|ms|s|m|h))*$" },
+    "dnsLabel": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 253 },
+    "secretKey": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+    "resources": {
+      "type": "object", "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": { "$ref": "#/definitions/resourceMap" },
+        "limits": { "$ref": "#/definitions/resourceMap" }
+      }
+    },
+    "resourceMap": {
+      "type": "object",
+      "additionalProperties": { "oneOf": [{ "type": "string" }, { "type": "number" }] }
+    },
+    "labelSelector": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "matchLabels": { "$ref": "#/definitions/stringMap" },
+        "matchExpressions": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "networkPeer": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "podSelector": { "$ref": "#/definitions/labelSelector" },
+        "namespaceSelector": { "$ref": "#/definitions/labelSelector" },
+        "ipBlock": {
+          "type": "object", "additionalProperties": false, "required": ["cidr"],
+          "properties": {
+            "cidr": { "type": "string", "minLength": 1 },
+            "except": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          }
+        }
+      },
+      "minProperties": 1
+    },
+    "networkPort": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "protocol": { "enum": ["TCP", "UDP", "SCTP"] },
+        "port": { "oneOf": [{ "type": "integer", "minimum": 1, "maximum": 65535 }, { "type": "string", "minLength": 1 }] },
+        "endPort": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "networkPolicyIngressRule": {
+      "type": "object", "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "from": { "type": "array", "items": { "$ref": "#/definitions/networkPeer" } },
+        "ports": { "type": "array", "items": { "$ref": "#/definitions/networkPort" } }
+      }
+    },
+    "networkPolicyEgressRule": {
+      "type": "object", "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "to": { "type": "array", "items": { "$ref": "#/definitions/networkPeer" } },
+        "ports": { "type": "array", "items": { "$ref": "#/definitions/networkPort" } }
+      }
+    }
+  }
+}

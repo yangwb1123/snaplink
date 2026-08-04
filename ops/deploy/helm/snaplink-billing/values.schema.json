@@ -1,0 +1,412 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "replicaCount",
+    "image",
+    "edge",
+    "serviceAccount",
+    "settings",
+    "secrets",
+    "service",
+    "resources",
+    "autoscaling",
+    "pdb"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "settings": {
+            "properties": {
+              "audit": { "properties": { "enabled": { "const": true } } }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "secrets": { "required": ["auditClientSecretKey"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "settings": {
+            "properties": {
+              "quota": { "properties": { "enabled": { "const": true } } }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "secrets": { "required": ["quotaExistingSecret", "quotaClientSecretKey"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "settings": {
+            "properties": {
+              "retention": { "properties": { "enabled": { "const": true } } }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "settings": {
+            "properties": {
+              "quota": { "properties": { "enabled": { "const": true } } }
+            }
+          },
+          "secrets": { "required": ["retentionExistingSecret", "retentionClientSecretKey"] }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "replicaCount": { "type": "integer", "minimum": 1 },
+    "externalRevision": { "type": "string" },
+    "image": { "$ref": "#/definitions/image" },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "tlsSecretName"],
+      "properties": {
+        "image": { "$ref": "#/definitions/image" },
+        "tlsSecretName": { "type": "string", "minLength": 1 }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": { "name": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create", "name", "annotations"],
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "$ref": "#/definitions/stringMap" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "create": { "const": false } } },
+          "then": { "properties": { "name": { "minLength": 1 } } }
+        }
+      ]
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issuer",
+        "jwksURL",
+        "audience",
+        "catalogConfigMap",
+        "bindingsConfigMap",
+        "postgres",
+        "audit",
+        "quota",
+        "retention",
+        "renewals",
+        "readyTimeout"
+      ],
+      "properties": {
+        "issuer": { "$ref": "#/definitions/httpsURL" },
+        "jwksURL": { "$ref": "#/definitions/httpsURL" },
+        "audience": { "type": "string", "minLength": 1 },
+        "catalogConfigMap": { "type": "string" },
+        "bindingsConfigMap": { "type": "string" },
+        "readyTimeout": { "$ref": "#/definitions/duration" },
+        "postgres": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxOpen", "maxIdle", "connMaxLifetime", "connMaxIdleTime"],
+          "properties": {
+            "maxOpen": { "type": "integer", "minimum": 1 },
+            "maxIdle": { "type": "integer", "minimum": 0 },
+            "connMaxLifetime": { "$ref": "#/definitions/duration" },
+            "connMaxIdleTime": { "$ref": "#/definitions/duration" }
+          }
+        },
+        "audit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "runtimeConfigMap": { "type": "string" },
+            "baseURL": { "type": "string" },
+            "tokenURL": { "type": "string" },
+            "clientID": { "type": "string" },
+            "sourcePrefix": { "type": "string" },
+            "scope": { "type": "string" },
+            "resource": { "type": "string" },
+            "httpTimeout": { "type": "string" },
+            "authPause": { "type": "string" },
+            "errorPause": { "type": "string" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "enabled": { "const": true } } },
+              "then": {
+                "required": [
+                  "baseURL",
+                  "tokenURL",
+                  "clientID",
+                  "sourcePrefix",
+                  "scope",
+                  "resource",
+                  "httpTimeout",
+                  "authPause",
+                  "errorPause"
+                ],
+                "properties": {
+                  "baseURL": { "$ref": "#/definitions/httpsURL" },
+                  "tokenURL": { "$ref": "#/definitions/httpsURL" },
+                  "clientID": { "type": "string", "minLength": 1 },
+                  "sourcePrefix": { "type": "string", "pattern": "^[A-Za-z0-9._:-]+$" },
+                  "scope": { "type": "string", "minLength": 1 },
+                  "resource": { "type": "string", "minLength": 1 },
+                  "httpTimeout": { "$ref": "#/definitions/duration" },
+                  "authPause": { "$ref": "#/definitions/duration" },
+                  "errorPause": { "$ref": "#/definitions/duration" }
+                }
+              }
+            }
+          ]
+        },
+        "quota": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "baseURL": { "type": "string" },
+            "tokenURL": { "type": "string" },
+            "clientID": { "type": "string" },
+            "sourcePrefix": { "type": "string" },
+            "scope": { "type": "string" },
+            "resource": { "type": "string" },
+            "httpTimeout": { "type": "string" },
+            "lease": { "type": "string" },
+            "batchSize": { "type": "integer" },
+            "initialBackoff": { "type": "string" },
+            "maxBackoff": { "type": "string" },
+            "pollInterval": { "type": "string" },
+            "maxLag": { "type": "string" },
+            "errorPause": { "type": "string" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "enabled": { "const": true } } },
+              "then": {
+                "required": [
+                  "baseURL", "tokenURL", "clientID", "sourcePrefix", "scope", "resource",
+                  "httpTimeout", "lease", "batchSize", "initialBackoff", "maxBackoff",
+                  "pollInterval", "maxLag", "errorPause"
+                ],
+                "properties": {
+                  "baseURL": { "$ref": "#/definitions/httpsURL" },
+                  "tokenURL": { "$ref": "#/definitions/httpsURL" },
+                  "clientID": { "type": "string", "minLength": 1 },
+                  "sourcePrefix": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+                  "scope": { "const": "tenant-quota:projection:write" },
+                  "resource": { "type": "string", "minLength": 1 },
+                  "httpTimeout": { "$ref": "#/definitions/duration" },
+                  "lease": { "$ref": "#/definitions/duration" },
+                  "batchSize": { "type": "integer", "minimum": 1, "maximum": 500 },
+                  "initialBackoff": { "$ref": "#/definitions/duration" },
+                  "maxBackoff": { "$ref": "#/definitions/duration" },
+                  "pollInterval": { "$ref": "#/definitions/duration" },
+                  "maxLag": { "$ref": "#/definitions/duration" },
+                  "errorPause": { "$ref": "#/definitions/duration" }
+                }
+              }
+            }
+          ]
+        },
+        "retention": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "baseURL": { "type": "string" },
+            "tokenURL": { "type": "string" },
+            "clientID": { "type": "string" },
+            "resource": { "type": "string" },
+            "httpTimeout": { "type": "string" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "enabled": { "const": true } } },
+              "then": {
+                "required": ["baseURL", "tokenURL", "clientID", "resource", "httpTimeout"],
+                "properties": {
+                  "baseURL": { "$ref": "#/definitions/httpsURL" },
+                  "tokenURL": { "$ref": "#/definitions/httpsURL" },
+                  "clientID": { "type": "string", "minLength": 1 },
+                  "resource": { "type": "string", "minLength": 1 },
+                  "httpTimeout": { "$ref": "#/definitions/duration" }
+                }
+              }
+            }
+          ]
+        },
+        "renewals": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "interval", "lease", "retryDelay", "batchSize"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "interval": { "$ref": "#/definitions/duration" },
+            "lease": { "$ref": "#/definitions/duration" },
+            "retryDelay": { "$ref": "#/definitions/duration" },
+            "batchSize": { "type": "integer", "minimum": 1, "maximum": 500 }
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["existingSecret", "postgresDSNKey"],
+      "properties": {
+        "existingSecret": { "type": "string", "minLength": 1 },
+        "postgresDSNKey": { "type": "string", "minLength": 1 },
+        "auditClientSecretKey": { "type": "string" },
+        "quotaExistingSecret": { "type": "string" },
+        "quotaClientSecretKey": { "type": "string" },
+        "retentionExistingSecret": { "type": "string" },
+        "retentionClientSecretKey": { "type": "string" }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "port"],
+      "properties": {
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["billing", "edge"],
+      "properties": {
+        "billing": { "$ref": "#/definitions/resources" },
+        "edge": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "minReplicas",
+        "maxReplicas",
+        "targetCPUUtilizationPercentage",
+        "targetMemoryUtilizationPercentage",
+        "scaleDownStabilizationSeconds"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minReplicas": { "type": "integer", "minimum": 1 },
+        "maxReplicas": { "type": "integer", "minimum": 1 },
+        "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "targetMemoryUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "scaleDownStabilizationSeconds": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "pdb": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "minAvailable"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minAvailable": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 1 },
+    "topologySpreadConstraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["maxSkew", "topologyKey", "whenUnsatisfiable"],
+        "properties": {
+          "maxSkew": { "type": "integer", "minimum": 1 },
+          "topologyKey": { "type": "string", "minLength": 1 },
+          "whenUnsatisfiable": {
+            "type": "string",
+            "enum": ["DoNotSchedule", "ScheduleAnyway"]
+          }
+        }
+      }
+    },
+    "nodeSelector": { "$ref": "#/definitions/stringMap" },
+    "tolerations": { "type": "array", "items": { "type": "object" } },
+    "affinity": { "type": "object" },
+    "podAnnotations": { "$ref": "#/definitions/stringMap" },
+    "podLabels": { "$ref": "#/definitions/stringMap" }
+  },
+  "definitions": {
+    "duration": {
+      "type": "string",
+      "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+    },
+    "httpsURL": {
+      "type": "string",
+      "pattern": "^https://[^[:space:]]+$"
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "tag", "digest", "pullPolicy"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string", "minLength": 1 },
+        "digest": { "type": "string", "pattern": "^(|sha256:[a-f0-9]{64})$" },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": { "$ref": "#/definitions/resourcePair" },
+        "limits": { "$ref": "#/definitions/resourcePair" }
+      }
+    },
+    "resourcePair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory"],
+      "properties": {
+        "cpu": { "type": ["string", "integer"], "minLength": 1 },
+        "memory": { "type": ["string", "integer"], "minLength": 1 }
+      }
+    },
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "bindings": [
+    {
+      "tenant_id": "tenant-a",
+      "checkout_client_ids": ["snaplink-console-tenant-a"],
+      "billing_client_id": "stripe-tenant-a-adapter",
+      "billing_client_secret_env": "SNAPLINK_STRIPE_TENANT_A_BILLING_SECRET"
+    }
+  ]
+}

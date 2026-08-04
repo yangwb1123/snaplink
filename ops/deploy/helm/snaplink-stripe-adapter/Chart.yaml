@@ -1,0 +1,7 @@
+apiVersion: v2
+name: snaplink-stripe-adapter
+description: Production deployment for the Snaplink Stripe payment adapter
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.26.0-0"

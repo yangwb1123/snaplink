@@ -1,0 +1,8 @@
+Snaplink Billing is exposed through the in-Pod TLS edge only.
+
+Service:
+  {{ include "snaplink-billing.fullname" . }}:{{ .Values.service.port }}
+
+Before admitting traffic, verify every replica's /readyz endpoint and confirm
+that the external PostgreSQL, catalog, binding, TLS, and Audit Governance
+control-plane objects named in values.yaml exist.

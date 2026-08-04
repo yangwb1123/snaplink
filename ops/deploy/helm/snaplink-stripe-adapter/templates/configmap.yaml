@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snaplink-stripe-adapter.fullname" . }}-settings
+  labels:
+    {{- include "snaplink-stripe-adapter.labels" . | nindent 4 }}
+data:
+  SNAPLINK_STRIPE_LISTEN: "0.0.0.0:8443"
+  SNAPLINK_STRIPE_TLS_CERT_FILE: {{ printf "%s/%s" .Values.tls.mountPath .Values.tls.certKey | quote }}
+  SNAPLINK_STRIPE_TLS_KEY_FILE: {{ printf "%s/%s" .Values.tls.mountPath .Values.tls.privateKeyKey | quote }}
+  SNAPLINK_STRIPE_ISSUER: {{ .Values.settings.issuer | quote }}
+  SNAPLINK_STRIPE_JWKS_URL: {{ .Values.settings.jwksURL | quote }}
+  SNAPLINK_STRIPE_AUDIENCE: {{ .Values.settings.audience | quote }}
+  SNAPLINK_STRIPE_BILLING_BASE_URL: {{ .Values.settings.billingBaseURL | quote }}
+  SNAPLINK_STRIPE_TOKEN_URL: {{ .Values.settings.tokenURL | quote }}
+  SNAPLINK_STRIPE_BILLING_RESOURCE: {{ .Values.settings.billingResource | quote }}
+  SNAPLINK_STRIPE_BINDINGS_FILE: {{ printf "%s/%s" .Values.bindings.mountPath .Values.bindings.key | quote }}
+  SNAPLINK_STRIPE_API_BASE_URL: {{ .Values.settings.stripeAPIBaseURL | quote }}
+  SNAPLINK_STRIPE_API_VERSION: {{ .Values.settings.stripeAPIVersion | quote }}
+  SNAPLINK_STRIPE_LIVE_MODE: {{ .Values.settings.liveMode | quote }}
+  SNAPLINK_STRIPE_ACCOUNT: {{ .Values.settings.account | quote }}
+  SNAPLINK_STRIPE_WEBHOOK_API_VERSION: {{ .Values.settings.webhookAPIVersion | quote }}
+  SNAPLINK_STRIPE_RETURN_ORIGINS: {{ join "," .Values.settings.returnOrigins | quote }}
+  SNAPLINK_STRIPE_HTTP_TIMEOUT: {{ .Values.settings.httpTimeout | quote }}
+  SNAPLINK_STRIPE_HANDLER_TIMEOUT: {{ .Values.settings.handlerTimeout | quote }}
+  SNAPLINK_STRIPE_READY_TIMEOUT: {{ .Values.settings.readyTimeout | quote }}
+  SNAPLINK_STRIPE_POLL_INTERVAL: {{ .Values.settings.pollInterval | quote }}
+  SNAPLINK_STRIPE_CLAIM_LEASE: {{ .Values.settings.claimLease | quote }}
+  SNAPLINK_STRIPE_SHUTDOWN_DRAIN: {{ .Values.settings.shutdownDrain | quote }}
+  SNAPLINK_STRIPE_BATCH_SIZE: {{ .Values.settings.batchSize | quote }}
+  SNAPLINK_STRIPE_DELIVERY_CONCURRENCY: {{ .Values.settings.deliveryConcurrency | quote }}
+  SNAPLINK_STRIPE_MAX_BACKLOG: {{ .Values.settings.maxBacklog | quote }}
+  SNAPLINK_STRIPE_MAX_BACKLOG_AGE: {{ .Values.settings.maxBacklogAge | quote }}
+  SNAPLINK_STRIPE_ALLOW_INSECURE_LOOPBACK: "false"

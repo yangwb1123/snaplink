@@ -1,0 +1,98 @@
+replicaCount: 3
+externalRevision: ""
+
+image:
+  repository: ghcr.io/snaplink/snaplink-stripe-adapter
+  tag: latest
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+settings:
+  issuer: https://sso.example.com
+  jwksURL: https://sso.example.com/.well-known/jwks.json
+  audience: https://stripe-adapter.example.com
+  billingBaseURL: https://billing.example.com
+  tokenURL: https://sso.example.com/token
+  billingResource: https://billing.example.com
+  stripeAPIBaseURL: https://api.stripe.com
+  stripeAPIVersion: 2025-06-30.basil
+  liveMode: false
+  account: platform
+  webhookAPIVersion: 2025-06-30.basil
+  returnOrigins:
+    - https://console.example.com
+  httpTimeout: 10s
+  handlerTimeout: 25s
+  readyTimeout: 2s
+  pollInterval: 1s
+  claimLease: 45s
+  shutdownDrain: 50s
+  batchSize: 50
+  deliveryConcurrency: 8
+  maxBacklog: 10000
+  maxBacklogAge: 15m
+
+bindings:
+  existingConfigMap: snaplink-stripe-adapter-bindings
+  key: bindings.json
+  mountPath: /etc/snaplink-stripe/bindings
+
+secrets:
+  existingSecret: snaplink-stripe-adapter-secrets
+  postgresDSNKey: postgres-dsn
+  stripeAPIKeyKey: stripe-api-key
+  webhookSecretsKey: stripe-webhook-secrets
+  billingClientSecrets:
+    - env: SNAPLINK_STRIPE_ACME_BILLING_SECRET
+      key: tenant-acme-billing-client-secret
+
+tls:
+  existingSecret: snaplink-stripe-adapter-tls
+  mountPath: /etc/snaplink-stripe/tls
+  certKey: tls.crt
+  privateKeyKey: tls.key
+
+service:
+  type: ClusterIP
+  port: 443
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { cpu: "1", memory: 512Mi }
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  scaleDownStabilizationSeconds: 300
+
+pdb:
+  enabled: true
+  minAvailable: 2
+
+networkPolicy:
+  enabled: false
+  ingress: []
+  egress: []
+
+terminationGracePeriodSeconds: 120
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}

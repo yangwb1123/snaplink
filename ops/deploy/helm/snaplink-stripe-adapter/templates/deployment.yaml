@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "snaplink-stripe-adapter.fullname" . }}
+  labels:
+    {{- include "snaplink-stripe-adapter.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 1, maxSurge: 1 }
+  selector:
+    matchLabels:
+      {{- include "snaplink-stripe-adapter.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/settings: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.externalRevision }}
+        snaplink.io/external-revision: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "snaplink-stripe-adapter.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: payment-adapter
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "snaplink-stripe-adapter.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- range . }}
+        - maxSkew: {{ .maxSkew }}
+          topologyKey: {{ .topologyKey }}
+          whenUnsatisfiable: {{ .whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "snaplink-stripe-adapter.selectorLabels" $ | nindent 14 }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: adapter
+          image: {{ include "snaplink-stripe-adapter.image" (dict "image" .Values.image) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - { name: https, containerPort: 8443, protocol: TCP }
+          envFrom:
+            - configMapRef:
+                name: {{ include "snaplink-stripe-adapter.fullname" . }}-settings
+          env:
+            - name: SNAPLINK_STRIPE_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.existingSecret is required" .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.postgresDSNKey }}
+            - name: SNAPLINK_STRIPE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.stripeAPIKeyKey }}
+            - name: SNAPLINK_STRIPE_WEBHOOK_SECRETS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.webhookSecretsKey }}
+            {{- range .Values.secrets.billingClientSecrets }}
+            - name: {{ .env }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.secrets.existingSecret }}
+                  key: {{ .key }}
+            {{- end }}
+          startupProbe:
+            httpGet: { scheme: HTTPS, path: /livez, port: https }
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { scheme: HTTPS, path: /livez, port: https }
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { scheme: HTTPS, path: /readyz, port: https }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - name: bindings
+              mountPath: {{ printf "%s/%s" .Values.bindings.mountPath .Values.bindings.key }}
+              subPath: {{ .Values.bindings.key }}
+              readOnly: true
+            - name: tls
+              mountPath: {{ .Values.tls.mountPath }}
+              readOnly: true
+      volumes:
+        - name: bindings
+          configMap:
+            name: {{ required "bindings.existingConfigMap is required" .Values.bindings.existingConfigMap }}
+            defaultMode: 0444
+            items:
+              - key: {{ .Values.bindings.key }}
+                path: {{ .Values.bindings.key }}
+        - name: tls
+          secret:
+            secretName: {{ required "tls.existingSecret is required" .Values.tls.existingSecret }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.tls.certKey }}
+                path: {{ .Values.tls.certKey }}
+              - key: {{ .Values.tls.privateKeyKey }}
+                path: {{ .Values.tls.privateKeyKey }}
