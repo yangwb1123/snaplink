@@ -32,6 +32,16 @@ type Subject struct {
 	Attrs     map[string]string // extra claims (email, etc.)
 }
 
+// TokenResponse is the normalized success response from the OAuth token endpoint.
+type TokenResponse struct {
+	AccessToken  string
+	RefreshToken string
+	ExpiresIn    int64
+	Scopes       []string
+	TokenType    string
+	IDToken      string
+}
+
 // CheckRequest is the input to AuthzClient.Check. Permission follows the
 // "<domain>:<action>" convention with "*" and "<domain>:*" wildcards.
 type CheckRequest struct {
