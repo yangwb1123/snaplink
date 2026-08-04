@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: snaplink-sso
+
+resources:
+  - service-account.yaml
+  - deployment.yaml
+  - service.yaml
+
+configMapGenerator:
+  - name: snaplink-audit-provisioner-settings
+    envs:
+      - settings.env
+  - name: snaplink-audit-provisioner-desired
+    files:
+      - desired-state.json=desired-state.example.json
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: snaplink-sso
+    includeSelectors: false

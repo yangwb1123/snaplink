@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "snaplink-audit-provisioner.fullname" . }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "snaplink-audit-provisioner.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "snaplink-audit-provisioner.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: audit-control-plane
+    spec:
+      serviceAccountName: {{ include "snaplink-audit-provisioner.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: provisioner
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: status
+              containerPort: {{ .Values.service.port }}
+          env:
+            - name: SNAPLINK_AUDIT_PROVISIONER_MANIFEST_FILE
+              value: /etc/snaplink-audit-provisioner/desired/..data/desired-state.json
+            - name: SNAPLINK_AUDIT_PROVISIONER_BASE_URL
+              value: {{ .Values.config.auditBaseURL | quote }}
+            - name: SNAPLINK_AUDIT_PROVISIONER_TOKEN_URL
+              value: {{ .Values.config.tokenURL | quote }}
+            - name: SNAPLINK_AUDIT_PROVISIONER_CLIENT_ID
+              value: {{ .Values.config.clientID | quote }}
+            - name: SNAPLINK_AUDIT_PROVISIONER_CLIENT_SECRET_FILE
+              value: /etc/snaplink-audit-provisioner/secret/..data/client-secret
+            - name: SNAPLINK_AUDIT_PROVISIONER_RESOURCE
+              value: {{ .Values.config.resource | quote }}
+            - name: SNAPLINK_AUDIT_PROVISIONER_LISTEN
+              value: {{ printf ":%v" .Values.service.port | quote }}
+            - name: SNAPLINK_AUDIT_PROVISIONER_POLL_INTERVAL
+              value: {{ .Values.config.pollInterval | quote }}
+            - name: SNAPLINK_AUDIT_PROVISIONER_REQUEST_TIMEOUT
+              value: {{ .Values.config.requestTimeout | quote }}
+            - name: SNAPLINK_AUDIT_PROVISIONER_ALLOW_INSECURE_LOOPBACK
+              value: {{ .Values.config.allowInsecureLoopback | quote }}
+          startupProbe:
+            httpGet: { path: /livez, port: status }
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /livez, port: status }
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /readyz, port: status }
+            periodSeconds: 5
+            failureThreshold: 2
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: desired
+              mountPath: /etc/snaplink-audit-provisioner/desired
+              readOnly: true
+            - name: client-secret
+              mountPath: /etc/snaplink-audit-provisioner/secret
+              readOnly: true
+      volumes:
+        - name: desired
+          configMap:
+            name: {{ include "snaplink-audit-provisioner.desiredConfigMap" . }}
+            defaultMode: 0444
+        - name: client-secret
+          secret:
+            secretName: {{ .Values.config.existingSecret }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.config.secretKey }}
+                path: client-secret

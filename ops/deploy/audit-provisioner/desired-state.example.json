@@ -1,0 +1,292 @@
+{
+  "revision": 1,
+  "tenants": [
+    {
+      "id": "tenant-example",
+      "name": "Example tenant",
+      "home_region": "us-west",
+      "data_region": "us-west",
+      "active": true,
+      "events_per_second": 1000,
+      "burst": 2000
+    }
+  ],
+  "sources": [
+    {
+      "tenant_id": "tenant-example",
+      "prefix": "aero-id",
+      "name": "Aero ID audit relay",
+      "allowed_client_ids": ["aero-id-audit-relay"],
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "prefix": "aero-im",
+      "name": "Aero IM audit relay",
+      "allowed_client_ids": ["aero-im-audit-relay"],
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "prefix": "aero-vault",
+      "name": "Aero Vault audit relay",
+      "allowed_client_ids": ["aero-vault-audit-relay"],
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "prefix": "snaplink-billing",
+      "name": "Snaplink Billing audit relay",
+      "allowed_client_ids": ["snaplink-billing-audit-relay"],
+      "active": true
+    }
+  ],
+  "schemas": [
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "aero.id.audit-fact",
+      "version": 1,
+      "event_type": "aero.id.audit-fact",
+      "required_fields": [],
+      "allowed_fields": [],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "personal",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "aero.im.security",
+      "version": 1,
+      "event_type": "aero.im.security",
+      "required_fields": [],
+      "allowed_fields": [],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "confidential",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "aero.vault.security",
+      "version": 1,
+      "event_type": "aero.vault.security",
+      "required_fields": ["fact_kind"],
+      "allowed_fields": [
+        "detail_sha256",
+        "fact_kind",
+        "object_size_bytes",
+        "request_id",
+        "storage_backend"
+      ],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "confidential",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.entitlement.snapshot_published",
+      "version": 1,
+      "event_type": "snaplink.billing.entitlement.snapshot_published",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.subscription.created",
+      "version": 1,
+      "event_type": "snaplink.billing.subscription.created",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.subscription.plan_changed",
+      "version": 1,
+      "event_type": "snaplink.billing.subscription.plan_changed",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.subscription.renewal_failed",
+      "version": 1,
+      "event_type": "snaplink.billing.subscription.renewal_failed",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.subscription.renewed",
+      "version": 1,
+      "event_type": "snaplink.billing.subscription.renewed",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.subscription.status_changed",
+      "version": 1,
+      "event_type": "snaplink.billing.subscription.status_changed",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.topup.chargeback",
+      "version": 1,
+      "event_type": "snaplink.billing.topup.chargeback",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.topup.chargeback_reversed",
+      "version": 1,
+      "event_type": "snaplink.billing.topup.chargeback_reversed",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.topup.created",
+      "version": 1,
+      "event_type": "snaplink.billing.topup.created",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.topup.failed",
+      "version": 1,
+      "event_type": "snaplink.billing.topup.failed",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.topup.refunded",
+      "version": 1,
+      "event_type": "snaplink.billing.topup.refunded",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.topup.succeeded",
+      "version": 1,
+      "event_type": "snaplink.billing.topup.succeeded",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.usage.rollup_closed",
+      "version": 1,
+      "event_type": "snaplink.billing.usage.rollup_closed",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.wallet.adjustment_posted",
+      "version": 1,
+      "event_type": "snaplink.billing.wallet.adjustment_posted",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.wallet.credit_posted",
+      "version": 1,
+      "event_type": "snaplink.billing.wallet.credit_posted",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.wallet.debit_posted",
+      "version": 1,
+      "event_type": "snaplink.billing.wallet.debit_posted",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    },
+    {
+      "tenant_id": "tenant-example",
+      "schema_id": "snaplink.billing.wallet.frozen",
+      "version": 1,
+      "event_type": "snaplink.billing.wallet.frozen",
+      "required_fields": ["facts", "payload_digest"],
+      "allowed_fields": ["facts", "payload_digest"],
+      "encrypted_fields": [],
+      "searchable_fields": [],
+      "classification": "financial",
+      "active": true
+    }
+  ]
+}

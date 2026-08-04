@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "snaplink-audit-provisioner.fullname" . }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "snaplink-audit-provisioner.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: status
+      port: {{ .Values.service.port }}
+      targetPort: status

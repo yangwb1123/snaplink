@@ -1,0 +1,9 @@
+apiVersion: v2
+name: snaplink-audit-provisioner
+description: Create-only Audit Governance tenant, source, and schema provisioner
+type: application
+version: 0.1.0
+appVersion: "latest"
+home: https://github.com/yangwb1123/snaplink
+sources:
+  - https://github.com/yangwb1123/snaplink

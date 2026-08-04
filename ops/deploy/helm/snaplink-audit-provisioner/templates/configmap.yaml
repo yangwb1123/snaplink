@@ -1,0 +1,9 @@
+{{- if .Values.desiredState }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "snaplink-audit-provisioner.fullname" . }}
+data:
+  desired-state.json: |
+{{ .Values.desiredState | indent 4 }}
+{{- end }}

@@ -1,0 +1,37 @@
+replicaCount: 1
+
+image:
+  repository: snaplink/audit-provisioner
+  tag: prod
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+  name: ""
+
+service:
+  port: 8092
+
+config:
+  auditBaseURL: https://audit-governance.snaplink-audit.svc.cluster.local:8089
+  tokenURL: https://sso-server.snaplink-sso.svc.cluster.local:8080/token
+  clientID: snaplink-audit-provisioner
+  resource: audit-governance
+  pollInterval: 30s
+  requestTimeout: 5s
+  existingSecret: snaplink-audit-provisioner
+  secretKey: client-secret
+  existingDesiredConfigMap: snaplink-audit-provisioner-desired
+  allowInsecureLoopback: false
+
+# When non-empty, the chart creates the desired ConfigMap. Keep secrets out of
+# this JSON. Prefer --set-file desiredState=/secure/reviewed/desired.json.
+desiredState: ""
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
