@@ -30,12 +30,11 @@ type RegisterDeps interface {
 	// persistence subsequently fails. It is nil-safe on tenant-less clients
 	// (open registration) and fails OPEN on a store outage — the same
 	// governance posture as the session-creation quota gate.
-	CheckClientCreateQuota(ctx core.HandlerContext, tenantID string) (charged, denied bool)
+	CheckClientCreateQuota(ctx core.HandlerContext, tenantID, clientID string) (charged, denied bool)
 
-	// ReleaseClientCreateQuota compensates a CheckClientCreateQuota charge
-	// when the client-store write fails afterward, so a transient store
-	// error never permanently over-counts the tenant's client usage.
-	ReleaseClientCreateQuota(ctx context.Context, tenantID string)
+	// ReleaseClientCreateQuota releases a client unit after either a failed
+	// charged create or a successful tenant-scoped deletion.
+	ReleaseClientCreateQuota(ctx context.Context, tenantID, clientID string)
 
 	// Auditor returns the audit Recorder so the self-service DCR
 	// create/update/delete paths can record a credential-lifecycle event
@@ -230,13 +229,13 @@ func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
 // never permanently over-counts usage. Returns false when the response was
 // already written (quota denied or persist failure).
 func persistRegisteredClient(d RegisterDeps, ctx core.HandlerContext, client *core.Client) bool {
-	charged, denied := d.CheckClientCreateQuota(ctx, client.TenantID)
+	charged, denied := d.CheckClientCreateQuota(ctx, client.TenantID, client.ID)
 	if denied {
 		return false
 	}
 	if err := d.ClientStoreAccessor().Add(ctx.Request().Context(), client); err != nil {
 		if charged {
-			d.ReleaseClientCreateQuota(ctx.Request().Context(), client.TenantID)
+			d.ReleaseClientCreateQuota(ctx.Request().Context(), client.TenantID, client.ID)
 		}
 		d.SrvLogger().Error("dcr persist failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
@@ -328,6 +327,7 @@ func HandleRegistrationDelete(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
+	d.ReleaseClientCreateQuota(ctx.Request().Context(), client.TenantID, client.ID)
 	d.InvalidateClientCache(client.ID) // evict local + publish KindClientChange to peers
 	// As with the update path: authorizeRegistrationMgmt gates this, so the
 	// event records an authorized self-service deletion only — never a

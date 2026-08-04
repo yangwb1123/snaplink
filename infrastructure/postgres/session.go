@@ -263,6 +263,11 @@ func (s *SessionManager) SetAuthorizedScopes(ctx context.Context, sessionID stri
 	return err
 }
 
+func (s *SessionManager) SetKind(ctx context.Context, sessionID, kind string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET kind = $1 WHERE id = $2`, kind, sessionID)
+	return err
+}
+
 func scanSession(s scanner) (*sso.Session, error) {
 	var (
 		out                              sso.Session
@@ -327,4 +332,5 @@ var (
 	_ sso.SessionTenantLister          = (*SessionManager)(nil)
 	_ sso.SessionTrustManager          = (*SessionManager)(nil)
 	_ core.SessionAuthorizationManager = (*SessionManager)(nil)
+	_ core.SessionKindManager          = (*SessionManager)(nil)
 )

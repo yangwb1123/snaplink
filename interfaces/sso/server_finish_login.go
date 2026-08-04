@@ -7,6 +7,7 @@ import (
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"net/http"
 	"slices"
 	"time"
@@ -155,12 +156,14 @@ func (s *Server) prepareDirectMintSession(ctx HandlerContext, result *AuthResult
 		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrAccessDenied, req.State))
 		return nil, nil, "", false
 	}
+	if errors.Is(err, core.ErrQuotaExceeded) {
+		return nil, nil, "", false
+	}
 	s.logger.Error("failed to create session", "error", err)
 	ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, req.State))
 	return nil, nil, "", false
 }
 
-// finishLoginDirectMint issues session + tokens for direct-mint (response_type empty/token).
 func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) {
 	session, deviceCtx, devID, ok := s.prepareDirectMintSession(ctx, result, req, client)
 	if !ok {
@@ -406,14 +409,11 @@ func (s *Server) finishLoginCodeFlow(ctx HandlerContext, result *AuthResult, req
 	if handled {
 		return
 	}
-	// Canonical OP-session lifecycle: a login that resumed an existing
-	// session (SessionID) or requested one (CreateSession) gets its session
-	// created/validated HERE, in the authorization-code flow — the SID then
-	// rides the code into the exchanged tokens instead of living in an
-	// edition-local cookie store. Fail-open: a session-manager outage or a
-	// stale resumed session drops the sid (login proceeds; auditors see the
-	// empty session on recordLoginSuccess) rather than blocking the login.
+	// A stale/outage session drops sid fail-open; a written policy denial is terminal.
 	sessionID := s.codeFlowSession(ctx, result, req, client)
+	if ctx.Written() {
+		return
+	}
 	code, err := s.issueAuthCode(ctx.Request().Context(), result, req, client, dpopJKT, sessionID)
 	if err != nil {
 		s.logger.Error("failed to issue auth code", "error", err)

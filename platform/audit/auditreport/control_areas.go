@@ -82,6 +82,7 @@ var controlAreaDefs = []controlAreaDef{
 		code: "CC6.3",
 		name: "Privileged and administrative actions",
 		eventTypes: []audit.EventType{
+			audit.EventTenantQuotaProjectionApplied,
 			audit.EventAdminClientCreated,
 			audit.EventAdminClientUpdated,
 			audit.EventAdminClientDeleted,
@@ -158,6 +159,7 @@ var controlAreaDefs = []controlAreaDef{
 		code: "CC7.2",
 		name: "Anomaly and lockout monitoring",
 		eventTypes: []audit.EventType{
+			audit.EventTenantQuotaStoreFailure,
 			audit.EventNewDeviceLogin,
 			audit.EventNewLocation,
 			audit.EventTrustDecay,

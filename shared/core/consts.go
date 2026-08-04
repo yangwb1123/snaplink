@@ -16,29 +16,31 @@ const (
 	// (RFC 7591 Dynamic CLIENT Registration). Default-off — open signup is an
 	// abuse surface most enterprise deployments don't want (they provision via
 	// SCIM/admin); enable deliberately for B2C.
-	PathSignup          = "/auth/register"
-	PathCallback        = "/auth/callback"
-	PathToken           = "/token"
-	PathIntrospect      = "/token/introspect"
-	PathRevoke          = "/token/revoke"
-	PathRevokeAll       = "/token/revoke-all"
-	PathDeviceCode      = "/device/code"
-	PathDeviceVerify    = "/device/verify"
-	PathUserInfo        = "/userinfo"
-	PathLogout          = "/logout"
-	PathEndSession      = "/end_session"
-	PathPAR             = "/par"                        // RFC 9126 Pushed Authorization Requests
-	PathBackchannelAuth = "/backchannel-authentication" // OIDC CIBA Core 1.0 §7
-	PathAPIPrefix       = "/api/v1"
-	PathClientByID      = "/clients/:id"
-	PathAuditEvents     = "/audit/events"
-	PathAuditEventByID  = "/audit/events/:id"
-	PathAuditFacets     = "/audit/facets"
-	PathMyPermissions   = "/permissions/me"
-	PathMyMenus         = "/menus/me"
-	PathMyRoles         = "/roles/me"
-	PathMySessions      = "/sessions/me"
-	PathMySessionByID   = "/sessions/me/:id"
+	PathSignup                      = "/auth/register"
+	PathCallback                    = "/auth/callback"
+	PathToken                       = "/token"
+	PathIntrospect                  = "/token/introspect"
+	PathRevoke                      = "/token/revoke"
+	PathRevokeAll                   = "/token/revoke-all"
+	PathTenantQuotaProjection       = "/api/v1/internal/tenant-quota/projection"
+	ScopeTenantQuotaProjectionWrite = "tenant-quota:projection:write"
+	PathDeviceCode                  = "/device/code"
+	PathDeviceVerify                = "/device/verify"
+	PathUserInfo                    = "/userinfo"
+	PathLogout                      = "/logout"
+	PathEndSession                  = "/end_session"
+	PathPAR                         = "/par"                        // RFC 9126 Pushed Authorization Requests
+	PathBackchannelAuth             = "/backchannel-authentication" // OIDC CIBA Core 1.0 §7
+	PathAPIPrefix                   = "/api/v1"
+	PathClientByID                  = "/clients/:id"
+	PathAuditEvents                 = "/audit/events"
+	PathAuditEventByID              = "/audit/events/:id"
+	PathAuditFacets                 = "/audit/facets"
+	PathMyPermissions               = "/permissions/me"
+	PathMyMenus                     = "/menus/me"
+	PathMyRoles                     = "/roles/me"
+	PathMySessions                  = "/sessions/me"
+	PathMySessionByID               = "/sessions/me/:id"
 	// PathMeSessions*, PathMeSessionByID, and PathMeSessionsRevokeAll are the
 	// /me/*-namespace variants of the /sessions/me* paths. These follow the
 	// self-service /me/* convention (cf. PathMe, PathMyMFA) and provide a

@@ -68,6 +68,13 @@ const (
 	EventIdempotencyCaptureMissing EventType = "idempotency_capture_missing"
 )
 
+// Tenant quota dependency events. Emitted only when quota enforcement fails
+// open because its backing store is unavailable or returns an internal error.
+const (
+	EventTenantQuotaStoreFailure      EventType = "tenant_quota_store_failure"
+	EventTenantQuotaProjectionApplied EventType = "tenant_quota_projection_applied"
+)
+
 // Cluster invalidation bus events.
 const (
 	EventInvalidationBusDegraded    EventType = "invalidation_bus_degraded"

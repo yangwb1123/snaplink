@@ -3,6 +3,7 @@ package oauthwire
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/url"
 	"reflect"
 	"strconv"
@@ -42,8 +43,23 @@ func BindParams(ctx core.HandlerContext, v any) error {
 	default:
 		// Default to JSON for "application/json", missing CT, or
 		// anything unexpected. The original Bind contract.
-		return json.NewDecoder(r.Body).Decode(v)
+		return decodeSingleJSON(r.Body, v)
 	}
+}
+
+func decodeSingleJSON(body io.Reader, target any) error {
+	decoder := json.NewDecoder(body)
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("oauth: request body must contain one JSON value")
+		}
+		return err
+	}
+	return nil
 }
 
 // formIntoStruct decodes url.Values into the target struct using the

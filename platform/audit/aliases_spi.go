@@ -185,6 +185,8 @@ const (
 	EventTOTPEnrollFailed                    = auditspi.EventTOTPEnrollFailed
 	EventTOTPEnrolled                        = auditspi.EventTOTPEnrolled
 	EventTenantSessionsRevoked               = auditspi.EventTenantSessionsRevoked
+	EventTenantQuotaStoreFailure             = auditspi.EventTenantQuotaStoreFailure
+	EventTenantQuotaProjectionApplied        = auditspi.EventTenantQuotaProjectionApplied
 	EventTenantTokensRevoked                 = auditspi.EventTenantTokensRevoked
 	EventTokenIssued                         = auditspi.EventTokenIssued
 	EventTokenRevoked                        = auditspi.EventTokenRevoked

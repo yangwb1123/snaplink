@@ -200,6 +200,12 @@ type SessionMetaCreator interface {
 	CreateWithMeta(ctx context.Context, userID string, meta SessionMeta) (*Session, error)
 }
 
+// SessionKindManager atomically publishes an internally pending session after
+// its quota lease is durable. Missing sessions are idempotent no-ops.
+type SessionKindManager interface {
+	SetKind(ctx context.Context, sessionID, kind string) error
+}
+
 // SessionAuthorizationManager is the optional durable authorization-state
 // extension used by conditional-access convergence. Implementations replace
 // the session's scope ceiling atomically; callers guarantee the replacement is

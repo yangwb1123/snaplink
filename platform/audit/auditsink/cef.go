@@ -160,6 +160,8 @@ var cefEventNames = map[auditspi.EventType]string{
 	auditspi.EventSSFSetReceived:                 "SSF SET Received",
 	auditspi.EventInvalidationBusDegraded:        "Invalidation Bus Degraded",
 	auditspi.EventInvalidationBusReconnected:     "Invalidation Bus Reconnected",
+	auditspi.EventTenantQuotaStoreFailure:        "Tenant Quota Store Failure",
+	auditspi.EventTenantQuotaProjectionApplied:   "Tenant Quota Projection Applied",
 }
 
 const (

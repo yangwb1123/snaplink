@@ -289,6 +289,10 @@ func (s *SessionManager) SetAuthorizedScopes(ctx context.Context, sessionID stri
 	return s.updateSessionFields(ctx, sessionID, "authorized_scopes", strings.Join(scopes, " "))
 }
 
+func (s *SessionManager) SetKind(ctx context.Context, sessionID, kind string) error {
+	return s.updateSessionFields(ctx, sessionID, "kind", kind)
+}
+
 var updateSessionFieldsScript = goredis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 redis.call('HSET', KEYS[1], unpack(ARGV))
@@ -356,4 +360,5 @@ var (
 	_ sso.SessionMetaCreator           = (*SessionManager)(nil)
 	_ sso.SessionTrustManager          = (*SessionManager)(nil)
 	_ core.SessionAuthorizationManager = (*SessionManager)(nil)
+	_ core.SessionKindManager          = (*SessionManager)(nil)
 )

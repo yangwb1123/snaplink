@@ -43,17 +43,19 @@ var severityOverrides = map[auditspi.EventType]severityLevel{
 
 	// bulk-revocation / mass-deletion admin actions — medium: intentional
 	// and usually authorized, but high-blast-radius and worth flagging.
-	auditspi.EventTenantTokensRevoked:       severityMedium,
-	auditspi.EventTenantSessionsRevoked:     severityMedium,
-	auditspi.EventAdminTokenRevoked:         severityMedium,
-	auditspi.EventAdminUserDeleted:          severityMedium,
-	auditspi.EventAdminClientDeleted:        severityMedium,
-	auditspi.EventAdminTenantDeleted:        severityMedium,
-	auditspi.EventAdminSubjectErased:        severityMedium,
-	auditspi.EventSubjectSelfErased:         severityMedium,
-	auditspi.EventAdminDeviceSecretsRevoked: severityMedium,
-	auditspi.EventInvalidationBusDegraded:   severityMedium,
-	auditspi.EventPasswordWeak:              severityLow,
+	auditspi.EventTenantTokensRevoked:          severityMedium,
+	auditspi.EventTenantSessionsRevoked:        severityMedium,
+	auditspi.EventAdminTokenRevoked:            severityMedium,
+	auditspi.EventAdminUserDeleted:             severityMedium,
+	auditspi.EventAdminClientDeleted:           severityMedium,
+	auditspi.EventAdminTenantDeleted:           severityMedium,
+	auditspi.EventAdminSubjectErased:           severityMedium,
+	auditspi.EventSubjectSelfErased:            severityMedium,
+	auditspi.EventAdminDeviceSecretsRevoked:    severityMedium,
+	auditspi.EventInvalidationBusDegraded:      severityMedium,
+	auditspi.EventTenantQuotaStoreFailure:      severityMedium,
+	auditspi.EventTenantQuotaProjectionApplied: severityInfo,
+	auditspi.EventPasswordWeak:                 severityLow,
 
 	// routine read-only queries — informational regardless of volume.
 	auditspi.EventClientAccess:    severityInfo,

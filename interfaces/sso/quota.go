@@ -2,26 +2,266 @@ package sso
 
 import (
 	"context"
-	"math"
+	"encoding/json"
+	"errors"
+	"io"
+	"mime"
 	"net/http"
 	"strconv"
 
+	"github.com/yangwb1123/snaplink/domains/tenant/quotabinding"
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
+
+const tenantQuotaIncrementFailedReason = "increment_failed"
+
+const (
+	tenantQuotaProjectionRealm   = "tenant-quota-projection"
+	maxTenantQuotaProjectionBody = 32 << 10
+)
+
+// TenantQuotaProjectionSource binds a validated OAuth client and an exact
+// source namespace to one tenant. A client may own many tenant sources; the
+// request body can only select from that signed client's configured set.
+type TenantQuotaProjectionSource = quotabinding.Source
+
+// TenantQuotaProjectionSourceRegistry is a live, monotonic desired-state
+// registry. ApplyDesired safely updates a mounted handler without replacing
+// its route or loading executable code.
+type TenantQuotaProjectionSourceRegistry = quotabinding.Registry
+
+func NewTenantQuotaProjectionSourceRegistry(
+	sources []TenantQuotaProjectionSource,
+) (*TenantQuotaProjectionSourceRegistry, error) {
+	return quotabinding.NewRegistry(sources)
+}
+
+// TenantQuotaProjectionReceipt is the monotonic store acknowledgement.
+type TenantQuotaProjectionReceipt struct {
+	TenantID string `json:"tenant_id"`
+	Revision uint64 `json:"revision"`
+	Applied  bool   `json:"applied"`
+}
+
+type tenantQuotaProjectionHandler struct {
+	server   *Server
+	store    core.TenantQuotaProjectionStore
+	audience string
+	sources  *TenantQuotaProjectionSourceRegistry
+}
+
+// NewTenantQuotaProjectionHandler builds the machine-only commercial quota
+// ingress. Tenant authority comes from (validated client_id, configured
+// source_system); tenant_id in JSON is only an exact consistency assertion.
+func NewTenantQuotaProjectionHandler(
+	server *Server, audience string, sources []TenantQuotaProjectionSource,
+) (http.HandlerFunc, error) {
+	registry, err := NewTenantQuotaProjectionSourceRegistry(sources)
+	if err != nil || len(sources) == 0 {
+		return nil, core.ErrInvalidQuotaOperation
+	}
+	return NewTenantQuotaProjectionHandlerWithRegistry(server, audience, registry)
+}
+
+// NewTenantQuotaProjectionHandlerWithRegistry retains a live registry so a
+// precompiled module may apply a new desired-state generation in place.
+func NewTenantQuotaProjectionHandlerWithRegistry(
+	server *Server, audience string, registry *TenantQuotaProjectionSourceRegistry,
+) (http.HandlerFunc, error) {
+	if server == nil || !validProjectionBindingValue(audience) || registry == nil ||
+		len(registry.Snapshot()) == 0 {
+		return nil, core.ErrInvalidQuotaOperation
+	}
+	store, ok := server.tenantQuotaStore.(core.TenantQuotaProjectionStore)
+	if !ok {
+		return nil, core.ErrUnsupportedOperation
+	}
+	handler := &tenantQuotaProjectionHandler{
+		server: server, store: store, audience: audience, sources: registry,
+	}
+	return handler.ServeHTTP, nil
+}
+
+func validProjectionBindingValue(value string) bool {
+	return quotabinding.ValidIdentity(value)
+}
+
+type tenantQuotaProjectionRequest struct {
+	TenantID     string                     `json:"tenant_id"`
+	SourceSystem string                     `json:"source_system"`
+	Projection   core.TenantQuotaProjection `json:"projection"`
+}
+
+func (h *tenantQuotaProjectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := handlerContextForRequest(w, r)
+	tokenNoStoreHeaders(ctx)
+	claims, clientID, ok := h.authenticate(ctx)
+	if !ok {
+		return
+	}
+	request, ok := decodeTenantQuotaProjectionRequest(ctx)
+	if !ok {
+		h.record(ctx, audit.OutcomeFailure, clientID, "", "", "invalid_request")
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, core.ErrInvalidRequest))
+		return
+	}
+	if !quotaProjectionMachineClaims(claims, h.audience) {
+		h.rejectScope(ctx, clientID, "", "")
+		return
+	}
+	tenantID, bound := h.sources.Resolve(clientID, request.SourceSystem)
+	if !bound {
+		h.rejectScope(ctx, clientID, "", "")
+		return
+	}
+	if tenantID != request.TenantID {
+		h.rejectTenantMismatch(ctx, clientID, tenantID, request.SourceSystem)
+		return
+	}
+	h.apply(ctx, clientID, tenantID, request)
+}
+
+func (h *tenantQuotaProjectionHandler) authenticate(
+	ctx HandlerContext,
+) (*TokenClaims, string, bool) {
+	token := dpopSchemeToken(ctx.Request())
+	if token == "" {
+		h.rejectToken(ctx)
+		return nil, "", false
+	}
+	claims, _, err := h.server.validateAnyToken(ctx.Request().Context(), token)
+	if err != nil || claims == nil || claims.TokenUse != core.TokenUseAccessToken ||
+		h.server.verifyDPoPBearer(ctx, claims) != nil || h.server.verifyMTLSBearer(ctx, claims) != nil {
+		h.rejectToken(ctx)
+		return nil, "", false
+	}
+	return claims, claims.ClientID, true
+}
+
+func quotaProjectionMachineClaims(claims *TokenClaims, audience string) bool {
+	if claims == nil || claims.ClientID == "" || claims.Subject != claims.ClientID || claims.JTI == "" ||
+		!claims.AuthTime.IsZero() || claims.SID != "" || claims.Actor != nil || claims.MayAct != nil ||
+		claims.ACR != "" || len(claims.AMR) != 0 {
+		return false
+	}
+	return containsProjectionValue(claims.Audience, audience) &&
+		containsProjectionValue(claims.Scopes, core.ScopeTenantQuotaProjectionWrite)
+}
+
+func containsProjectionValue(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func decodeTenantQuotaProjectionRequest(ctx HandlerContext) (tenantQuotaProjectionRequest, bool) {
+	mediaType, _, err := mime.ParseMediaType(ctx.Request().Header.Get("Content-Type"))
+	if err != nil || mediaType != core.ContentTypeJSON {
+		return tenantQuotaProjectionRequest{}, false
+	}
+	body := http.MaxBytesReader(ctx.ResponseWriter(), ctx.Request().Body, maxTenantQuotaProjectionBody)
+	decoder := json.NewDecoder(body)
+	decoder.DisallowUnknownFields()
+	var request tenantQuotaProjectionRequest
+	if decoder.Decode(&request) != nil {
+		return tenantQuotaProjectionRequest{}, false
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return tenantQuotaProjectionRequest{}, false
+	}
+	if core.ValidateQuotaTenantID(request.TenantID) != nil {
+		return tenantQuotaProjectionRequest{}, false
+	}
+	return request, true
+}
+
+func (h *tenantQuotaProjectionHandler) apply(
+	ctx HandlerContext, clientID, tenantID string, request tenantQuotaProjectionRequest,
+) {
+	if core.ValidateTenantQuotaProjection(&request.Projection) != nil {
+		h.record(ctx, audit.OutcomeFailure, clientID, tenantID, request.SourceSystem, "invalid_projection")
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, core.ErrInvalidRequest))
+		return
+	}
+	applied, err := h.store.ApplyQuotaProjection(
+		ctx.Request().Context(), tenantID, &request.Projection,
+	)
+	if errors.Is(err, core.ErrQuotaRevisionConflict) {
+		h.record(ctx, audit.OutcomeFailure, clientID, tenantID, request.SourceSystem, "revision_conflict")
+		ctx.JSON(http.StatusConflict, errorBody(ctx, core.ErrQuotaProjectionConflict))
+		return
+	}
+	if err != nil {
+		h.server.logger.Error("tenant quota projection apply failed", "tenant_id", tenantID, "client_id", clientID, "error", err)
+		h.record(ctx, audit.OutcomeFailure, clientID, tenantID, request.SourceSystem, "store_unavailable")
+		ctx.JSON(http.StatusServiceUnavailable, errorBody(ctx, core.ErrQuotaProjectionUnavailable))
+		return
+	}
+	reason := "monotonic_noop"
+	if applied {
+		reason = "applied"
+	}
+	h.record(ctx, audit.OutcomeSuccess, clientID, tenantID, request.SourceSystem, reason)
+	ctx.JSON(http.StatusOK, TenantQuotaProjectionReceipt{
+		TenantID: tenantID, Revision: request.Projection.Revision, Applied: applied,
+	})
+}
+
+func (h *tenantQuotaProjectionHandler) rejectToken(ctx HandlerContext) {
+	h.record(ctx, audit.OutcomeFailure, "", "", "", "invalid_token")
+	setBearerChallenge(ctx, tenantQuotaProjectionRealm, core.ErrInvalidToken, "")
+	ctx.JSON(http.StatusUnauthorized, errorBody(ctx, core.ErrInvalidToken))
+}
+
+func (h *tenantQuotaProjectionHandler) rejectScope(
+	ctx HandlerContext, clientID, tenantID, sourceSystem string,
+) {
+	h.record(ctx, audit.OutcomeFailure, clientID, tenantID, sourceSystem, "insufficient_scope")
+	setBearerChallenge(ctx, tenantQuotaProjectionRealm, core.ErrInsufficientScope, "")
+	ctx.JSON(http.StatusForbidden, errorBody(ctx, core.ErrInsufficientScope))
+}
+
+func (h *tenantQuotaProjectionHandler) rejectTenantMismatch(
+	ctx HandlerContext, clientID, tenantID, sourceSystem string,
+) {
+	h.record(ctx, audit.OutcomeFailure, clientID, tenantID, sourceSystem, core.ErrTenantMismatch)
+	setBearerChallenge(ctx, tenantQuotaProjectionRealm, core.ErrTenantMismatch, "")
+	ctx.JSON(http.StatusForbidden, errorBody(ctx, core.ErrTenantMismatch))
+}
+
+func (h *tenantQuotaProjectionHandler) record(
+	ctx HandlerContext, outcome audit.Outcome, clientID, tenantID, sourceSystem, reason string,
+) {
+	if h.server.auditor == nil {
+		return
+	}
+	event := audit.EventFromRequest(ctx)
+	event.Type, event.Outcome, event.Reason = audit.EventTenantQuotaProjectionApplied, outcome, reason
+	event.ActorID, event.ClientID, event.TenantID = clientID, clientID, tenantID
+	if tenantID != "" && sourceSystem != "" && validProjectionBindingValue(sourceSystem) {
+		audit.SetMeta(event, "source_system", sourceSystem)
+	}
+	h.server.auditor.Record(ctx.Request().Context(), event)
+}
 
 // checkQuotaBeforeCreate checks if the tenant has capacity to create a
 // resource. denied=true means a 403 was already written and the caller must
 // stop; charged=true means the caller MUST compensate with
 // releaseResourceQuota if the resource creation subsequently fails, so a
 // transient store error never permanently over-counts usage.
-func (s *Server) checkQuotaBeforeCreate(ctx HandlerContext, tenantID string, resource core.ResourceType) (charged, denied bool) {
+func (s *Server) checkQuotaBeforeCreate(ctx HandlerContext, tenantID string, resource core.ResourceType, resourceID string) (charged, denied bool) {
 	if s.tenantQuotaStore == nil || tenantID == "" {
 		return false, false
 	}
-	err := s.tenantQuotaStore.IncrementUsage(ctx.Request().Context(), tenantID, resource, 1)
+	err := s.reserveResourceQuota(ctx.Request().Context(), tenantID, resource, resourceID)
 	switch {
 	case err == nil:
 		return true, false
@@ -39,10 +279,27 @@ func (s *Server) checkQuotaBeforeCreate(ctx HandlerContext, tenantID string, res
 // releaseResourceQuota compensates a checkQuotaBeforeCreate charge when the
 // resource creation it guarded fails afterward. Fail-open: a decrement error
 // is logged, never surfacing over the original creation error.
-func (s *Server) releaseResourceQuota(ctx context.Context, tenantID string, resource core.ResourceType) {
-	if err := s.tenantQuotaStore.DecrementUsage(ctx, tenantID, resource, 1); err != nil {
+func (s *Server) releaseResourceQuota(ctx context.Context, tenantID string, resource core.ResourceType, resourceID string) {
+	if s.tenantQuotaStore == nil || tenantID == "" {
+		return
+	}
+	var err error
+	if leases, ok := s.tenantQuotaStore.(core.TenantQuotaResourceStore); ok && resourceID != "" {
+		_, err = leases.ReleaseResource(ctx, tenantID, resource, resourceID)
+	} else {
+		err = s.tenantQuotaStore.DecrementUsage(ctx, tenantID, resource, 1)
+	}
+	if err != nil {
 		s.logger.Error("tenant quota release failed", "tenant_id", tenantID, "resource", resource, "error", err)
 	}
+}
+
+func (s *Server) reserveResourceQuota(ctx context.Context, tenantID string, resource core.ResourceType, resourceID string) error {
+	if leases, ok := s.tenantQuotaStore.(core.TenantQuotaResourceStore); ok && resourceID != "" {
+		_, err := leases.ReserveResource(ctx, tenantID, resource, resourceID)
+		return err
+	}
+	return s.tenantQuotaStore.IncrementUsage(ctx, tenantID, resource, 1)
 }
 
 // chargeSessionQuota increments the tenant's session-quota counter before a
@@ -57,19 +314,41 @@ func (s *Server) chargeSessionQuota(ctx HandlerContext, tenantID, userID string)
 	if s.tenantQuotaStore == nil || tenantID == "" {
 		return false, false
 	}
+	if _, managed := s.sessionMgr.(core.TenantSessionQuotaManager); managed {
+		return false, false
+	}
 	rctx := ctx.Request().Context()
 	err := s.tenantQuotaStore.IncrementUsage(rctx, tenantID, core.ResourceSessions, 1)
+	if errors.Is(err, core.ErrQuotaExceeded) && s.reconcileSessionQuota(rctx, tenantID) {
+		err = s.tenantQuotaStore.IncrementUsage(rctx, tenantID, core.ResourceSessions, 1)
+	}
 	switch {
 	case err == nil:
 		return true, false
-	case err == core.ErrQuotaExceeded:
-		s.logger.Error("tenant session quota exceeded", "tenant_id", tenantID, "user", userID)
-		ctx.JSON(http.StatusForbidden, errorBody(ctx, core.ErrQuotaExceededCode))
+	case errors.Is(err, core.ErrQuotaExceeded):
+		s.denySessionQuota(ctx, tenantID, userID)
 		return false, true
 	default:
 		s.logger.Error("tenant quota check failed", "tenant_id", tenantID, "error", err)
 		return false, false
 	}
+}
+
+func (s *Server) denySessionQuota(ctx HandlerContext, tenantID, userID string) {
+	s.logger.Error("tenant session quota exceeded", "tenant_id", tenantID, "user", userID)
+	ctx.JSON(http.StatusForbidden, errorBody(ctx, core.ErrQuotaExceededCode))
+}
+
+func (s *Server) reconcileSessionQuota(ctx context.Context, tenantID string) bool {
+	reconciler, ok := s.sessionMgr.(core.TenantSessionQuotaReconciler)
+	if !ok {
+		return false
+	}
+	if err := reconciler.ReconcileTenantSessionQuota(ctx, tenantID); err != nil {
+		s.logger.Error("tenant session quota reconciliation failed", "tenant_id", tenantID, "error", err)
+		return false
+	}
+	return true
 }
 
 // releaseSessionQuota compensates a chargeSessionQuota charge when the
@@ -89,89 +368,63 @@ func (s *Server) releaseSessionQuota(rctx context.Context, tenantID string) {
 // write subsequently fails. Skips (false, false) when no quota store is
 // wired or the client is tenant-less, and fails OPEN on a non-quota store
 // error — matching the createSession session-quota precedent.
-func (s *Server) CheckClientCreateQuota(ctx HandlerContext, tenantID string) (charged, denied bool) {
-	return s.checkQuotaBeforeCreate(ctx, tenantID, core.ResourceClients)
+func (s *Server) CheckClientCreateQuota(ctx HandlerContext, tenantID, clientID string) (charged, denied bool) {
+	return s.checkQuotaBeforeCreate(ctx, tenantID, core.ResourceClients, clientID)
 }
 
-// ReleaseClientCreateQuota compensates a CheckClientCreateQuota charge when
-// the DCR client-store write fails afterward — without it, a transient
-// store error permanently over-counts the tenant's client usage.
-func (s *Server) ReleaseClientCreateQuota(ctx context.Context, tenantID string) {
-	s.releaseResourceQuota(ctx, tenantID, core.ResourceClients)
+// ReleaseClientCreateQuota releases the client counter after a failed charged
+// create or a successful DCR delete.
+func (s *Server) ReleaseClientCreateQuota(ctx context.Context, tenantID, clientID string) {
+	s.releaseResourceQuota(ctx, tenantID, core.ResourceClients, clientID)
 }
 
-// defaultClientRegistrationRatePerSec / defaultClientRegistrationRateBurst
-// give POST /register (RFC 7591 DCR) a built-in, conservative per-IP rate
-// limit that every server gets for free — NewServer seeds it (sso.go); see
-// checkClientRegistrationRateLimit's doc below for why an unauthenticated
-// (or IAT-shared, effectively public) registration endpoint needs one by
-// default rather than requiring every operator to remember to opt in.
-// 5/min/IP (burst 5) is generous enough for normal client-provisioning
-// bursts (a CI pipeline or onboarding script registering a handful of
-// clients back to back) while bounding the worst case to 300/hour/IP —
-// several orders of magnitude below what unlimited spam could do to
-// client storage.
-const (
-	defaultClientRegistrationRatePerSec = 5.0 / 60
-	defaultClientRegistrationRateBurst  = 5
-)
+// ReleaseDeletedClientQuota is the admin-client lifecycle hook. The full
+// stored record supplies TenantID without adding it to the stable admin proto.
+func (s *Server) ReleaseDeletedClientQuota(ctx context.Context, client *Client) {
+	if client != nil {
+		s.releaseResourceQuota(ctx, client.TenantID, core.ResourceClients, client.ID)
+	}
+}
 
-// handleRegister enforces the DCR-specific rate limit, then delegates to
-// oauth.HandleRegister (RFC 7591 DCR). Lives here (not handlers.go, where
-// every other handleX wrapper is a one-liner) because handlers.go is at its
-// 500-line budget ceiling; quota.go groups the DCR-adjacent throttling
-// concerns (this + CheckClientCreateQuota above) and has ample headroom.
-func (s *Server) handleRegister(ctx HandlerContext) {
-	if s.checkClientRegistrationRateLimit(ctx) {
+// consumeTokenRateQuota charges one authenticated, tenant-matched /token
+// dispatch. A successful idempotency replay never reaches this helper. Quota
+// exhaustion uses the stable rate_limited response; dependency failures are
+// observable but fail open so an outage cannot become an authentication outage.
+func (s *Server) consumeTokenRateQuota(ctx HandlerContext, client *Client) bool {
+	if s.tenantQuotaStore == nil || client == nil || client.TenantID == "" {
+		return false
+	}
+	err := s.tenantQuotaStore.IncrementUsage(ctx.Request().Context(), client.TenantID, core.ResourceTokenRate, 1)
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, core.ErrQuotaExceeded) {
+		ctx.ResponseWriter().Header().Set(ratelimit.HeaderRetryAfter, strconv.Itoa(1))
+		ctx.JSON(http.StatusTooManyRequests, errorBody(ctx, ratelimit.ErrRateLimited))
+		return true
+	}
+	s.logger.Error("tenant token quota check failed", "tenant_id", client.TenantID, "client_id", client.ID, "error", err)
+	s.recordTenantQuotaStoreFailure(ctx, client.ID, client.TenantID, core.ResourceTokenRate)
+	return false
+}
+
+func (s *Server) dispatchTokenGrantWithQuota(ctx HandlerContext, client *Client, req oauth.TokenRequest, dpopJKT, mtlsX5T, idemKey string, idemRW *middleware.CaptureWriter) {
+	if !s.consumeTokenRateQuota(ctx, client) {
+		s.dispatchTokenGrant(ctx, client, req, dpopJKT, mtlsX5T)
+	}
+	s.finishTokenIdempotency(ctx, idemKey, idemRW)
+}
+
+func (s *Server) recordTenantQuotaStoreFailure(ctx HandlerContext, clientID, tenantID string, resource core.ResourceType) {
+	if s.auditor == nil {
 		return
 	}
-	oauth.HandleRegister(s, ctx)
-}
-
-// checkClientRegistrationRateLimit enforces the IP-scoped rate limit on POST
-// /register (RFC 7591 DCR). This is DELIBERATELY separate from the global
-// security.rate_limit.* policy (rateLimitPolicy / interfaces/ratelimit.Policy
-// — opt-in, off by default, and only ever protects this endpoint if an
-// operator remembers to add a "/register" prefix rule to it): an
-// unauthenticated client-registration endpoint left completely unthrottled is
-// a storage-exhaustion / enumeration vector regardless of whether the global
-// limiter is wired, so this guard is seeded with a conservative default at
-// construction time (see defaultClientRegistrationRatePerSec above) and stays
-// on unless an operator explicitly disables it via
-// WithClientRegistrationRateLimit(nil).
-//
-// Keyed by ratelimit.KeyByClientIP — the same trusted-proxies-aware
-// IP-extraction the global rate limiter and geo enrichment use, so a
-// deployment that already wired WithTrustedProxies gets the validated real
-// client IP here too, with no extra configuration.
-//
-// Returns true (a 429 response already written) when the limit was exceeded.
-func (s *Server) checkClientRegistrationRateLimit(ctx HandlerContext) bool {
-	lim := s.clientRegistrationRateLimiter
-	if lim == nil {
-		return false
-	}
-	ok, retryAfter := lim.Allow(ratelimit.KeyByClientIP(ctx.Request()))
-	if ok {
-		return false
-	}
-	// Credential-shaped endpoint (mints a client_secret + registration_access_token
-	// on success) — no-store applies to the rejection too, same as every other
-	// /register* response (AGENTS.md "Credential Endpoints").
-	middleware.TokenNoStoreHeaders(ctx)
-	if retryAfter > 0 {
-		// Ceiling division: RFC 7231 interprets Retry-After: 0 as "retry
-		// immediately", so sub-second durations round up to 1.
-		seconds := int(math.Ceil(retryAfter.Seconds()))
-		if seconds < 1 {
-			seconds = 1
-		}
-		ctx.ResponseWriter().Header().Set(ratelimit.HeaderRetryAfter, strconv.Itoa(seconds))
-	}
-	// Reuses the SAME stable "rate_limited" code the global limiter emits
-	// (interfaces/ratelimit.ErrRateLimited) rather than inventing a new one —
-	// callers that already branch on it for the global limiter get identical
-	// behavior here.
-	ctx.JSON(http.StatusTooManyRequests, errorBody(ctx, ratelimit.ErrRateLimited))
-	return true
+	e := audit.EventFromRequest(ctx)
+	e.Type = audit.EventTenantQuotaStoreFailure
+	e.Outcome = audit.OutcomeFailure
+	e.ClientID = clientID
+	e.TenantID = tenantID
+	e.Reason = tenantQuotaIncrementFailedReason
+	audit.SetMeta(e, "resource", string(resource))
+	s.auditor.Record(ctx.Request().Context(), e)
 }

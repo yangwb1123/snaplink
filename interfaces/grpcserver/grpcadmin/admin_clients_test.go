@@ -320,6 +320,33 @@ func TestClientAdminService_RejectDeletesClientAndRecordsReason(t *testing.T) {
 	requireCode(t, err, codes.NotFound)
 }
 
+func TestClientAdminService_DeleteHooksReceiveStoredTenant(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	svc := NewClientAdminService(store, nil, nil, nil)
+	var deleted []string
+	svc.SetClientDeletedHook(func(_ context.Context, client *sso.Client) {
+		deleted = append(deleted, client.TenantID)
+	})
+	ctx := context.Background()
+
+	if err := store.Add(ctx, &sso.Client{ID: "delete-me", TenantID: "tenant-a"}); err != nil {
+		t.Fatalf("seed delete client: %v", err)
+	}
+	if _, err := svc.Delete(ctx, &adminv1.DeleteClientRequest{Id: "delete-me"}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if err := store.Add(ctx, &sso.Client{ID: "reject-me", TenantID: "tenant-b"}); err != nil {
+		t.Fatalf("seed reject client: %v", err)
+	}
+	if _, err := svc.Reject(ctx, &adminv1.RejectClientRequest{Id: "reject-me"}); err != nil {
+		t.Fatalf("Reject: %v", err)
+	}
+	if len(deleted) != 2 || deleted[0] != "tenant-a" || deleted[1] != "tenant-b" {
+		t.Fatalf("deleted tenant callbacks = %v, want [tenant-a tenant-b]", deleted)
+	}
+}
+
 // TestClientAdminService_UpdatePreservesSecretAndAttributes proves the
 // documented anti-footgun behavior: an Update whose proto Client carries no
 // secret (the admin proto has no way to express "leave attributes alone"

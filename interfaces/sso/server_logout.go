@@ -374,6 +374,9 @@ func (s *Server) createSession(ctx HandlerContext, userID, clientID, tenantID st
 		}
 	}
 	sess, err := s.createSessionRecord(ctx, rctx, userID, clientID, tenantID, scopes, authTime, devID)
+	if errors.Is(err, core.ErrQuotaExceeded) {
+		s.denySessionQuota(ctx, tenantID, userID)
+	}
 	if err != nil && charged {
 		s.releaseSessionQuota(rctx, tenantID)
 	}

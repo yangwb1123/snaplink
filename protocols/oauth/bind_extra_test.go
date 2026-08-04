@@ -174,6 +174,17 @@ func TestBindParamsContentTypeWithCharset(t *testing.T) {
 	}
 }
 
+func TestBindParamsRejectsTrailingJSONValue(t *testing.T) {
+	t.Parallel()
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"grant_type":"x"}{"grant_type":"y"}`))
+	req.Header.Set(core.HeaderContentType, core.ContentTypeJSON)
+	rec := httptest.NewRecorder()
+	var got bindTarget
+	if err := BindParams(core.NewContext(rec, req), &got); err == nil {
+		t.Fatal("multiple JSON values must fail binding")
+	}
+}
+
 // TestAuthenticateIntrospectionClientMissingCreds covers the early-return
 // branch when id or secret is empty (no store round trip).
 func TestAuthenticateIntrospectionClientMissingCreds(t *testing.T) {

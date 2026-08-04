@@ -198,8 +198,8 @@ type wiringState struct {
 	// (nil = grant not supported). Wired via WithSAML2BearerGrant.
 	saml2BearerValidator tokengrant.SAMLAssertionValidator
 
-	// tenantQuotaStore enforces per-tenant resource limits (clients, users,
-	// sessions). Nil = no quota enforcement (byte-identical to pre-quota build).
+	// tenantQuotaStore enforces wired tenant client/session/token limits. Nil =
+	// no quota enforcement (byte-identical to pre-quota build).
 	tenantQuotaStore TenantQuotaStore
 
 	// featureGates controls which optional protocol surfaces Mount()

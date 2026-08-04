@@ -55,6 +55,9 @@ type ClientAdminService struct {
 	// no-op. Mirrors the PermissionAdminService callback-field pattern (no
 	// *sso.Server injection into grpcserver).
 	onClientChange func(clientID string)
+	// onClientDeleted releases quota using the full pre-delete record, whose
+	// TenantID is intentionally absent from the admin wire protocol.
+	onClientDeleted func(context.Context, *sso.Client)
 }
 
 // NewClientAdminService builds the service. onDiscoveryChange may be nil
@@ -71,6 +74,18 @@ func NewClientAdminService(store sso.ClientStore, recorder *audit.Recorder, onDi
 		onClientChange = func(string) {}
 	}
 	return &ClientAdminService{store: store, recorder: recorder, onDiscoveryChange: onDiscoveryChange, onClientChange: onClientChange}
+}
+
+// SetClientDeletedHook installs a post-delete lifecycle callback. It is
+// additive so the admin protobuf and the historical constructor stay stable.
+func (s *ClientAdminService) SetClientDeletedHook(fn func(context.Context, *sso.Client)) {
+	s.onClientDeleted = fn
+}
+
+func (s *ClientAdminService) notifyClientDeleted(ctx context.Context, client *sso.Client) {
+	if s.onClientDeleted != nil && client != nil {
+		s.onClientDeleted(ctx, client)
+	}
 }
 
 // List applies filter -> sort -> offset pagination over a full store.List(ctx)
@@ -262,9 +277,11 @@ func (s *ClientAdminService) Delete(ctx context.Context, in *adminv1.DeleteClien
 	if in == nil || in.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "id required")
 	}
+	deletedClient, _ := s.store.Get(ctx, in.Id)
 	if err := s.store.Delete(ctx, in.Id); err != nil {
 		return nil, status.Errorf(codes.Internal, "delete: %v", err)
 	}
+	s.notifyClientDeleted(ctx, deletedClient)
 	recordAdmin(ctx, s.recorder, audit.EventAdminClientDeleted, in.Id)
 	s.onDiscoveryChange()
 	s.onClientChange(in.Id)
@@ -363,6 +380,7 @@ func (s *ClientAdminService) Reject(ctx context.Context, in *adminv1.RejectClien
 	if err := s.store.Delete(ctx, in.Id); err != nil {
 		return nil, status.Errorf(codes.Internal, "reject: %v", err)
 	}
+	s.notifyClientDeleted(ctx, c)
 	meta := map[string]string{"client_name": c.Name}
 	if in.Reason != "" {
 		meta["reason"] = in.Reason

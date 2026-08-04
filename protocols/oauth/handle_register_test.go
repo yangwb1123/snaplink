@@ -21,13 +21,14 @@ import (
 type registerDeps struct {
 	policy      *DCRPolicy
 	clients     core.ClientStore
+	auditor     *audit.Recorder
 	reqErr      error    // forced RequireClientStore error
 	invalidated []string // client IDs passed to InvalidateClientCache
 
 	// quotaCharged, when true, makes CheckClientCreateQuota report a charge
 	// (as if a real quota store were wired) so tests can exercise the
 	// release-on-failure path. releasedQuota records ReleaseClientCreateQuota
-	// calls (tenant IDs) for assertions.
+	// calls (tenant/client IDs) for assertions.
 	quotaCharged  bool
 	releasedQuota []string
 }
@@ -38,13 +39,13 @@ func (d *registerDeps) SrvLogger() spi.Logger                                   
 func (d *registerDeps) ResolveIssuer(core.HandlerContext) string                       { return "https://issuer.test" }
 func (d *registerDeps) SetBearerChallenge(core.HandlerContext, string, string, string) {}
 func (d *registerDeps) RequireClientStore() error                                      { return d.reqErr }
-func (d *registerDeps) Auditor() *audit.Recorder                                       { return nil }
+func (d *registerDeps) Auditor() *audit.Recorder                                       { return d.auditor }
 func (d *registerDeps) InvalidateClientCache(id string)                                { d.invalidated = append(d.invalidated, id) }
-func (d *registerDeps) CheckClientCreateQuota(core.HandlerContext, string) (bool, bool) {
+func (d *registerDeps) CheckClientCreateQuota(core.HandlerContext, string, string) (bool, bool) {
 	return d.quotaCharged, false
 }
-func (d *registerDeps) ReleaseClientCreateQuota(_ context.Context, tenantID string) {
-	d.releasedQuota = append(d.releasedQuota, tenantID)
+func (d *registerDeps) ReleaseClientCreateQuota(_ context.Context, tenantID, clientID string) {
+	d.releasedQuota = append(d.releasedQuota, tenantID+":"+clientID)
 }
 
 var _ RegisterDeps = (*registerDeps)(nil)
@@ -452,13 +453,22 @@ func TestHandleRegistrationDelete(t *testing.T) {
 	t.Parallel()
 	t.Run("valid bearer deletes 204", func(t *testing.T) {
 		d, cs := newRegisterDeps(&DCRPolicy{AllowOpenRegistration: true})
-		cs.put(&core.Client{ID: "c1", RegistrationAccessToken: "rat"}, "")
+		sink := audit.NewMemorySink(4)
+		d.auditor = audit.New(sink)
+		cs.put(&core.Client{ID: "c1", TenantID: "tenant-1", RegistrationAccessToken: "rat"}, "")
 		rec := serveMgmt(d, mgmtHandler(d, HandleRegistrationDelete), http.MethodDelete, "", "c1", "rat")
 		if rec.Code != http.StatusNoContent {
 			t.Fatalf("status = %d, want 204", rec.Code)
 		}
 		if _, err := cs.Get(t.Context(), "c1"); err == nil {
 			t.Fatal("client should be deleted")
+		}
+		if len(d.releasedQuota) != 1 || d.releasedQuota[0] != "tenant-1:c1" {
+			t.Fatalf("released quota = %v, want [tenant-1:c1]", d.releasedQuota)
+		}
+		events, err := sink.Query(t.Context(), audit.Query{Type: audit.EventClientDeleted})
+		if err != nil || len(events) != 1 || events[0].ClientID != "c1" {
+			t.Fatalf("client deletion audit events=%v err=%v", events, err)
 		}
 	})
 

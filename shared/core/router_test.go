@@ -429,11 +429,74 @@ func TestExtractParams(t *testing.T) {
 // the SSO server programs against. A signature drift breaks the build here
 // rather than at every consumer call site.
 var (
-	_ HandlerContext = (*Context)(nil)
-	_ Router         = (*StdRouter)(nil)
-	_ Router         = (*GatedRouter)(nil)
-	_ GatedRegistrar = (*StdRouter)(nil)
+	_ HandlerContext  = (*Context)(nil)
+	_ Router          = (*StdRouter)(nil)
+	_ Router          = (*GatedRouter)(nil)
+	_ GatedRegistrar  = (*StdRouter)(nil)
+	_ LeasedRegistrar = (*StdRouter)(nil)
 )
+
+func TestStdRouterLeasedRoutePinsBeforeMiddleware(t *testing.T) {
+	t.Parallel()
+
+	root := NewStdRouter()
+	middlewareRan := false
+	root.Use(func(ctx HandlerContext) {
+		middlewareRan = true
+		if ctx.Get("generation") != "g1" {
+			t.Error("middleware ran without the pinned generation")
+		}
+	})
+	active := false
+	releases := 0
+	root.RegisterLeased(http.MethodGet, "/leased", func(ctx HandlerContext) {
+		ctx.JSON(http.StatusOK, map[string]bool{"ok": true})
+	}, func(ctx HandlerContext) (func(), bool) {
+		if !active {
+			return nil, false
+		}
+		ctx.Set("generation", "g1")
+		return func() { releases++ }, true
+	})
+
+	baseline := httptest.NewRecorder()
+	root.ServeHTTP(baseline, httptest.NewRequest(http.MethodGet, "/missing", nil))
+	off := httptest.NewRecorder()
+	root.ServeHTTP(off, httptest.NewRequest(http.MethodGet, "/leased", nil))
+	if middlewareRan || off.Code != baseline.Code || off.Body.String() != baseline.Body.String() {
+		t.Fatalf("inactive leased route differed from native 404: status=%d body=%q middleware=%v", off.Code, off.Body.String(), middlewareRan)
+	}
+
+	active = true
+	on := httptest.NewRecorder()
+	root.ServeHTTP(on, httptest.NewRequest(http.MethodGet, "/leased", nil))
+	if on.Code != http.StatusOK || !middlewareRan || releases != 1 {
+		t.Fatalf("active leased route: status=%d middleware=%v releases=%d", on.Code, middlewareRan, releases)
+	}
+}
+
+func TestStdRouterLeasedRouteReleasesAfterMiddlewareAbort(t *testing.T) {
+	t.Parallel()
+
+	root := NewStdRouter()
+	root.Use(func(ctx HandlerContext) {
+		ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "denied"})
+		ctx.Abort()
+	})
+	released := false
+	handled := false
+	root.RegisterLeased(http.MethodGet, "/leased", func(HandlerContext) {
+		handled = true
+	}, func(HandlerContext) (func(), bool) {
+		return func() { released = true }, true
+	})
+
+	recorder := httptest.NewRecorder()
+	root.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/leased", nil))
+	if recorder.Code != http.StatusUnauthorized || handled || !released {
+		t.Fatalf("abort: status=%d handled=%v released=%v", recorder.Code, handled, released)
+	}
+}
 
 // TestGatedRouter_LiveToggleControlsReachabilityByteIdenticalTo404 is the
 // package-local proof of GatedRouter's core claim (interfaces/sso's

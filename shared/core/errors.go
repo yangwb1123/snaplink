@@ -32,6 +32,14 @@ var (
 	// limit. The caller converts this to an appropriate HTTP/gRPC error
 	// (e.g. 403 Forbidden for admin API, invalid_request for token).
 	ErrQuotaExceeded = errors.New("sso: tenant resource quota exceeded")
+	// ErrInvalidQuotaOperation is returned when a quota-store call has an
+	// empty tenant, an unknown resource, a non-positive delta, or an invalid
+	// quota. It is an internal SPI sentinel, not a wire error code.
+	ErrInvalidQuotaOperation = errors.New("sso: invalid tenant quota operation")
+	// ErrQuotaRevisionConflict reports a failed compare-and-swap on a
+	// versioned quota projection or an absolute usage reconciliation. Callers
+	// must refresh the current revision/generation before retrying.
+	ErrQuotaRevisionConflict = errors.New("sso: tenant quota revision conflict")
 
 	// ErrPasswordMismatch is returned by PasswordCredentialStore.VerifyPassword
 	// when the supplied password does not match the stored hash OR no
@@ -160,6 +168,9 @@ const (
 	ErrUnsupportedResponseType    = "unsupported_response_type"
 	ErrRefreshTokenNotConfigured  = "refresh_token_not_configured"
 	ErrInvalidScope               = "invalid_scope"
+	ErrInsufficientScope          = "insufficient_scope"
+	ErrQuotaProjectionConflict    = "quota_revision_conflict"
+	ErrQuotaProjectionUnavailable = "quota_projection_unavailable"
 	ErrInvalidPKCEMethod          = "invalid_pkce_method"
 	ErrPKCERequired               = "pkce_required"
 	ErrInvalidTarget              = "invalid_target"

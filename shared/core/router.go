@@ -57,6 +57,10 @@ type HandlerFunc func(ctx HandlerContext)
 // MiddlewareFunc is the signature for middleware.
 type MiddlewareFunc func(ctx HandlerContext)
 
+// RouteLeaseAcquirer pins the backing route generation before middleware.
+// Returning false makes the route behave as though it was never registered.
+type RouteLeaseAcquirer func(HandlerContext) (release func(), ok bool)
+
 // trackingResponseWriter is the permanent outermost wrapper NewContext
 // installs. It flips a written flag on the first Write/WriteHeader so
 // Written() stays truthful across SetResponseWriter swaps — a bare flag on
@@ -171,7 +175,8 @@ type StdRoute struct {
 	// was registered) would otherwise still run and stamp response
 	// headers before a handler-level gate check ever got a chance to
 	// reject the request. See GatedRouter's doc for the full rationale.
-	live func() bool
+	live    func() bool
+	acquire RouteLeaseAcquirer
 }
 
 // StdRouter implements Router using the standard library. Groups share the
@@ -230,6 +235,17 @@ func (r *StdRouter) RegisterGated(method, path string, handler HandlerFunc, live
 	})
 }
 
+// RegisterLeased registers a static route whose backing generation is pinned
+// before any route middleware runs and released after the request completes.
+func (r *StdRouter) RegisterLeased(
+	method, path string, handler HandlerFunc, acquire RouteLeaseAcquirer,
+) {
+	*r.routes = append(*r.routes, StdRoute{
+		path: r.prefix + r.buildPath(path), method: method, handler: handler,
+		middlewares: append([]MiddlewareFunc{}, r.middlewares...), acquire: acquire,
+	})
+}
+
 // Group returns a child router whose registrations are prefixed with the
 // given path and inherit the parent's middlewares (plus any new ones).
 // Routes registered on the child end up in the same table the root serves.
@@ -266,6 +282,15 @@ func (r *StdRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// request never gets. See StdRoute.live's doc.
 		if route.live != nil && !route.live() {
 			continue
+		}
+		if route.acquire != nil {
+			release, ok := route.acquire(ctx)
+			if !ok {
+				continue
+			}
+			if release != nil {
+				defer release()
+			}
 		}
 		extractParams(ctx, route.path, req.URL.Path)
 		for _, mw := range route.middlewares {
@@ -364,6 +389,12 @@ func GateHTTPHandler(live func() bool, h http.Handler) http.Handler {
 // methods below).
 type GatedRegistrar interface {
 	RegisterGated(method, path string, handler HandlerFunc, live func() bool)
+}
+
+// LeasedRegistrar is implemented by routers that can pin a route generation
+// at match time, before middleware can observe the request.
+type LeasedRegistrar interface {
+	RegisterLeased(method, path string, handler HandlerFunc, acquire RouteLeaseAcquirer)
 }
 
 // GatedRouter wraps a Router so every handler registered through it — and

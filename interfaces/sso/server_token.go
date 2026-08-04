@@ -59,9 +59,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	if served {
 		return
 	}
-
-	s.dispatchTokenGrant(ctx, client, req, dpopJKT, mtlsX5T)
-	s.finishTokenIdempotency(ctx, idemKey, idemRW)
+	s.dispatchTokenGrantWithQuota(ctx, client, req, dpopJKT, mtlsX5T, idemKey, idemRW)
 }
 
 // beginTokenIdempotency implements the Idempotency-Key fast path: when the

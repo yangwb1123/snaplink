@@ -206,8 +206,8 @@ func WithRiskScorer(r spi.RiskScorer) Option {
 }
 
 // WithTenantQuotaStore wires a per-tenant resource quota store. When set,
-// the server checks resource limits before creating clients, users, or
-// sessions — preventing a single tenant from exhausting shared resources.
+// the server checks the wired client/session lifecycle paths and authenticated
+// token dispatches. The SPI also reserves a user dimension for its lifecycle.
 // A nil store is a no-op (no quota enforcement).
 func WithTenantQuotaStore(qs TenantQuotaStore) Option {
 	return func(s *Server) { s.tenantQuotaStore = qs }

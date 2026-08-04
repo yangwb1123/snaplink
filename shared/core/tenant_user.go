@@ -3,6 +3,9 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
+	"strings"
 	"time"
 )
 
@@ -164,6 +167,13 @@ const (
 	ResourceUsers     ResourceType = "users"
 	ResourceSessions  ResourceType = "sessions"
 	ResourceTokenRate ResourceType = "token_rate"
+
+	// TenantQuotaTokenWindowSeconds is the fixed trailing window used to
+	// calculate TenantUsage.TokenRate and enforce MaxTokenRate.
+	TenantQuotaTokenWindowSeconds int64 = 60
+	// TenantQuotaMaxRevision keeps generations and projection revisions inside
+	// signed BIGINT so memory and PostgreSQL expose identical bounds.
+	TenantQuotaMaxRevision uint64 = math.MaxInt64
 )
 
 // TenantQuota defines the resource limits for a single tenant.
@@ -176,6 +186,40 @@ type TenantQuota struct {
 	// MaxTokenRate is the maximum tokens per second this tenant may
 	// issue across all clients. 0 = unlimited.
 	MaxTokenRate int `json:"max_token_rate,omitempty"`
+	// *Limited disambiguates a commercial hard limit of zero from the legacy
+	// zero-as-unlimited contract. Positive Max* values are always limited for
+	// backward compatibility; a zero Max* is limited only when its flag is
+	// true. Static/operator TenantQuota literals therefore retain their old
+	// meaning while an entitlement projection can express "none allowed".
+	ClientsLimited   bool `json:"clients_limited,omitempty"`
+	UsersLimited     bool `json:"users_limited,omitempty"`
+	SessionsLimited  bool `json:"sessions_limited,omitempty"`
+	TokenRateLimited bool `json:"token_rate_limited,omitempty"`
+}
+
+// ResourceLimit returns the hard ceiling and whether it is enabled. The
+// positive-value fallback preserves the original TenantQuota wire and Go API.
+func (q TenantQuota) ResourceLimit(resource ResourceType) (int, bool, error) {
+	switch resource {
+	case ResourceClients:
+		return q.MaxClients, q.MaxClients > 0 || q.ClientsLimited, nil
+	case ResourceUsers:
+		return q.MaxUsers, q.MaxUsers > 0 || q.UsersLimited, nil
+	case ResourceSessions:
+		return q.MaxSessions, q.MaxSessions > 0 || q.SessionsLimited, nil
+	case ResourceTokenRate:
+		return q.MaxTokenRate, q.MaxTokenRate > 0 || q.TokenRateLimited, nil
+	default:
+		return 0, false, fmt.Errorf("%w: unknown resource %q", ErrInvalidQuotaOperation, resource)
+	}
+}
+
+// TenantQuotaProjection is a monotonic commercial entitlement projection.
+// Revision starts at one and identifies the source snapshot; stores ignore an
+// older revision and reject same-revision equivocation.
+type TenantQuotaProjection struct {
+	Revision uint64      `json:"revision"`
+	Quota    TenantQuota `json:"quota"`
 }
 
 // TenantUsage records a tenant's current resource consumption.
@@ -186,6 +230,82 @@ type TenantUsage struct {
 	// TokenRate is the current 1-minute rolling average of token
 	// issuance requests per second.
 	TokenRate float64 `json:"token_rate,omitempty"`
+}
+
+// ValidateQuotaTenantID rejects identifiers that cannot safely identify a
+// quota row. Tenant IDs are stored verbatim, so surrounding whitespace is not
+// normalized into a different tenant.
+func ValidateQuotaTenantID(tenantID string) error {
+	if tenantID == "" || tenantID != strings.TrimSpace(tenantID) {
+		return fmt.Errorf("%w: tenant_id is required without surrounding whitespace", ErrInvalidQuotaOperation)
+	}
+	return nil
+}
+
+// ValidateQuotaResource rejects dimensions outside the closed ResourceType
+// set. Stores must never silently ignore an unknown quota dimension.
+func ValidateQuotaResource(resource ResourceType) error {
+	switch resource {
+	case ResourceClients, ResourceUsers, ResourceSessions, ResourceTokenRate:
+		return nil
+	default:
+		return fmt.Errorf("%w: unknown resource %q", ErrInvalidQuotaOperation, resource)
+	}
+}
+
+// ValidateQuotaGaugeResource restricts idempotent leases and absolute
+// reconciliation to durable gauge resources. Token rate remains a rolling
+// window and is mutated only through IncrementUsage/DecrementUsage.
+func ValidateQuotaGaugeResource(resource ResourceType) error {
+	if err := ValidateQuotaResource(resource); err != nil {
+		return err
+	}
+	if resource == ResourceTokenRate {
+		return fmt.Errorf("%w: token_rate is not a gauge resource", ErrInvalidQuotaOperation)
+	}
+	return nil
+}
+
+// ValidateQuotaResourceID bounds the durable idempotency key used by a
+// resource lease. IDs are stored verbatim and never normalized across tenants.
+func ValidateQuotaResourceID(resourceID string) error {
+	if resourceID == "" || resourceID != strings.TrimSpace(resourceID) || len(resourceID) > 512 {
+		return fmt.Errorf("%w: resource_id must be 1..512 bytes without surrounding whitespace", ErrInvalidQuotaOperation)
+	}
+	return nil
+}
+
+// ValidateQuotaDelta validates a positive increment or decrement representable
+// by TenantUsage's int-valued gauge fields.
+func ValidateQuotaDelta(delta int64) error {
+	if delta <= 0 || delta > int64(math.MaxInt) {
+		return fmt.Errorf("%w: delta must be between 1 and %d", ErrInvalidQuotaOperation, int64(math.MaxInt))
+	}
+	return nil
+}
+
+// ValidateTenantQuota validates a quota before persistence. Negative limits
+// are never interpreted as unlimited, and the token rate must be safe to
+// expand into its 60-second enforcement window.
+func ValidateTenantQuota(quota *TenantQuota) error {
+	if quota == nil {
+		return fmt.Errorf("%w: quota is required", ErrInvalidQuotaOperation)
+	}
+	if quota.MaxClients < 0 || quota.MaxUsers < 0 || quota.MaxSessions < 0 || quota.MaxTokenRate < 0 {
+		return fmt.Errorf("%w: limits must not be negative", ErrInvalidQuotaOperation)
+	}
+	if int64(quota.MaxTokenRate) > math.MaxInt64/TenantQuotaTokenWindowSeconds {
+		return fmt.Errorf("%w: max_token_rate is too large", ErrInvalidQuotaOperation)
+	}
+	return nil
+}
+
+// ValidateTenantQuotaProjection validates a monotonic entitlement snapshot.
+func ValidateTenantQuotaProjection(projection *TenantQuotaProjection) error {
+	if projection == nil || projection.Revision == 0 || projection.Revision > TenantQuotaMaxRevision {
+		return fmt.Errorf("%w: quota projection revision must be positive", ErrInvalidQuotaOperation)
+	}
+	return ValidateTenantQuota(&projection.Quota)
 }
 
 // TenantQuotaStore persists and evaluates per-tenant resource quotas.
@@ -217,4 +337,63 @@ type TenantQuotaStore interface {
 
 	// ResetUsage resets usage counters (e.g. after billing period rollover).
 	ResetUsage(ctx context.Context, tenantID string) error
+}
+
+// TenantQuotaResourceStore is the optional multi-replica-safe gauge extension.
+// ReserveResource and ReleaseResource are idempotent by resourceID. Every
+// first state transition advances that resource's Generation. ReconcileUsage
+// replaces the absolute counter only when expectedGeneration still matches,
+// so a reconciler cannot overwrite a concurrent create/delete.
+type TenantQuotaResourceStore interface {
+	ReserveResource(ctx context.Context, tenantID string, resource ResourceType, resourceID string) (bool, error)
+	ReleaseResource(ctx context.Context, tenantID string, resource ResourceType, resourceID string) (bool, error)
+	GetResourceUsage(ctx context.Context, tenantID string, resource ResourceType) (*TenantResourceUsage, error)
+	ReconcileUsage(ctx context.Context, tenantID string, resource ResourceType, absolute int, expectedGeneration uint64) (uint64, error)
+}
+
+// TenantQuotaResourceSetStore is the exact-set reconciliation extension used
+// for distributed lifecycle gauges. Implementations replace both the counter
+// and active lease set under the same generation CAS, preventing a concurrent
+// create/delete from being lost by an absolute-count repair.
+type TenantQuotaResourceSetStore interface {
+	TenantQuotaResourceStore
+	ResourceLeaseActive(ctx context.Context, tenantID string, resource ResourceType, resourceID string) (bool, error)
+	ReconcileResourceSet(ctx context.Context, tenantID string, resource ResourceType, resourceIDs []string, expectedGeneration uint64) (uint64, error)
+}
+
+// TenantSessionQuotaReconciler is implemented by a SessionManager wrapper
+// that can rebuild the concurrent-session gauge from durable live sessions.
+// The login quota gate invokes it only after an apparent limit hit, allowing
+// naturally expired sessions to stop consuming quota without a global sweep.
+type TenantSessionQuotaReconciler interface {
+	ReconcileTenantSessionQuota(ctx context.Context, tenantID string) error
+}
+
+// TenantSessionQuotaManager marks a SessionManager that owns admission and
+// lifecycle leases itself; the legacy pre-create scalar charge must skip it.
+type TenantSessionQuotaManager interface {
+	TenantSessionQuotaReconciler
+	ManagesTenantSessionQuota()
+}
+
+// TenantResourceUsage is the CAS read model for one durable gauge.
+type TenantResourceUsage struct {
+	Value      int    `json:"value"`
+	Generation uint64 `json:"generation"`
+}
+
+// TenantQuotaProjectionStore applies entitlement snapshots monotonically.
+// A stale revision returns (false, nil); the same revision with different
+// content returns ErrQuotaRevisionConflict.
+type TenantQuotaProjectionStore interface {
+	GetQuotaProjection(ctx context.Context, tenantID string) (*TenantQuotaProjection, error)
+	ApplyQuotaProjection(ctx context.Context, tenantID string, projection *TenantQuotaProjection) (bool, error)
+}
+
+// TenantQuotaWindowCleaner is an optional operational extension for stores
+// that persist token-rate buckets. now is the cleanup reference time; buckets
+// outside the trailing quota window may be removed. IncrementUsage and
+// GetUsage remain correct even when this maintenance hook is never called.
+type TenantQuotaWindowCleaner interface {
+	CleanupTokenRateWindows(ctx context.Context, now time.Time) (int64, error)
 }

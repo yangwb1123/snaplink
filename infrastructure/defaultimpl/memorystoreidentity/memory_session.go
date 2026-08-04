@@ -138,6 +138,15 @@ func (m *MemorySessionManager) SetAuthorizedScopes(_ context.Context, sessionID 
 	return nil
 }
 
+func (m *MemorySessionManager) SetKind(_ context.Context, sessionID, kind string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if session, ok := m.sessions[sessionID]; ok {
+		session.Kind = kind
+	}
+	return nil
+}
+
 // DeleteByTenant implements core.SessionTenantIndex: it removes every session
 // stamped with tenantID, returning the count deleted. Backs proactive
 // revocation on tenant suspension/deletion so a session minted while the
@@ -263,6 +272,7 @@ var (
 	_ core.SessionTenantLister         = (*MemorySessionManager)(nil)
 	_ core.SessionTrustManager         = (*MemorySessionManager)(nil)
 	_ core.SessionAuthorizationManager = (*MemorySessionManager)(nil)
+	_ core.SessionKindManager          = (*MemorySessionManager)(nil)
 	_ io.Closer                        = (*MemorySessionManager)(nil)
 	_ core.SessionActivityTracker      = (*MemorySessionManager)(nil)
 )

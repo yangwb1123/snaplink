@@ -3,16 +3,53 @@ package sso
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/selfservice"
 	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
+
+// The DCR endpoint always has a conservative, per-IP storage-abuse guard.
+const (
+	defaultClientRegistrationRatePerSec = 5.0 / 60
+	defaultClientRegistrationRateBurst  = 5
+)
+
+func (s *Server) handleRegister(ctx HandlerContext) {
+	if !s.checkClientRegistrationRateLimit(ctx) {
+		oauth.HandleRegister(s, ctx)
+	}
+}
+
+// checkClientRegistrationRateLimit is separate from the opt-in global rate
+// policy because an unthrottled registration endpoint is a storage-exhaustion
+// vector. It uses the trusted-proxies-aware canonical client IP.
+func (s *Server) checkClientRegistrationRateLimit(ctx HandlerContext) bool {
+	lim := s.clientRegistrationRateLimiter
+	if lim == nil {
+		return false
+	}
+	ok, retryAfter := lim.Allow(ratelimit.KeyByClientIP(ctx.Request()))
+	if ok {
+		return false
+	}
+	middleware.TokenNoStoreHeaders(ctx)
+	if retryAfter > 0 {
+		seconds := max(1, int(math.Ceil(retryAfter.Seconds())))
+		ctx.ResponseWriter().Header().Set(ratelimit.HeaderRetryAfter, strconv.Itoa(seconds))
+	}
+	ctx.JSON(http.StatusTooManyRequests, errorBody(ctx, ratelimit.ErrRateLimited))
+	return true
+}
 
 // handleSelfRegister delegates to selfservice.HandleSelfRegister.
 func (s *Server) handleSelfRegister(ctx HandlerContext) {

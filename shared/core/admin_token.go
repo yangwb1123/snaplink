@@ -92,6 +92,11 @@ const (
 // can distinguish "the user logged in" from "support acted as the user".
 const SessionKindAdminImpersonation = "admin_impersonation"
 
+// SessionKindQuotaPending marks an interactive session that is not usable
+// until its tenant session lease is durably reserved. It is an internal
+// lifecycle state and must never be returned as an authenticated session.
+const SessionKindQuotaPending = "quota_pending"
+
 const (
 	// BreakGlassImpersonationClientID is the synthetic OAuth client_id stamped
 	// on a break-glass impersonation access token. The emergency-support flow
