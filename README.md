@@ -186,6 +186,7 @@ conn, _ := grpc.NewClient("sso:8081", grpc.WithTransportCredentials(insecure.New
 jwks := remote.NewJWKSCache("http://sso:8080/.well-known/jwks.json")
 
 tokens := remote.NewTokenClient("http://sso:8080/token",
+    remote.WithAuthorizationEndpoint("http://sso:8080/auth/login"),
     remote.WithClientID("web-app"),
     remote.WithRedirectURI("https://app.example/callback"),
 )
@@ -193,7 +194,8 @@ auth  := remote.NewAuthClient(jwks)     // ValidateToken / Logout
 authz := remote.NewAuthzClient(conn)    // Check / ListPermissions / ListRoles / GetMenus (gRPC)
 audit := remote.NewAuditClient(conn)    // Record (gRPC)
 
-verifier, challenge, _ := tokens.GeneratePKCE() // App stores verifier + state and redirects with challenge.
+target, verifier, _ := tokens.AuthorizationCodeURL(state, "openid", "profile")
+// App stores verifier + state, then redirects the browser to target.
 issued, _ := tokens.ExchangeCode(ctx, callbackCode, verifier)
 _ = issued.AccessToken
 
