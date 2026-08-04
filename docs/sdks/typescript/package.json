@@ -1,6 +1,6 @@
 {
   "name": "@snaplink/sso-client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Generated TypeScript client for the snaplink/sso HTTP API. See README.md for scope; regenerate with `go run ./cmd/gensdk --lang=ts` from the repo root.",
   "license": "Apache-2.0",
   "main": "client.ts",

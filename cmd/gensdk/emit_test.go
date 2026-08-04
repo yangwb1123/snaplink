@@ -142,3 +142,74 @@ func TestGenerateTS_BalancedBracesAndNoRawTemplateLeftovers(t *testing.T) {
 		t.Error(`generated output contains "}});" -- the extra-closing-brace regression`)
 	}
 }
+
+func TestTSWireQueryUsesOpenAPIParameterNames(t *testing.T) {
+	params := []Param{
+		{Name: "client_id", Type: &TypeSpec{Kind: KindString}},
+		{Name: "include_disabled", Type: &TypeSpec{Kind: KindBoolean}},
+	}
+	want := `{ "client_id": query?.clientId, "include_disabled": query?.includeDisabled }`
+	if got := tsWireQuery(params); got != want {
+		t.Errorf("tsWireQuery() = %q, want %q", got, want)
+	}
+}
+
+func TestTSClientAuthenticationOperations(t *testing.T) {
+	cases := map[string]bool{
+		"postToken":      true,
+		"postIntrospect": true,
+		"postRevoke":     true,
+		"postPAR":        true,
+		"postLogin":      false,
+		"postLogout":     false,
+	}
+	for operationID, want := range cases {
+		if got := tsUsesClientAuth(operationID); got != want {
+			t.Errorf("tsUsesClientAuth(%q) = %v, want %v", operationID, got, want)
+		}
+	}
+}
+
+func TestCoreSurfaceIncludesSVERPAdminReads(t *testing.T) {
+	for _, operationID := range []string{"adminLocalUserList", "permissionListRoles"} {
+		if !coreSurface[operationID] {
+			t.Errorf("coreSurface does not include %q", operationID)
+		}
+	}
+}
+
+func TestGenerateTS_ConfidentialAuthAndStrictOptionalTransport(t *testing.T) {
+	reg := NewRegistry(docAny(map[string]interface{}{}))
+	ops := []Operation{
+		{
+			ID: "postToken", Method: "post", Path: "/token", Tag: "auth", HasBody: true,
+			BodyRequired: true, BodyType: &TypeSpec{Kind: KindRef, Name: "TokenRequest"},
+		},
+		{
+			ID: "getMyPermissions", Method: "get", Path: "/permissions/me", Tag: "me",
+			QueryParams: []Param{{Name: "client_id", Type: &TypeSpec{Kind: KindString}}},
+		},
+	}
+	out := GenerateTS("Test", "1.0", reg, ops)
+	for _, want := range []string{
+		"export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;",
+		"clientSecret?: string;",
+		"requestTimeoutMs?: number;",
+		`headers["Authorization"] = "Basic " + encodeBasicCredentials(clientId, clientSecret);`,
+		"delete withoutCredentials.client_secret;",
+		`{ body, clientAuth: true });`,
+		`query: { "client_id": query?.clientId }`,
+		"const init: RequestInit = { method, headers };",
+		"init.signal = AbortSignal.timeout(this.requestTimeoutMs);",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("generated TypeScript missing %q", want)
+		}
+	}
+	if strings.Contains(out, "{ method, headers, body }") {
+		t.Error("generated TypeScript explicitly assigns an undefined body to RequestInit")
+	}
+	if strings.Contains(out, "fetch?: typeof fetch") {
+		t.Error("generated TypeScript requires runtime-specific static fetch properties")
+	}
+}

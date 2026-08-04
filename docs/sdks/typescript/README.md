@@ -1,7 +1,8 @@
 # snaplink/sso — TypeScript client (generated)
 
 > **Scope:** convenience client for a curated OpenAPI subset. It is not a
-> complete SDK for every runtime route, not an npm package, and does not ship a
+> complete SDK for every runtime route, is not published to the public npm
+> registry, and does not ship a
 > login page, self-service portal, setup UI, developer portal, or admin console.
 > `sso-server` is a pure API backend; those browser experiences are separate
 > frontend projects.
@@ -9,6 +10,9 @@
 `client.ts` is **generated output**, committed the same way generated Go under
 `gen/proto/` is: checked in for consumers to use directly, regenerated from
 `docs/openapi.yaml` by a Go program rather than hand-maintained.
+
+The directory is a valid npm package (`@snaplink/sso-client`) and can be
+consumed from a checked-out Snaplink repository with a `file:` dependency.
 
 ```
 go run ./cmd/gensdk --lang=ts
@@ -44,7 +48,8 @@ as `coreSurface` in `cmd/gensdk/operations.go`:
   change, MFA factor listing, session listing/bulk-revoke, consent
   listing, permissions/roles/menu-tree.
 - **A small representative admin sample**: client lookup by id, the
-  runtime endpoint inventory, and the audit-event query API — enough to
+  runtime endpoint inventory, local-user listing, per-client role listing,
+  and the audit-event query API — enough to
   demonstrate the pattern, NOT the full admin
   grpc-gateway-generated admin CRUD surface (clients/users/tenants/
   domains/releases/snapshots/tokens/policies/...), nor SCIM, CAEP/SSF,
@@ -76,7 +81,8 @@ see Usage below.
 - **`oneOf`/`anyOf`** become a TypeScript union of the resolved variants
   (e.g. `IntrospectResponse.aud: string | string[]`, or a whole
   operation's response type like
-  `Promise<LoginResponse | LoginDiscoveryResponse | MFARequiredResponse>`).
+  `Promise<LoginResponse | AuthorizationCodeResponse |
+  LoginDiscoveryResponse | MFARequiredResponse>`).
 - An operation's **form-urlencoded content type is not separately
   modeled** — every curated operation that accepts
   `application/x-www-form-urlencoded` also accepts `application/json`
@@ -110,17 +116,25 @@ await client.logout();
 ```ts
 import { SSOClient, SSOError } from "./client";
 
+let accessToken: string | undefined;
+const clientSecret = process.env.SNAPLINK_CLIENT_SECRET;
+if (!clientSecret) throw new Error("SNAPLINK_CLIENT_SECRET is required");
+
 const client = new SSOClient({
   baseUrl: "https://sso.example.com",
-  getAccessToken: () => localStorage.getItem("access_token") ?? undefined,
+  clientId: "my-confidential-app",
+  clientSecret,
+  requestTimeoutMs: 15_000,
+  getAccessToken: () => accessToken,
 });
 
 const tokens = await client.postToken({
   grant_type: "authorization_code",
   code: "ac_...",
+  code_verifier: "the-original-pkce-verifier",
   redirect_uri: "https://app.example.com/cb",
-  client_id: "my-app",
 });
+accessToken = tokens.access_token;
 
 try {
   const me = await client.getUserInfo();
@@ -131,6 +145,10 @@ try {
   }
 }
 ```
+
+`clientSecret` is for trusted server/BFF runtimes only. The SDK sends it with
+HTTP Basic for token, revocation, introspection, and PAR calls; never bundle a
+confidential client secret into browser code.
 
 `SSOClientOptions.fetch` lets you inject a non-global `fetch`
 implementation (tests, older Node). Any method whose operation requires a

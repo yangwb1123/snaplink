@@ -49,6 +49,7 @@ var coreSurface = map[string]bool{
 	// Small representative admin sample (see README — NOT the full ~150-route
 	// grpc-gateway-generated admin CRUD surface).
 	"getClientByID": true, "getAdminEndpoints": true, "queryAuditEvents": true,
+	"adminLocalUserList": true, "permissionListRoles": true,
 }
 
 var httpMethods = []string{"get", "post", "put", "patch", "delete"}

@@ -62,6 +62,12 @@ class AuditEventList(TypedDict, total=False):
     events: List[AuditEvent]
 
 
+class AuthorizationCodeResponse(TypedDict, total=False):
+    code: str  # Short-lived, single-use authorization code to exchange at /token.
+    iss: str  # RFC 9207 authorization-server issuer identifier.
+    state: str  # Opaque state echoed when it was supplied in LoginRequest.
+
+
 class AuthorizationDetail(TypedDict, total=False):
     """One element of RFC 9396 Rich Authorization Requests"""
     actions: List[str]  # RFC 9396 §3.3 — action verbs (read, write, transfer).
@@ -188,6 +194,7 @@ class IntrospectResponse(TypedDict, total=False):
     iat: int  # Unix issued-at seconds.
     iss: str
     jti: str
+    renew_after: int  # Unix time this still-active token needs renewal, an early
     scope: str
     sub: str
     token_type: str
@@ -207,6 +214,26 @@ class JWKS(TypedDict, total=False):
     keys: List[JWK]
 
 
+class ListRolesResponse(TypedDict, total=False):
+    nextPageToken: str  # Opaque cursor for the next page; empty on the last page.
+    roles: List[Role]
+    totalSize: int  # Total roles in the client registry.
+
+
+class LocalUserResponse(TypedDict, total=False):
+    """A LOCAL (password-authenticated) user — distinct from AdminUser"""
+    attributes: Dict[str, str]
+    created_at: str
+    display_name: str
+    email: str
+    external_id: str
+    id: str
+    name: str
+    provider: str
+    updated_at: str
+    username: str
+
+
 class LoginDiscoveryResponse(TypedDict, total=False):
     providers: List[str]  # Authenticator names this client may use.
 
@@ -214,9 +241,15 @@ class LoginDiscoveryResponse(TypedDict, total=False):
 class LoginRequest(TypedDict, total=False):
     authorization_details: List[AuthorizationDetail]  # RFC 9396 Rich Authorization Requests. Each element MUST
     client_id: str  # Registered Client.ID (per cmd/sso-server/config.yaml `clients[]`).
+    code_challenge: str  # RFC 7636 PKCE code challenge for authorization-code login.
+    code_challenge_method: str  # RFC 7636 PKCE transformation; S256 is recommended and may be required.
     credential: Dict[str, str]  # Provider-specific credential map. Standard keys:
+    device_token: str  # Opaque "remember this device" grant minted by a prior
+    nonce: str  # OIDC nonce bound to a subsequently issued ID token.
     provider: str  # Authenticator name; omit for discovery.
+    redirect_uri: str  # Registered redirect URI bound to the authorization code.
     resource: List[str]  # RFC 8707 resource indicators. Each value MUST be in the
+    response_type: str  # Request an OAuth 2.0 authorization code instead of direct token minting.
     scope: List[str]
     state: str  # Opaque value echoed back to redirect-based flows.
 
@@ -224,8 +257,13 @@ class LoginRequest(TypedDict, total=False):
 class LoginResponse(TypedDict, total=False):
     access_token: str  # Ed25519 JWT (when client uses `token_strategy: jwt`) or opaque session token (when `session`).
     country_code: str  # ISO 3166-1 alpha-2; populated when geo middleware is wired.
+    device_token: str  # Present only on a `POST /auth/mfa` completion where the
     expires_in: int  # Token lifetime in seconds.
+    id_token: str  # OIDC ID token, present when the granted scope includes openid.
+    iss: str  # RFC 9207 authorization-server issuer identifier.
     menus: MenuTree  # Present when `permissions.embed_in_login: true`.
+    passkey_enrollment_recommended: bool  # Advisory UX nudge — present (`true`) only when
+    passkey_recovery_allowed: bool  # Advisory metadata accompanying `passkey_enrollment_recommended`
     permissions: List[Permission]  # Present when `permissions.embed_in_login: true`.
     recommended_language: str  # BCP-47 tag; populated when geo middleware is wired.
     refresh_token: str
@@ -248,6 +286,7 @@ class MFACompleteRequest(TypedDict, total=False):
     mfa_challenge_id: str  # The opaque challenge id returned by `/auth/login` in the
     mfa_method: str  # One of the values from the `mfa_methods` array the
     params: Dict[str, str]  # Method-specific parameter map. When Params is set it wins
+    trust_device: bool  # When true AND a `TrustedDeviceStore` is wired, a SUCCESSFUL
 
 
 class MFARequiredResponse(TypedDict, total=False):
@@ -272,6 +311,11 @@ class MenuItem(TypedDict, total=False):
 MenuTree = List[MenuItem]
 
 
+class MenuTreeResponse(TypedDict, total=False):
+    client_id: str
+    menus: MenuTree
+
+
 class OpenIDConfiguration(TypedDict, total=False):
     """OpenID Connect Discovery 1.0 + RFC 8414 metadata. Field set"""
     acr_values_supported: List[str]
@@ -291,6 +335,7 @@ class OpenIDConfiguration(TypedDict, total=False):
     id_token_encryption_enc_values_supported: List[str]  # Present only when a JWE response encrypter is wired.
     id_token_signing_alg_values_supported: List[str]
     introspection_endpoint: str
+    introspection_signing_alg_values_supported: List[str]  # RFC 9701 §7. Present ONLY when a dedicated introspection
     issuer: str  # Identifier the AS uses for itself. MUST equal the
     jwks_uri: str
     mtls_endpoint_aliases: Dict[str, str]
@@ -338,10 +383,22 @@ class PARResponse(TypedDict, total=False):
     request_uri: str
 
 
+class PaginatedLocalUsersResponse(TypedDict, total=False):
+    limit: int
+    page: int
+    total: int
+    users: List[LocalUserResponse]
+
+
 class Permission(TypedDict, total=False):
     code: str
     description: str
     name: str
+
+
+class PermissionListResponse(TypedDict, total=False):
+    client_id: str
+    permissions: List[Permission]
 
 
 class RevokeRequest(TypedDict, total=False):
@@ -358,9 +415,14 @@ class Role(TypedDict, total=False):
     permissions: List[str]
 
 
+class RoleListResponse(TypedDict, total=False):
+    client_id: str
+    roles: List[Role]
+
+
 class SendCodeRequest(TypedDict, total=False):
     provider: str
-    target: str  # Phone number (E.164) or email address.
+    target: str  # Phone number (E.164) or email address. `magiclink` also takes an
 
 
 class Session(TypedDict, total=False):
@@ -420,6 +482,32 @@ class User(TypedDict, total=False):
     updated_at: str
 
 
+class UserInfo(TypedDict, total=False):
+    """OIDC Core UserInfo claim projection for an openid-scoped bearer."""
+    acr: str
+    address: Union[str, Dict[str, Any]]
+    amr: List[str]
+    auth_time: int
+    birthdate: str
+    email: str
+    email_verified: bool
+    family_name: str
+    gender: str
+    given_name: str
+    locale: str
+    name: str
+    nickname: str
+    phone_number: str
+    phone_number_verified: bool
+    picture: str
+    preferred_username: str
+    profile: str
+    sub: str
+    updated_at: int
+    website: str
+    zoneinfo: str
+
+
 class SSOClient:
     """Minimal, hand-scoped client for the snaplink/sso HTTP API. See the
     module docstring for exactly what operation surface this covers."""
@@ -465,6 +553,14 @@ class SSOClient:
         """Runtime endpoint inventory — every route this replica actually registered. (operationId: getAdminEndpoints)"""
         return self._request("GET", "/api/v1/admin/endpoints", auth=True)
 
+    def admin_local_user_list(self, query: Optional[Dict[str, Any]] = None) -> PaginatedLocalUsersResponse:
+        """List LOCAL (password-authenticated) users. (operationId: adminLocalUserList)"""
+        return self._request("GET", "/api/v1/admin/local-users", query=query, auth=True)
+
+    def permission_list_roles(self, client_id: str, query: Optional[Dict[str, Any]] = None) -> ListRolesResponse:
+        """List roles for a client. (operationId: permissionListRoles)"""
+        return self._request("GET", f"/api/v1/admin/permissions/{urllib.parse.quote(client_id)}/roles", query=query, auth=True)
+
     def query_audit_events(self, query: Optional[Dict[str, Any]] = None) -> AuditEventList:
         """Query audit events. (operationId: queryAuditEvents)"""
         return self._request("GET", "/api/v1/audit/events", query=query, auth=True)
@@ -475,11 +571,11 @@ class SSOClient:
 
     # ---- auth ----
 
-    def post_login(self, body: LoginRequest) -> Union[LoginResponse, LoginDiscoveryResponse, MFARequiredResponse]:
+    def post_login(self, body: LoginRequest) -> Union[LoginResponse, AuthorizationCodeResponse, LoginDiscoveryResponse, MFARequiredResponse]:
         """Authenticate and receive a token. (operationId: postLogin)"""
         return self._request("POST", "/auth/login", body=body)
 
-    def post_mfa_complete(self, body: MFACompleteRequest) -> LoginResponse:
+    def post_mfa_complete(self, body: MFACompleteRequest) -> Union[LoginResponse, AuthorizationCodeResponse]:
         """Complete an MFA step-up challenge. (operationId: postMFAComplete)"""
         return self._request("POST", "/auth/mfa", body=body)
 
@@ -551,17 +647,17 @@ class SSOClient:
 
     # ---- me ----
 
-    def get_my_menus(self) -> MenuTree:
+    def get_my_menus(self, query: Optional[Dict[str, Any]] = None) -> MenuTreeResponse:
         """Menu tree the bearer's subject is authorized to see. (operationId: getMyMenus)"""
-        return self._request("GET", "/menus/me", auth=True)
+        return self._request("GET", "/menus/me", query=query, auth=True)
 
-    def get_my_permissions(self) -> List[Permission]:
+    def get_my_permissions(self, query: Optional[Dict[str, Any]] = None) -> PermissionListResponse:
         """Permissions of the bearer's subject for the inferred client. (operationId: getMyPermissions)"""
-        return self._request("GET", "/permissions/me", auth=True)
+        return self._request("GET", "/permissions/me", query=query, auth=True)
 
-    def get_my_roles(self) -> List[Role]:
+    def get_my_roles(self, query: Optional[Dict[str, Any]] = None) -> RoleListResponse:
         """Roles of the bearer's subject for the inferred client. (operationId: getMyRoles)"""
-        return self._request("GET", "/roles/me", auth=True)
+        return self._request("GET", "/roles/me", query=query, auth=True)
 
     # ---- self-service ----
 
@@ -595,7 +691,7 @@ class SSOClient:
 
     # ---- userinfo ----
 
-    def get_user_info(self) -> User:
+    def get_user_info(self) -> UserInfo:
         """Fetch the user record for the bearer's subject. (operationId: getUserInfo)"""
         return self._request("GET", "/userinfo", auth=True)
 

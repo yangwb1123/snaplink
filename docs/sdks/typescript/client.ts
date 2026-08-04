@@ -9,14 +9,19 @@
 // derived/shortened aliasing — so a call site is grep-able straight back to
 // its docs/openapi.yaml operation.
 
+export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export interface SSOClientOptions {
   /** Base URL of the snaplink/sso deployment, e.g. "https://sso.example.com". */
   baseUrl: string;
-  /** This application's registered client_id. Set it here so login(user, pass)
-   *  needs only credentials. */
+  /** This application's registered client_id. */
   clientId?: string;
+  /** Confidential client secret. Server-side use only; sent with HTTP Basic. */
+  clientSecret?: string;
+  /** Per-request timeout in milliseconds. Omit to use the runtime fetch default. */
+  requestTimeoutMs?: number;
   /** Injectable fetch (tests, non-global runtimes). Defaults to globalThis.fetch. */
-  fetch?: typeof fetch;
+  fetch?: FetchLike;
   /** Returns the bearer token for auth-required calls (getMe, revokeMySessions, ...).
    *  Omit it: after login() the SDK holds the access token and auto-attaches it. */
   getAccessToken?: () => string | undefined | Promise<string | undefined>;
@@ -38,6 +43,22 @@ interface requestOptions {
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
   auth?: boolean;
+  clientAuth?: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+function encodeBasicCredentials(clientId: string, clientSecret: string): string {
+  const bytes = new TextEncoder().encode(clientId + ":" + clientSecret);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 // ---- Types (generated from components.schemas) ----
@@ -71,6 +92,15 @@ export interface AuditEvent {
 export interface AuditEventList {
   count: number;
   events: AuditEvent[];
+}
+
+export interface AuthorizationCodeResponse {
+  /** Short-lived, single-use authorization code to exchange at /token. */
+  code: string;
+  /** RFC 9207 authorization-server issuer identifier. */
+  iss: string;
+  /** Opaque state echoed when it was supplied in LoginRequest. */
+  state?: string;
 }
 
 /** One element of RFC 9396 Rich Authorization Requests */
@@ -228,6 +258,8 @@ export interface IntrospectResponse {
   iat?: number;
   iss?: string;
   jti?: string;
+  /** Unix time this still-active token needs renewal, an early */
+  renew_after?: number;
   scope?: string;
   sub?: string;
   token_type?: string;
@@ -249,6 +281,28 @@ export interface JWKS {
   keys: JWK[];
 }
 
+export interface ListRolesResponse {
+  /** Opaque cursor for the next page; empty on the last page. */
+  nextPageToken: string;
+  roles: Role[];
+  /** Total roles in the client registry. */
+  totalSize: number;
+}
+
+/** A LOCAL (password-authenticated) user — distinct from AdminUser */
+export interface LocalUserResponse {
+  attributes?: Record<string, string>;
+  created_at: string;
+  display_name?: string;
+  email?: string;
+  external_id?: string;
+  id: string;
+  name?: string;
+  provider?: string;
+  updated_at: string;
+  username?: string;
+}
+
 export interface LoginDiscoveryResponse {
   /** Authenticator names this client may use. */
   providers: string[];
@@ -259,14 +313,24 @@ export interface LoginRequest {
   authorization_details?: AuthorizationDetail[];
   /** Registered Client.ID (per cmd/sso-server/config.yaml `clients[]`). */
   client_id: string;
+  /** RFC 7636 PKCE code challenge for authorization-code login. */
+  code_challenge?: string;
+  /** RFC 7636 PKCE transformation; S256 is recommended and may be required. */
+  code_challenge_method?: "plain" | "S256";
   /** Provider-specific credential map. Standard keys: */
   credential?: Record<string, string>;
   /** Opaque "remember this device" grant minted by a prior */
   device_token?: string;
+  /** OIDC nonce bound to a subsequently issued ID token. */
+  nonce?: string;
   /** Authenticator name; omit for discovery. */
   provider?: string;
+  /** Registered redirect URI bound to the authorization code. */
+  redirect_uri?: string;
   /** RFC 8707 resource indicators. Each value MUST be in the */
   resource?: string[];
+  /** Request an OAuth 2.0 authorization code instead of direct token minting. */
+  response_type?: "code";
   scope?: string[];
   /** Opaque value echoed back to redirect-based flows. */
   state?: string;
@@ -277,10 +341,20 @@ export interface LoginResponse {
   access_token: string;
   /** ISO 3166-1 alpha-2; populated when geo middleware is wired. */
   country_code?: string;
+  /** Present only on a `POST /auth/mfa` completion where the */
+  device_token?: string;
   /** Token lifetime in seconds. */
   expires_in: number;
+  /** OIDC ID token, present when the granted scope includes openid. */
+  id_token?: string;
+  /** RFC 9207 authorization-server issuer identifier. */
+  iss: string;
   /** Present when `permissions.embed_in_login: true`. */
   menus?: MenuTree;
+  /** Advisory UX nudge — present (`true`) only when */
+  passkey_enrollment_recommended?: boolean;
+  /** Advisory metadata accompanying `passkey_enrollment_recommended` */
+  passkey_recovery_allowed?: boolean;
   /** Present when `permissions.embed_in_login: true`. */
   permissions?: Permission[];
   /** BCP-47 tag; populated when geo middleware is wired. */
@@ -315,6 +389,8 @@ export interface MFACompleteRequest {
   mfa_method: string;
   /** Method-specific parameter map. When Params is set it wins */
   params?: Record<string, string>;
+  /** When true AND a `TrustedDeviceStore` is wired, a SUCCESSFUL */
+  trust_device?: boolean;
 }
 
 export interface MFARequiredResponse {
@@ -343,6 +419,11 @@ export interface MenuItem {
 }
 
 export type MenuTree = MenuItem[];
+
+export interface MenuTreeResponse {
+  client_id: string;
+  menus: MenuTree;
+}
 
 /** OpenID Connect Discovery 1.0 + RFC 8414 metadata. Field set */
 export interface OpenIDConfiguration {
@@ -432,10 +513,22 @@ export interface PARResponse {
   request_uri: string;
 }
 
+export interface PaginatedLocalUsersResponse {
+  limit: number;
+  page: number;
+  total: number;
+  users: LocalUserResponse[];
+}
+
 export interface Permission {
   code: string;
   description?: string;
   name?: string;
+}
+
+export interface PermissionListResponse {
+  client_id: string;
+  permissions: Permission[];
 }
 
 export interface RevokeRequest {
@@ -454,9 +547,14 @@ export interface Role {
   permissions?: string[];
 }
 
+export interface RoleListResponse {
+  client_id: string;
+  roles: Role[];
+}
+
 export interface SendCodeRequest {
-  provider: "phone" | "email";
-  /** Phone number (E.164) or email address. */
+  provider: "phone" | "email" | "magiclink";
+  /** Phone number (E.164) or email address. `magiclink` also takes an */
   target: string;
 }
 
@@ -548,17 +646,50 @@ export interface User {
   updated_at?: string;
 }
 
+/** OIDC Core UserInfo claim projection for an openid-scoped bearer. */
+export interface UserInfo {
+  acr?: string;
+  address?: string | Record<string, unknown>;
+  amr?: string[];
+  auth_time?: number;
+  birthdate?: string;
+  email?: string;
+  email_verified?: boolean;
+  family_name?: string;
+  gender?: string;
+  given_name?: string;
+  locale?: string;
+  name?: string;
+  nickname?: string;
+  phone_number?: string;
+  phone_number_verified?: boolean;
+  picture?: string;
+  preferred_username?: string;
+  profile?: string;
+  sub: string;
+  updated_at?: number;
+  website?: string;
+  zoneinfo?: string;
+}
+
 export class SSOClient {
   private readonly baseUrl: string;
-  private readonly clientId?: string;
-  private readonly fetchImpl: typeof fetch;
-  private readonly getAccessToken?: () => string | undefined | Promise<string | undefined>;
+  private readonly clientId: string | undefined;
+  private readonly clientSecret: string | undefined;
+  private readonly requestTimeoutMs: number | undefined;
+  private readonly fetchImpl: FetchLike;
+  private readonly getAccessToken: (() => string | undefined | Promise<string | undefined>) | undefined;
   /** Access token captured by login(); auto-attached to auth-required calls. */
-  private token?: string;
+  private token: string | undefined;
 
   constructor(opts: SSOClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.clientId = opts.clientId;
+    this.clientSecret = opts.clientSecret;
+    if (opts.requestTimeoutMs !== undefined && (!Number.isFinite(opts.requestTimeoutMs) || opts.requestTimeoutMs <= 0)) {
+      throw new SSOError(0, "invalid_request", "requestTimeoutMs must be a positive finite number");
+    }
+    this.requestTimeoutMs = opts.requestTimeoutMs;
     this.fetchImpl = opts.fetch ?? fetch;
     // Default token source is the token login() captured, so getUserInfo() etc.
     // work right after login without wiring anything.
@@ -630,16 +761,18 @@ export class SSOClient {
       if (s) url += "?" + s;
     }
     const headers: Record<string, string> = { Accept: "application/json" };
-    let body: string | undefined;
-    if (opts.body !== undefined) {
+    const authenticatedBody = opts.clientAuth ? this.withClientAuthentication(opts.body, headers) : opts.body;
+    const init: RequestInit = { method, headers };
+    if (this.requestTimeoutMs !== undefined) init.signal = AbortSignal.timeout(this.requestTimeoutMs);
+    if (authenticatedBody !== undefined) {
       headers["Content-Type"] = "application/json";
-      body = JSON.stringify(opts.body);
+      init.body = JSON.stringify(authenticatedBody);
     }
     if (opts.auth && this.getAccessToken) {
       const token = await this.getAccessToken();
       if (token) headers["Authorization"] = `Bearer ${token}`;
     }
-    const res = await this.fetchImpl(url, { method, headers, body });
+    const res = await this.fetchImpl(url, init);
     if (!res.ok) {
       let error: string | undefined;
       let errorDescription: string | undefined;
@@ -657,6 +790,20 @@ export class SSOClient {
     return (text ? JSON.parse(text) : undefined) as T;
   }
 
+  private withClientAuthentication(body: unknown, headers: Record<string, string>): unknown {
+    if (!isRecord(body)) return body;
+    const clientId = this.clientId ?? stringValue(body.client_id);
+    const clientSecret = this.clientSecret ?? stringValue(body.client_secret);
+    if (!clientSecret) return body;
+    if (!clientId) {
+      throw new SSOError(0, "invalid_request", "clientId is required when a confidential client secret is configured");
+    }
+    headers["Authorization"] = "Basic " + encodeBasicCredentials(clientId, clientSecret);
+    const withoutCredentials = { ...body };
+    delete withoutCredentials.client_id;
+    delete withoutCredentials.client_secret;
+    return withoutCredentials;
+  }
   // ---- admin ----
 
   /** Runtime endpoint inventory — every route this replica actually registered. */
@@ -664,9 +811,19 @@ export class SSOClient {
     return this.request<{ endpoints?: { feature?: string; method?: string; path?: string }[]; status?: string }>("GET", `/api/v1/admin/endpoints`, { auth: true });
   }
 
+  /** List LOCAL (password-authenticated) users. */
+  async adminLocalUserList(query?: { page?: number; limit?: number }): Promise<PaginatedLocalUsersResponse> {
+    return this.request<PaginatedLocalUsersResponse>("GET", `/api/v1/admin/local-users`, { query: { "page": query?.page, "limit": query?.limit }, auth: true });
+  }
+
+  /** List roles for a client. */
+  async permissionListRoles(clientId: string, query?: { pageSize?: number; pageToken?: string }): Promise<ListRolesResponse> {
+    return this.request<ListRolesResponse>("GET", `/api/v1/admin/permissions/${encodeURIComponent(clientId)}/roles`, { query: { "page_size": query?.pageSize, "page_token": query?.pageToken }, auth: true });
+  }
+
   /** Query audit events. */
   async queryAuditEvents(query?: { type?: string; actorId?: string; clientId?: string; tenantId?: string; provider?: string; outcome?: "success" | "failure"; requestId?: string; traceId?: string; since?: string; until?: string; limit?: number; offset?: number }): Promise<AuditEventList> {
-    return this.request<AuditEventList>("GET", `/api/v1/audit/events`, { query, auth: true });
+    return this.request<AuditEventList>("GET", `/api/v1/audit/events`, { query: { "type": query?.type, "actor_id": query?.actorId, "client_id": query?.clientId, "tenant_id": query?.tenantId, "provider": query?.provider, "outcome": query?.outcome, "request_id": query?.requestId, "trace_id": query?.traceId, "since": query?.since, "until": query?.until, "limit": query?.limit, "offset": query?.offset }, auth: true });
   }
 
   /** Fetch one Client record. */
@@ -677,13 +834,13 @@ export class SSOClient {
   // ---- auth ----
 
   /** Authenticate and receive a token. */
-  async postLogin(body: LoginRequest): Promise<LoginResponse | LoginDiscoveryResponse | MFARequiredResponse> {
-    return this.request<LoginResponse | LoginDiscoveryResponse | MFARequiredResponse>("POST", `/auth/login`, { body });
+  async postLogin(body: LoginRequest): Promise<LoginResponse | AuthorizationCodeResponse | LoginDiscoveryResponse | MFARequiredResponse> {
+    return this.request<LoginResponse | AuthorizationCodeResponse | LoginDiscoveryResponse | MFARequiredResponse>("POST", `/auth/login`, { body });
   }
 
   /** Complete an MFA step-up challenge. */
-  async postMFAComplete(body: MFACompleteRequest): Promise<LoginResponse> {
-    return this.request<LoginResponse>("POST", `/auth/mfa`, { body });
+  async postMFAComplete(body: MFACompleteRequest): Promise<LoginResponse | AuthorizationCodeResponse> {
+    return this.request<LoginResponse | AuthorizationCodeResponse>("POST", `/auth/mfa`, { body });
   }
 
   /** Send a one-time code for the named authenticator. */
@@ -708,7 +865,7 @@ export class SSOClient {
 
   /** Pushed Authorization Request (RFC 9126). */
   async postPAR(body: PARRequest): Promise<PARResponse> {
-    return this.request<PARResponse>("POST", `/par`, { body });
+    return this.request<PARResponse>("POST", `/par`, { body, clientAuth: true });
   }
 
   /** Dynamic Client Registration (RFC 7591). */
@@ -733,17 +890,17 @@ export class SSOClient {
 
   /** OAuth 2.0 token endpoint (RFC 6749 §3.2). */
   async postToken(body: TokenRequest): Promise<TokenIssuance> {
-    return this.request<TokenIssuance>("POST", `/token`, { body });
+    return this.request<TokenIssuance>("POST", `/token`, { body, clientAuth: true });
   }
 
   /** OAuth 2.0 token introspection (RFC 7662). */
   async postIntrospect(body: IntrospectRequest): Promise<IntrospectResponse | IntrospectBatchResponse> {
-    return this.request<IntrospectResponse | IntrospectBatchResponse>("POST", `/token/introspect`, { body });
+    return this.request<IntrospectResponse | IntrospectBatchResponse>("POST", `/token/introspect`, { body, clientAuth: true });
   }
 
   /** OAuth 2.0 token revocation (RFC 7009). */
   async postRevoke(body: RevokeRequest): Promise<void> {
-    return this.request<void>("POST", `/token/revoke`, { body });
+    return this.request<void>("POST", `/token/revoke`, { body, clientAuth: true });
   }
 
   /** Bulk revoke every refresh token bound to the bearer's subject. */
@@ -771,18 +928,18 @@ export class SSOClient {
   // ---- me ----
 
   /** Menu tree the bearer's subject is authorized to see. */
-  async getMyMenus(): Promise<MenuTree> {
-    return this.request<MenuTree>("GET", `/menus/me`, { auth: true });
+  async getMyMenus(query?: { clientId?: string }): Promise<MenuTreeResponse> {
+    return this.request<MenuTreeResponse>("GET", `/menus/me`, { query: { "client_id": query?.clientId }, auth: true });
   }
 
   /** Permissions of the bearer's subject for the inferred client. */
-  async getMyPermissions(): Promise<Permission[]> {
-    return this.request<Permission[]>("GET", `/permissions/me`, { auth: true });
+  async getMyPermissions(query?: { clientId?: string }): Promise<PermissionListResponse> {
+    return this.request<PermissionListResponse>("GET", `/permissions/me`, { query: { "client_id": query?.clientId }, auth: true });
   }
 
   /** Roles of the bearer's subject for the inferred client. */
-  async getMyRoles(): Promise<Role[]> {
-    return this.request<Role[]>("GET", `/roles/me`, { auth: true });
+  async getMyRoles(query?: { clientId?: string }): Promise<RoleListResponse> {
+    return this.request<RoleListResponse>("GET", `/roles/me`, { query: { "client_id": query?.clientId }, auth: true });
   }
 
   // ---- self-service ----
@@ -803,8 +960,8 @@ export class SSOClient {
   }
 
   /** List the authenticated user's registered second factors. */
-  async listMyMFAFactors(): Promise<{ factors?: { added_at?: string; id?: string; label?: string; method?: string }[] }> {
-    return this.request<{ factors?: { added_at?: string; id?: string; label?: string; method?: string }[] }>("GET", `/me/mfa`, { auth: true });
+  async listMyMFAFactors(): Promise<{ factors?: { added_at?: string; discoverable?: boolean; id?: string; label?: string; method?: string }[] }> {
+    return this.request<{ factors?: { added_at?: string; discoverable?: boolean; id?: string; label?: string; method?: string }[] }>("GET", `/me/mfa`, { auth: true });
   }
 
   /** Authenticated self-service password change. */
@@ -814,7 +971,7 @@ export class SSOClient {
 
   /** Sign out everywhere — revoke the user's sessions in bulk. */
   async revokeMySessions(query?: { all?: boolean }): Promise<{ revoked?: number }> {
-    return this.request<{ revoked?: number }>("DELETE", `/sessions/me`, { query, auth: true });
+    return this.request<{ revoked?: number }>("DELETE", `/sessions/me`, { query: { "all": query?.all }, auth: true });
   }
 
   /** List the authenticated user's own active sessions. */
@@ -825,8 +982,8 @@ export class SSOClient {
   // ---- userinfo ----
 
   /** Fetch the user record for the bearer's subject. */
-  async getUserInfo(): Promise<User> {
-    return this.request<User>("GET", `/userinfo`, { auth: true });
+  async getUserInfo(): Promise<UserInfo> {
+    return this.request<UserInfo>("GET", `/userinfo`, { auth: true });
   }
 
 }
