@@ -87,12 +87,13 @@ func TestDeployAlerts_AuditLossAndSigningDegradationCovered(t *testing.T) {
 func TestDeployAlerts_ConventionsHold(t *testing.T) {
 	t.Parallel()
 	validSeverity := map[string]bool{"info": true, "warning": true, "critical": true}
+	validComponent := map[string]bool{"sso-server": true, "snaplink-billing": true}
 	for name, r := range loadAlertRules(t) {
 		if !validSeverity[r.Labels["severity"]] {
 			t.Errorf("alert %q severity %q not in info|warning|critical", name, r.Labels["severity"])
 		}
-		if r.Labels["component"] != "sso-server" {
-			t.Errorf("alert %q missing component=sso-server label", name)
+		if !validComponent[r.Labels["component"]] {
+			t.Errorf("alert %q component %q is not a deployed service", name, r.Labels["component"])
 		}
 		if r.Annotations["summary"] == "" || r.Annotations["description"] == "" {
 			t.Errorf("alert %q missing summary/description annotation", name)
