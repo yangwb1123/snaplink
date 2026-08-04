@@ -7,6 +7,38 @@
 # every deployment's "high" looks different.
 
 groups:
+  - name: snaplink-billing-renewals
+    interval: 30s
+    rules:
+
+      - alert: BillingRenewalCycleErrors
+        expr: sum(increase(snaplink_billing_renewal_cycle_errors_total[10m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+          component: snaplink-billing
+        annotations:
+          summary: "Billing automatic renewal cycle is failing"
+          description: |
+            At least one renewal cycle failed in the last 10 minutes. Inspect
+            snaplink-billing logs and PostgreSQL health before the 15-minute
+            readiness tolerance is exhausted; a transient error does not yet
+            withdraw the replica.
+
+      - alert: BillingRenewalBacklogDegraded
+        expr: max(snaplink_billing_renewal_readiness_degraded) > 0
+        for: 2m
+        labels:
+          severity: critical
+          component: snaplink-billing
+        annotations:
+          summary: "Billing renewal backlog exceeded its readiness tolerance"
+          description: |
+            A Billing worker has had an oldest due subscription or no fully
+            successful cycle for more than 15 minutes. Inspect due count,
+            oldest age, observation timestamp, PostgreSQL and worker logs.
+            Keep the worker running so durable leases can drain after recovery.
+
   - name: sso-server
     interval: 30s
     rules:

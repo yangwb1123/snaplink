@@ -7,7 +7,7 @@
 # See README.md for the etcdctl recipes that demonstrate the override.
 
 server:
-  issuer: sso-server
+  issuer: http://localhost:8080
   base_url: http://localhost:8080
   listen: ":8080"
   session_ttl: 24h
@@ -21,3 +21,49 @@ audit:
   enabled: true
   api_enabled: false
   memory_capacity: 1000
+
+# Local-development credential only. Production registers this machine client
+# through the SSO control plane and stores its secret outside ConfigMaps.
+clients:
+  - id: snaplink-console-tenant-a
+    secret: checkout-local-only
+    name: Tenant A local checkout client
+    redirect_uris: []
+    allowed_scopes: [billing:checkout:create]
+    allowed_authenticators: []
+    allowed_resources: [stripe-adapter-api]
+    token_strategy: jwt
+    active: true
+  - id: stripe-tenant-a-adapter
+    secret: stripe-billing-local-only
+    name: Tenant A local Stripe Billing relay
+    redirect_uris: []
+    allowed_scopes: [billing:payment:order:read, billing:payment:write]
+    allowed_authenticators: []
+    allowed_resources: [billing-api]
+    token_strategy: jwt
+    active: true
+  - id: snaplink-billing-quota-relay
+    secret: quota-local-only
+    name: Billing quota projection relay
+    redirect_uris: []
+    allowed_scopes: [tenant-quota:projection:write]
+    allowed_authenticators: []
+    allowed_resources: [snaplink-sso-quota]
+    token_strategy: jwt
+    active: true
+
+tenant:
+  enabled: true
+  resource_quota:
+    backend: memory
+    projection_ingress:
+      enabled: true
+      audience: snaplink-sso-quota
+      sources:
+        - id: billing-quota-tenant-example
+          client_id: snaplink-billing-quota-relay
+          tenant_id: tenant-example
+          source_system: snaplink-billing-quota.YJnQgZ29gnt3CF3TKG-8HZ1HLwSmNkYR9MmjuWPZfNg
+          enabled: true
+          revision: 1

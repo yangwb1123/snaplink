@@ -67,7 +67,22 @@ identity:
   backend: postgres # clients + users (durable system-of-record)
   session_backend: redis # sessions are HOT — keep them on the cluster, not the DB
 permissions: { enabled: true, backend: postgres }
-tenant: { enabled: true, backend: postgres }
+tenant:
+  enabled: true
+  backend: postgres
+  resource_quota:
+    backend: postgres
+    cleanup_interval: 1m
+    projection_ingress:
+      enabled: true
+      audience: snaplink-sso-quota
+      sources:
+        - id: billing-quota-tenant-example
+          client_id: snaplink-billing-quota-relay
+          tenant_id: tenant-example
+          source_system: snaplink-billing-quota.YJnQgZ29gnt3CF3TKG-8HZ1HLwSmNkYR9MmjuWPZfNg
+          enabled: true
+          revision: 1
 audit: { enabled: true, backend: postgres, hash_chain: true }
 self_service:
   consent: { backend: postgres }

@@ -17,3 +17,13 @@ scrape_configs:
         labels:
           service: sso-server
           env: dev
+  - job_name: snaplink-billing
+    scheme: https
+    tls_config:
+      # The compose profile uses Caddy's ephemeral local development CA only.
+      insecure_skip_verify: true
+    static_configs:
+      - targets: ["billing-edge:8443"]
+        labels:
+          service: snaplink-billing
+          env: dev

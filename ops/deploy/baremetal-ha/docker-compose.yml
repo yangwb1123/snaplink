@@ -60,6 +60,9 @@ services:
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg1:5432
       PATRONI_SUPERUSER_PASSWORD: ${POSTGRES_SUPER_PASSWORD}
       PATRONI_REPLICATION_PASSWORD: ${POSTGRES_SUPER_PASSWORD}
+      SSO_DB_PASSWORD: ${SSO_DB_PASSWORD}
+      BILLING_DB_PASSWORD: ${BILLING_DB_PASSWORD}
+      STRIPE_DB_PASSWORD: ${STRIPE_DB_PASSWORD}
       SYNCHRONOUS_MODE: "true"
     volumes:
       - ./patroni/patroni.yml:/etc/patroni/patroni.yml:ro
@@ -140,15 +143,16 @@ services:
     image: snaplink/sso-server:local
     restart: unless-stopped
     networks: [ssoha]
-    command: ["sso-server", "--config", "/etc/sso/config.yaml"]
+    command: ["--config", "/etc/sso/config.yaml"]
     environment:
-      SSO_VIP: ${SSO_VIP}
-      SSO_DB_PASSWORD: ${SSO_DB_PASSWORD}
+      SSO_SERVER__ISSUER: ${SSO_ISSUER}
+      SSO_SERVER__BASE_URL: ${SSO_ISSUER}
+      SSO_POSTGRES__DSN: "host=pg1,pg2,pg3 port=5432 user=sso password=${SSO_DB_PASSWORD} dbname=sso sslmode=disable target_session_attrs=read-write"
       SSO_REDIS__PASSWORD: ${SSO_REDIS_PASSWORD}
     volumes:
       - ./sso/config.yaml:/etc/sso/config.yaml:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/readyz >/dev/null 2>&1 || exit 1"]
+      test: ["CMD", "/healthcheck"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -158,14 +162,16 @@ services:
   sso2:
     <<: *sso
     environment:
-      SSO_VIP: ${SSO_VIP}
-      SSO_DB_PASSWORD: ${SSO_DB_PASSWORD}
+      SSO_SERVER__ISSUER: ${SSO_ISSUER}
+      SSO_SERVER__BASE_URL: ${SSO_ISSUER}
+      SSO_POSTGRES__DSN: "host=pg1,pg2,pg3 port=5432 user=sso password=${SSO_DB_PASSWORD} dbname=sso sslmode=disable target_session_attrs=read-write"
       SSO_REDIS__PASSWORD: ${SSO_REDIS_PASSWORD}
   sso3:
     <<: *sso
     environment:
-      SSO_VIP: ${SSO_VIP}
-      SSO_DB_PASSWORD: ${SSO_DB_PASSWORD}
+      SSO_SERVER__ISSUER: ${SSO_ISSUER}
+      SSO_SERVER__BASE_URL: ${SSO_ISSUER}
+      SSO_POSTGRES__DSN: "host=pg1,pg2,pg3 port=5432 user=sso password=${SSO_DB_PASSWORD} dbname=sso sslmode=disable target_session_attrs=read-write"
       SSO_REDIS__PASSWORD: ${SSO_REDIS_PASSWORD}
 
   # --- Edge: 2x HAProxy (keepalived VIP failover is a VM-only drill) ---
@@ -175,14 +181,165 @@ services:
     networks: [ssoha]
     volumes:
       - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-    ports: ["8080:80", "8404:8404", "5432:5432", "5433:5433"]
+      - ${SSO_TLS_PEM_PATH:-./secrets/sso-edge.pem}:/run/secrets/sso-edge.pem:ro
+    ports: ["8080:80", "8443:443", "8404:8404", "5432:5432", "5433:5433"]
     depends_on:
       sso1: { condition: service_healthy }
     healthcheck:
-      test: ["CMD-SHELL", "haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg"]
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
       interval: 10s
       timeout: 5s
       retries: 5
   haproxy-b:
     <<: *haproxy
-    ports: ["8081:80", "8405:8404"]
+    ports: ["8081:80", "8444:443", "8405:8404"]
+
+  # Billing stays plaintext on 127.0.0.1 inside each HAProxy network namespace.
+  # The public API is available only through HAProxy's TLS commerce/metering ACL.
+  billing-a: &billing
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      target: snaplink-billing
+    image: snaplink/billing:local
+    restart: unless-stopped
+    network_mode: service:haproxy-a
+    extra_hosts:
+      - "${SSO_PUBLIC_HOST}:127.0.0.1"
+    environment: &billing-env
+      SNAPLINK_BILLING_LISTEN: 127.0.0.1:8090
+      SNAPLINK_BILLING_ISSUER: ${SSO_ISSUER}
+      SNAPLINK_BILLING_JWKS_URL: ${SSO_ISSUER}/.well-known/jwks.json
+      SNAPLINK_BILLING_AUDIENCE: ${BILLING_AUDIENCE}
+      SNAPLINK_BILLING_POSTGRES_DSN: "host=pg1,pg2,pg3 port=5432 user=billing password=${BILLING_DB_PASSWORD} dbname=billing sslmode=disable target_session_attrs=read-write"
+      SNAPLINK_BILLING_CATALOG_FILE: /etc/snaplink-billing/catalog.json
+      SNAPLINK_BILLING_SOURCE_BINDINGS_FILE: /etc/snaplink-billing/bindings.json
+      SNAPLINK_BILLING_RENEWALS_ENABLED: ${BILLING_RENEWALS_ENABLED:-false}
+      SNAPLINK_BILLING_AUDIT_BASE_URL: ${BILLING_AUDIT_BASE_URL}
+      SNAPLINK_BILLING_AUDIT_TOKEN_URL: ${SSO_ISSUER}/token
+      SNAPLINK_BILLING_AUDIT_CLIENT_ID: ${BILLING_AUDIT_CLIENT_ID}
+      SNAPLINK_BILLING_AUDIT_CLIENT_SECRET: ${BILLING_AUDIT_CLIENT_SECRET}
+      SNAPLINK_BILLING_AUDIT_RUNTIME_FILE: /etc/snaplink-billing/audit-runtime.json
+      SNAPLINK_BILLING_AUDIT_SOURCE_PREFIX: ${BILLING_AUDIT_SOURCE_PREFIX:-snaplink-billing}
+      SNAPLINK_BILLING_AUDIT_SCOPE: audit:event:write
+      SNAPLINK_BILLING_AUDIT_RESOURCE: audit-governance
+      SNAPLINK_BILLING_QUOTA_BASE_URL: ${SSO_ISSUER}
+      SNAPLINK_BILLING_QUOTA_TOKEN_URL: ${SSO_ISSUER}/token
+      SNAPLINK_BILLING_QUOTA_CLIENT_ID: ${BILLING_QUOTA_CLIENT_ID}
+      SNAPLINK_BILLING_QUOTA_CLIENT_SECRET: ${BILLING_QUOTA_CLIENT_SECRET}
+      SNAPLINK_BILLING_QUOTA_SOURCE_PREFIX: snaplink-billing-quota
+      SNAPLINK_BILLING_QUOTA_SCOPE: tenant-quota:projection:write
+      SNAPLINK_BILLING_QUOTA_RESOURCE: ${BILLING_QUOTA_RESOURCE}
+      SNAPLINK_BILLING_RETENTION_BASE_URL: ${BILLING_AUDIT_BASE_URL}
+      SNAPLINK_BILLING_RETENTION_TOKEN_URL: ${SSO_ISSUER}/token
+      SNAPLINK_BILLING_RETENTION_CLIENT_ID: ${BILLING_RETENTION_CLIENT_ID}
+      SNAPLINK_BILLING_RETENTION_CLIENT_SECRET: ${BILLING_RETENTION_CLIENT_SECRET}
+      SNAPLINK_BILLING_RETENTION_RESOURCE: ${BILLING_RETENTION_RESOURCE}
+      SNAPLINK_BILLING_RELAY_OWNER: billing-a
+      SNAPLINK_BILLING_QUOTA_RELAY_OWNER: billing-a
+      SNAPLINK_BILLING_RENEWALS_OWNER: billing-a
+    volumes:
+      - ../../product/catalog.v1.json:/etc/snaplink-billing/catalog.json:ro
+      - ./billing/source-bindings.json:/etc/snaplink-billing/bindings.json:ro
+      - ./billing/audit-runtime.json:/etc/snaplink-billing/audit-runtime.json:ro
+    depends_on:
+      haproxy-a: { condition: service_started }
+      pg1: { condition: service_healthy }
+  billing-b:
+    <<: *billing
+    network_mode: service:haproxy-b
+    environment:
+      <<: *billing-env
+      SNAPLINK_BILLING_RELAY_OWNER: billing-b
+      SNAPLINK_BILLING_QUOTA_RELAY_OWNER: billing-b
+      SNAPLINK_BILLING_RENEWALS_OWNER: billing-b
+    depends_on:
+      haproxy-b: { condition: service_started }
+      pg1: { condition: service_healthy }
+
+  stripe-bindings-init:
+    image: caddy:2-alpine
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - cp /source/bindings.json /target/bindings.json && chmod 0444 /target/bindings.json
+    volumes:
+      - ./stripe-adapter/bindings.json:/source/bindings.json:ro
+      - stripe-bindings-data:/target
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+
+  # One adapter per edge host. Both share the dedicated Stripe PostgreSQL
+  # database; generation-fenced claims make webhook relay active-active.
+  stripe-a: &stripe-adapter
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      target: snaplink-stripe-adapter
+    image: snaplink/stripe-adapter:local
+    restart: unless-stopped
+    network_mode: service:haproxy-a
+    extra_hosts:
+      - "${SSO_PUBLIC_HOST}:127.0.0.1"
+    environment: &stripe-env
+      SNAPLINK_STRIPE_LISTEN: 127.0.0.1:8091
+      SNAPLINK_STRIPE_POSTGRES_DSN: "host=pg1,pg2,pg3 port=5432 user=stripe_adapter password=${STRIPE_DB_PASSWORD} dbname=stripe_adapter sslmode=disable target_session_attrs=read-write"
+      SNAPLINK_STRIPE_ISSUER: ${SSO_ISSUER}
+      SNAPLINK_STRIPE_JWKS_URL: ${SSO_ISSUER}/.well-known/jwks.json
+      SNAPLINK_STRIPE_AUDIENCE: ${STRIPE_ADAPTER_AUDIENCE}
+      SNAPLINK_STRIPE_BILLING_BASE_URL: ${SSO_ISSUER}
+      SNAPLINK_STRIPE_TOKEN_URL: ${SSO_ISSUER}/token
+      SNAPLINK_STRIPE_BILLING_RESOURCE: ${BILLING_AUDIENCE}
+      SNAPLINK_STRIPE_BINDINGS_FILE: /etc/snaplink-stripe/bindings.json
+      SNAPLINK_STRIPE_API_BASE_URL: https://api.stripe.com
+      SNAPLINK_STRIPE_API_VERSION: ${STRIPE_API_VERSION}
+      SNAPLINK_STRIPE_API_KEY: ${STRIPE_API_KEY}
+      SNAPLINK_STRIPE_WEBHOOK_SECRETS: ${STRIPE_WEBHOOK_SECRETS}
+      SNAPLINK_STRIPE_LIVE_MODE: ${STRIPE_LIVE_MODE}
+      SNAPLINK_STRIPE_ACCOUNT: ${STRIPE_ACCOUNT}
+      SNAPLINK_STRIPE_WEBHOOK_API_VERSION: ${STRIPE_WEBHOOK_API_VERSION}
+      SNAPLINK_STRIPE_RETURN_ORIGINS: ${STRIPE_RETURN_ORIGINS}
+      SNAPLINK_STRIPE_HTTP_TIMEOUT: 10s
+      SNAPLINK_STRIPE_HANDLER_TIMEOUT: 25s
+      SNAPLINK_STRIPE_READY_TIMEOUT: 2s
+      SNAPLINK_STRIPE_POLL_INTERVAL: 1s
+      SNAPLINK_STRIPE_CLAIM_LEASE: 45s
+      SNAPLINK_STRIPE_SHUTDOWN_DRAIN: 50s
+      SNAPLINK_STRIPE_BATCH_SIZE: "50"
+      SNAPLINK_STRIPE_DELIVERY_CONCURRENCY: "8"
+      SNAPLINK_STRIPE_MAX_BACKLOG: "10000"
+      SNAPLINK_STRIPE_MAX_BACKLOG_AGE: 15m
+      SNAPLINK_STRIPE_ALLOW_INSECURE_LOOPBACK: "false"
+      SNAPLINK_STRIPE_ACME_BILLING_SECRET: ${STRIPE_ACME_BILLING_SECRET}
+    volumes:
+      - stripe-bindings-data:/etc/snaplink-stripe:ro
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    depends_on:
+      billing-a: { condition: service_started }
+      pg1: { condition: service_healthy }
+      stripe-bindings-init: { condition: service_completed_successfully }
+  stripe-b:
+    <<: *stripe-adapter
+    network_mode: service:haproxy-b
+    environment:
+      <<: *stripe-env
+    depends_on:
+      billing-b: { condition: service_started }
+      pg1: { condition: service_healthy }
+      stripe-bindings-init: { condition: service_completed_successfully }
+
+  # Explicit operator probe for the distroless app replicas. It is not started
+  # by default; use `docker compose --profile tools run --rm probe ...`.
+  probe:
+    image: curlimages/curl:${CURL_TAG}
+    profiles: [tools]
+    networks: [ssoha]
+    entrypoint: ["/usr/bin/curl"]
+
+volumes:
+  stripe-bindings-data:

@@ -2,6 +2,8 @@
 #
 #   docker compose up                              # sso-server + etcd
 #   docker compose --profile observability up      # adds prometheus + grafana
+#   docker compose --profile payment up            # adds Billing + Stripe adapter
+#   docker compose --profile audit-provisioning up # adds governance provisioner
 #
 # Mirrors deploy/k8s/ for symmetry: the same image, the same config
 # shape, plus the etcd config source the in-cluster path leaves as
@@ -33,7 +35,7 @@ services:
       # Build context is the repo root so the Dockerfile can COPY the
       # whole module. The Dockerfile lives at repo-root, hence the
       # explicit dockerfile path.
-      context: ../..
+      context: ../../..
       dockerfile: Dockerfile
     container_name: snaplink-sso
     command:
@@ -59,6 +61,195 @@ services:
     # NO container healthcheck — the distroless/static base has no
     # shell or HTTP client to exec. The host can curl :8080/livez
     # directly to verify readiness.
+
+  billing-postgres:
+    image: postgres:16-alpine
+    profiles: ["commerce", "payment"]
+    environment:
+      POSTGRES_DB: billing
+      POSTGRES_USER: billing
+      POSTGRES_PASSWORD: billing-local-only
+    volumes:
+      - billing-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U billing -d billing"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Caddy owns the local billing Pod-equivalent network namespace. The billing
+  # process joins it below, so 127.0.0.1:8090 remains unreachable from any
+  # other container while Caddy exposes only TLS :8443.
+  billing-edge:
+    image: caddy:2-alpine
+    profiles: ["commerce", "payment"]
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./billing.Caddyfile:/etc/caddy/Caddyfile:ro
+      - billing-caddy-data:/data
+      - billing-caddy-config:/config
+
+  snaplink-billing:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      target: snaplink-billing
+    image: snaplink/billing:local
+    profiles: ["commerce", "payment"]
+    network_mode: "service:billing-edge"
+    environment:
+      SNAPLINK_BILLING_LISTEN: 127.0.0.1:8090
+      SNAPLINK_BILLING_ISSUER: http://localhost:8080
+      SNAPLINK_BILLING_JWKS_URL: http://127.0.0.1:8088/.well-known/jwks.json
+      SNAPLINK_BILLING_AUDIENCE: billing-api
+      SNAPLINK_BILLING_ALLOW_INSECURE_LOOPBACK: "true"
+      SNAPLINK_BILLING_POSTGRES_DSN: postgres://billing:billing-local-only@billing-postgres:5432/billing?sslmode=disable
+      SNAPLINK_BILLING_CATALOG_FILE: /etc/snaplink-billing/catalog.json
+      SNAPLINK_BILLING_SOURCE_BINDINGS_FILE: /etc/snaplink-billing/bindings.json
+      SNAPLINK_BILLING_RENEWALS_ENABLED: "false"
+      SNAPLINK_BILLING_QUOTA_BASE_URL: http://127.0.0.1:8088
+      SNAPLINK_BILLING_QUOTA_TOKEN_URL: http://127.0.0.1:8088/token
+      SNAPLINK_BILLING_QUOTA_CLIENT_ID: snaplink-billing-quota-relay
+      SNAPLINK_BILLING_QUOTA_CLIENT_SECRET: quota-local-only
+      SNAPLINK_BILLING_QUOTA_SOURCE_PREFIX: snaplink-billing-quota
+      SNAPLINK_BILLING_QUOTA_SCOPE: tenant-quota:projection:write
+      SNAPLINK_BILLING_QUOTA_RESOURCE: snaplink-sso-quota
+      SNAPLINK_BILLING_QUOTA_RELAY_OWNER: compose-billing
+    volumes:
+      - ../../product/catalog.v1.json:/etc/snaplink-billing/catalog.json:ro
+      - ../../../cmd/snaplink-billing/source-bindings.example.json:/etc/snaplink-billing/bindings.json:ro
+    depends_on:
+      sso-server:
+        condition: service_started
+      billing-postgres:
+        condition: service_healthy
+
+  stripe-postgres:
+    image: postgres:16-alpine
+    profiles: ["payment"]
+    environment:
+      POSTGRES_DB: stripe_adapter
+      POSTGRES_USER: stripe_adapter
+      POSTGRES_PASSWORD: stripe-local-only
+    volumes:
+      - stripe-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stripe_adapter -d stripe_adapter"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # The adapter joins this edge's namespace and binds only to loopback. Caddy
+  # exposes local development TLS and supplies loopback bridges to SSO and the
+  # Billing TLS edge; those cleartext hops cannot leave this namespace.
+  stripe-edge:
+    image: caddy:2-alpine
+    profiles: ["payment"]
+    ports:
+      - "8445:8445"
+    volumes:
+      - ./stripe.Caddyfile:/etc/caddy/Caddyfile:ro
+      - stripe-caddy-data:/data
+      - stripe-caddy-config:/config
+    depends_on:
+      sso-server:
+        condition: service_started
+      billing-edge:
+        condition: service_started
+
+  stripe-bindings-init:
+    image: caddy:2-alpine
+    profiles: ["payment"]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - cp /source/bindings.json /target/bindings.json && chmod 0444 /target/bindings.json
+    volumes:
+      - ./stripe-bindings.json:/source/bindings.json:ro
+      - stripe-bindings-data:/target
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+
+  snaplink-stripe-adapter:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      target: snaplink-stripe-adapter
+    image: snaplink/stripe-adapter:local
+    profiles: ["payment"]
+    network_mode: "service:stripe-edge"
+    environment:
+      SNAPLINK_STRIPE_LISTEN: 127.0.0.1:8091
+      SNAPLINK_STRIPE_POSTGRES_DSN: postgres://stripe_adapter:stripe-local-only@stripe-postgres:5432/stripe_adapter?sslmode=disable
+      SNAPLINK_STRIPE_ISSUER: http://localhost:8080
+      SNAPLINK_STRIPE_JWKS_URL: http://127.0.0.1:8088/.well-known/jwks.json
+      SNAPLINK_STRIPE_AUDIENCE: stripe-adapter-api
+      SNAPLINK_STRIPE_BILLING_BASE_URL: http://127.0.0.1:8089
+      SNAPLINK_STRIPE_TOKEN_URL: http://127.0.0.1:8088/token
+      SNAPLINK_STRIPE_BILLING_RESOURCE: billing-api
+      SNAPLINK_STRIPE_BINDINGS_FILE: /etc/snaplink-stripe/bindings.json
+      SNAPLINK_STRIPE_API_BASE_URL: https://api.stripe.com
+      SNAPLINK_STRIPE_API_VERSION: 2025-06-30.basil
+      SNAPLINK_STRIPE_API_KEY: ${STRIPE_API_KEY:-sk_test_local_only}
+      SNAPLINK_STRIPE_WEBHOOK_SECRETS: ${STRIPE_WEBHOOK_SECRETS:-whsec_local_only}
+      SNAPLINK_STRIPE_LIVE_MODE: "false"
+      SNAPLINK_STRIPE_ACCOUNT: platform
+      SNAPLINK_STRIPE_WEBHOOK_API_VERSION: 2025-06-30.basil
+      SNAPLINK_STRIPE_RETURN_ORIGINS: https://console.localhost
+      SNAPLINK_STRIPE_HTTP_TIMEOUT: 10s
+      SNAPLINK_STRIPE_HANDLER_TIMEOUT: 25s
+      SNAPLINK_STRIPE_READY_TIMEOUT: 2s
+      SNAPLINK_STRIPE_POLL_INTERVAL: 1s
+      SNAPLINK_STRIPE_CLAIM_LEASE: 45s
+      SNAPLINK_STRIPE_SHUTDOWN_DRAIN: 50s
+      SNAPLINK_STRIPE_BATCH_SIZE: "50"
+      SNAPLINK_STRIPE_DELIVERY_CONCURRENCY: "8"
+      SNAPLINK_STRIPE_MAX_BACKLOG: "10000"
+      SNAPLINK_STRIPE_MAX_BACKLOG_AGE: 15m
+      SNAPLINK_STRIPE_ALLOW_INSECURE_LOOPBACK: "true"
+      SNAPLINK_STRIPE_TENANT_A_BILLING_SECRET: ${STRIPE_BILLING_CLIENT_SECRET:-stripe-billing-local-only}
+    volumes:
+      - stripe-bindings-data:/etc/snaplink-stripe:ro
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    depends_on:
+      stripe-edge:
+        condition: service_started
+      stripe-postgres:
+        condition: service_healthy
+      stripe-bindings-init:
+        condition: service_completed_successfully
+
+  snaplink-audit-provisioner:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      target: snaplink-audit-provisioner
+    image: snaplink/audit-provisioner:local
+    profiles: ["audit-provisioning"]
+    environment:
+      SNAPLINK_AUDIT_PROVISIONER_MANIFEST_FILE: /etc/snaplink-audit-provisioner/desired-state.json
+      SNAPLINK_AUDIT_PROVISIONER_BASE_URL: ${AUDIT_GOVERNANCE_BASE_URL:-https://audit-governance:8089}
+      SNAPLINK_AUDIT_PROVISIONER_TOKEN_URL: ${AUDIT_PROVISIONER_TOKEN_URL:-https://sso-server:8080/token}
+      SNAPLINK_AUDIT_PROVISIONER_CLIENT_ID: ${AUDIT_PROVISIONER_CLIENT_ID:-snaplink-audit-provisioner}
+      SNAPLINK_AUDIT_PROVISIONER_CLIENT_SECRET_FILE: /run/secrets/audit-provisioner-client-secret
+      SNAPLINK_AUDIT_PROVISIONER_RESOURCE: ${AUDIT_PROVISIONER_RESOURCE:-audit-governance}
+      SNAPLINK_AUDIT_PROVISIONER_LISTEN: :8092
+      SNAPLINK_AUDIT_PROVISIONER_POLL_INTERVAL: ${AUDIT_PROVISIONER_POLL_INTERVAL:-30s}
+      SNAPLINK_AUDIT_PROVISIONER_REQUEST_TIMEOUT: ${AUDIT_PROVISIONER_REQUEST_TIMEOUT:-5s}
+    ports:
+      - "8092:8092"
+    volumes:
+      - ../audit-provisioner/desired-state.example.json:/etc/snaplink-audit-provisioner/desired-state.json:ro
+      - ${AUDIT_PROVISIONER_SECRET_FILE:-./secrets/audit-provisioner-client-secret}:/run/secrets/audit-provisioner-client-secret:ro
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
 
   # ---- observability stack — opt-in via `--profile observability` ----
 
@@ -99,3 +290,12 @@ services:
       - ../grafana/sso-overview.json:/var/lib/grafana/dashboards/sso-overview.json:ro
     depends_on:
       - prometheus
+
+volumes:
+  billing-postgres-data:
+  billing-caddy-data:
+  billing-caddy-config:
+  stripe-postgres-data:
+  stripe-caddy-data:
+  stripe-caddy-config:
+  stripe-bindings-data:

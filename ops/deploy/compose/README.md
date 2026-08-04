@@ -20,6 +20,21 @@ docker compose up --build
 # add observability (Prometheus + Grafana with the snaplink dashboard
 # auto-provisioned):
 docker compose --profile observability up --build
+
+# add PostgreSQL-backed commerce/metering behind local Caddy TLS:
+docker compose --profile commerce up --build
+
+# add commerce plus the Stripe adapter behind a separate loopback Caddy edge:
+docker compose --profile payment up --build
+
+# reconcile Audit Governance desired state against TLS endpoints:
+install -d -m 0700 secrets
+# The locked parent protects the host path; 0444 lets the nonroot container read
+# the bind-mounted file while the provisioner still rejects writable secrets.
+install -m 0444 /secure/path/client-secret secrets/audit-provisioner-client-secret
+AUDIT_GOVERNANCE_BASE_URL=https://audit.example.internal \
+AUDIT_PROVISIONER_TOKEN_URL=https://sso.example.internal/token \
+docker compose --profile audit-provisioning up --build snaplink-audit-provisioner
 ```
 
 The first `--build` pass compiles the sso-server image from the repo
@@ -35,6 +50,9 @@ source).
 | etcd        | 2379  | http://localhost:2379                        |
 | prometheus  | 9090  | http://localhost:9090 (profile only)         |
 | grafana     | 3000  | http://localhost:3000 (admin/admin)          |
+| billing     | 8443  | https://localhost:8443 (local Caddy CA)       |
+| Stripe adapter | 8445 | https://localhost:8445 (payment profile; local Caddy CA) |
+| audit provisioner | 8092 | http://localhost:8092 (profile probes + metrics) |
 
 Open Grafana → Dashboards → SSO → "snaplink/sso — overview" to see
 the dashboard. Anonymous viewer access is enabled so you don't have
@@ -52,7 +70,35 @@ curl -s http://localhost:8080/metrics | head -20
 
 # JWKS for downstream JWT verification:
 curl -s http://localhost:8080/.well-known/jwks.json | jq .
+
+# Billing uses a local Caddy CA; `-k` is for this development stack only.
+curl -ks https://localhost:8443/livez
+curl -ks https://localhost:8443/metrics | grep snaplink_billing_renewal
+
+# Stripe adapter probes and metrics use its independent edge.
+curl -ks https://localhost:8445/readyz
+curl -ks https://localhost:8445/metrics
 ```
+
+The commerce profile also exercises entitlement-to-SSO quota projection. Its
+committed `quota-local-only` credential is intentionally limited to local
+development and has exactly `tenant-quota:projection:write` for resource
+`snaplink-sso-quota`. The Billing relay reaches SSO only through the loopback
+Caddy bridge, and `config.yaml` binds the same client plus derived
+`snaplink-billing-quota` source to `tenant-example`. Add a source record for
+each additional test tenant; never copy this credential into production.
+When both `commerce` and `observability` profiles run, Prometheus scrapes the
+Billing TLS edge every five seconds and evaluates the shared renewal alerts.
+
+The `payment` profile also starts a separate PostgreSQL database and the
+`snaplink-stripe-adapter` Docker target. The adapter socket, its SSO bridge and
+its Billing bridge all stay on loopback inside `stripe-edge`'s network
+namespace; only local TLS port 8445 is published. Defaults prefixed `*_local_*`
+are deliberately non-production test credentials. Override `STRIPE_API_KEY`,
+`STRIPE_WEBHOOK_SECRETS`, and `STRIPE_BILLING_CLIENT_SECRET` only from your
+shell or local secret store. A one-shot initializer copies the reviewed
+`stripe-bindings.json` into a shared volume as a regular mode-0444 file; it is
+never placed in an environment variable.
 
 ## Demonstrating the etcd config source
 
@@ -96,6 +142,9 @@ docker compose down -v         # also wipes the etcd volume
 ops/deploy/compose/
 ├── compose.yaml              # services
 ├── config.yaml               # bind-mounted into sso-server
+├── billing.Caddyfile         # local TLS edge + loopback JWKS proxy
+├── stripe.Caddyfile          # payment TLS edge + loopback dependency bridges
+├── stripe-bindings.json      # non-secret local tenant/client mapping
 ├── prometheus.yml            # scrape config
 ├── grafana-provisioning/
 │   ├── datasources/
@@ -109,6 +158,12 @@ The actual dashboard JSON + alert rules live in `ops/deploy/grafana/` and
 are bind-mounted here — keeps one source of truth across the K8s and
 compose paths.
 
+The audit profile mounts `../audit-provisioner/desired-state.example.json` and
+a read-only secret file from the mode-0700 `secrets` directory. Replace the
+example tenant and client IDs and increase
+its revision before use. This platform-control credential is separate from all
+event-relay credentials and receives only the provisioner's fixed scope.
+
 ## What this stack is NOT
 
 * **Not production-grade.** One API replica uses the configured development
@@ -116,6 +171,10 @@ compose paths.
   volume; admin/admin Grafana credentials; anonymous viewer access
   on; sso-server has no TLS termination, no rate limiting wired,
   no real users seeded. Memory and local SQLite stores are not shared HA state.
+  The commerce/payment profiles also commit local-only PostgreSQL credentials
+  and use Caddy's development CA; they demonstrate process/network boundaries,
+  not production secret management or database HA. Automatic renewal stays
+  off, and the payment profile must never be started with live Stripe keys.
 * **Not the K8s shape.** For an in-cluster deployment see
   `ops/deploy/kustomize/` — the manifests there share the same config/image
   shape and expose separate `/livez` and `/readyz` probes. Use the production

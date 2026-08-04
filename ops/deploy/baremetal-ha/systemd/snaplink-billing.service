@@ -1,0 +1,32 @@
+[Unit]
+Description=Snaplink tenant commerce and metering service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=snaplink-billing
+Group=snaplink-billing
+EnvironmentFile=/etc/snaplink/billing.env
+ExecStart=/usr/local/bin/snaplink-billing
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=65s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

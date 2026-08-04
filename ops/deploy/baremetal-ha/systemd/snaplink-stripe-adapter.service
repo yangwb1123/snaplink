@@ -1,0 +1,32 @@
+[Unit]
+Description=Snaplink Stripe payment adapter
+Wants=network-online.target
+After=network-online.target snaplink-billing.service
+
+[Service]
+Type=simple
+User=snaplink-stripe
+Group=snaplink-stripe
+EnvironmentFile=/etc/snaplink/stripe-adapter.env
+ExecStart=/usr/local/bin/snaplink-stripe-adapter
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=125s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

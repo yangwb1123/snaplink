@@ -11,12 +11,21 @@
 # fail invalid_grant), and refresh-family-reuse / jti-replay / lockout defenses
 # silently become per-pod. So the hot path is on redis, the durable
 # system-of-record on postgres, coordination on etcd.
+version: 1
+
 server:
-  addr: ":8080"
+  issuer: "https://sso.example.com"
+  base_url: "https://sso.example.com"
+  listen: ":8080"
+  required_capabilities: [core.runtime.v1, server.stock.v1]
+  topology:
+    mode: multi
+    allow_per_pod_state: false
+  pairwise_subjects:
+    backend: postgres
   # Trust the first proxy hop ONLY behind the HAProxy edge that strips and
   # re-sets X-Forwarded-*. Without a trusted edge, client-supplied XFF could
   # spoof geo / ratelimit IP keying / base-URL (AGENTS.md section 3).
-  trusted_proxies: ["10.0.0.0/8", "172.16.0.0/12"]
 
 # ---- HOT / EPHEMERAL tier: one shared Redis Cluster, fanned out to every hot store ----
 redis:
@@ -42,6 +51,9 @@ ciba: { backend: redis }
 mfa:
   challenge: { backend: redis }
 security:
+  trusted_proxies:
+    cidrs: ["10.0.0.0/8", "172.16.0.0/12"]
+    hops: 1
   jti_replay: { backend: redis }
   rate_limit:
     backend: redis                     # shared buckets (per-pod memory = N x the limit)
@@ -53,10 +65,9 @@ security:
 
 # ---- DURABLE tier: Postgres HA (Patroni leader via the VIP:5432) ----
 postgres:
-  # host points at the VIP:5432 (HAProxy -> current Patroni leader); the extra
-  # hosts + target_session_attrs=read-write are a fallback that lets pgx find the
-  # writable primary directly if HAProxy is mid-failover.
-  dsn: "host=${SSO_VIP},pg1,pg2,pg3 port=5432 user=sso password=${SSO_DB_PASSWORD} dbname=sso sslmode=prefer target_session_attrs=read-write"
+  # The complete secret-bearing DSN is injected as SSO_POSTGRES__DSN. List all
+  # Patroni members with target_session_attrs=read-write so app boot does not
+  # depend on the public HAProxy tier; VM deployments must verify DB TLS.
   dialect: postgres
   max_open_conns: 20
   max_idle_conns: 5
@@ -65,7 +76,22 @@ identity:
   backend: postgres                    # clients + users (durable system-of-record)
   session_backend: redis               # sessions are HOT — keep them on the cluster
 permissions: { enabled: true, backend: postgres }
-tenant: { enabled: true, backend: postgres }
+tenant:
+  enabled: true
+  backend: postgres
+  resource_quota:
+    backend: postgres
+    cleanup_interval: 1m
+    projection_ingress:
+      enabled: true
+      audience: snaplink-sso-quota
+      sources:
+        - id: billing-quota-tenant-example
+          client_id: snaplink-billing-quota-relay
+          tenant_id: tenant-example
+          source_system: snaplink-billing-quota.YJnQgZ29gnt3CF3TKG-8HZ1HLwSmNkYR9MmjuWPZfNg
+          enabled: true
+          revision: 1
 audit: { enabled: true, backend: postgres, hash_chain: true }
 self_service:
   consent: { backend: postgres }
@@ -83,6 +109,10 @@ cluster:
     etcd_endpoints: [etcd1:2379, etcd2:2379, etcd3:2379]
     etcd_prefix: /sso/bus
   cross_replica_revocation: true       # FAILS BOOT without a live bus (intentional)
+
+registry:
+  backend: etcd
+  etcd_endpoints: [etcd1:2379, etcd2:2379, etcd3:2379]
 
 keys:
   signing:
