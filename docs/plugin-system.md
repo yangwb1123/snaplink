@@ -1,8 +1,9 @@
 # Module build and plugin lifecycle
 
-Snaplink uses NGINX-style positive build profiles for cold modules. Safe hot
-activation remains a later lifecycle phase; a feature gate is not a hot
-plugin.
+Snaplink uses NGINX-style positive build profiles for cold modules. The tree
+also contains the reusable lifecycle primitive for modules already compiled
+into a host; no stock server or business module is classified hot merely
+because that primitive exists. A feature gate is not a hot plugin.
 
 The normative design is
 [ADR-0009](adr/ADR-0009-static-and-runtime-modules.md). This guide describes
@@ -17,8 +18,12 @@ the commands and profiles available in the current tree.
 | Alternate `go.mod`/`go.sum`, canonical lock and embedded inventory | Implemented |
 | `standard` and `standard-kafka` compatibility builds | Supported |
 | `prototype`, `minimal`, and `full` edition builds | Buildable |
+| Signed public-SKU release archives with target lock and inventory evidence | Implemented for `prototype`, `minimal`, `full`, and independent `billing` |
+| Standalone `billing` service build | Preview; buildable |
 | Package-level dependency isolation for `prototype`/`minimal` | Incomplete |
-| In-process hot lifecycle or external plugin supervisor | Not implemented |
+| Precompiled generation manager and fixed route-slot primitive | Implemented as an unwired host SDK |
+| Stock-server/business-module hot integration and audit-exporter tap | Not implemented |
+| External plugin supervisor | Not implemented |
 
 `prototype` and `minimal` are behaviorally distinct but not yet physically
 isolated from one another. Both target `cmd/sso-minimal`, which still reaches
@@ -33,6 +38,7 @@ that every excluded capability or dependency left the binary.
 | `prototype` | preview | Smallest SSO/OAuth runtime: password login, Authorization Code + mandatory PKCE, reusable OP session, basic JSON logs, memory defaults and a stable `default` tenant migration seam |
 | `minimal` | preview | Extends `prototype` with OIDC discovery, ID Token, UserInfo and logout plus request tracing |
 | `full` | supported | Extends `minimal` with the full current stock `sso-server` composition and the registered Kafka audit cold module |
+| `billing` | preview | Independent `snaplink-billing` commerce and usage-metering service; not part of the SSO edition hierarchy |
 | `standard` | supported | Compatibility profile for the historical stock `sso-server` composition |
 | `standard-kafka` | supported | Extends `standard` with the statically linked Kafka audit sink |
 
@@ -43,6 +49,12 @@ one. `prototype` and `minimal` use `cmd/sso-minimal`; `full` selects
 rather than the smaller runtime. Compilation does not turn every production
 option on: runtime configuration, feature gates and backend availability
 remain separate concerns.
+
+`billing` does not inherit an SSO profile and is never selected by `full`. Its
+embedded `billing-runtime` bundle depends only on locked `core-runtime` at the
+catalog level and identifies the separately deployed commerce/metering
+process. This is a cold compilation boundary: it does not make billing a hot
+module in `sso-server`.
 
 `oauth-client-credentials` is an independent optional machine-to-machine
 module. It is not the core of any SSO edition.
@@ -55,20 +67,23 @@ Validate and inspect the catalog:
 python cli.py modules check
 python cli.py modules list
 python cli.py modules plan --profile prototype
+python cli.py modules plan --profile billing
 python cli.py modules graph --profile full
 python cli.py modules why op-session-sso --profile full
 ```
 
-Build the public editions:
+Build the public editions and standalone billing service:
 
 ```bash
 python cli.py configure --profile prototype --version v1.1.1 --build
 python cli.py configure --profile minimal --version v1.1.1 --build
 python cli.py configure --profile full --version v1.1.1 --build
+python cli.py configure --profile billing --version v1.1.1 --build
 
 dist/modules/prototype/snaplink version
 dist/modules/minimal/snaplink version
 dist/modules/full/snaplink version
+dist/modules/billing/snaplink-billing version
 # alice/s3cret
 # demo-app/demo-secret       -> http://127.0.0.1:3000/callback
 # demo-app-b/demo-secret-b   -> http://127.0.0.1:3001/callback
@@ -76,8 +91,9 @@ dist/modules/full/snaplink version
 
 The first output lines are respectively
 `snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, and
-`snaplink-v1.1.1.full`. The explicit source version is also recorded in
-the module lock.
+`snaplink-v1.1.1.full`; the independent service reports
+`snaplink-billing v1.1.1`. The explicit source version is also recorded in the
+module lock.
 
 `production` remains accepted as a compatibility alias for the `full` profile;
 new automation and artifact paths should use `full`.
@@ -113,6 +129,9 @@ Inspect a configured artifact:
 dist/modules/prototype/snaplink modules
 dist/modules/prototype/snaplink modules --json
 go version -m dist/modules/prototype/snaplink
+
+dist/modules/billing/snaplink-billing modules --json
+go version -m dist/modules/billing/snaplink-billing
 ```
 
 The inventory contains the profile ID, ordered module IDs, sorted capability
@@ -122,6 +141,13 @@ contract. The lock records the resolved capability and Go module graphs plus
 build inputs; it is not a binary package inventory or an SBOM. Use
 `go version -m`, symbol inspection and the release SBOM to prove physical
 dependency removal.
+
+Official `prototype`, `minimal`, `full`, and independent `billing` release
+archives include the target's lock, expected inventory, and binary verification
+result under `evidence/`. The release hook binds those values into the binary
+and checks the configured build metadata before GoReleaser archives it. The
+adjacent SPDX-JSON SBOM is the supply-chain inventory; neither the lock nor this
+evidence asserts complete package-level physical dependency isolation.
 
 ## Edition boundaries
 
@@ -231,10 +257,31 @@ families are supported.
 | Cluster/revocation/key buses | External typed authenticator processes |
 | Primary audit/redaction/hash chain | Secondary audit taps |
 
-A hot-precompiled module requires static route/capability slots, generation
-leases, blue/green readiness, drain, reverse-order cleanup and transition
-audit. The current router, readiness checks and audit sink registry do not meet
-that contract.
+The reusable `platform/lifecycle/modules` primitive provides fixed route slots,
+blue/green generation publication, request/dependency/background leases,
+bounded readiness and lifecycle callbacks, drain, reverse-order dependency
+cleanup, retiring-generation status and a startup-injected bounded transition
+observer. Events contain only fixed transition types, validated module IDs,
+generation numbers and timestamps; observer failure is fail-open and cannot
+block a transition.
+
+Dependency acquisition and slot publication/disable use one short graph commit
+section, never a lifecycle callback, so a dependent cannot bind a generation
+that is concurrently hidden. Lifecycle callbacks execute outside manager and
+graph locks. A concurrent change to the same module fails fast with
+`ErrTransitionInProgress`; independent modules may transition concurrently.
+`Close` atomically rejects new transitions and starts one shutdown. If a
+transition is active it returns `ErrTransitionInProgress`; a later call waits
+for the same completion subject to its context.
+
+This is a host SDK boundary, not a general `sso-server` wiring claim. No stock
+`sso-server` route, primary audit sink, or redaction chain activates through
+it. The independently deployed `snaplink-billing` composition does use this
+lifecycle for its already-compiled secondary Audit Governance relay, with a
+strict revisioned desired-state file, generation leases, drain, readiness, and
+stop callbacks. Other surfaces remain cold until their fixed slot,
+configuration, authorization, transition-audit adapter, and failure policy are
+integrated and tested.
 
 Installable third-party hot modules will run out of process over a typed,
 authenticated protocol. Go `.so` plugins are not supported.

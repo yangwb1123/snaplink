@@ -4,6 +4,7 @@
   "availability_classes": [
     "sdk",
     "stock-binary",
+    "standalone-binary",
     "module-only",
     "external-frontend"
   ],
@@ -49,6 +50,19 @@
       "config_keys": [],
       "surfaces": ["/api/v1/admin/docs"],
       "sources": ["interfaces/apidocs"]
+    },
+    {
+      "id": "audit.governance-provisioner",
+      "name": "Audit Governance desired-state provisioner",
+      "summary": "Create-only reconciliation of tenant, source allow-list and schema desired state against Audit Governance.",
+      "availability": ["standalone-binary"],
+      "default_state": "disabled",
+      "feature_gate": null,
+      "required_stores": ["Audit Governance control API"],
+      "module_capabilities": [],
+      "config_keys": ["SNAPLINK_AUDIT_PROVISIONER_MANIFEST_FILE", "SNAPLINK_AUDIT_PROVISIONER_BASE_URL"],
+      "surfaces": ["/livez", "/readyz", "/metrics", "Audit Governance control API"],
+      "sources": ["cmd/snaplink-audit-provisioner"]
     },
     {
       "id": "audit.kafka",
@@ -127,6 +141,19 @@
       "config_keys": ["cluster", "topology"],
       "surfaces": ["/readyz", "cross-replica bus"],
       "sources": ["cmd/sso-server/build_app_cluster.go"]
+    },
+    {
+      "id": "commerce.tenant",
+      "name": "Tenant commerce and billing",
+      "summary": "Versioned plans, snapshotted subscription renewal, entitlement projections, wallets, top-up orders, normalized payment-event ingestion, durable SSO quota delivery and optional Audit Governance retention projection.",
+      "availability": ["sdk", "standalone-binary"],
+      "default_state": "conditional",
+      "feature_gate": null,
+      "required_stores": ["commerce.Store", "commerce.PaymentStore", "commerce.RenewalStore"],
+      "module_capabilities": ["commerce.tenant.v1"],
+      "config_keys": ["SNAPLINK_BILLING_RENEWALS_ENABLED", "SNAPLINK_BILLING_QUOTA_BASE_URL", "SNAPLINK_BILLING_RETENTION_BASE_URL"],
+      "surfaces": ["/api/v1/admin/commerce/*", "/api/v1/commerce/*/payments/*", "/readyz", "/metrics"],
+      "sources": ["domains/tenant/commerce", "interfaces/commerce", "interfaces/ssoclient/quotaprojection", "infrastructure/postgres/tenantcommerce", "cmd/snaplink-billing"]
     },
     {
       "id": "federation.openid",
@@ -272,6 +299,19 @@
       "sources": ["platform/signingkeys"]
     },
     {
+      "id": "metering.usage",
+      "name": "Machine usage and entitlement API",
+      "summary": "Invoice-grade usage facts, atomic reservations, client-bound dimensions and narrow entitlement reads.",
+      "availability": ["sdk", "standalone-binary"],
+      "default_state": "conditional",
+      "feature_gate": null,
+      "required_stores": ["usageledger.Store", "usageledger.SourceBindingStore", "commerce.EntitlementReader"],
+      "module_capabilities": [],
+      "config_keys": ["SNAPLINK_BILLING_SOURCE_BINDINGS_FILE"],
+      "surfaces": ["/api/v1/metering/usage", "/api/v1/metering/reservations*", "/api/v1/metering/entitlement"],
+      "sources": ["domains/metering/usageledger", "interfaces/metering", "infrastructure/postgres/usageledger", "cmd/snaplink-billing"]
+    },
+    {
       "id": "oauth.advanced",
       "name": "Advanced OAuth security",
       "summary": "PAR, JAR, DPoP, mTLS, RAR, token exchange and FAPI controls.",
@@ -337,6 +377,19 @@
       "sources": ["protocols/oidc"]
     },
     {
+      "id": "payment.stripe",
+      "name": "Stripe top-up payment adapter",
+      "summary": "Tenant-bound Checkout creation and signed provider-event normalization into Billing payment facts.",
+      "availability": ["standalone-binary"],
+      "default_state": "disabled",
+      "feature_gate": null,
+      "required_stores": ["Stripe adapter PostgreSQL inbox", "Snaplink Billing API"],
+      "module_capabilities": [],
+      "config_keys": ["SNAPLINK_STRIPE_BINDINGS_FILE", "SNAPLINK_STRIPE_LIVE_MODE", "SNAPLINK_STRIPE_ACCOUNT"],
+      "surfaces": ["/api/v1/checkout/sessions", "/webhooks/stripe", "/readyz", "/metrics"],
+      "sources": ["cmd/snaplink-stripe-adapter"]
+    },
+    {
       "id": "provisioning.scim",
       "name": "SCIM provisioning",
       "summary": "Inbound SCIM user/group provisioning and optional outbound push.",
@@ -374,6 +427,19 @@
       "config_keys": ["tenant", "region", "residency"],
       "surfaces": ["/api/v1/admin/tenants/*", "tenant middleware"],
       "sources": ["domains/tenant"]
+    },
+    {
+      "id": "tenant.quota-projection",
+      "name": "Tenant quota projection ingress",
+      "summary": "Authenticated monotonic delivery of commercial entitlements into SSO tenant quota enforcement.",
+      "availability": ["sdk", "stock-binary"],
+      "default_state": "conditional",
+      "feature_gate": null,
+      "required_stores": ["TenantQuotaProjectionStore"],
+      "module_capabilities": ["platform.tenant.v1"],
+      "config_keys": ["tenant.resource_quota.backend", "tenant.resource_quota.projection_ingress"],
+      "surfaces": ["/api/v1/internal/tenant-quota/projection", "/readyz"],
+      "sources": ["domains/tenant/quotabinding", "interfaces/sso/quota.go", "interfaces/ssoclient/quotaprojection"]
     },
     {
       "id": "threat.detection-response",

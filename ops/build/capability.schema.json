@@ -22,9 +22,9 @@
     "availability_classes": {
       "type": "array",
       "items": {
-        "enum": ["sdk", "stock-binary", "module-only", "external-frontend"]
+        "enum": ["sdk", "stock-binary", "standalone-binary", "module-only", "external-frontend"]
       },
-      "minItems": 4,
+      "minItems": 5,
       "uniqueItems": true
     },
     "default_states": {

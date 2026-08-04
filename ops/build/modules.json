@@ -48,6 +48,28 @@
     },
     {
       "schema_version": 1,
+      "id": "billing-runtime",
+      "summary": "Standalone tenant commerce, subscription, entitlement, wallet, usage-metering, and SSO quota-projection service composition.",
+      "kind": "bundle",
+      "state": "embedded",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "commerce.tenant.v1",
+        "metering.usage.v1",
+        "server.billing.v1"
+      ],
+      "requires": [
+        "core.runtime.v1"
+      ],
+      "conflicts": [],
+      "security": {
+        "removable": false,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
       "id": "sso-prototype-runtime",
       "summary": "OAuth SSO prototype with structured logs and a stable default tenant seam.",
       "kind": "bundle",

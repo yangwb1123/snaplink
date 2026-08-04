@@ -5,9 +5,7 @@
 #
 # Real release (CI, triggered by `git push origin vX.Y.Z`):
 #   the .github/workflows/release.yml job runs `goreleaser release`
-#   against the tag and uploads artifacts to the configured target.
-#   Today release.disable=true keeps that target empty until a git
-#   remote + GitHub Releases (or a private registry) is wired.
+#   against the tag and uploads archives, SBOMs, signatures, and images.
 
 version: 2
 
@@ -16,9 +14,266 @@ project_name: sso-server
 before:
   hooks:
     # Ensure go.sum is in sync — releases must not introduce drift.
-    - go mod tidy
+    - go mod tidy -diff
 
 builds:
+  - id: snaplink-prototype
+    main: ./cmd/sso-minimal
+    binary: snaplink
+    env: [CGO_ENABLED=0]
+    flags:
+      - -trimpath
+      - -mod=readonly
+      - -modfile={{ .Env.SNAPLINK_PROFILE_RELEASE_ROOT }}/prototype/{{ .Os }}_{{ .Arch }}/modules.mod
+      - -overlay={{ .Env.SNAPLINK_PROFILE_RELEASE_ROOT }}/prototype/{{ .Os }}_{{ .Arch }}/overlay.json
+    tags: [snaplink_configured]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    hooks:
+      post:
+        - cmd: >-
+            python ops/scripts/profile_release.py verify-binary
+            --profile prototype --target {{ .Os }}/{{ .Arch }}
+            --binary {{ .Path }}
+            --evidence-root {{ .Env.SNAPLINK_PROFILE_RELEASE_ROOT }}
+            --archive-root dist/profile-evidence
+          output: true
+    overrides:
+      - goos: linux
+        goarch: amd64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=prototype
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_LINUX_AMD64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+      - goos: linux
+        goarch: arm64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=prototype
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_LINUX_ARM64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+      - goos: darwin
+        goarch: amd64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=prototype
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_DARWIN_AMD64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+      - goos: darwin
+        goarch: arm64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=prototype
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_DARWIN_ARM64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+      - goos: windows
+        goarch: amd64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=prototype
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_WINDOWS_AMD64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_PROTOTYPE_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+
+  - id: snaplink-minimal
+    main: ./cmd/sso-minimal
+    binary: snaplink
+    env: [CGO_ENABLED=0]
+    flags:
+      - -trimpath
+      - -mod=readonly
+      - -modfile={{ .Env.SNAPLINK_PROFILE_RELEASE_ROOT }}/minimal/{{ .Os }}_{{ .Arch }}/modules.mod
+      - -overlay={{ .Env.SNAPLINK_PROFILE_RELEASE_ROOT }}/minimal/{{ .Os }}_{{ .Arch }}/overlay.json
+    tags: [snaplink_configured]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    hooks:
+      post:
+        - cmd: >-
+            python ops/scripts/profile_release.py verify-binary
+            --profile minimal --target {{ .Os }}/{{ .Arch }}
+            --binary {{ .Path }}
+            --evidence-root {{ .Env.SNAPLINK_PROFILE_RELEASE_ROOT }}
+            --archive-root dist/profile-evidence
+          output: true
+    overrides:
+      - goos: linux
+        goarch: amd64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=minimal
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_MINIMAL_LINUX_AMD64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_MINIMAL_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_MINIMAL_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+      - goos: linux
+        goarch: arm64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=minimal
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_MINIMAL_LINUX_ARM64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_MINIMAL_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_MINIMAL_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+      - goos: darwin
+        goarch: amd64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=minimal
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_MINIMAL_DARWIN_AMD64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_MINIMAL_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_MINIMAL_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+      - goos: darwin
+        goarch: arm64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=minimal
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_MINIMAL_DARWIN_ARM64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_MINIMAL_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_MINIMAL_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+      - goos: windows
+        goarch: amd64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=minimal
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_MINIMAL_WINDOWS_AMD64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_MINIMAL_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_MINIMAL_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+
+  - id: snaplink-full
+    main: ./cmd/sso-server
+    binary: snaplink
+    env: [CGO_ENABLED=0]
+    flags:
+      - -trimpath
+      - -mod=readonly
+      - -modfile={{ .Env.SNAPLINK_PROFILE_RELEASE_ROOT }}/full/{{ .Os }}_{{ .Arch }}/modules.mod
+      - -overlay={{ .Env.SNAPLINK_PROFILE_RELEASE_ROOT }}/full/{{ .Os }}_{{ .Arch }}/overlay.json
+    tags: [snaplink_configured]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    hooks:
+      post:
+        - cmd: >-
+            python ops/scripts/profile_release.py verify-binary
+            --profile full --target {{ .Os }}/{{ .Arch }}
+            --binary {{ .Path }}
+            --evidence-root {{ .Env.SNAPLINK_PROFILE_RELEASE_ROOT }}
+            --archive-root dist/profile-evidence
+          output: true
+    overrides:
+      - goos: linux
+        goarch: amd64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=full
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_FULL_LINUX_AMD64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_FULL_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_FULL_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+      - goos: linux
+        goarch: arm64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=full
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_FULL_LINUX_ARM64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_FULL_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_FULL_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+      - goos: darwin
+        goarch: amd64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=full
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_FULL_DARWIN_AMD64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_FULL_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_FULL_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+      - goos: darwin
+        goarch: arm64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=full
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_FULL_DARWIN_ARM64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_FULL_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_FULL_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+
   - id: sso-server
     main: ./cmd/sso-server
     binary: sso-server
@@ -35,16 +290,11 @@ builds:
     goos:
       - linux
       - darwin
-      - windows
     goarch:
       - amd64
       - arm64
-    # Skip windows/arm64 — sso-server has no users on that combo yet
-    # and it inflates the matrix from 6 → 6 binaries unnecessarily
-    # (matrix is now: linux x 2, darwin x 2, windows x 1 = 5).
-    ignore:
-      - goos: windows
-        goarch: arm64
+    # The stock server imports the Unix flock bootstrap backend and is not a
+    # supported Windows binary. The prototype/minimal builds remain portable.
 
   - id: sso-ctl
     # Offline operator toolbelt (audit-verify / import / migrate / snapshot
@@ -72,10 +322,91 @@ builds:
       - goos: windows
         goarch: arm64
 
+  - id: snaplink-billing
+    main: ./cmd/snaplink-billing
+    binary: snaplink-billing
+    env: [CGO_ENABLED=0]
+    flags:
+      - -trimpath
+      - -mod=readonly
+      - -modfile={{ .Env.SNAPLINK_PROFILE_RELEASE_ROOT }}/billing/{{ .Os }}_{{ .Arch }}/modules.mod
+      - -overlay={{ .Env.SNAPLINK_PROFILE_RELEASE_ROOT }}/billing/{{ .Os }}_{{ .Arch }}/overlay.json
+    tags: [snaplink_configured]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    hooks:
+      post:
+        - cmd: >-
+            python ops/scripts/profile_release.py verify-binary
+            --profile billing --target {{ .Os }}/{{ .Arch }}
+            --binary {{ .Path }}
+            --evidence-root {{ .Env.SNAPLINK_PROFILE_RELEASE_ROOT }}
+            --archive-root dist/profile-evidence
+          output: true
+    overrides:
+      - goos: linux
+        goarch: amd64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=billing
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_BILLING_LINUX_AMD64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_BILLING_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_BILLING_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+      - goos: linux
+        goarch: arm64
+        ldflags:
+          - -s -w
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=billing
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.ModuleLockDigest={{ .Env.SNAPLINK_RELEASE_BILLING_LINUX_ARM64_LOCK_DIGEST }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledModules={{ .Env.SNAPLINK_RELEASE_BILLING_MODULES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities={{ .Env.SNAPLINK_RELEASE_BILLING_CAPABILITIES }}
+          - -X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+          - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+          - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+
+  - id: snaplink-stripe-adapter
+    main: ./cmd/snaplink-stripe-adapter
+    binary: snaplink-stripe-adapter
+    env:
+      - CGO_ENABLED=0
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+      - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+      - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+      - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+    goos: [linux]
+    goarch: [amd64, arm64]
+
+  - id: snaplink-audit-provisioner
+    main: ./cmd/snaplink-audit-provisioner
+    binary: snaplink-audit-provisioner
+    env:
+      - CGO_ENABLED=0
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+      - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+      - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+      - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
+    goos: [linux]
+    goarch: [amd64, arm64]
+
   - id: sso-mcp
     # SSO MCP protocol gateway — exposes SSO resources via the Model Context
     # Protocol (MCP). Pure-Go, no-CGO build, same matrix as sso-ctl.
-    main: ./cmd/sso-mcp
+    # This command owns a nested module; build from that module root.
+    dir: ./cmd/sso-mcp
+    main: .
     binary: sso-mcp
     env:
       - CGO_ENABLED=0
@@ -96,6 +427,14 @@ builds:
 
 archives:
   - id: default
+    ids:
+      - sso-server
+      - sso-ctl
+      - snaplink-stripe-adapter
+      - snaplink-audit-provisioner
+      - sso-mcp
+    # Linux additionally carries the separately deployed service binaries.
+    allow_different_binary_count: true
     # tar.gz everywhere except Windows (zip — Powershell unpacks it
     # natively without extra tools).
     formats: [tar.gz]
@@ -109,7 +448,85 @@ archives:
     files:
       - LICENSE
       - .github/SECURITY.md
-      - docs/CHANGELOG.md  # autogenerated below; goreleaser includes if present
+      - CHANGELOG.md
+
+  - id: snaplink-prototype
+    ids: [snaplink-prototype]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      snaplink_prototype_{{ .Version }}_{{ .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE
+      - .github/SECURITY.md
+      - docs/RELEASE.md
+      - src: "dist/profile-evidence/prototype/{{ .Os }}_{{ .Arch }}/modules.lock.json"
+        dst: evidence/modules.lock.json
+      - src: "dist/profile-evidence/prototype/{{ .Os }}_{{ .Arch }}/profile-inventory.json"
+        dst: evidence/profile-inventory.json
+      - src: "dist/profile-evidence/prototype/{{ .Os }}_{{ .Arch }}/binary-evidence.json"
+        dst: evidence/binary-evidence.json
+
+  - id: snaplink-minimal
+    ids: [snaplink-minimal]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      snaplink_minimal_{{ .Version }}_{{ .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE
+      - .github/SECURITY.md
+      - docs/RELEASE.md
+      - src: "dist/profile-evidence/minimal/{{ .Os }}_{{ .Arch }}/modules.lock.json"
+        dst: evidence/modules.lock.json
+      - src: "dist/profile-evidence/minimal/{{ .Os }}_{{ .Arch }}/profile-inventory.json"
+        dst: evidence/profile-inventory.json
+      - src: "dist/profile-evidence/minimal/{{ .Os }}_{{ .Arch }}/binary-evidence.json"
+        dst: evidence/binary-evidence.json
+
+  - id: snaplink-full
+    ids: [snaplink-full]
+    formats: [tar.gz]
+    name_template: >-
+      snaplink_full_{{ .Version }}_{{ .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE
+      - .github/SECURITY.md
+      - docs/RELEASE.md
+      - src: "dist/profile-evidence/full/{{ .Os }}_{{ .Arch }}/modules.lock.json"
+        dst: evidence/modules.lock.json
+      - src: "dist/profile-evidence/full/{{ .Os }}_{{ .Arch }}/profile-inventory.json"
+        dst: evidence/profile-inventory.json
+      - src: "dist/profile-evidence/full/{{ .Os }}_{{ .Arch }}/binary-evidence.json"
+        dst: evidence/binary-evidence.json
+
+  - id: snaplink-billing
+    ids: [snaplink-billing]
+    formats: [tar.gz]
+    name_template: >-
+      snaplink_billing_{{ .Version }}_{{ .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE
+      - .github/SECURITY.md
+      - docs/RELEASE.md
+      - src: "dist/profile-evidence/billing/{{ .Os }}_{{ .Arch }}/modules.lock.json"
+        dst: evidence/modules.lock.json
+      - src: "dist/profile-evidence/billing/{{ .Os }}_{{ .Arch }}/profile-inventory.json"
+        dst: evidence/profile-inventory.json
+      - src: "dist/profile-evidence/billing/{{ .Os }}_{{ .Arch }}/binary-evidence.json"
+        dst: evidence/binary-evidence.json
 
 checksum:
   name_template: "checksums.txt"
@@ -119,12 +536,11 @@ checksum:
 # without a tag — embeds the short commit so two snapshots of the same
 # version don't collide.
 snapshot:
-  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+  version_template: "{{ .Env.SNAPLINK_PROFILE_RELEASE_SNAPSHOT_VERSION }}"
 
-# Software Bill of Materials. syft is bundled with goreleaser; one SBOM
-# per archive lands beside the tarball + checksums, in SPDX-JSON format
-# (the most widely consumed SBOM flavor). Auditors / supply-chain
-# scanners (Trivy, Grype, Dependency-Track) ingest these directly.
+# Software Bill of Materials. The release workflow installs syft; one SBOM per
+# archive lands beside the tarball + checksums, in SPDX-JSON format. Auditors
+# and supply-chain scanners (Trivy, Grype, Dependency-Track) ingest it directly.
 sboms:
   - artifacts: archive
 
@@ -177,6 +593,42 @@ dockers:
       - "--target=sso-mcp"
       - "--label=org.opencontainers.image.title=sso-mcp"
       - "--label=org.opencontainers.image.description=Snaplink SSO MCP gateway"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+
+  - image_templates:
+      - "ghcr.io/snaplink/snaplink-billing:{{ .Version }}"
+      - "ghcr.io/snaplink/snaplink-billing:latest"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64,linux/arm64"
+      - "--target=snaplink-billing"
+      - "--label=org.opencontainers.image.title=snaplink-billing"
+      - "--label=org.opencontainers.image.description=Snaplink tenant commerce and metering service"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+
+  - image_templates:
+      - "ghcr.io/snaplink/snaplink-stripe-adapter:{{ .Version }}"
+      - "ghcr.io/snaplink/snaplink-stripe-adapter:latest"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64,linux/arm64"
+      - "--target=snaplink-stripe-adapter"
+      - "--label=org.opencontainers.image.title=snaplink-stripe-adapter"
+      - "--label=org.opencontainers.image.description=Snaplink Stripe payment adapter"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+
+  - image_templates:
+      - "ghcr.io/snaplink/snaplink-audit-provisioner:{{ .Version }}"
+      - "ghcr.io/snaplink/snaplink-audit-provisioner:latest"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64,linux/arm64"
+      - "--target=snaplink-audit-provisioner"
+      - "--label=org.opencontainers.image.title=snaplink-audit-provisioner"
+      - "--label=org.opencontainers.image.description=Snaplink Audit Governance desired-state provisioner"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.source={{ .GitURL }}"
 

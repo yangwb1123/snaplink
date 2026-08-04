@@ -9,10 +9,11 @@ IMAGE_TAG ?= dev
 PROFILE   ?= standard
 VERSION   ?= v0.0.0-dev
 MODULE_ARGS ?=
+VALIDATION_POSTGRES_DSN := postgres://validation@postgres.invalid/snaplink?sslmode=verify-full
 
 CLI = python cli.py
 
-.PHONY: help test ai-dev-test race bench vet fmt build configure build-profile build-prototype build-minimal build-full build-production build-small modules-list modules-plan modules-check modules-smoke capabilities-check capabilities-generate docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve route-contract release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
+.PHONY: help test ai-dev-test race bench vet fmt build configure build-profile build-prototype build-minimal build-full build-production build-small modules-list modules-plan modules-check modules-smoke capabilities-check capabilities-generate docker docker-stripe-adapter ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve route-contract release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff helm-render docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -151,7 +152,7 @@ config-validate: ## Validate all deploy config.yaml files against current server
 	for cfg in cmd/sso-server/config.yaml bin/config.yaml ops/deploy/compose/config.yaml ops/deploy/baremetal-ha/sso/config.yaml ops/deploy/k8s/config.yaml ops/deploy/k8s-prod/config.yaml docs/examples/basic/config.yaml; do \
 		echo -n "  $$cfg ... "; \
 		if [ -f "$$cfg" ]; then \
-			if $(GO) run ./cmd/sso-server --config="$$cfg" --validate-only 2>/dev/null; then \
+			if SSO_POSTGRES__DSN='$(VALIDATION_POSTGRES_DSN)' $(GO) run ./cmd/sso-server --config="$$cfg" --validate-only 2>/dev/null; then \
 				echo "OK"; \
 			else \
 				echo "FAIL"; fail=1; \
@@ -164,6 +165,9 @@ config-validate: ## Validate all deploy config.yaml files against current server
 
 docker: ## Build container image.
 	docker build -t $(IMAGE):$(IMAGE_TAG) .
+
+docker-stripe-adapter: ## Build the standalone Stripe adapter container target.
+	docker build --target snaplink-stripe-adapter -t snaplink/stripe-adapter:$(IMAGE_TAG) .
 
 proto-lint: ## Lint .proto files.
 	cd proto && $(GO) run github.com/bufbuild/buf/cmd/buf@latest lint
@@ -210,6 +214,14 @@ release-check: ## Lint .goreleaser.yaml.
 	$(GO) run github.com/goreleaser/goreleaser/v2@latest check
 
 release-snapshot: ## goreleaser dry-run.
+	@profile_release_root=$$(mktemp -d); \
+	trap 'rm -rf -- "$$profile_release_root"' EXIT; \
+	env_file="$$profile_release_root/release.env"; \
+	python ops/scripts/profile_release.py prepare \
+		--version "$(VERSION)" \
+		--output-root "$$profile_release_root" \
+		--env-file "$$env_file"; \
+	set -a; . "$$env_file"; set +a; \
 	$(GO) run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean --skip=publish
 
 docs-serve: ## Serve openapi.yaml in swagger-ui.
@@ -348,9 +360,6 @@ adr-compliance: ## Check ADR compliance (ADR-0003, ADR-0004, ADR-0007).
 # Release & Docker targets.
 # -------------------------------------------------------------------
 
-release-snapshot: ## Build snapshot binaries (local, no publish).
-	goreleaser release --snapshot --clean
-
 release: ## Build + publish to GitHub Releases (requires git tag).
 	goreleaser release --clean
 
@@ -385,7 +394,7 @@ config-validate-all: ## Validate all 7 deploy config files against the server.
 	for cfg in cmd/sso-server/config.yaml bin/config.yaml ops/deploy/compose/config.yaml ops/deploy/baremetal-ha/sso/config.yaml ops/deploy/k8s/config.yaml ops/deploy/k8s-prod/config.yaml docs/examples/basic/config.yaml; do \
 		echo -n "  $$cfg ... "; \
 		if [ -f "$$cfg" ]; then \
-			if go run ./cmd/sso-server --config="$$cfg" --validate-only 2>/dev/null; then \
+			if SSO_POSTGRES__DSN='$(VALIDATION_POSTGRES_DSN)' $(GO) run ./cmd/sso-server --config="$$cfg" --validate-only 2>/dev/null; then \
 				echo "OK"; \
 			else \
 				echo "FAIL"; fail=1; \
@@ -400,7 +409,7 @@ smoke-test: ## Run smoke tests against a running server.
 	sh ops/deploy/baremetal-ha/smoke.sh
 
 k8s-render: ## Render all Kustomize overlays to flat YAML for auditing.
-	@mkdir -p $(BIN_DIR)/k8s-rendered/dev $(BIN_DIR)/k8s-rendered/prod
+	@mkdir -p $(BIN_DIR)/k8s-rendered/dev $(BIN_DIR)/k8s-rendered/prod $(BIN_DIR)/k8s-rendered/billing $(BIN_DIR)/k8s-rendered/stripe-adapter $(BIN_DIR)/k8s-rendered/audit-provisioner
 	@echo "==> Rendering kustomize overlays (dev)..."
 	@KUSTOMIZE=$$(command -v kustomize 2>/dev/null || command -v kubectl 2>/dev/null); \
 	if [ -z "$$KUSTOMIZE" ]; then echo "kustomize or kubectl not installed" >&2; exit 1; fi; \
@@ -416,7 +425,44 @@ k8s-render: ## Render all Kustomize overlays to flat YAML for auditing.
 	else \
 		kustomize build ops/deploy/kustomize/overlays/prod > $(BIN_DIR)/k8s-rendered/prod/all.yaml; \
 	fi
+	@echo "==> Rendering snaplink-billing deployment..."
+	@KUSTOMIZE=$$(command -v kustomize 2>/dev/null || command -v kubectl 2>/dev/null); \
+	if echo "$$KUSTOMIZE" | grep -q kubectl; then \
+		kubectl kustomize ops/deploy/billing > $(BIN_DIR)/k8s-rendered/billing/all.yaml; \
+	else \
+		kustomize build ops/deploy/billing > $(BIN_DIR)/k8s-rendered/billing/all.yaml; \
+	fi
+	@echo "==> Rendering Stripe adapter deployment..."
+	@KUSTOMIZE=$$(command -v kustomize 2>/dev/null || command -v kubectl 2>/dev/null); \
+	if echo "$$KUSTOMIZE" | grep -q kubectl; then \
+		kubectl kustomize ops/deploy/billing/stripe-adapter > $(BIN_DIR)/k8s-rendered/stripe-adapter/all.yaml; \
+	else \
+		kustomize build ops/deploy/billing/stripe-adapter > $(BIN_DIR)/k8s-rendered/stripe-adapter/all.yaml; \
+	fi
+	@echo "==> Rendering Audit Governance provisioner deployment..."
+	@KUSTOMIZE=$$(command -v kustomize 2>/dev/null || command -v kubectl 2>/dev/null); \
+	if echo "$$KUSTOMIZE" | grep -q kubectl; then \
+		kubectl kustomize ops/deploy/audit-provisioner > $(BIN_DIR)/k8s-rendered/audit-provisioner/all.yaml; \
+	else \
+		kustomize build ops/deploy/audit-provisioner > $(BIN_DIR)/k8s-rendered/audit-provisioner/all.yaml; \
+	fi
 	@echo "Rendered YAML in $(BIN_DIR)/k8s-rendered/"
+
+helm-render: ## Strict-lint and render the standalone service Helm charts.
+	@command -v helm >/dev/null 2>&1 || { echo "helm not installed" >&2; exit 1; }
+	@mkdir -p $(BIN_DIR)/helm-rendered
+	helm lint --strict ops/deploy/helm/snaplink-billing
+	helm template billing ops/deploy/helm/snaplink-billing \
+		--namespace snaplink-sso > $(BIN_DIR)/helm-rendered/snaplink-billing.yaml
+	helm lint --strict ops/deploy/helm/snaplink-stripe-adapter
+	helm template stripe-adapter ops/deploy/helm/snaplink-stripe-adapter \
+		--namespace snaplink-sso > $(BIN_DIR)/helm-rendered/snaplink-stripe-adapter.yaml
+	helm lint --strict ops/deploy/helm/snaplink-audit-provisioner
+	helm template audit-provisioner ops/deploy/helm/snaplink-audit-provisioner \
+		--namespace snaplink-sso \
+		--set-file desiredState=ops/deploy/audit-provisioner/desired-state.example.json \
+		> $(BIN_DIR)/helm-rendered/snaplink-audit-provisioner.yaml
+	@echo "Rendered YAML in $(BIN_DIR)/helm-rendered/"
 
 k8s-diff: ## Diff rendered output between dev and prod overlays.
 	@echo "==> Building dev overlay..."
@@ -486,4 +532,4 @@ licenses-notice: ## Generate NOTICE.txt for distribution (Apache 2.0 §4).
 	@echo "Full dependency list: see licenses.csv (make licenses)" >> NOTICE.txt
 	@echo "NOTICE.txt written ($$(wc -l < NOTICE.txt) lines)"
 
-.PHONY: ai-dev-test licenses licenses-check licenses-notice release-snapshot release docker-push docker-multiarch lint-all security-scan-all config-validate-all smoke-test k8s-render k8s-diff terraform-validate terraform-plan-dev terraform-plan-prod check-test skill-test adr-compliance
+.PHONY: ai-dev-test licenses licenses-check licenses-notice release-snapshot release docker-push docker-multiarch lint-all security-scan-all config-validate-all smoke-test k8s-render k8s-diff helm-render terraform-validate terraform-plan-dev terraform-plan-prod check-test skill-test adr-compliance

@@ -28,6 +28,7 @@ END_MARKER = "<!-- END GENERATED CAPABILITY AVAILABILITY -->"
 AVAILABILITY_CLASSES = (
     "sdk",
     "stock-binary",
+    "standalone-binary",
     "module-only",
     "external-frontend",
 )

@@ -2,6 +2,32 @@
   "$schema": "./profile-isolation.schema.json",
   "schema_version": 1,
   "profiles": {
+    "billing": {
+      "summary": "The billing service owns commerce and usage state without linking either SSO executable composition.",
+      "binaries": [
+        { "package": "./cmd/snaplink-billing", "binary": "snaplink-billing" }
+      ],
+      "must_not_link": [
+        "cmd/sso-minimal",
+        "cmd/sso-server",
+        "interfaces/grpcserver",
+        "interfaces/snapshot",
+        "platform/bootstrap",
+        "platform/releases",
+        "protocols/scim"
+      ],
+      "must_link": [
+        "domains/metering/usageledger",
+        "domains/tenant/commerce",
+        "infrastructure/auditgovernance",
+        "infrastructure/postgres/tenantcommerce",
+        "infrastructure/postgres/usageledger",
+        "interfaces/commerce",
+        "interfaces/metering",
+        "interfaces/ssoclient/quotaprojection",
+        "shared/core"
+      ]
+    },
     "small": {
       "summary": "prototype + minimal editions share one binary (cmd/sso-minimal); the durable/admin/observability graph must stay out.",
       "binaries": [

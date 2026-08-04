@@ -34,7 +34,8 @@ from module_catalog import (
 
 def test_repository_catalog_and_profiles_validate():
     checked = validate_repository()
-    assert checked[0] == "catalog (32 modules)"
+    assert checked[0] == "catalog (33 modules)"
+    assert any(item.startswith("profile billing") for item in checked)
     assert any(item.startswith("profile prototype") for item in checked)
     assert any(item.startswith("profile minimal") for item in checked)
     assert any(item.startswith("profile full") for item in checked)
@@ -51,6 +52,7 @@ def test_repository_catalog_and_profiles_validate():
 def test_smoke_matrix_includes_supported_and_buildable_preview_profiles():
     assert supported_profile_ids() == ("full", "standard", "standard-kafka")
     assert buildable_profile_ids() == (
+        "billing",
         "full",
         "minimal",
         "prototype",
@@ -58,12 +60,37 @@ def test_smoke_matrix_includes_supported_and_buildable_preview_profiles():
         "standard-kafka",
     )
     assert module_builder._smoke_profile_ids() == (
+        "billing",
         "full",
         "minimal",
         "prototype",
         "standard",
         "standard-kafka",
     )
+
+
+def test_billing_is_an_independent_preview_build():
+    plan = resolve_plan("billing")
+
+    assert plan.buildable
+    assert plan.profile.data["maturity"] == "preview"
+    assert plan.profile.build_package == "./cmd/snaplink-billing"
+    assert plan.profile.binary_name == "snaplink-billing"
+    assert plan.profile.program_name == "snaplink-billing"
+    assert plan.profile.composition_module == "billing-runtime"
+    assert [module.id for module in plan.modules] == [
+        "core-runtime",
+        "billing-runtime",
+    ]
+    assert plan.dependencies["billing-runtime"] == ("core-runtime",)
+    assert set(plan.modules[-1].provides) == {
+        "commerce.tenant.v1",
+        "metering.usage.v1",
+        "server.billing.v1",
+    }
+    assert "billing-runtime" not in {
+        module.id for module in resolve_plan("full").modules
+    }
 
 
 def test_smoke_matrix_never_drops_an_unbuildable_supported_profile(monkeypatch):

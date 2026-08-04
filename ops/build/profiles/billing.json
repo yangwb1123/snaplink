@@ -1,0 +1,23 @@
+{
+  "$schema": "../profile.schema.json",
+  "schema_version": 1,
+  "id": "billing",
+  "summary": "Standalone tenant commerce and usage-metering service.",
+  "maturity": "preview",
+  "modules": [
+    "billing-runtime"
+  ],
+  "build": {
+    "package": "./cmd/snaplink-billing",
+    "binary": "snaplink-billing",
+    "program": "snaplink-billing",
+    "composition_module": "billing-runtime"
+  },
+  "policy": {
+    "allow_cgo": false,
+    "fips": "any",
+    "allowed_licenses": [
+      "Apache-2.0"
+    ]
+  }
+}

@@ -118,6 +118,7 @@ The current profiles are:
 | `prototype` | preview | Smallest SSO/OAuth runtime: Authorization Code + mandatory PKCE, password/OP-session SSO, JSON logs, memory defaults and the stable `default` tenant seam |
 | `minimal` | preview | Extends `prototype` with OIDC discovery, ID Token, UserInfo and logout plus request tracing |
 | `full` | supported | Extends `minimal` with the complete current stock `sso-server` composition and registered Kafka audit cold module |
+| `billing` | preview | Independent `snaplink-billing` commerce and usage-metering process; not inherited by an SSO profile |
 
 `standard` remains the compatibility default during migration.
 `prototype` and `minimal` are separate build profiles and expose different
@@ -150,6 +151,12 @@ accepted as binary-isolation proof.
 The `oauth-client-credentials` grant is an independent optional
 machine-to-machine module, not the definition or foundation of minimal SSO.
 
+The `billing` profile is also outside the edition hierarchy. It selects the
+embedded, restart-only `billing-runtime` composition and locked
+`core-runtime`, targets `cmd/snaplink-billing`, and is deliberately absent from
+`full`. This records an independently deployable service boundary, not an
+in-process or hot-loaded SSO module.
+
 Security wire invariants are kernel policy, not removable modules. A profile
 cannot disable signature validation, oracle collapse, credential-response
 cache headers, anti-enumeration, trusted-proxy enforcement or mandatory PKCE
@@ -175,11 +182,12 @@ This is the `nginx -V` equivalent. It contains no secrets or runtime module
 configuration. Public edition builds make their identity visible through the
 normal `version` command: a `v1.1.1` build reports
 `snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, or
-`snaplink-v1.1.1.full`.
+`snaplink-v1.1.1.full`. The independent billing profile retains its program
+identity and reports `snaplink-billing v1.1.1`.
 
 ### 5. Require a generation-based lifecycle before calling a module hot
 
-The future runtime manager belongs under `platform/lifecycle/modules` so it
+The runtime manager primitive belongs under `platform/lifecycle/modules` so it
 does not increase `platform/`'s frozen top-level fan-out. Its definitions come
 from the cold build result; runtime config cannot invent a new in-process
 module.
@@ -203,6 +211,27 @@ Replacement is blue/green:
 A failed candidate is cleaned up without affecting the active generation.
 Runtime rollback after publication is not automatic because a module may have
 already produced external side effects.
+
+The general primitive is now implemented, including fixed route slots,
+generation-scoped background controllers, retiring-generation status and a
+bounded startup-injected transition observer. Lifecycle callbacks run outside
+manager and dependency-graph commit locks. Dependency acquisition and final
+publish/disable are atomic with respect to the short graph commit section. A
+same-module concurrent transition fails with `ErrTransitionInProgress` rather
+than running callbacks concurrently. `Close` rejects new transitions once,
+returns that sentinel when an active transition must finish, and lets later
+callers wait for the shared shutdown result.
+
+The independent `snaplink-billing` composition now uses this manager for one
+bounded product capability: its precompiled Audit Governance outbox relay.
+An automatic five-second poll or `SIGHUP` reconciles a strict, monotonic
+enable/disable desired-state file. Each
+generation uses distinct durable lease ownership; an old generation stops new
+claims and drains its in-flight batch before close. A rejected reload preserves
+the active generation and degrades the static readiness check. This proves only
+that background exporter hot path. No stock `sso-server` business route is
+mounted through a slot, the primary audit sink is not replaceable, and the
+external-process supervisor is not implemented.
 
 Routes for hot modules have a static method/path/security shape created at
 boot. Route matching must acquire a generation lease before module middleware
@@ -258,8 +287,9 @@ private keys or reusable bearer credentials by default.
    prove dependency removal.
 5. **Production evidence:** prove the `full` composition against durable
    state, OAuth/OIDC controls, observability and supported topology.
-6. **Hot manager:** add generation leases, route guards, drain, readiness and
-   transition audit; migrate one low-risk background module first.
+6. **Hot manager:** retain the implemented generation manager and route-slot
+   primitive; attach the transition observer to audit and migrate one low-risk
+   background module before classifying a product capability hot.
 7. **External supervisor:** add signed artifact policy and typed RPC processes.
 8. **Release evidence:** publish per-profile SBOMs, locks, signatures and
    provenance.

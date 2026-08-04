@@ -1,8 +1,6 @@
 # Release workflow. Fires when a `vX.Y.Z` tag is pushed to main.
-# Today release.disable=true in .goreleaser.yaml short-circuits the
-# upload step — the workflow runs end-to-end, verifies the build matrix
-# + SBOM generation succeed, then exits without publishing. Flip when
-# a remote (GitHub Releases / ghcr.io / private registry) is chosen.
+# GoReleaser publishes signed archives, SBOMs, and the configured GHCR images.
+# Tag protection and the release gate are therefore production controls.
 
 name: release
 
@@ -11,9 +9,9 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write     # needed when release.disable flips to false (creates GH Release)
-  id-token: write     # OIDC token for keyless cosign signing (future)
-  packages: write     # needed when container push is wired
+  contents: write     # creates the GitHub Release and uploads archives
+  id-token: write     # OIDC token for keyless cosign signing
+  packages: write     # pushes release images to GHCR
 
 jobs:
   release:
@@ -30,11 +28,20 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Prepare public SKU release evidence
+        shell: bash
+        run: |
+          evidence_root="${RUNNER_TEMP}/snaplink-profile-release"
+          python ops/scripts/profile_release.py prepare \
+            --version "${GITHUB_REF_NAME}" \
+            --output-root "${evidence_root}" \
+            --env-file "${evidence_root}/release.env"
+          cat "${evidence_root}/release.env" >> "${GITHUB_ENV}"
+
       # syft is required for the sboms step in .goreleaser.yaml.
       - uses: anchore/sbom-action/download-syft@v0
 
-      # cosign is required when the future signs: block in
-      # .goreleaser.yaml is uncommented. Cheap to install up front.
+      # cosign signs archives and images using the workflow's OIDC identity.
       - uses: sigstore/cosign-installer@v3
 
       # Docker buildx with the docker-container driver enables multi-platform
@@ -49,7 +56,5 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
-          # GITHUB_TOKEN is the default; explicit for clarity. When
-          # release.disable flips to false, this is the credential
-          # goreleaser uses to create the Release + upload assets.
+          # GITHUB_TOKEN creates the release, uploads assets, and pushes images.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

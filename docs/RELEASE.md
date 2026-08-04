@@ -8,10 +8,17 @@ There is no guaranteed calendar cadence.
 
 GoReleaser currently defines:
 
-- `sso-server`
+- separately named `snaplink-prototype` and `snaplink-minimal` archives for
+  Linux, macOS, and Windows targets
+- a `snaplink-full` archive for Linux and macOS, and an independent
+  `snaplink-billing` archive for Linux
+- `sso-server` for Linux and macOS
 - `sso-ctl`
 - the separately-moduled `sso-mcp`
-- `sso-server` and `sso-mcp` container images
+- `snaplink-stripe-adapter` and `snaplink-audit-provisioner` Linux service
+  binaries
+- matching `sso-server`, `sso-mcp`, Billing, Stripe-adapter, and audit-
+  provisioner container images
 - SHA-256 checksums
 - one SPDX-JSON SBOM per archive
 - keyless Cosign signatures for archives and container images
@@ -20,9 +27,14 @@ The normal `python cli.py build` engineering gate builds only `sso-server` and
 `sso-ctl`; `make release-snapshot` is the check for the complete GoReleaser
 matrix.
 
-Local profile builds produce a module lock and embedded inventory, but
-GoReleaser does not yet publish per-profile artifacts or binary-level profile
-SBOMs:
+Each public SKU archive (`prototype`, `minimal`, `full`, and independent
+`billing`) carries the exact target's
+`modules.lock.json`, expected `profile-inventory.json`, and generated
+`binary-evidence.json` under `evidence/`. The normal per-archive SPDX-JSON SBOM,
+checksum, and Cosign signature are published beside it. Before archiving, the
+release hook verifies the binary target and configured build tag, embedded
+profile/lock/inventory values, selected external module linkage, and—when the
+target is native—the executable's `modules --json` result. The profiles are:
 
 - `prototype` is the smallest buildable SSO/OAuth edition: Code + mandatory
   PKCE, password/OP-session login, JSON logs, memory defaults, and the stable
@@ -30,6 +42,8 @@ SBOMs:
 - `minimal` inherits `prototype` and adds the common OIDC and tracing surfaces.
 - `full` inherits `minimal` and selects the complete current stock
   `sso-server` composition plus the registered Kafka audit cold module.
+- `billing` is an independent preview profile for the separately deployed
+  `snaplink-billing` process; it is not included in `full`.
 - `standard` and `standard-kafka` exist only to preserve the historical stock
   composition.
 
@@ -39,16 +53,20 @@ Build with an explicit source version, for example:
 python cli.py configure --profile prototype --version v1.1.1 --build
 python cli.py configure --profile minimal --version v1.1.1 --build
 python cli.py configure --profile full --version v1.1.1 --build
+python cli.py configure --profile billing --version v1.1.1 --build
 ```
 
 The resulting first version lines are
 `snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, and
-`snaplink-v1.1.1.full`. Every version command also reports the UTC build time,
-full Git hash, dirty-source marker, and Go toolchain. `prototype` and `minimal` still share
-`cmd/sso-minimal` and a larger linked dependency graph; their different
-runtime boundaries are not yet physical-isolation evidence. A module lock
-records cold capability selection, not runtime backend choice, feature-gate
-state, hot lifecycle support, or an SBOM. Follow
+`snaplink-v1.1.1.full`; billing reports `snaplink-billing v1.1.1`. Every
+version command also reports the UTC build time, full Git hash,
+dirty-source marker, and Go toolchain. `prototype` and `minimal` still share
+`cmd/sso-minimal` and a larger linked dependency graph. SKU release evidence
+proves the target-specific runtime profile and canonical module-lock binding;
+it explicitly does not claim complete package-level physical dependency
+isolation for any SKU. A
+module lock records cold capability selection, not runtime backend choice,
+feature-gate state, hot lifecycle support, or an SBOM. Follow
 [plugin-system.md](plugin-system.md).
 
 The release pipeline does not currently produce a SLSA provenance statement.
@@ -137,6 +155,11 @@ hooks or an applicable repository signature policy to make a release pass.
 
 - Confirm every expected OS/architecture archive exists.
 - Verify `checksums.txt`, SBOMs and Cosign signatures.
+- For each public SKU archive, compare the binary's `modules --json` output
+  with `evidence/profile-inventory.json` on a native target and confirm its
+  lock digest matches `evidence/modules.lock.json` and
+  `evidence/binary-evidence.json` (`snaplink-billing` is the Billing binary;
+  the SSO editions use `snaplink`).
 - Pull each published container by immutable digest and run `version`.
 - Run a smoke login/token/UserInfo flow against the released image.
 - Confirm release notes link the correct migration and security guidance.

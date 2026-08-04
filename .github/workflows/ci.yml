@@ -379,8 +379,54 @@ jobs:
       # registry login. Single-platform here keeps the run fast.
       - uses: docker/setup-buildx-action@v3
 
+      - name: Dockerfile target contract
+        run: python -m unittest checks.test_dockerfile checks.test_billing_delivery checks.test_stripe_delivery
+
       - name: build (no push)
         uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          # GitHub Actions cache backend — survives across runs on the
+          # same ref without external infra.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Single-arch smoke is enough to catch Dockerfile breakage.
+          platforms: linux/amd64
+          tags: snaplink/sso-server:ci
+
+      - name: build snaplink-billing target (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: snaplink-billing
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          tags: snaplink/billing:ci
+
+      - name: build snaplink-stripe-adapter target (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: snaplink-stripe-adapter
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          tags: snaplink/stripe-adapter:ci
+
+      - name: build snaplink-audit-provisioner target (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: snaplink-audit-provisioner
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          tags: snaplink/audit-provisioner:ci
 
   kustomize:
     # Render all Kustomize overlays to catch YAML syntax errors,
@@ -397,11 +443,95 @@ jobs:
           sudo mv kustomize /usr/local/bin/
           kustomize version
 
+      - name: install Helm
+        run: |
+          curl --fail --silent --show-error --location \
+            https://get.helm.sh/helm-v4.2.0-linux-amd64.tar.gz \
+            --output helm-v4.2.0-linux-amd64.tar.gz
+          printf '%s  %s\n' \
+            '97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096' \
+            'helm-v4.2.0-linux-amd64.tar.gz' | sha256sum --check -
+          tar xzf helm-v4.2.0-linux-amd64.tar.gz
+          sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
       - name: render dev overlay
         run: kustomize build ops/deploy/kustomize/overlays/dev/ > /dev/null
 
       - name: render prod overlay
         run: kustomize build ops/deploy/kustomize/overlays/prod/ > /dev/null
+
+      - name: render billing deployment
+        run: kustomize build ops/deploy/billing/ > /dev/null
+
+      - name: render Stripe adapter deployment
+        run: kustomize build ops/deploy/billing/stripe-adapter/ > /dev/null
+
+      - name: render Audit Governance provisioner deployment
+        run: kustomize build ops/deploy/audit-provisioner/ > /dev/null
+
+      - name: lint and render billing Helm chart
+        run: |
+          helm lint --strict ops/deploy/helm/snaplink-billing
+          helm template billing ops/deploy/helm/snaplink-billing \
+            --namespace snaplink-sso > /dev/null
+
+      - name: lint and render Stripe adapter Helm chart
+        run: |
+          helm lint --strict ops/deploy/helm/snaplink-stripe-adapter
+          helm template stripe-adapter ops/deploy/helm/snaplink-stripe-adapter \
+            --namespace snaplink-sso > /dev/null
+
+      - name: lint and render Audit Governance provisioner Helm chart
+        run: |
+          helm lint --strict ops/deploy/helm/snaplink-audit-provisioner
+          helm template audit-provisioner ops/deploy/helm/snaplink-audit-provisioner \
+            --namespace snaplink-sso \
+            --set-file desiredState=ops/deploy/audit-provisioner/desired-state.example.json \
+            > /dev/null
+
+      - name: validate commerce compose profile
+        run: docker compose -f ops/deploy/compose/compose.yaml --profile commerce config > /dev/null
+
+      - name: validate payment compose profile
+        run: docker compose -f ops/deploy/compose/compose.yaml --profile payment config > /dev/null
+
+      - name: validate Audit Governance provisioner compose profile
+        run: docker compose -f ops/deploy/compose/compose.yaml --profile audit-provisioning config > /dev/null
+
+      - name: validate bare-metal HA topology and TLS edge
+        run: |
+          docker compose -f ops/deploy/baremetal-ha/docker-compose.yml \
+            --env-file ops/deploy/baremetal-ha/.env.example --profile tools \
+            config > /dev/null
+          sh -n ops/deploy/baremetal-ha/smoke.sh
+          sed -e 's#^ExecStart=.*#ExecStart=/bin/true#' \
+            -e 's#^ExecReload=.*#ExecReload=/bin/true#' \
+            ops/deploy/baremetal-ha/systemd/sso-server.service \
+            > /tmp/sso-server.service
+          sed -e 's#^ExecStart=.*#ExecStart=/bin/true#' \
+            ops/deploy/baremetal-ha/systemd/snaplink-billing.service \
+            > /tmp/snaplink-billing.service
+          sed -e 's#^ExecStart=.*#ExecStart=/bin/true#' \
+            ops/deploy/baremetal-ha/systemd/snaplink-stripe-adapter.service \
+            > /tmp/snaplink-stripe-adapter.service
+          sed -e 's#^ExecStart=.*#ExecStart=/bin/true#' \
+            ops/deploy/baremetal-ha/systemd/snaplink-audit-provisioner.service \
+            > /tmp/snaplink-audit-provisioner.service
+          systemd-analyze verify \
+            /tmp/sso-server.service /tmp/snaplink-billing.service \
+            /tmp/snaplink-stripe-adapter.service \
+            /tmp/snaplink-audit-provisioner.service
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj /CN=sso.example.com \
+            -keyout /tmp/sso-edge.key -out /tmp/sso-edge.crt
+          cp /tmp/sso-edge.crt /tmp/sso-edge.pem
+          openssl pkey -in /tmp/sso-edge.key >> /tmp/sso-edge.pem
+          SSO_TLS_PEM_PATH=/tmp/sso-edge.pem docker compose \
+            -f ops/deploy/baremetal-ha/docker-compose.yml \
+            --env-file ops/deploy/baremetal-ha/.env.example \
+            run --rm --no-deps haproxy-a \
+            haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
 
       - name: diff dev vs prod
         run: |
@@ -427,18 +557,6 @@ jobs:
         run: |
           terraform init -backend=false -input=false
           terraform validate
-        with:
-          context: .
-          push: false
-          # GitHub Actions cache backend — survives across runs on the
-          # same ref without external infra.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          # Single-arch smoke is enough to catch Dockerfile breakage
-          # (missing files, syntax errors, broken go build). Multi-arch
-          # matrix lives in a follow-up once we have a push target.
-          platforms: linux/amd64
-          tags: snaplink/sso-server:ci
 
   chaos:
     # test/chaos/*.go (fault injection: storage error fail-open/closed,

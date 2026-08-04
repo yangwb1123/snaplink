@@ -1,0 +1,25 @@
+# Keep generated artifacts and local credentials out of every Docker build
+# context. Source, module files and .git remain available to the builder so
+# version metadata keeps its existing behavior.
+/bin/
+/dist/
+/logs/
+/.venv/
+/.pytest_cache/
+/.pi/
+**/__pycache__/
+*.py[cod]
+*.cover
+*.prof
+*.test
+/coverage.out
+/coverage.html
+/snaplink-billing
+/snaplink-stripe-adapter
+/sso-server
+/sso-minimal
+/sso-ctl
+/gensdk
+/ops/deploy/compose/secrets/
+/ops/deploy/baremetal-ha/secrets/
+**/.env

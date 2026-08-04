@@ -13,8 +13,9 @@ observability and topology.
 
 | Binary | Snaplink packages | Symbols | Size |
 |---|---:|---:|---:|
-| `sso-minimal` (prototype + minimal) | 90 | ~33.8k | ~32.7 MB |
-| `sso-server` (full) | 171 | ~72.3k | ~66.6 MB |
+| `sso-minimal` (prototype + minimal) | 95 | ~35.1k | ~34.2 MB |
+| `sso-server` (full) | 180 | ~73.5k | ~68.1 MB |
+| `snaplink-billing` (billing) | 109 | ~38.0k | ~34.7 MB |
 
 The small binary links the protocol SDK (`interfaces/sso`), the identity
 and OAuth memory stores (`infrastructure/defaultimpl`), password
@@ -40,6 +41,18 @@ infrastructure/admin/durable graph, not the SDK. The boundary is declared
 in `ops/build/profile-isolation.json` and enforced by
 `python cli.py profiles evidence` — an accidental import that drags
 postgres or the admin gateway into the small binary fails the check.
+
+The independent `billing` profile has a narrower, different assertion. It
+must link the tenant-commerce and usage-ledger domains, their PostgreSQL
+stores, the billing HTTP interfaces and Audit Governance relay, while it must
+also link the typed entitlement-to-SSO quota projection client. It must not
+link either SSO command composition, admin gRPC, snapshots, bootstrap,
+releases or SCIM. Shared SDK packages reached through its Snaplink token
+client are not claimed to be physically absent. This proves an independently
+buildable process boundary; it does not classify billing as hot or include it
+in the `full` SSO edition. An empty quota base URL keeps the compiled worker
+inactive; endpoint/audience/credentials are cold configuration, not an
+installable plugin.
 
 ## Reproducing the evidence
 
