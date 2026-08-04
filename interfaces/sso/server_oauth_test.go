@@ -113,3 +113,57 @@ func TestUASummary(t *testing.T) {
 		}
 	}
 }
+
+func TestTokenClientAuthEvidenceMatchesRegisteredMethod(t *testing.T) {
+	methods := []struct {
+		name string
+		kind tokenClientAuthKind
+	}{
+		{"client_secret_basic", tokenAuthBasic},
+		{"client_secret_post", tokenAuthPost},
+		{"private_key_jwt", tokenAuthPrivateKeyJWT},
+		{ClientAuthWorkloadIdentity, tokenAuthWorkloadIdentity},
+		{ClientAuthTLS, tokenAuthNone},
+		{ClientAuthSelfSignedTLS, tokenAuthNone},
+		{"none", tokenAuthNone},
+	}
+	evidence := []struct {
+		name  string
+		value tokenClientAuthEvidence
+	}{
+		{"none", tokenClientAuthEvidence{}},
+		{"Basic", tokenClientAuthEvidence{basic: true}},
+		{"body secret", tokenClientAuthEvidence{bodySecret: true}},
+		{"private_key_jwt", tokenClientAuthEvidence{assertion: true, assertionType: ClientAssertionTypeJWTBearer}},
+		{"workload", tokenClientAuthEvidence{assertion: true, assertionType: ClientAssertionTypeWorkloadIdentity}},
+		{"mixed Basic/post", tokenClientAuthEvidence{basic: true, bodySecret: true}},
+		{"mixed post/assertion", tokenClientAuthEvidence{bodySecret: true, assertion: true, assertionType: ClientAssertionTypeJWTBearer}},
+		{"partial assertion", tokenClientAuthEvidence{assertion: true}},
+	}
+	for _, method := range methods {
+		for _, input := range evidence {
+			want := input.value.kind() == method.kind
+			if got := input.value.matches(method.name); got != want {
+				t.Errorf("method=%s evidence=%s: matches=%v want %v", method.name, input.name, got, want)
+			}
+		}
+	}
+}
+
+func TestTokenClientAuthEvidenceLegacyCompatibility(t *testing.T) {
+	singleMethods := []tokenClientAuthEvidence{
+		{},
+		{basic: true},
+		{bodySecret: true},
+		{assertion: true, assertionType: ClientAssertionTypeJWTBearer},
+		{assertion: true, assertionType: ClientAssertionTypeWorkloadIdentity},
+	}
+	for _, evidence := range singleMethods {
+		if !evidence.matches("") {
+			t.Errorf("legacy client rejected one credential kind %v", evidence.kind())
+		}
+	}
+	if (tokenClientAuthEvidence{basic: true, bodySecret: true}).matches("") {
+		t.Error("legacy client accepted mixed Basic and body credentials")
+	}
+}

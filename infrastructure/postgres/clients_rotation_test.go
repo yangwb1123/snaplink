@@ -66,6 +66,85 @@ func TestPostgresClients_RotateSecretUpdatesSecretRotatedAt(t *testing.T) {
 	}
 }
 
+func TestPostgresClients_RotateSecretOverlapLifecycle(t *testing.T) {
+	t.Parallel()
+	st := freshClientStore(t)
+	ctx := context.Background()
+	if err := st.Add(ctx, &sso.Client{ID: "overlap", Secret: "old", Active: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	newSecret, err := st.RotateSecretWithOverlap(ctx, "overlap", time.Hour)
+	if err != nil {
+		t.Fatalf("RotateSecretWithOverlap: %v", err)
+	}
+	if err := st.ValidateSecret(ctx, "overlap", newSecret); err != nil {
+		t.Fatalf("new secret inside overlap: %v", err)
+	}
+	if err := st.ValidateSecret(ctx, "overlap", "old"); err != nil {
+		t.Fatalf("old secret inside overlap: %v", err)
+	}
+	client, err := st.Get(ctx, "overlap")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if client.PreviousSecret == "old" || !client.SecretOverlapUntil.After(time.Now()) {
+		t.Fatalf("overlap metadata not stored safely: %+v", client)
+	}
+	client.SecretOverlapUntil = time.Now().Add(-time.Second)
+	if err := st.Update(ctx, client); err != nil {
+		t.Fatalf("expire overlap: %v", err)
+	}
+	if err := st.ValidateSecret(ctx, "overlap", "old"); err == nil {
+		t.Fatal("old secret after overlap must be rejected")
+	}
+}
+
+func TestPostgresClients_SecretExpiryPersistsAndIsEnforced(t *testing.T) {
+	t.Parallel()
+	st := freshClientStore(t)
+	ctx := context.Background()
+	expires := time.Now().UTC().Add(-time.Minute)
+	if err := st.Add(ctx, &sso.Client{ID: "expired", Secret: "secret", Active: true, SecretExpiresAt: expires}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	client, err := st.Get(ctx, "expired")
+	if err != nil || client.SecretExpiresAt.UnixNano() != expires.UnixNano() {
+		t.Fatalf("expiry did not round-trip: client=%+v err=%v", client, err)
+	}
+	if err := st.ValidateSecret(ctx, "expired", "secret"); err == nil {
+		t.Fatal("expired client secret must be rejected")
+	}
+}
+
+func TestPostgresClients_DCRRuntimeMetadataAndRATOverlapPersist(t *testing.T) {
+	t.Parallel()
+	st := freshClientStore(t)
+	ctx := context.Background()
+	until := time.Now().UTC().Add(time.Hour)
+	client := &sso.Client{
+		ID: "dcr", Secret: "secret", Active: true,
+		RegistrationAccessToken: "rat", PreviousRegistrationAccessToken: "old-rat",
+		RegistrationAccessTokenOverlapUntil: until,
+		GrantTypes:                          []string{"authorization_code", "refresh_token"},
+		TokenEndpointAuthMethod:             "tls_client_auth", TLSClientAuthSubjectDN: "CN=dcr",
+	}
+	if err := st.Add(ctx, client); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	stored, err := st.Get(ctx, "dcr")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(stored.GrantTypes) != 2 || stored.TokenEndpointAuthMethod != "tls_client_auth" ||
+		stored.TLSClientAuthSubjectDN != "CN=dcr" {
+		t.Fatalf("DCR runtime metadata did not persist: %+v", stored)
+	}
+	if stored.PreviousRegistrationAccessToken == "old-rat" || stored.PreviousRegistrationAccessToken == "" ||
+		stored.RegistrationAccessTokenOverlapUntil.UnixNano() != until.UnixNano() {
+		t.Fatalf("RAT overlap did not persist safely: %+v", stored)
+	}
+}
+
 // TestPostgresClients_ListDueForRotation proves the query's full contract:
 // only ACTIVE, secret-bearing clients whose secret is at least as old as the
 // cutoff are due; an inactive client, a secretless client, and a

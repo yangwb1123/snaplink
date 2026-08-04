@@ -193,6 +193,7 @@ func (h *{{.Name}}GrantHandler) Handle(ctx core.HandlerContext, client *core.Cli
 	//    token, err := issuer.Issue(ctx.Request().Context(), &core.Subject{
 	//    	ID:       resourceOwnerID, // if applicable
 	//    	ClientID: client.ID,
+	//    	TenantID: client.TenantID,
 	//    }, scopes)
 	//    if err != nil {
 	//    	ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))

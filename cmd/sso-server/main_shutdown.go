@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	configreload "github.com/yangwb1123/snaplink/config/reload"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/shared/spi"
 	"google.golang.org/grpc"
 
@@ -153,6 +154,14 @@ func shutdownServers(ctx context.Context, logger spi.Logger, httpSrv, pprofSrv *
 func shutdownSubsystems(ctx context.Context, a *app, logger spi.Logger) {
 	shutdownWatchLoops(ctx, a)
 	shutdownSchedulers(ctx, a, logger)
+	if a.server != nil {
+		if err := a.server.ShutdownAuthenticatorDelivery(ctx); err != nil {
+			logger.Error("authenticator delivery drain timed out", "error", err)
+		}
+		if err := a.server.ShutdownNotificationRouter(ctx); err != nil {
+			logger.Error("notification router drain timed out", "error", err)
+		}
+	}
 	// Anomaly detection: drain queue + close SQLite stores. Bounded
 	// by the same shutdown ctx so a hung detector backend can't
 	// stall the whole process.
@@ -188,18 +197,24 @@ func shutdownSubsystems(ctx context.Context, a *app, logger spi.Logger) {
 				logger.Error("caep transmitter drain timed out", "error", err)
 			}
 		}
+		shutdownBCLManager(ctx, a.server.LogoutNotifier(), logger)
 	}
 	closeMemoryStoreReapers(a)
 }
 
-// closeMemoryStoreReapers stops any background reaper goroutines the
-// bounded in-process refresh-token/device-code/PAR/JTI-replay/auth-code/
-// session stores may have started (StartReaper, opt-in via *.reap_interval /
-// identity.session_reap_interval config). Reached through the existing
-// store accessors + an io.Closer type assertion — same idiom as
-// shutdownAuditKafka below — since the concrete memory store type is
-// private to interfaces/sso; a sqlite/redis/custom backend simply doesn't
-// implement io.Closer here and this is a silent no-op.
+func shutdownBCLManager(ctx context.Context, notifier sso.LogoutNotifier, logger spi.Logger) {
+	closer, ok := notifier.(interface{ Close(context.Context) error })
+	if !ok {
+		return
+	}
+	if err := closer.Close(ctx); err != nil {
+		logger.Error("backchannel logout replay drain timed out", "error", err)
+	}
+}
+
+// closeMemoryStoreReapers stops reapers and closes stores that expose
+// io.Closer (memory or SQLite OAuth/session implementations). Redis/custom
+// backends without Close remain a silent no-op.
 func closeMemoryStoreReapers(a *app) {
 	if a.server == nil {
 		return
@@ -210,6 +225,9 @@ func closeMemoryStoreReapers(a *app) {
 	closeIfCloser(a.server.JTIReplayStore())
 	closeIfCloser(a.server.AuthCodeStore())
 	closeIfCloser(a.server.SessionManager())
+	closeIfCloser(a.server.IdentityLinkStore())
+	closeIfCloser(a.server.NotificationStore())
+	closeIfCloser(a.server.NotificationPreferenceStore())
 }
 
 // closeIfCloser closes v when it implements io.Closer, else no-ops.
@@ -291,6 +309,8 @@ func shutdownSchedulers(ctx context.Context, a *app, logger spi.Logger) {
 		"break-glass sweeper did not exit cleanly")
 	stopScheduler(ctx, logger, a.continuousVerifyCancel, a.continuousVerifyDone,
 		"continuous-verification agent did not exit cleanly")
+	stopScheduler(ctx, logger, a.capConvergenceCancel, a.capConvergenceDone,
+		"conditional-access convergence did not exit cleanly")
 	stopScheduler(ctx, logger, a.tokenAnomalySweepCancel, a.tokenAnomalySweepDone,
 		"token anomaly sweep did not exit cleanly")
 	stopScheduler(ctx, logger, a.userAutoDeprovisionCancel, a.userAutoDeprovisionDone,

@@ -54,9 +54,9 @@ func TestRemoteAuth_RoundtripPerAlg(t *testing.T) {
 		name string
 		iss  jwtIssuer
 	}{
-		{"EdDSA", defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(5 * time.Minute))},
-		{"ES256", defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSATokenTTL(5 * time.Minute))},
-		{"RS256", defaultimpl.NewRSAJWTIssuer(defaultimpl.WithRSATokenTTL(5 * time.Minute))},
+		{"EdDSA", defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(5*time.Minute), defaultimpl.WithEd25519Issuer("remote-test"))},
+		{"ES256", defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSATokenTTL(5*time.Minute), defaultimpl.WithECDSAIssuer("remote-test"))},
+		{"RS256", defaultimpl.NewRSAJWTIssuer(defaultimpl.WithRSATokenTTL(5*time.Minute), defaultimpl.WithRSAIssuer("remote-test"))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -65,7 +65,7 @@ func TestRemoteAuth_RoundtripPerAlg(t *testing.T) {
 
 			cache := remote.NewJWKSCache(url, remote.WithJWKSRefreshInterval(time.Hour))
 			defer cache.Close()
-			client := remote.NewAuthClient(cache)
+			client := remote.NewAuthClient(cache, remote.WithIssuer("remote-test"))
 
 			tok, err := tc.iss.Issue(context.Background(), &sso.Subject{
 				ID:     "user-1",

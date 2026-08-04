@@ -79,12 +79,7 @@ ALTER TABLE clients ADD COLUMN federation                      INTEGER NOT NULL 
 ALTER TABLE clients ADD COLUMN attributes                      TEXT    NOT NULL DEFAULT '{}';`,
 	},
 	{
-		// v3: secret_rotated_at backs the scheduled client-secret rotation
-		// sweep (clientrotation.ClientSecretRotator.ListDueForRotation).
-		// Default 0 (unix-nanos "unknown") on existing rows means every
-		// pre-migration client is NEVER due until its secret is next
-		// rotated (Add/RotateSecret stamp it then) — see
-		// core.Client.SecretRotatedAt for why zero must not mean "overdue".
+		// v3 tracks scheduled rotation. Zero keeps legacy rows out of sweeps.
 		Version: 3,
 		SQL:     `ALTER TABLE clients ADD COLUMN secret_rotated_at INTEGER NOT NULL DEFAULT 0;`,
 	},
@@ -98,6 +93,16 @@ ALTER TABLE clients ADD COLUMN attributes                      TEXT    NOT NULL 
 		SQL: `
 ALTER TABLE clients ADD COLUMN client_trust_score   REAL    NOT NULL DEFAULT 0;
 ALTER TABLE clients ADD COLUMN client_trust_set_at  INTEGER NOT NULL DEFAULT 0;`,
+	},
+	{
+		Version: 5,
+		SQL: `
+ALTER TABLE clients ADD COLUMN previous_secret      TEXT    NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN secret_overlap_until INTEGER NOT NULL DEFAULT 0;`,
+	},
+	{
+		Version: 6,
+		SQL:     `ALTER TABLE clients ADD COLUMN secret_expires_at INTEGER NOT NULL DEFAULT 0;`,
 	},
 }
 
@@ -173,8 +178,13 @@ func (s *ClientStore) ValidateSecret(ctx context.Context, clientID, clientSecret
 	if err != nil {
 		return err
 	}
-	if !compareClientSecret(c.Secret, clientSecret) {
+	current := compareClientSecret(c.Secret, clientSecret)
+	previous := time.Now().Before(c.SecretOverlapUntil) && compareClientSecret(c.PreviousSecret, clientSecret)
+	if !current && !previous {
 		return errors.New("invalid client secret")
+	}
+	if !c.SecretExpiresAt.IsZero() && !time.Now().Before(c.SecretExpiresAt) {
+		return errors.New("client secret expired")
 	}
 	// Parity with MemoryClientStore.ValidateSecret: a deactivated
 	// confidential client MUST NOT mint tokens. The /token grant path
@@ -274,7 +284,8 @@ const clientInsertSQL = `
             userinfo_encrypted_response_alg, userinfo_encrypted_response_enc,
             backchannel_logout_uri, subject_type, sector_identifier_uri,
             frontchannel_logout_uri, federation, attributes, secret_rotated_at,
-            client_trust_score, client_trust_set_at
+            client_trust_score, client_trust_set_at,
+            previous_secret, secret_overlap_until, secret_expires_at
         ) VALUES (
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
@@ -288,7 +299,8 @@ const clientInsertSQL = `
             ?, ?,
             ?, ?, ?,
             ?, ?, ?, ?,
-            ?, ?
+			?, ?,
+			?, ?, ?
         )`
 
 func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
@@ -302,7 +314,11 @@ func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
 	// (federation-derived / public) has nothing to rotate, so its
 	// timestamp stays zero (never due).
 	if c.Secret != "" {
-		c.SecretRotatedAt = time.Now()
+		now := time.Now()
+		c.SecretRotatedAt = now
+		if c.SecretExpiresAt.IsZero() {
+			c.SecretExpiresAt = now.Add(clientrotation.DefaultLifetime)
+		}
 	}
 	args, err := clientWritePrep(c)
 	if err != nil {
@@ -351,7 +367,8 @@ const clientUpdateSQL = `
             userinfo_encrypted_response_alg = ?, userinfo_encrypted_response_enc = ?,
             backchannel_logout_uri = ?, subject_type = ?, sector_identifier_uri = ?,
             frontchannel_logout_uri = ?, federation = ?, attributes = ?, secret_rotated_at = ?,
-            client_trust_score = ?, client_trust_set_at = ?
+            client_trust_score = ?, client_trust_set_at = ?,
+            previous_secret = ?, secret_overlap_until = ?, secret_expires_at = ?
         WHERE id = ?`
 
 func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
@@ -384,27 +401,6 @@ func (s *ClientStore) Delete(ctx context.Context, clientID string) error {
 		return fmt.Errorf("sqlite: delete client: %w", err)
 	}
 	return nil
-}
-
-func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string, error) {
-	plain, err := generateClientSecret()
-	if err != nil {
-		return "", err
-	}
-	hashed, err := hashClientSecret(plain)
-	if err != nil {
-		return "", fmt.Errorf("sqlite: hash rotated secret: %w", err)
-	}
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE clients SET secret = ?, secret_rotated_at = ? WHERE id = ?`,
-		hashed, unixNanoOrZero(time.Now()), clientID)
-	if err != nil {
-		return "", fmt.Errorf("sqlite: rotate secret: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return "", sso.ErrNoSuchClient
-	}
-	return plain, nil
 }
 
 // ListDueForRotation implements clientrotation.ClientRotationLister: every
@@ -447,7 +443,8 @@ func clientSelectAll() string {
         userinfo_encrypted_response_alg, userinfo_encrypted_response_enc,
         backchannel_logout_uri, subject_type, sector_identifier_uri,
         frontchannel_logout_uri, federation, attributes, secret_rotated_at,
-        client_trust_score, client_trust_set_at
+        client_trust_score, client_trust_set_at,
+        previous_secret, secret_overlap_until, secret_expires_at
         FROM clients`
 }
 
@@ -492,8 +489,10 @@ func isUniqueViolation(err error) bool {
 }
 
 var (
-	_ sso.ClientStore                     = (*ClientStore)(nil)
-	_ sso.TenantScopedClientStore         = (*ClientStore)(nil)
-	_ core.ClientStoreStats               = (*ClientStore)(nil)
-	_ clientrotation.ClientRotationLister = (*ClientStore)(nil)
+	_ sso.ClientStore                             = (*ClientStore)(nil)
+	_ sso.TenantScopedClientStore                 = (*ClientStore)(nil)
+	_ core.ClientStoreStats                       = (*ClientStore)(nil)
+	_ clientrotation.ClientRotationLister         = (*ClientStore)(nil)
+	_ clientrotation.ClientSecretOverlapRotator   = (*ClientStore)(nil)
+	_ clientrotation.ClientSecretLifecycleRotator = (*ClientStore)(nil)
 )

@@ -101,6 +101,7 @@ func newBCLServer(t *testing.T, bcURI string, notifier sso.LogoutNotifier) (*htt
 		sso.WithClientStore(clients),
 		sso.WithAuthenticator(pw),
 		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithIDTokenIssuer(issuer),
 		sso.WithDefaultTokenStrategy("jwt"),
 		sso.WithBackchannelLogout(issuer, notifier),
 		sso.WithAuditRecorder(rec),
@@ -112,11 +113,16 @@ func newBCLServer(t *testing.T, bcURI string, notifier sso.LogoutNotifier) (*htt
 
 // loginBCL drives the direct-mint flow and returns the access_token.
 func loginBCL(t *testing.T, srv *httptest.Server) string {
+	return loginBCLToken(t, srv, "access_token", nil)
+}
+
+func loginBCLToken(t *testing.T, srv *httptest.Server, field string, scope []string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{
 		"provider":   "password",
 		"client_id":  bclClient,
 		"credential": map[string]string{"username": bclUser, "password": bclPassword},
+		"scope":      scope,
 	})
 	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -129,9 +135,9 @@ func loginBCL(t *testing.T, srv *httptest.Server) string {
 	}
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
-	tok, _ := out["access_token"].(string)
+	tok, _ := out[field].(string)
 	if tok == "" {
-		t.Fatalf("no access_token in login response: %v", out)
+		t.Fatalf("no %s in login response: %v", field, out)
 	}
 	return tok
 }
@@ -303,7 +309,9 @@ func TestBCL_AuditOnSuccess(t *testing.T) {
 
 func TestBCL_AuditOnFailure(t *testing.T) {
 	// RP returns 500 → audit failure path.
+	var attempts atomic.Int32
 	rp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
 	t.Cleanup(rp.Close)
@@ -322,6 +330,85 @@ func TestBCL_AuditOnFailure(t *testing.T) {
 	}
 	if events[0].Reason == "" {
 		t.Errorf("Reason should carry the failure detail")
+	}
+	if got := attempts.Load(); got != sso.DefaultBackchannelLogoutMaxAttempts {
+		t.Errorf("delivery attempts = %d, want %d", got, sso.DefaultBackchannelLogoutMaxAttempts)
+	}
+}
+
+func TestBCL_DoesNotRetryPermanentHTTPFailure(t *testing.T) {
+	var attempts atomic.Int32
+	rp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		http.Error(w, "bad logout token", http.StatusBadRequest)
+	}))
+	t.Cleanup(rp.Close)
+	srv, _, _ := newBCLServer(t, rp.URL, sso.NewHTTPLogoutNotifier())
+	logoutBCL(t, srv, loginBCL(t, srv))
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("permanent 400 delivery attempts = %d, want 1", got)
+	}
+}
+
+func TestBCL_RetriesTransientFailureWithFreshToken(t *testing.T) {
+	n := &captureNotifier{failNth: 1}
+	srv, sink, _ := newBCLServer(t, "https://app.example.com/bc-logout", n)
+	logoutBCL(t, srv, loginBCL(t, srv))
+	calls := n.snapshot()
+	if len(calls) != 2 {
+		t.Fatalf("notifier calls = %d, want first failure plus one retry", len(calls))
+	}
+	if calls[0].LogoutToken == calls[1].LogoutToken {
+		t.Fatal("retry reused a replay-detectable logout token")
+	}
+	events, _ := sink.Query(context.Background(), audit.Query{Type: audit.EventLogoutNotified})
+	if len(events) != 1 || events[0].Outcome != audit.OutcomeSuccess {
+		t.Fatalf("audit events = %+v, want one eventual success", events)
+	}
+}
+
+type cancellationProbeNotifier struct {
+	started  chan struct{}
+	observed chan error
+}
+
+func (n *cancellationProbeNotifier) Notify(ctx context.Context, _, _ string) error {
+	close(n.started)
+	time.Sleep(100 * time.Millisecond)
+	err := ctx.Err()
+	n.observed <- err
+	return err
+}
+
+func TestBCL_ClientDisconnectDoesNotCancelDelivery(t *testing.T) {
+	n := &cancellationProbeNotifier{started: make(chan struct{}), observed: make(chan error, 1)}
+	srv, _, _ := newBCLServer(t, "https://app.example.com/bc-logout", n)
+	token := loginBCL(t, srv)
+	reqCtx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(reqCtx, http.MethodPost, srv.URL+"/logout", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	result := make(chan error, 1)
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		result <- err
+	}()
+	<-n.started
+	cancel()
+	select {
+	case err := <-n.observed:
+		if err != nil {
+			t.Fatalf("delivery context was canceled with browser request: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("delivery did not finish after client disconnect")
+	}
+	select {
+	case <-result:
+	case <-time.After(2 * time.Second):
+		t.Fatal("canceled client request did not return")
 	}
 }
 
@@ -365,13 +452,8 @@ func TestBCL_EndSessionAlsoFiresNotification(t *testing.T) {
 	// termination only works half the time (POST-style only).
 	n := &captureNotifier{}
 	srv, _, _ := newBCLServer(t, "https://app.example.com/bc-logout", n)
-	tok := loginBCL(t, srv)
-
-	// validateAnyToken accepts any AS-signed token; we use the
-	// access token in place of an id_token_hint — the carrier
-	// shape is the same and handleEndSession identifies user +
-	// client from the validated claims.
-	endSessionURL := srv.URL + "/end_session?id_token_hint=" + tok
+	idToken := loginBCLToken(t, srv, "id_token", []string{"openid"})
+	endSessionURL := srv.URL + "/end_session?id_token_hint=" + idToken
 	resp, err := http.Get(endSessionURL)
 	if err != nil {
 		t.Fatalf("end_session: %v", err)

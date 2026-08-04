@@ -246,10 +246,10 @@ type BreakGlassConfig struct {
 // state-machine surface (sso.WithUserLifecycle): mounts GET/POST
 // /api/v1/admin/users/:id/lifecycle so operators can inspect and drive an
 // account through INVITED -> ACTIVE -> {SUSPENDED, INACTIVE} -> ARCHIVED ->
-// PURGED. GOVERNANCE metadata only — it NEVER gates authentication
-// (core.User.IsActive still owns the login decision; see the package doc).
-// Disabled by default: Enabled=false wires nothing — byte-identical to a
-// build without the feature.
+// PURGED. When enabled it also gates end-user authentication and token use:
+// only ACTIVE may proceed, while lifecycle read errors fail closed. Disabled
+// by default: Enabled=false wires nothing — byte-identical to a build without
+// the feature.
 //
 // AutoDeprovision is a SEPARATE, independently-gated opt-in (mirrors
 // sso.WithUserAutoDeprovision itself requiring sso.WithUserLifecycle — the
@@ -263,6 +263,7 @@ type BreakGlassConfig struct {
 // config_*.go.
 type UserLifecycleConfig struct {
 	Enabled         bool                      `yaml:"enabled"`
+	Backend         string                    `yaml:"backend"` // ""|memory|postgres
 	AutoDeprovision UserAutoDeprovisionConfig `yaml:"auto_deprovision"`
 }
 

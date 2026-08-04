@@ -304,17 +304,19 @@ func TestReload_AdminAPIGateWithoutHookIsReportedAsIgnored(t *testing.T) {
 }
 
 // TestReload_WebSPAGateHookReportingNoEffectIsIgnoredNotApplied proves the
-// one asymmetry SetWebSPAGateHook is subject to: a wired hook that itself
-// reports false (Server.SetWebSPAGateEnabled — no SPA filesystem was ever
+// one asymmetry SetBrandingGateHook is subject to: a wired hook that itself
+// reports false (Server.SetBrandingGateEnabled — no tenant store was ever
 // wired at boot) must still surface as Ignored, not a false Applied. This
 // is the "graceful, not a silent no-op that looks like it worked" case.
+// The legacy /feature_gates/web_spa diff path is exercised too: the
+// normalized config carries the value in FeatureGates.Branding either way.
 func TestReload_WebSPAGateHookReportingNoEffectIsIgnored(t *testing.T) {
 	initial := baseConfig()
 	next := baseConfig()
-	next.FeatureGates.WebSPA = boolPtr(false)
+	next.FeatureGates.Branding = boolPtr(false)
 
 	r := New(initial, func(context.Context) (*config.Config, error) { return next, nil }, nil)
-	r.SetWebSPAGateHook(func(bool) bool { return false }) // mirrors "no FS wired"
+	r.SetBrandingGateHook(func(bool) bool { return false }) // mirrors "no tenant store wired"
 
 	res, err := r.Reload(context.Background())
 	if err != nil {
@@ -323,11 +325,35 @@ func TestReload_WebSPAGateHookReportingNoEffectIsIgnored(t *testing.T) {
 	if len(res.Applied) != 0 {
 		t.Errorf("Applied = %v, want none (hook reported no effect)", res.Applied)
 	}
-	if !containsPath(res.Ignored, "/feature_gates/web_spa") {
-		t.Errorf("Ignored = %v, want it to contain /feature_gates/web_spa", res.Ignored)
+	if !containsPath(res.Ignored, "/feature_gates/branding") {
+		t.Errorf("Ignored = %v, want it to contain /feature_gates/branding", res.Ignored)
 	}
-	if got := r.Current().FeatureGates.WebSPA; got != nil {
-		t.Errorf("Current().FeatureGates.WebSPA = %v, want untouched (nil)", got)
+	if got := r.Current().FeatureGates.Branding; got != nil {
+		t.Errorf("Current().FeatureGates.Branding = %v, want untouched (nil)", got)
+	}
+}
+
+// TestReload_LegacyWebSPAPathIsIgnoredNotUnknown proves the deprecated
+// /feature_gates/web_spa diff path is still recognized (reported as Ignored
+// when no hook is wired) rather than falling into the unknown-path bucket,
+// so an operator who has not yet migrated their config keeps hot-reload
+// diagnostics instead of a silent no-op.
+func TestReload_LegacyWebSPAPathIsIgnoredNotUnknown(t *testing.T) {
+	initial := baseConfig()
+	next := baseConfig()
+	next.FeatureGates.Branding = boolPtr(false)
+
+	r := New(initial, func(context.Context) (*config.Config, error) { return next, nil }, nil)
+
+	res, err := r.Reload(context.Background())
+	if err != nil {
+		t.Fatalf("Reload() error = %v", err)
+	}
+	if !containsPath(res.Ignored, "/feature_gates/branding") {
+		t.Errorf("Ignored = %v, want it to contain /feature_gates/branding", res.Ignored)
+	}
+	if containsPath(res.Ignored, "/feature_gates/web_spa") {
+		t.Errorf("Ignored = %v, must not contain legacy /feature_gates/web_spa (normalized away)", res.Ignored)
 	}
 }
 

@@ -1,6 +1,11 @@
 package config
 
-import "time"
+import (
+	"errors"
+	"time"
+
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+)
 
 // AuthenticatorsConfig toggles and tunes each available authenticator.
 // All sub-sections are nullable — omit a section to disable that method.
@@ -15,6 +20,41 @@ type AuthenticatorsConfig struct {
 	Certificate    *CertificateConfig          `yaml:"certificate,omitempty"`
 	TOTP           *TOTPConfig                 `yaml:"totp,omitempty"`
 	OIDCFederation []*OIDCFederationAuthConfig `yaml:"oidc_federation,omitempty"`
+	CodeSendQuota  CodeSendQuotaConfig         `yaml:"code_send_quota,omitempty"`
+	CodeDelivery   CodeDeliveryConfig          `yaml:"code_delivery,omitempty"`
+}
+
+// CodeSendQuotaConfig bounds paid/out-of-band OTP and magic-link delivery.
+// Limits are per fixed window; -1 disables a dimension and zero selects the
+// secure stock default.
+type CodeSendQuotaConfig struct {
+	IdentityLimit int           `yaml:"identity_limit,omitempty"`
+	TenantLimit   int           `yaml:"tenant_limit,omitempty"`
+	Window        time.Duration `yaml:"window,omitempty"`
+}
+
+// CodeDeliveryConfig moves OTP and magic-link transport waits off the request
+// path. The queue is deliberately memory-only so plaintext codes are never
+// persisted; CodeStore remains Redis-backed in multi-replica deployments.
+type CodeDeliveryConfig struct {
+	Async          bool          `yaml:"async,omitempty"`
+	QueueSize      int           `yaml:"queue_size,omitempty"`
+	Workers        int           `yaml:"workers,omitempty"`
+	Attempts       int           `yaml:"attempts,omitempty"`
+	AttemptTimeout time.Duration `yaml:"attempt_timeout,omitempty"`
+	RetryBackoff   time.Duration `yaml:"retry_backoff,omitempty"`
+}
+
+func (c CodeDeliveryConfig) validate() error {
+	if c.QueueSize < 0 || c.Workers < 0 || c.Attempts < 0 || c.AttemptTimeout < 0 || c.RetryBackoff < 0 {
+		return errors.New("config: authenticators.code_delivery values must not be negative")
+	}
+	if c.QueueSize > authenticators.MaxCodeDeliveryQueueSize || c.Workers > authenticators.MaxCodeDeliveryWorkers ||
+		c.Attempts > authenticators.MaxCodeDeliveryAttempts || c.AttemptTimeout > authenticators.MaxCodeDeliveryTimeout ||
+		c.RetryBackoff > authenticators.MaxCodeDeliveryBackoff {
+		return errors.New("config: authenticators.code_delivery value exceeds its safe maximum")
+	}
+	return nil
 }
 
 // OIDCFederationAuthConfig describes one upstream OAuth 2.0 / OIDC

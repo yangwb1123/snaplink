@@ -154,7 +154,7 @@ func RecordCIBAPingFailed(rec *Recorder, ctx context.Context, clientID, authReqI
 
 // RecordRefreshTokenReuse emits a refresh_token_reuse_detected event
 // after a refresh-token-reuse attack invalidates a whole family.
-func RecordRefreshTokenReuse(rec *Recorder, ctx core.HandlerContext, clientID, familyID string, killed int) {
+func RecordRefreshTokenReuse(rec *Recorder, ctx core.HandlerContext, clientID, subjectID, familyID string, killed int) {
 	if rec == nil {
 		return
 	}
@@ -162,6 +162,7 @@ func RecordRefreshTokenReuse(rec *Recorder, ctx core.HandlerContext, clientID, f
 	e.Type = EventRefreshTokenReuse
 	e.Outcome = OutcomeFailure
 	e.ClientID = clientID
+	e.ActorID = subjectID
 	e.Reason = "family=" + familyID
 	if killed > 0 {
 		SetMeta(e, "killed", itoa(killed))

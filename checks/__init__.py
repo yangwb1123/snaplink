@@ -2,6 +2,7 @@ from checks.filesize import run as check_filesize
 from checks.complexity import run as check_complexity
 from checks.architecture import run as check_architecture
 from checks.invariants import run as check_invariants
+from checks.route_contract import run as check_routes
 from checks.coverage import run as check_coverage
 from checks.exemptions import run as check_exemptions
 from checks.self_test import run as check_self_test
@@ -15,7 +16,7 @@ from checks.make_help import run as make_help
 
 __all__ = [
     "check_filesize", "check_complexity", "check_architecture",
-    "check_invariants", "check_coverage", "check_exemptions",
+    "check_invariants", "check_routes", "check_coverage", "check_exemptions",
     "check_self_test", "check_health_report", "check_root_files",
     "check_root_business_code", "check_directory_fanout", "check_build",
     "check_review_feature", "make_help",

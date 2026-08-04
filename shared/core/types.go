@@ -31,16 +31,9 @@ type Client struct {
 	TokenStrategy         string   `json:"token_strategy,omitempty"`
 	Active                bool     `json:"active"`
 
-	// Federation marks a client DERIVED from an OpenID Federation 1.0 trust
-	// chain (slice 3) rather than persisted. It is a PROVENANCE flag, not an
-	// access grant: the client is admitted ONLY because its chain validated, its
-	// metadata is the POLICY-
-	// CONSTRAINED result (the trust anchor's metadata_policy bounds
-	// redirect_uris/response_types/scope), and it carries JWKS (the
-	// chain-vouched entity keys) but NO Secret — it authenticates
-	// authenticates via private_key_jwt (never shared secret, which would bypass
-	// federation). Purely informational for audit/diagnostics. Federation:false
-	// for every operator-provisioned / DCR client.
+	// Federation marks a client derived from a validated OpenID Federation
+	// trust chain rather than persisted. Such clients use vouched JWKS and
+	// asymmetric authentication, never a shared secret.
 	Federation bool `json:"federation,omitempty" yaml:"federation,omitempty"`
 
 	// TenantID binds this client to one tenant in multi-tenant
@@ -77,7 +70,9 @@ type Client struct {
 	// client_secret; constant-time compared on every management
 	// request. Empty means dynamic management is disabled for this
 	// client (legacy / operator-provisioned clients never had one).
-	RegistrationAccessToken string `json:"-" yaml:"-"`
+	RegistrationAccessToken             string    `json:"-" yaml:"-"`
+	PreviousRegistrationAccessToken     string    `json:"-" yaml:"-"`
+	RegistrationAccessTokenOverlapUntil time.Time `json:"-" yaml:"-"`
 
 	// PostLogoutRedirectURIs is the allowlist of URLs the OIDC
 	// RP-Initiated Logout endpoint will redirect the user back to
@@ -354,14 +349,13 @@ type Client struct {
 	// User.Attributes, these are transmitter wiring, not subject claims.
 	Attributes map[string]string `json:"attributes,omitempty" yaml:"attributes,omitempty"`
 
-	// SecretRotatedAt is when Secret was last SET — by Add (initial
-	// creation) or RotateSecret (admin-triggered or scheduled). Zero for
-	// legacy pre-migration records. A ClientStore's OPTIONAL due-listing
-	// extension (shared/security/clientrotation.ClientRotationLister) MUST
-	// treat zero as "not due", never "infinitely overdue" — else enabling
-	// scheduled rotation would mass-rotate every pre-existing client the
-	// instant the feature is turned on.
-	SecretRotatedAt time.Time `json:"-" yaml:"-"`
+	// Secret lifecycle fields never leave the store/admin boundary. During a
+	// configured overlap, both Secret and PreviousSecret validate; zero times
+	// preserve legacy "never tracked / no overlap" behavior.
+	PreviousSecret     string    `json:"-" yaml:"-"`
+	SecretOverlapUntil time.Time `json:"-" yaml:"-"`
+	SecretRotatedAt    time.Time `json:"-" yaml:"-"`
+	SecretExpiresAt    time.Time `json:"client_secret_expires_at,omitempty" yaml:"client_secret_expires_at,omitempty"`
 
 	// ClientTrustScore + ClientTrustSetAt bind the activity-derived client
 	// trust score (platform/lifecycle/clienttrust) to this record —

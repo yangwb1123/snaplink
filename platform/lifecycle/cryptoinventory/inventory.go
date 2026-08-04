@@ -54,9 +54,21 @@ type Entry struct {
 	// CompromisedAt / CompromiseReason are set by ReportKeyCompromise ONLY —
 	// no Source ever reports these directly (reporting a compromise is
 	// bookkeeping this package owns, not a fact pulled from elsewhere).
-	CompromisedAt    time.Time `json:"compromised_at,omitzero"`
-	CompromiseReason string    `json:"compromise_reason,omitempty"`
+	CompromisedAt    time.Time        `json:"compromised_at,omitzero"`
+	CompromiseReason string           `json:"compromise_reason,omitempty"`
+	RetirementStatus RetirementStatus `json:"retirement_status,omitempty"`
+	RetirementError  string           `json:"retirement_error,omitempty"`
 }
+
+// RetirementStatus reports the owning source's exact compromise response.
+type RetirementStatus string
+
+const (
+	RetirementUnsupported RetirementStatus = "unsupported"
+	RetirementFailed      RetirementStatus = "failed"
+	RetirementPending     RetirementStatus = "pending_verification"
+	RetirementCompleted   RetirementStatus = "retired"
+)
 
 // Filter narrows ListKeys. A zero Filter matches every catalogued entry.
 type Filter struct {
@@ -81,7 +93,10 @@ func (f Filter) Match(e Entry) bool {
 
 // ErrKeyNotFound is returned by ReportKeyCompromise when keyID matches no
 // entry across any registered Source — mirrors corecredential.ErrCredentialNotFound.
-var ErrKeyNotFound = errors.New("cryptoinventory: key not found")
+var (
+	ErrKeyNotFound           = errors.New("cryptoinventory: key not found")
+	ErrRetirementUnsupported = errors.New("cryptoinventory: source cannot retire key")
+)
 
 // Source is the narrow read-only SPI each cryptographic-material concern
 // implements directly, or through a small adapter, so an Inventory can PULL

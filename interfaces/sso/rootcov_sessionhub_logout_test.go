@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
 )
 
@@ -118,18 +120,30 @@ func TestRcov_Logout_NoSAMLLegNeverTriggersFanout(t *testing.T) {
 // fan-out, via the same sessionhub wiring as POST /logout.
 func TestRcov_EndSession_TriggersSAMLSLOForLinkedSession(t *testing.T) {
 	t.Parallel()
-	s := rcovNewServer(t)
+	iss := defaultimpl.NewEd25519JWTIssuer()
+	s := rcovNewServer(t, sso.WithTokenIssuer("jwt", iss), sso.WithIDTokenIssuer(iss))
 	saml := &recordingSAMLTrigger{}
 	s.srv.SessionHub().SetSAMLTrigger(saml)
 
-	access, _ := rcovDirectLogin(t, s)
+	status, out := rcovPostJSON(t, s.http.URL+"/auth/login", "", map[string]any{
+		"provider": "password", "client_id": rcovClient,
+		"credential": map[string]string{"username": rcovUsername, "password": rcovPassword},
+		"scope":      []string{"openid"},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("login status=%d body=%v", status, out)
+	}
+	idToken, _ := out["id_token"].(string)
+	if idToken == "" {
+		t.Fatalf("login produced no id_token: %v", out)
+	}
 	sessions, err := s.sessions.ListByUser(context.Background(), rcovUser)
 	if err != nil || len(sessions) == 0 {
 		t.Fatalf("expected a session created at login, got %v (err=%v)", sessions, err)
 	}
 	linkSAMLLegForSession(t, s.srv.SessionHub(), rcovUser, sessions[0].ID)
 
-	resp, err := http.Get(s.http.URL + "/end_session?id_token_hint=" + url.QueryEscape(access))
+	resp, err := http.Get(s.http.URL + "/end_session?id_token_hint=" + url.QueryEscape(idToken))
 	if err != nil {
 		t.Fatalf("end_session request: %v", err)
 	}

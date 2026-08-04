@@ -77,16 +77,20 @@ func (m *MemorySessionManager) CreateWithMeta(_ context.Context, userID string, 
 	id := randomHex(sessionIDBytes)
 	now := time.Now()
 	session := &core.Session{
-		ID:         id,
-		UserID:     userID,
-		CreatedAt:  now,
-		ExpiresAt:  now.Add(m.ttl),
-		IP:         meta.IP,
-		UserAgent:  meta.UserAgent,
-		TenantID:   meta.TenantID,
-		Kind:       meta.Kind,
-		TrustScore: meta.TrustScore,
-		TrustSetAt: meta.TrustSetAt,
+		ID:               id,
+		UserID:           userID,
+		CreatedAt:        now,
+		ExpiresAt:        now.Add(m.ttl),
+		IP:               meta.IP,
+		UserAgent:        meta.UserAgent,
+		TenantID:         meta.TenantID,
+		DeviceID:         meta.DeviceID,
+		ClientID:         meta.ClientID,
+		AuthorizedScopes: append([]string(nil), meta.AuthorizedScopes...),
+		AuthTime:         meta.AuthTime,
+		Kind:             meta.Kind,
+		TrustScore:       meta.TrustScore,
+		TrustSetAt:       meta.TrustSetAt,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -121,6 +125,15 @@ func (m *MemorySessionManager) SetTrust(_ context.Context, sessionID string, sco
 		// A fresh baseline supersedes a prior below-floor decision: clear the
 		// flag so a re-verified session isn't perpetually challenged.
 		s.StepUpRequired = false
+	}
+	return nil
+}
+
+func (m *MemorySessionManager) SetAuthorizedScopes(_ context.Context, sessionID string, scopes []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.sessions[sessionID]; ok {
+		s.AuthorizedScopes = append([]string(nil), scopes...)
 	}
 	return nil
 }
@@ -244,11 +257,12 @@ func randomHex(n int) string {
 }
 
 var (
-	_ core.SessionManager         = (*MemorySessionManager)(nil)
-	_ core.SessionMetaCreator     = (*MemorySessionManager)(nil)
-	_ core.SessionTenantIndex     = (*MemorySessionManager)(nil)
-	_ core.SessionTenantLister    = (*MemorySessionManager)(nil)
-	_ core.SessionTrustManager    = (*MemorySessionManager)(nil)
-	_ io.Closer                   = (*MemorySessionManager)(nil)
-	_ core.SessionActivityTracker = (*MemorySessionManager)(nil)
+	_ core.SessionManager              = (*MemorySessionManager)(nil)
+	_ core.SessionMetaCreator          = (*MemorySessionManager)(nil)
+	_ core.SessionTenantIndex          = (*MemorySessionManager)(nil)
+	_ core.SessionTenantLister         = (*MemorySessionManager)(nil)
+	_ core.SessionTrustManager         = (*MemorySessionManager)(nil)
+	_ core.SessionAuthorizationManager = (*MemorySessionManager)(nil)
+	_ io.Closer                        = (*MemorySessionManager)(nil)
+	_ core.SessionActivityTracker      = (*MemorySessionManager)(nil)
 )

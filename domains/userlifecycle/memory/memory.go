@@ -41,6 +41,17 @@ func (s *Store) Get(_ context.Context, userID string) (userlifecycle.Record, err
 	return cloneRecord(rec), nil
 }
 
+// GetState returns only the current state for authentication and sweep paths.
+func (s *Store) GetState(_ context.Context, userID string) (userlifecycle.State, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rec, ok := s.records[userID]
+	if !ok {
+		return userlifecycle.DefaultState, nil
+	}
+	return rec.State, nil
+}
+
 // Append applies t under the store lock, enforcing optimistic concurrency: a
 // seed (t.From == StateNone) requires no existing record; any other transition
 // requires t.From to equal the account's live state (DefaultState when no
@@ -90,6 +101,8 @@ func cloneRecord(rec userlifecycle.Record) userlifecycle.Record {
 	rec.History = slices.Clone(rec.History)
 	return rec
 }
+
+var _ userlifecycle.StateReader = (*Store)(nil)
 
 // ActivityTracker is an in-process userlifecycle.LastActiveSource that records
 // an explicit "last active" instant per user — the precise, session-lifetime-

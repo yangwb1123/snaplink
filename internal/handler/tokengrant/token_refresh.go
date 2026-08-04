@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // RefreshGrantDeps is what HandleRefreshGrant needs. *sso.Server satisfies it
@@ -28,7 +30,7 @@ type RefreshGrantDeps interface {
 	RecordTokenIssued(ctx core.HandlerContext, clientID, strategy, subjectID string)
 	RecordRefreshTokenIssued(ctx core.HandlerContext, clientID, subjectID string, rotation bool)
 	RecordSubjectClientAccess(ctx context.Context, subject, clientID string)
-	RecordRefreshTokenReuse(ctx core.HandlerContext, clientID, familyID string, killed int)
+	RecordRefreshTokenReuse(ctx core.HandlerContext, clientID, subjectID, familyID string, killed int)
 	RecordRefreshRotationVelocity(ctx core.HandlerContext, clientID, familyID string, count, killed int)
 	IncRefreshRotationVelocityExceeded()
 	LogErrorCtx(ctx core.HandlerContext, msg string, kv ...any)
@@ -38,7 +40,10 @@ type RefreshGrantDeps interface {
 	// only in the metric + server log) and returns true when the cap is hit so
 	// the caller returns immediately. Byte-identical no-op (returns false) when
 	// no token-policy store is wired — the default-off contract.
-	EnforceRefreshDepthPolicy(ctx core.HandlerContext, clientID, subject string, scopes []string, depth int) bool
+	EnforceRefreshDepthPolicy(ctx core.HandlerContext, clientID, subject, tenantID string, scopes []string, depth int) bool
+	// EnforceRefreshConditionalAccess re-evaluates live CAP policies against
+	// the current request and may narrow scopes or require interactive login.
+	EnforceRefreshConditionalAccess(ctx core.HandlerContext, client *core.Client, info *oauth.RefreshToken, scopes []string) ([]string, bool)
 	// RefreshAbsoluteMaxLifetime returns the configured hard ceiling on a
 	// refresh-token family's total age since original issuance (0 = disabled,
 	// the default-off contract — see refreshEnforceAbsoluteMaxLifetime).
@@ -50,6 +55,32 @@ type RefreshGrantDeps interface {
 	// oauth.InvalidateIntrospectionCache). Nil disables both the cache and
 	// this eviction, byte-identical to a build without caching.
 	IntrospectionCache() oauth.IntrospectionCache
+}
+
+type lifecycleStateReader interface {
+	LifecycleState(ctx context.Context, subject string) (userlifecycle.State, error)
+}
+
+// lifecycleGrantBlocked applies the optional lifecycle gate shared by every
+// end-user token grant. Custom dependency implementations that do not expose
+// the reader preserve their previous behavior; *sso.Server always exposes it
+// and returns ACTIVE when lifecycle storage is unwired.
+func lifecycleGrantBlocked(deps any, ctx core.HandlerContext, subject string) bool {
+	reader, ok := deps.(lifecycleStateReader)
+	if !ok {
+		return false
+	}
+	state, err := reader.LifecycleState(ctx.Request().Context(), subject)
+	if err == nil && userlifecycle.AllowsAuthentication(state) {
+		return false
+	}
+	if logger, ok := deps.(interface {
+		LogErrorCtx(core.HandlerContext, string, ...any)
+	}); ok {
+		logger.LogErrorCtx(ctx, "token grant denied by user lifecycle", "user", subject, "state", string(state), "error", err)
+	}
+	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+	return true
 }
 
 // HandleRefreshGrant processes the RFC 6749 §6 refresh_token grant. Behavior is
@@ -99,23 +130,31 @@ func HandleRefreshGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *cor
 	// alive. Session gone / expired / revoked → 400 invalid_grant. A
 	// store error is treated as "session not found" (fail-closed) — see
 	// the refreshCheckSessionLiveness contract.
-	if refreshCheckSessionLiveness(d, ctx, info) {
+	if refreshCheckSessionLiveness(d, ctx, info) || lifecycleGrantBlocked(d, ctx, info.UserID) {
 		return
 	}
-	grantScopes, ok := refreshResolveScopes(ctx, info, scope)
-	if !ok {
+	grantScopes, handled := refreshResolveGrant(d, ctx, client, info, scope)
+	if handled {
 		return
 	}
 	// Token-policy max_refresh_depth (opt-in, no-op unwired): deny once the
 	// family's rotation depth (info.Generation) reaches the cap — same
 	// invalid_grant collapse as every other refresh failure (oracle-leak).
-	if d.EnforceRefreshDepthPolicy(ctx, client.ID, info.UserID, grantScopes, info.Generation) {
+	if d.EnforceRefreshDepthPolicy(ctx, client.ID, info.UserID, client.TenantID, grantScopes, info.Generation) {
 		return
 	}
 	if refreshVelocityGate(d, ctx, client, store, info.FamilyID, refreshToken) {
 		return
 	}
 	refreshIssueAndRotate(d, ctx, client, info, refreshToken, grantScopes, dpopJKT, mtlsX5T)
+}
+
+func refreshResolveGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *core.Client, info *oauth.RefreshToken, scope string) ([]string, bool) {
+	grantScopes, ok := refreshResolveScopes(ctx, info, scope)
+	if !ok {
+		return nil, true
+	}
+	return d.EnforceRefreshConditionalAccess(ctx, client, info, grantScopes)
 }
 
 // refreshBindGuard enforces RFC 6749 §6 client binding and RFC 9449 §5 DPoP
@@ -174,11 +213,11 @@ func refreshIssueAndRotate(d RefreshGrantDeps, ctx core.HandlerContext, client *
 		return
 	}
 	issuedSub := d.ApplyPairwiseSubject(ctx.Request().Context(), client, info.UserID)
-	subject := refreshRotatedSubject(client, info, issuedSub, dpopJKT, mtlsX5T)
+	subject := refreshRotatedSubject(client, info, issuedSub, servingRegionFrom(ctx), dpopJKT, mtlsX5T)
 	token, err := ti.Issue(ctx.Request().Context(), subject, grantScopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		writeTokenIssueError(ctx, err)
 		return
 	}
 	// Rotation: issue a NEW refresh token (the old one was deleted by Consume).
@@ -223,6 +262,7 @@ func refreshRotateFamily(d RefreshGrantDeps, ctx core.HandlerContext, client *co
 		oauth.RefreshAuthContext{
 			AMR: info.Amr, ACR: info.Acr, AuthTime: info.AuthTime, Generation: info.Generation + 1,
 			FamilyCreatedAt: info.FamilyCreatedAt,
+			JTI:             info.JTI,
 		},
 		client.RefreshTokenTTL, info.ConfirmationJKT) // RFC 9449: key binding propagates unchanged
 }
@@ -230,11 +270,12 @@ func refreshRotateFamily(d RefreshGrantDeps, ctx core.HandlerContext, client *co
 // refreshRotatedSubject builds the Subject for a rotated access token. RFC 9068:
 // a rotation does NOT reset auth_time and keeps the original AMR — the underlying
 // authentication event is the original login, not this exchange.
-func refreshRotatedSubject(client *core.Client, info *oauth.RefreshToken, issuedSub, dpopJKT, mtlsX5T string) *core.Subject {
+func refreshRotatedSubject(client *core.Client, info *oauth.RefreshToken, issuedSub, servingRegion, dpopJKT, mtlsX5T string) *core.Subject {
 	return &core.Subject{
 		ID: issuedSub, Provider: info.Provider, Claims: info.Attributes,
 		Resources: info.Resources,
 		ClientID:  client.ID,
+		TenantID:  client.TenantID,
 		// Refresh rotations don't reset auth_time per RFC 9068 — the underlying
 		// authentication event is the original login, not the refresh exchange.
 		// AMR/ACR/AuthTime are the ORIGINAL authentication event's, persisted on
@@ -252,7 +293,13 @@ func refreshRotatedSubject(client *core.Client, info *oauth.RefreshToken, issued
 		AuthorizationDetails: oauth.CloneRawJSON(info.AuthorizationDetails),
 		// SID is locked to the original authorization's session — rotation never
 		// opens a new session.
-		SID:                 info.SID,
+		SID: info.SID,
+		// ServingRegion is MINT-TIME semantics: the region that SERVED this
+		// rotation, not the original login's — consistent with audit
+		// region.serving being per-event. A rotation in a different region
+		// re-stamps the claim by design (an RS pinned to one region will
+		// deny it — the documented interaction).
+		ServingRegion:       servingRegion,
 		TTL:                 client.AccessTokenTTL,
 		ConfirmationJKT:     dpopJKT,
 		ConfirmationX5TS256: mtlsX5T,
@@ -300,7 +347,7 @@ func refreshHandleConsumeError(d RefreshGrantDeps, ctx core.HandlerContext, clie
 					"client", client.ID)
 			}
 		}
-		d.RecordRefreshTokenReuse(ctx, client.ID, info.FamilyID, killed)
+		d.RecordRefreshTokenReuse(ctx, client.ID, info.UserID, info.FamilyID, killed)
 	}
 	return false
 }
@@ -394,6 +441,10 @@ func refreshCheckSessionLiveness(d RefreshGrantDeps, ctx core.HandlerContext, in
 		d.LogErrorCtx(ctx, "session liveness check failed (fail-closed)",
 			"sid", info.SID, "error", sErr)
 	} else if sess != nil && !sess.IsExpired() && !sess.Revoked {
+		if sess.StepUpRequired {
+			ctx.JSON(http.StatusBadRequest, core.ErrorBody(security.ErrInsufficientUserAuthentication))
+			return true
+		}
 		// Session is alive — track activity.
 		if tracker, ok := sm.(core.SessionActivityTracker); ok {
 			tracker.TrackActivity(ctx.Request().Context(), info.SID)

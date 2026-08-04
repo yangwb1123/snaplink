@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/clientrotation"
 )
 
 // OpenID Federation 1.0 §12 (Automatic Registration) — where federation
@@ -430,4 +431,20 @@ func (s *RegistrationClientStore) Delete(ctx context.Context, clientID string) e
 // operates on persisted clients.
 func (s *RegistrationClientStore) RotateSecret(ctx context.Context, clientID string) (string, error) {
 	return s.inner.RotateSecret(ctx, clientID)
+}
+
+func (s *RegistrationClientStore) RotateSecretWithOverlap(ctx context.Context, clientID string, overlap time.Duration) (string, error) {
+	store, ok := s.inner.(clientrotation.ClientSecretOverlapRotator)
+	if !ok {
+		return "", core.ErrUnsupportedOperation
+	}
+	return store.RotateSecretWithOverlap(ctx, clientID, overlap)
+}
+
+func (s *RegistrationClientStore) RotateSecretWithLifecycle(ctx context.Context, clientID string, overlap, lifetime time.Duration) (string, error) {
+	store, ok := s.inner.(clientrotation.ClientSecretLifecycleRotator)
+	if !ok {
+		return "", core.ErrUnsupportedOperation
+	}
+	return store.RotateSecretWithLifecycle(ctx, clientID, overlap, lifetime)
 }

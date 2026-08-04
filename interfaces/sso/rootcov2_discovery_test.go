@@ -31,8 +31,29 @@ import (
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
+
+func TestRcov2D_CIBAUserCodeDiscovery(t *testing.T) {
+	t.Parallel()
+	s := rcovNewServer(t,
+		sso.WithCIBA(defaultimpl.NewMemoryCIBAStore(), oauth.CIBATransportFunc(
+			func(context.Context, string, string, map[string]string) error { return nil },
+		), 0, 0),
+		sso.WithCIBAUserCodeVerifier(oauth.CIBAUserCodeVerifierFunc(
+			func(context.Context, string, string, string) error { return nil },
+		)),
+	)
+	var doc map[string]any
+	resp := rcovGetJSON(t, s.http.URL+"/.well-known/openid-configuration", &doc)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("discovery = %d, want 200", resp.StatusCode)
+	}
+	if doc["backchannel_user_code_parameter_supported"] != true {
+		t.Fatalf("CIBA user-code discovery = %v, want true", doc["backchannel_user_code_parameter_supported"])
+	}
+}
 
 // TestRcov2D_DiscoveryRichBranches wires the broad optional surface and fetches
 // the discovery doc, exercising the buildOIDCConfiguration branches +
@@ -144,6 +165,9 @@ func TestRcov2D_PARThenLogin(t *testing.T) {
 	// State pushed via PAR is echoed back.
 	if out["state"] != "par-state" {
 		t.Errorf("par state = %v, want par-state", out["state"])
+	}
+	if out["redirect_uri_validated"] != true || out["redirect_uri"] != rcovRedirect || out["response_mode"] != "query" {
+		t.Errorf("PAR delivery metadata = %v", out)
 	}
 
 	// Replaying the (now-consumed) request_uri => invalid_request_uri.

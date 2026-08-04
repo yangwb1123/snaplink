@@ -163,6 +163,24 @@ type CIBATransport interface {
 	Send(ctx context.Context, authReqID, subjectID string, metadata map[string]string) error
 }
 
+// CIBAUserCodeVerifier validates the optional CIBA user_code after the user
+// hint has resolved. The code is a dedicated user secret, never the user's OP
+// password, and is not persisted in CIBARequest. Implementations decide which
+// clients/users require a code by returning ErrCIBAUserCodeRequired for an
+// empty value; return ErrCIBAUserCodeInvalid for a supplied mismatch. They
+// MUST compare secrets safely and enforce an attempt budget.
+type CIBAUserCodeVerifier interface {
+	VerifyCIBAUserCode(ctx context.Context, clientID, subjectID, userCode string) error
+}
+
+// CIBAUserCodeVerifierFunc adapts a function to CIBAUserCodeVerifier.
+type CIBAUserCodeVerifierFunc func(context.Context, string, string, string) error
+
+// VerifyCIBAUserCode calls f.
+func (f CIBAUserCodeVerifierFunc) VerifyCIBAUserCode(ctx context.Context, clientID, subjectID, userCode string) error {
+	return f(ctx, clientID, subjectID, userCode)
+}
+
 // CIBAPingNotifier is the CIBA Core §10.2 ping-delivery seam: when a
 // backchannel request resolves, the AS POSTs to the client's registered
 // notification endpoint to tell it to come collect its tokens (vs. the
@@ -293,4 +311,8 @@ var (
 	// already-terminal request (clean signal for the
 	// legitimate-vs-attacker callback collision in audit).
 	ErrCIBARequestResolved = errors.New("sso: ciba request already resolved")
+	// ErrCIBAUserCodeRequired asks the client to collect a fresh code.
+	ErrCIBAUserCodeRequired = errors.New("sso: ciba user code required")
+	// ErrCIBAUserCodeInvalid rejects a supplied code without storing it.
+	ErrCIBAUserCodeInvalid = errors.New("sso: invalid ciba user code")
 )

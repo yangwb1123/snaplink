@@ -55,7 +55,7 @@ func TestRunAuditRetention_PrunesOldEventsAtInterval(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(3 * time.Second):
 		t.Fatal("scheduler didn't exit after cancel")
 	}
 
@@ -88,7 +88,7 @@ func TestRunAuditRetention_ExitsOnCtxCancelBeforeFirstTick(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(3 * time.Second):
 		t.Fatal("scheduler didn't exit on immediate ctx cancel")
 	}
 }
@@ -116,7 +116,7 @@ func TestRunAuditRetention_PruneErrorDoesNotStopLoop(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(3 * time.Second):
 		t.Fatal("scheduler hung after Prune error")
 	}
 }

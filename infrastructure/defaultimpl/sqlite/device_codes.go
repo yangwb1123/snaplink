@@ -51,7 +51,15 @@ var deviceCodeMigrations = []migrate.Migration{
 
 // oauth.DeviceCodeStore is the SQLite-backed [oauth.DeviceCodeStore].
 type DeviceCodeStore struct {
-	db *sql.DB
+	db             *sql.DB
+	lookupHMACKeys [][]byte
+	reaper         *sqliteExpiryReaper
+}
+
+// SetLookupHMACKeys enables current-key writes plus previous-key and legacy
+// plaintext reads for rolling migration. Keys are copied before retention.
+func (s *DeviceCodeStore) SetLookupHMACKeys(keys ...[]byte) {
+	s.lookupHMACKeys = cloneLookupKeys(keys...)
 }
 
 func NewDeviceCodeStore(dsn string) (*DeviceCodeStore, error) {
@@ -79,6 +87,7 @@ func (s *DeviceCodeStore) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
+	_ = s.reaper.Close()
 	err := s.db.Close()
 	s.db = nil
 	return err
@@ -119,7 +128,9 @@ func (s *DeviceCodeStore) Issue(ctx context.Context, dc *oauth.DeviceCode) error
             nonce, user_id, provider, attributes, approved, denied,
             last_poll, interval_ns, expires_at, resources)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		dc.DeviceCode, dc.UserCode, dc.ClientID, string(scopes),
+		opaqueLookupKey(firstLookupKey(s.lookupHMACKeys), "device_code", dc.DeviceCode),
+		opaqueLookupKey(firstLookupKey(s.lookupHMACKeys), "user_code", dc.UserCode),
+		dc.ClientID, string(scopes),
 		dc.Nonce, dc.UserID, dc.Provider, string(attrs),
 		boolToInt(dc.Approved), boolToInt(dc.Denied),
 		dc.LastPoll.UnixNano(), int64(dc.Interval),
@@ -132,13 +143,31 @@ func (s *DeviceCodeStore) Issue(ctx context.Context, dc *oauth.DeviceCode) error
 }
 
 func (s *DeviceCodeStore) GetByDeviceCode(ctx context.Context, deviceCode string) (*oauth.DeviceCode, error) {
-	row := s.db.QueryRowContext(ctx, deviceCodeSelectByCol("device_code"), deviceCode)
-	return s.fetch(ctx, row)
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "device_code", deviceCode) {
+		row := s.db.QueryRowContext(ctx, deviceCodeSelectByCol("device_code"), candidate)
+		out, err := s.fetch(ctx, row)
+		if !errors.Is(err, oauth.ErrDeviceCodeNotFound) {
+			if out != nil {
+				out.DeviceCode = deviceCode
+			}
+			return out, err
+		}
+	}
+	return nil, oauth.ErrDeviceCodeNotFound
 }
 
 func (s *DeviceCodeStore) GetByUserCode(ctx context.Context, userCode string) (*oauth.DeviceCode, error) {
-	row := s.db.QueryRowContext(ctx, deviceCodeSelectByCol("user_code"), userCode)
-	return s.fetch(ctx, row)
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "user_code", userCode) {
+		row := s.db.QueryRowContext(ctx, deviceCodeSelectByCol("user_code"), candidate)
+		out, err := s.fetch(ctx, row)
+		if !errors.Is(err, oauth.ErrDeviceCodeNotFound) {
+			if out != nil {
+				out.UserCode = userCode
+			}
+			return out, err
+		}
+	}
+	return nil, oauth.ErrDeviceCodeNotFound
 }
 
 func (s *DeviceCodeStore) fetch(ctx context.Context, row *sql.Row) (*oauth.DeviceCode, error) {
@@ -164,51 +193,58 @@ func (s *DeviceCodeStore) Approve(ctx context.Context, userCode, userID, provide
 	if err != nil {
 		return fmt.Errorf("sqlite: marshal attributes: %w", err)
 	}
-	res, err := s.db.ExecContext(ctx, `
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "user_code", userCode) {
+		res, err := s.db.ExecContext(ctx, `
         UPDATE device_codes SET approved = 1, user_id = ?, provider = ?,
                attributes = ?
         WHERE user_code = ? AND expires_at > ?`,
-		userID, provider, string(attrs), userCode, time.Now().UnixNano())
-	if err != nil {
-		return fmt.Errorf("sqlite: approve device_code: %w", err)
+			userID, provider, string(attrs), candidate, time.Now().UnixNano())
+		if err != nil {
+			return fmt.Errorf("sqlite: approve device_code: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			return nil
+		}
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return oauth.ErrDeviceCodeNotFound
-	}
-	return nil
+	return oauth.ErrDeviceCodeNotFound
 }
 
 func (s *DeviceCodeStore) Deny(ctx context.Context, userCode string) error {
-	res, err := s.db.ExecContext(ctx, `
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "user_code", userCode) {
+		res, err := s.db.ExecContext(ctx, `
         UPDATE device_codes SET denied = 1
         WHERE user_code = ? AND expires_at > ?`,
-		userCode, time.Now().UnixNano())
-	if err != nil {
-		return fmt.Errorf("sqlite: deny device_code: %w", err)
+			candidate, time.Now().UnixNano())
+		if err != nil {
+			return fmt.Errorf("sqlite: deny device_code: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			return nil
+		}
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return oauth.ErrDeviceCodeNotFound
-	}
-	return nil
+	return oauth.ErrDeviceCodeNotFound
 }
 
 func (s *DeviceCodeStore) UpdateLastPoll(ctx context.Context, deviceCode string, t time.Time) error {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE device_codes SET last_poll = ? WHERE device_code = ?`,
-		t.UnixNano(), deviceCode)
-	if err != nil {
-		return fmt.Errorf("sqlite: update last_poll: %w", err)
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "device_code", deviceCode) {
+		res, err := s.db.ExecContext(ctx,
+			`UPDATE device_codes SET last_poll = ? WHERE device_code = ?`,
+			t.UnixNano(), candidate)
+		if err != nil {
+			return fmt.Errorf("sqlite: update last_poll: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			return nil
+		}
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return oauth.ErrDeviceCodeNotFound
-	}
-	return nil
+	return oauth.ErrDeviceCodeNotFound
 }
 
 func (s *DeviceCodeStore) Delete(ctx context.Context, deviceCode string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM device_codes WHERE device_code = ?`, deviceCode)
-	if err != nil {
-		return fmt.Errorf("sqlite: delete device_code: %w", err)
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "device_code", deviceCode) {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM device_codes WHERE device_code = ?`, candidate); err != nil {
+			return fmt.Errorf("sqlite: delete device_code: %w", err)
+		}
 	}
 	return nil
 }
@@ -218,11 +254,24 @@ func (s *DeviceCodeStore) Delete(ctx context.Context, deviceCode string) error {
 // (SQLite serializes writers), so concurrent token-exchange polls yield exactly
 // one winner; no matching row -> ErrDeviceCodeNotFound.
 func (s *DeviceCodeStore) ConsumeIfApproved(ctx context.Context, deviceCode string) (*oauth.DeviceCode, error) {
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "device_code", deviceCode) {
+		out, err := s.consumeIfApproved(ctx, candidate)
+		if !errors.Is(err, oauth.ErrDeviceCodeNotFound) {
+			if out != nil {
+				out.DeviceCode = deviceCode
+			}
+			return out, err
+		}
+	}
+	return nil, oauth.ErrDeviceCodeNotFound
+}
+
+func (s *DeviceCodeStore) consumeIfApproved(ctx context.Context, lookup string) (*oauth.DeviceCode, error) {
 	row := s.db.QueryRowContext(ctx, `
         DELETE FROM device_codes WHERE device_code = ? AND approved = 1
         RETURNING device_code, user_code, client_id, scopes, nonce,
                   user_id, provider, attributes, approved, denied,
-                  last_poll, interval_ns, expires_at, resources`, deviceCode)
+                  last_poll, interval_ns, expires_at, resources`, lookup)
 	out, err := scanDeviceCode(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, oauth.ErrDeviceCodeNotFound

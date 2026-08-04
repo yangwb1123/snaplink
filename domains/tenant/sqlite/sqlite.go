@@ -48,6 +48,15 @@ ALTER TABLE tenants ADD COLUMN allowed_regions_json TEXT NOT NULL DEFAULT '[]';
 	{Version: 3, Name: "tenant_residency_enforce_writes", SQL: `
 ALTER TABLE tenants ADD COLUMN enforce_writes INTEGER NOT NULL DEFAULT 0;
 `},
+	{Version: 4, Name: "tenant_branding_resource", SQL: `
+CREATE TABLE tenant_branding (
+    tenant_id     TEXT PRIMARY KEY,
+    branding_json TEXT NOT NULL DEFAULT '{}',
+    version       INTEGER NOT NULL DEFAULT 1,
+    updated_at    INTEGER NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+`},
 }
 
 const schema = `

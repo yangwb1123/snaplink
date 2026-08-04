@@ -101,6 +101,13 @@ type Store interface {
 	RecordHealth(ctx context.Context, id string, h *ConnectionHealth) error
 }
 
+// Lister is the optional full-enumeration capability used by disaster-recovery
+// exports and administrative reconciliation. It stays outside Store so custom
+// hot-path implementations are not forced to support fleet-wide scans.
+type Lister interface {
+	List(ctx context.Context) ([]*Connection, error)
+}
+
 // DomainFromIdentifier extracts the lowercase home-realm domain from a login
 // identifier: the part after the last "@" for an email, or the whole string
 // (lowercased, trimmed) for a bare domain. Returns "" for empty input.

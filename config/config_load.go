@@ -12,6 +12,7 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/cors"
 	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/authpipeline"
 )
 
 // Load reads and parses a YAML config file, then applies defaults.
@@ -91,11 +92,26 @@ func (c *Config) applyDefaults() {
 		applyCodeDefaults(c.Authenticators.Email, authenticators.DefaultEmailCodeTTL)
 	}
 	applyMagicLinkDefaults(c.Authenticators.MagicLink)
+	applyCodeSendQuotaDefaults(&c.Authenticators.CodeSendQuota)
+	applyBCLFailureQueueDefaults(&c.BackchannelLogout.FailureQueue)
+	c.applyNotificationDefaults()
 	if c.Authenticators.TempToken != nil && c.Authenticators.TempToken.TTL == 0 {
 		c.Authenticators.TempToken.TTL = authenticators.DefaultTempTokenTTL
 	}
 	if c.Authenticators.KeyPair != nil && c.Authenticators.KeyPair.MaxClockSkew == 0 {
 		c.Authenticators.KeyPair.MaxClockSkew = authenticators.DefaultKeyPairClockSkew
+	}
+}
+
+func applyCodeSendQuotaDefaults(quota *CodeSendQuotaConfig) {
+	if quota.IdentityLimit == 0 {
+		quota.IdentityLimit = authenticators.DefaultCodeIdentitySendLimit
+	}
+	if quota.TenantLimit == 0 {
+		quota.TenantLimit = authenticators.DefaultCodeTenantSendLimit
+	}
+	if quota.Window == 0 {
+		quota.Window = authenticators.DefaultCodeSendQuotaWindow
 	}
 }
 
@@ -129,6 +145,24 @@ func (c *Config) validate() error {
 	if err := ValidateVersion(c); err != nil {
 		return err
 	}
+	if err := c.normalizeFeatureGates(); err != nil {
+		return err
+	}
+	// hosted_login is a legacy no-op: sso-server mounts no frontend, so the
+	// parsed block can never enable anything. Deprecation is loud so an
+	// operator who still sets it does not mistake it for a capability
+	// signal (see docs/config-reference.md). Removal lands with the next
+	// schema-version bump.
+	if c.HostedLogin.Enabled {
+		slog.Warn("config: hosted_login is deprecated and has no effect — sso-server serves no " +
+			"frontend; deploy the login UI as a separate project (see docs/frontend-contract.md)")
+	}
+	if err := c.validateTopology(); err != nil {
+		return err
+	}
+	if err := c.validateFeatureConfig(); err != nil {
+		return err
+	}
 	level := strings.ToLower(c.Logging.Level)
 	switch level {
 	case "debug", "info", "error":
@@ -145,13 +179,111 @@ func (c *Config) validate() error {
 	if c.Server.Issuer == sso.DefaultIssuer {
 		return fmt.Errorf("config: server.issuer must not equal the SDK sentinel %q — set it to your canonical public URL (e.g. https://sso.example.com) or accept the cmd default %q", sso.DefaultIssuer, DefaultServerIssuer)
 	}
-	for _, cl := range c.Clients {
-		if cl.ID == "" {
-			return errors.New("config: client.id required")
-		}
+	if err := validateConfiguredClients(c.Clients); err != nil {
+		return err
 	}
 	if c.Backup.Keep < 0 {
 		return fmt.Errorf("config: backup.keep must be >= 0 (0 disables retention), got %d", c.Backup.Keep)
+	}
+	return nil
+}
+
+func validateConfiguredClients(clients []ClientConfig) error {
+	for _, client := range clients {
+		if client.ID == "" {
+			return errors.New("config: client.id required")
+		}
+		if client.LoginPageURI != "" && !sso.IsFederatedLoginPageURIValid(client.LoginPageURI) {
+			return fmt.Errorf("config: client %q login_page_uri must be HTTPS or loopback HTTP", client.ID)
+		}
+	}
+	return nil
+}
+
+func (c *Config) validateFeatureConfig() error {
+	if err := c.validateAuthPipeline(); err != nil {
+		return err
+	}
+	if err := c.validateCodeSendQuota(); err != nil {
+		return err
+	}
+	if err := c.Authenticators.CodeDelivery.validate(); err != nil {
+		return err
+	}
+	if err := c.validateBCLFailureQueue(); err != nil {
+		return err
+	}
+	return c.validateNotifications()
+}
+
+func (c *Config) validateCodeSendQuota() error {
+	quota := c.Authenticators.CodeSendQuota
+	if quota.IdentityLimit < -1 || quota.TenantLimit < -1 {
+		return errors.New("config: authenticators.code_send_quota limits must be -1 or greater")
+	}
+	// Zero is the pre-defaulting value used by tests and programmatic callers;
+	// applyDefaults turns it into the stock 24-hour window on the load path.
+	if quota.Window < 0 {
+		return errors.New("config: authenticators.code_send_quota.window must be positive")
+	}
+	return nil
+}
+
+func (c *Config) applyNotificationDefaults() {
+	if !c.Notifications.Enabled {
+		return
+	}
+	if strings.TrimSpace(c.Notifications.Backend) == "" {
+		c.Notifications.Backend = "memory"
+	}
+	if c.Notifications.Cooldown == 0 {
+		c.Notifications.Cooldown = 5 * time.Minute
+	}
+	if c.Notifications.QueueSize == 0 {
+		c.Notifications.QueueSize = 256
+	}
+	if c.Notifications.Workers == 0 {
+		c.Notifications.Workers = 2
+	}
+	if c.Notifications.SessionExpiryWarning == 0 {
+		c.Notifications.SessionExpiryWarning = 30 * time.Minute
+	}
+	if c.Notifications.SessionScanInterval == 0 {
+		c.Notifications.SessionScanInterval = time.Minute
+	}
+}
+
+func (c *Config) validateNotifications() error {
+	if !c.Notifications.Enabled {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Notifications.Backend)) {
+	case "memory":
+	case "sqlite":
+		if strings.TrimSpace(c.Notifications.SQLite.DSN) == "" {
+			return errors.New("config: notifications.sqlite.dsn required for sqlite backend")
+		}
+	default:
+		return fmt.Errorf("config: notifications.backend must be memory or sqlite, got %q", c.Notifications.Backend)
+	}
+	if c.Notifications.Cooldown < 0 || c.Notifications.QueueSize < 1 || c.Notifications.Workers < 1 ||
+		c.Notifications.SessionExpiryWarning < 1 || c.Notifications.SessionScanInterval < 1 {
+		return errors.New("config: notifications cooldown must be non-negative and queue_size/workers/session expiry durations must be positive")
+	}
+	return nil
+}
+
+func (c *Config) validateTopology() error {
+	mode := strings.ToLower(strings.TrimSpace(c.Server.Topology.Mode))
+	switch mode {
+	case "", TopologyModeSingle, TopologyModeMulti:
+		c.Server.Topology.Mode = mode
+	default:
+		return fmt.Errorf("config: server.topology.mode must be %q or %q, got %q",
+			TopologyModeSingle, TopologyModeMulti, c.Server.Topology.Mode)
+	}
+	if c.Server.Topology.AllowPerPodState && mode != TopologyModeMulti {
+		return errors.New("config: server.topology.allow_per_pod_state requires mode: multi")
 	}
 	return nil
 }
@@ -206,7 +338,43 @@ func (c *Config) ServerOptions() []sso.Option {
 	if c.FeatureGates.anySet() {
 		opts = append(opts, sso.WithFeatureGates(c.FeatureGates.toSSOGates()))
 	}
+	opts = append(opts, c.authPipelineOptions()...)
 	return opts
+}
+
+func (c *Config) validateAuthPipeline() error {
+	if _, err := authpipeline.NewIPSkipMFAHook(c.AuthPipeline.IPSkipMFACIDRs); err != nil {
+		return fmt.Errorf("config: auth_pipeline.ip_skip_mfa_cidrs: %w", err)
+	}
+	seen := make(map[string]struct{}, len(c.AuthPipeline.RequiredProfileAttributes))
+	for index, raw := range c.AuthPipeline.RequiredProfileAttributes {
+		field := strings.TrimSpace(raw)
+		if field == "" {
+			return fmt.Errorf("config: auth_pipeline.required_profile_attributes[%d] must not be empty", index)
+		}
+		if _, exists := seen[field]; exists {
+			return fmt.Errorf("config: auth_pipeline.required_profile_attributes contains duplicate %q", field)
+		}
+		seen[field] = struct{}{}
+		c.AuthPipeline.RequiredProfileAttributes[index] = field
+	}
+	return nil
+}
+
+func (c *Config) authPipelineOptions() []sso.Option {
+	options := make([]sso.Option, 0, 2)
+	if len(c.AuthPipeline.IPSkipMFACIDRs) != 0 {
+		hook, err := authpipeline.NewIPSkipMFAHook(c.AuthPipeline.IPSkipMFACIDRs)
+		if err != nil {
+			slog.Error("config: invalid auth pipeline CIDR; hook omitted", "error", err)
+		} else {
+			options = append(options, sso.WithAuthHook(hook))
+		}
+	}
+	if len(c.AuthPipeline.RequiredProfileAttributes) != 0 {
+		options = append(options, sso.WithAuthHook(authpipeline.NewProfileCompletionHook(c.AuthPipeline.RequiredProfileAttributes)))
+	}
+	return options
 }
 
 // toPolicy builds the ratelimit.Policy implied by the YAML block.

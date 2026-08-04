@@ -185,6 +185,7 @@ func mintDelegationToken(d Deps, ctx core.HandlerContext, client *core.Client, a
 	token, err := ti.Issue(ctx.Request().Context(), &core.Subject{
 		ID:                  agent.ID,
 		ClientID:            client.ID,
+		TenantID:            client.TenantID,
 		Resources:           resources,
 		TTL:                 client.AccessTokenTTL,
 		Actor:               &core.ActorClaim{Subject: sess.HumanSubject},

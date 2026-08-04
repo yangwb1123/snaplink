@@ -21,6 +21,7 @@ Commands:
     check-exemptions       Check exemption sync
     self-test              Harness self-test
     check-invariants       Security invariants
+    check-routes           Runtime route / OpenAPI drift gate
     check-root             Check root directory for business code violations
     adr-compliance         Check ADR compliance (ADR-0003, ADR-0004, ADR-0007)
     check-test             Run checks/ unit tests
@@ -33,6 +34,9 @@ Commands:
     build                  Build binaries to bin/
     configure              Resolve/materialize a cold-module build profile
     modules                List/check/plan the module catalog
+    capabilities           Validate/generate/list the capability registry
+    sdk-surface            Validate/regenerate/list the SDK-surface registry
+    profiles               Prove build-profile physical isolation (evidence)
     lint                   Run golangci-lint
     security-scan          Run govulncheck + gosec
     skill <name> [args..]  Run a skill by directory name
@@ -162,6 +166,11 @@ def cmd_check_invariants():
     return iv_run()
 
 
+def cmd_check_routes():
+    from checks.route_contract import run as route_run
+    return route_run()
+
+
 def cmd_check_root():
     from checks.root_business_code import run as rb_run
     return rb_run()
@@ -241,6 +250,24 @@ def cmd_modules(args: list):
     return run_modules(args)
 
 
+def cmd_capabilities(args: list):
+    sys.path.insert(0, str(ROOT / "ops" / "scripts"))
+    from capability_registry import run as capabilities_run
+    return capabilities_run(args)
+
+
+def cmd_sdk_surface(args: list):
+    sys.path.insert(0, str(ROOT / "ops" / "scripts"))
+    from sdk_surface import run as sdk_surface_run
+    return sdk_surface_run(args)
+
+
+def cmd_profiles(args: list):
+    sys.path.insert(0, str(ROOT / "ops" / "scripts"))
+    from profile_evidence import run as profiles_run
+    return profiles_run(args)
+
+
 def cmd_lint():
     return run("go", "run", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest",
                "run", "--timeout", "5m").returncode
@@ -294,6 +321,7 @@ COMMANDS = {
     "check-exemptions": cmd_check_exemptions,
     "self-test": cmd_self_test,
     "check-invariants": cmd_check_invariants,
+    "check-routes": cmd_check_routes,
     "check-root": cmd_check_root,
     "adr-compliance": cmd_adr_compliance,
     "check-test": cmd_check_test,
@@ -306,6 +334,9 @@ COMMANDS = {
     "build": cmd_build,
     "configure": cmd_configure,
     "modules": cmd_modules,
+    "capabilities": cmd_capabilities,
+    "sdk-surface": cmd_sdk_surface,
+    "profiles": cmd_profiles,
     "lint": cmd_lint,
     "security-scan": cmd_security_scan,
     "skill": cmd_skill,
@@ -336,7 +367,7 @@ def main():
     if cmd == "review":
         spec = parsed.args[0] if parsed.args else None
         return handler(spec)
-    elif cmd in ("skill", "configure", "modules"):
+    elif cmd in ("skill", "configure", "modules", "capabilities", "sdk-surface", "profiles"):
         return handler(parsed.args + unknown)
     elif cmd == "help":
         return handler()

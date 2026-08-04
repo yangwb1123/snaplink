@@ -1,0 +1,6 @@
+# Generated/local harness state — never commit these.
+data/
+certs/
+results/*/
+!results/README.md
+*.bak

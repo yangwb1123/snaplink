@@ -48,8 +48,10 @@ type Eraser struct {
 	MFAEnrollments core.MFAEnrollmentStore
 	// PasswordReset / EmailChange revoke any pending self-service tokens bound to
 	// the subject. Optional (nil / not a *Revoker -> skipped).
-	PasswordReset core.PasswordResetRevoker
-	EmailChange   core.EmailChangeRevoker
+	PasswordReset           core.PasswordResetRevoker
+	EmailChange             core.EmailChangeRevoker
+	Notifications           core.NotificationStore
+	NotificationPreferences core.NotificationPreferenceStore
 }
 
 // EraseOptions tunes an erasure run.
@@ -74,6 +76,7 @@ type Report struct {
 	ConsentRevoked       int
 	MFAFactorsRemoved    int
 	ResetTokensRevoked   int
+	NotificationsDeleted bool
 	UserDeleted          bool
 	// Skipped names steps skipped because their SPI wasn't wired (or,
 	// for refresh tokens under DryRun, because the step isn't previewable).
@@ -106,9 +109,29 @@ func (e *Eraser) EraseSubject(ctx context.Context, userID string, opts EraseOpti
 	e.eraseConsent(ctx, userID, opts, rep)
 	e.eraseMFAEnrollments(ctx, userID, opts, rep)
 	e.eraseSelfServiceTokens(ctx, userID, opts, rep)
+	e.eraseNotifications(ctx, userID, opts, rep)
 	e.eraseUser(ctx, userID, opts, rep)
 
 	return rep, rep.Err()
+}
+
+func (e *Eraser) eraseNotifications(ctx context.Context, userID string, opts EraseOptions, rep *Report) {
+	if opts.DryRun {
+		rep.Skipped = append(rep.Skipped, "notifications(dry-run not previewable)")
+		return
+	}
+	if e.Notifications == nil {
+		rep.Skipped = append(rep.Skipped, "notifications(not wired)")
+	} else if err := e.Notifications.DeleteForSubject(ctx, userID); err != nil {
+		rep.Errors = append(rep.Errors, fmt.Errorf("delete notifications: %w", err))
+	} else {
+		rep.NotificationsDeleted = true
+	}
+	if e.NotificationPreferences != nil {
+		if err := e.NotificationPreferences.DeleteForSubject(ctx, userID); err != nil {
+			rep.Errors = append(rep.Errors, fmt.Errorf("delete notification preferences: %w", err))
+		}
+	}
 }
 
 // eraseConsent revokes every recorded consent grant for the subject so a

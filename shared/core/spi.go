@@ -156,6 +156,11 @@ type SessionActivityTracker interface {
 type SessionMeta struct {
 	IP        string
 	UserAgent string
+	ClientID  string
+	// AuthorizedScopes is copied at creation and may only shrink through
+	// SessionAuthorizationManager. AuthTime preserves the original login time.
+	AuthorizedScopes []string
+	AuthTime         time.Time
 
 	// TenantID, when set, binds the session to the tenant that owns the
 	// authenticating client. It lets SessionTenantIndex.DeleteByTenant kill
@@ -193,6 +198,14 @@ type SessionMeta struct {
 // implement it.
 type SessionMetaCreator interface {
 	CreateWithMeta(ctx context.Context, userID string, meta SessionMeta) (*Session, error)
+}
+
+// SessionAuthorizationManager is the optional durable authorization-state
+// extension used by conditional-access convergence. Implementations replace
+// the session's scope ceiling atomically; callers guarantee the replacement is
+// a subset of the prior grant. A missing session is an idempotent no-op.
+type SessionAuthorizationManager interface {
+	SetAuthorizedScopes(ctx context.Context, sessionID string, scopes []string) error
 }
 
 // SessionTenantIndex is the OPTIONAL extension a SessionManager MAY implement to

@@ -9,15 +9,15 @@ import (
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildauthn"
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
+	"github.com/yangwb1123/snaplink/config"
 	connectionssqlite "github.com/yangwb1123/snaplink/domains/connections/sqlite"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	tenantsqlite "github.com/yangwb1123/snaplink/domains/tenant/sqlite"
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
 	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
-	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
-	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
 
@@ -163,7 +163,7 @@ func (b *appBuilder) wireConnectionStore() error {
 	// connection's stored config (build failures land in the audit trail —
 	// b.recorder is populated by wireFoundation before wireDomains runs).
 	b.opts = append(b.opts, sso.WithConnectionAuthenticatorFactory(
-		serverbuildauthn.NewConnectionAuthenticatorFactory(b.recorder, b.logger, 0)))
+		serverbuildauthn.NewConnectionAuthenticatorFactoryWithLinker(b.recorder, b.logger, 0, b.identityLinker)))
 	if cfg.Connections.Probe.Timeout > 0 {
 		b.opts = append(b.opts, sso.WithConnectionProbeTimeout(cfg.Connections.Probe.Timeout))
 	}
@@ -196,21 +196,63 @@ func (b *appBuilder) wireDPoP() error {
 	return nil
 }
 
+// oauthBackend resolves the effective OAuth hot-store backend ("" and
+// "memory" are equivalent) for the schema-gate and ready-check-name branches.
+func oauthBackend(cfg config.OAuthConfig) string {
+	return strings.ToLower(strings.TrimSpace(cfg.Backend))
+}
+
+// checkOAuthStoreSchema runs the per-namespace schema boot gate for the OAuth
+// hot stores, branched by backend: SQLite gates via
+// serverbuildsign.CheckSQLiteSchema (type-probed DB() *sql.DB); postgres gates
+// via postgresbackend.CheckSchema on the shared pool. Running the SQLite
+// version-table query against a pgx pool would falsely fail boot (the
+// sqlite_master probe errors on a postgres connection), so the branch is
+// mandatory — follows the checkIdentityLinkSchema precedent. Memory/redis
+// stores expose no DB() and silently no-op, byte-identical to today.
+func (b *appBuilder) checkOAuthStoreSchema(backend, namespace string, store any, sqliteMax, pgMax int) error {
+	switch backend {
+	case "sqlite":
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, namespace, sqliteMax); err != nil {
+			return fmt.Errorf("schema check %s: %w", namespace, err)
+		}
+	case "postgres":
+		if err := postgresbackend.CheckSchema(b.schemaCtx, b.pgDB, namespace, pgMax); err != nil {
+			return fmt.Errorf("schema check %s: %w", namespace, err)
+		}
+	}
+	return nil
+}
+
+// oauthReadyCheckName produces the backend-accurate /readyz + storage-health
+// name for an OAuth store (sqlite-oauth-* vs postgres-oauth-*), so operators
+// can tell which dependency failed and the two backends never collide.
+func oauthReadyCheckName(backend, suffix string) string {
+	prefix := "sqlite"
+	if backend == "postgres" {
+		prefix = "postgres"
+	}
+	return prefix + "-oauth-" + suffix
+}
+
 // wireOAuthGrantStores wires the auth-code, refresh-token, account-erase,
 // device-code, PAR, JAR, CIBA, and JARM grant subsystems in order.
 func (b *appBuilder) wireOAuthGrantStores() error {
 	cfg := b.cfg
+	backend := oauthBackend(cfg.OAuth)
 	if cfg.OAuth.AuthCode.Enabled {
-		store, err := serverbuildstore.BuildAuthCodeStore(cfg.OAuth, b.redis)
+		store, err := serverbuildstore.BuildAuthCodeStore(cfg.OAuth, b.redis, b.pgDB, b.pgDialect)
 		if err != nil {
 			return fmt.Errorf("oauth.auth_code: %w", err)
 		}
-		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, "auth_codes", sqlitestores.AuthCodesMaxVersion()); err != nil {
-			return fmt.Errorf("schema check auth_codes: %w", err)
+		if err := b.checkOAuthStoreSchema(backend, "auth_codes", store,
+			sqlitestores.AuthCodesMaxVersion(), postgresbackend.AuthCodesMaxVersion()); err != nil {
+			return err
 		}
 		b.opts = append(b.opts, sso.WithAuthCodeStore(store, cfg.OAuth.AuthCode.TTL))
-		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-oauth-auth-codes", store)
-		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-auth-codes", store)
+		name := oauthReadyCheckName(backend, "auth-codes")
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, name, store)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, name, store)
 	}
 	if err := b.wireRefreshToken(); err != nil {
 		return err
@@ -287,16 +329,19 @@ func (b *appBuilder) wireRefreshToken() error {
 	if !cfg.OAuth.RefreshToken.Enabled {
 		return nil
 	}
-	store, err := serverbuildstore.BuildRefreshTokenStore(cfg.OAuth, b.redis)
+	backend := oauthBackend(cfg.OAuth)
+	store, err := serverbuildstore.BuildRefreshTokenStore(cfg.OAuth, b.redis, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("oauth.refresh_token: %w", err)
 	}
-	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, "refresh_tokens", sqlitestores.RefreshTokensMaxVersion()); err != nil {
-		return fmt.Errorf("schema check refresh_tokens: %w", err)
+	if err := b.checkOAuthStoreSchema(backend, "refresh_tokens", store,
+		sqlitestores.RefreshTokensMaxVersion(), postgresbackend.RefreshTokensMaxVersion()); err != nil {
+		return err
 	}
 	b.opts = append(b.opts, sso.WithRefreshTokenStore(store, cfg.OAuth.RefreshToken.TTL))
-	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-oauth-refresh-tokens", store)
-	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-refresh-tokens", store)
+	name := oauthReadyCheckName(backend, "refresh-tokens")
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, name, store)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, name, store)
 	b.refreshTokenStore = store
 	b.refreshTokenTTL = cfg.OAuth.RefreshToken.TTL
 	if d := cfg.OAuth.RefreshToken.AbsoluteMaxLifetime; d > 0 {
@@ -308,7 +353,8 @@ func (b *appBuilder) wireRefreshToken() error {
 
 // wireRefreshRotationGrace opts into the refresh-rotation grace window for
 // multi-replica resilience. Extracted from wireRefreshToken for function-length
-// budget. 0 = strict single-use (no-op). Supports memory, sqlite, and redis.
+// budget. 0 = strict single-use (no-op). Supports memory, sqlite, redis, and
+// postgres.
 func (b *appBuilder) wireRefreshRotationGrace() error {
 	cfg := b.cfg
 	if w := cfg.OAuth.RefreshToken.RotationGraceWindow; w > 0 {
@@ -336,8 +382,22 @@ func (b *appBuilder) wireRefreshRotationGrace() error {
 			b.refreshGracePruneCancel = store.CleanupStop()
 			b.refreshGracePruneDone = store.CleanupDone()
 			b.logger.Info("refresh rotation grace enabled (sqlite; cluster-shared)", "window", w, "dsn", cfg.OAuth.SQLite.DSN)
+		case "postgres":
+			if b.pgDB == nil {
+				return errors.New("oauth.refresh_token.rotation_grace_backend=postgres but no postgres block configured (set postgres.dsn)")
+			}
+			store, err := postgresbackend.NewRefreshGraceStoreWithDB(b.pgDB, b.pgDialect, w, 0)
+			if err != nil {
+				return fmt.Errorf("refresh rotation grace store: %w", err)
+			}
+			b.opts = append(b.opts, sso.WithRefreshRotationGraceStore(store))
+			b.opts = serverbuildsign.AppendReadyCheck(b.opts, "postgres-refresh-grace", store)
+			b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "postgres-refresh-grace", store)
+			b.refreshGracePruneCancel = store.CleanupStop()
+			b.refreshGracePruneDone = store.CleanupDone()
+			b.logger.Info("refresh rotation grace enabled (postgres; cluster-shared)", "window", w)
 		default:
-			return fmt.Errorf("unknown oauth.refresh_token.rotation_grace_backend %q (supported: memory, sqlite, redis)", cfg.OAuth.RefreshToken.RotationGraceBackend)
+			return fmt.Errorf("unknown oauth.refresh_token.rotation_grace_backend %q (supported: memory, sqlite, redis, postgres)", cfg.OAuth.RefreshToken.RotationGraceBackend)
 		}
 	}
 	return nil
@@ -346,13 +406,15 @@ func (b *appBuilder) wireRefreshRotationGrace() error {
 // wireDeviceCodePAR wires the device-code and PAR grant stores.
 func (b *appBuilder) wireDeviceCodePAR() error {
 	cfg := b.cfg
+	backend := oauthBackend(cfg.OAuth)
 	if cfg.OAuth.DeviceCode.Enabled {
-		store, err := serverbuildstore.BuildDeviceCodeStore(cfg.OAuth, b.redis)
+		store, err := serverbuildstore.BuildDeviceCodeStore(cfg.OAuth, b.redis, b.pgDB, b.pgDialect)
 		if err != nil {
 			return fmt.Errorf("oauth.device_code: %w", err)
 		}
-		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, "device_codes", sqlitestores.DeviceCodesMaxVersion()); err != nil {
-			return fmt.Errorf("schema check device_codes: %w", err)
+		if err := b.checkOAuthStoreSchema(backend, "device_codes", store,
+			sqlitestores.DeviceCodesMaxVersion(), postgresbackend.DeviceCodesMaxVersion()); err != nil {
+			return err
 		}
 		b.opts = append(b.opts, sso.WithDeviceCodeStore(
 			store,
@@ -360,20 +422,23 @@ func (b *appBuilder) wireDeviceCodePAR() error {
 			cfg.OAuth.DeviceCode.PollInterval,
 			cfg.OAuth.DeviceCode.VerificationBaseURL,
 		))
-		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-oauth-device-codes", store)
-		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-device-codes", store)
+		name := oauthReadyCheckName(backend, "device-codes")
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, name, store)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, name, store)
 	}
 	if cfg.OAuth.PAR.Enabled {
-		store, err := serverbuildstore.BuildPARStore(cfg.OAuth, b.redis)
+		store, err := serverbuildstore.BuildPARStore(cfg.OAuth, b.redis, b.pgDB, b.pgDialect)
 		if err != nil {
 			return fmt.Errorf("par store: %w", err)
 		}
-		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, "par", sqlitestores.PARMaxVersion()); err != nil {
-			return fmt.Errorf("schema check par: %w", err)
+		if err := b.checkOAuthStoreSchema(backend, "par", store,
+			sqlitestores.PARMaxVersion(), postgresbackend.PARMaxVersion()); err != nil {
+			return err
 		}
 		b.opts = append(b.opts, sso.WithPARStore(store, cfg.OAuth.PAR.TTL))
-		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-oauth-par", store)
-		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-par", store)
+		name := oauthReadyCheckName(backend, "par")
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, name, store)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, name, store)
 	}
 	return nil
 }
@@ -418,70 +483,5 @@ func (b *appBuilder) wireCIBA() error {
 		"mode", mode,
 		"backend", strings.ToLower(strings.TrimSpace(cfg.CIBA.Backend)),
 		"transport", strings.ToLower(strings.TrimSpace(cfg.CIBA.Transport)))
-	return nil
-}
-
-// wireJARM wires JWT-secured authorization response mode (response_mode=jwt).
-func (b *appBuilder) wireJARM() error {
-	cfg := b.cfg
-	if !cfg.OAuth.JARM.Enabled {
-		return nil
-	}
-	js, ok := any(b.jwtIssuer).(oidc.JARMSigner)
-	if !ok {
-		return fmt.Errorf("oauth.jarm.enabled but the %s signing issuer does not implement JARM signing", b.signingAlg)
-	}
-	b.opts = append(b.opts, sso.WithJARM(js))
-	b.logger.Info("jarm: enabled (response_mode=jwt)", "signing_alg", b.signingAlg)
-	return nil
-}
-
-// wireIntrospection wires the /token/introspect response-caching, signed-JWT
-// response (reusing the primary signing issuer), and batch tuning knobs
-// (all opt-in, oauth.OAuthIntrospectionConfig).
-func (b *appBuilder) wireIntrospection() error {
-	cfg := b.cfg.OAuth.Introspection
-	if cfg.CacheTTL > 0 {
-		b.opts = append(b.opts, sso.WithIntrospectionCache(handler.NewMemoryIntrospectionCache(), cfg.CacheTTL))
-		b.logger.Info("introspection response cache enabled", "ttl", cfg.CacheTTL)
-	}
-	if cfg.SignedResponseEnabled {
-		is, ok := any(b.jwtIssuer).(oauth.IntrospectionSigner)
-		if !ok {
-			return fmt.Errorf("oauth.introspection.signed_response_enabled but the %s signing issuer does not implement introspection signing", b.signingAlg)
-		}
-		b.opts = append(b.opts, sso.WithIntrospectionSigner(is))
-		b.logger.Info("introspection: signed JWT responses enabled (opt-in via Accept header)", "signing_alg", b.signingAlg)
-	}
-	if cfg.BatchEnabled {
-		b.opts = append(b.opts, sso.WithIntrospectionBatch(cfg.MaxBatchSize))
-		b.logger.Info("introspection: batch requests enabled", "max_batch_size", cfg.MaxBatchSize)
-	}
-	return nil
-}
-
-// wireIntrospectionSigning wires RFC 9701 JWT-formatted /token/introspect
-// responses. Unlike wireIntrospection's SignedResponseEnabled path (which
-// reuses b.jwtIssuer, the primary signing issuer), this builds a SEPARATE
-// issuer from keys.introspection_signing — a distinct key with its own kid +
-// rotation lifecycle — for deployments that want the introspection signer
-// fully isolated from the access/ID-token issuer. If BOTH are enabled, this
-// wires AFTER wireIntrospection, so the dedicated key wins.
-func (b *appBuilder) wireIntrospectionSigning() error {
-	cfg := b.cfg.Keys.IntrospectionSigning
-	if !cfg.Enabled {
-		return nil
-	}
-	issuer, alg, extSigner, err := serverbuildsign.BuildSigningIssuer(cfg.SigningConfig, b.cfg.Server, b.metricsRegistry, b.logger)
-	if err != nil {
-		return fmt.Errorf("keys.introspection_signing: %w", err)
-	}
-	signer, ok := any(issuer).(oauth.IntrospectionSigner)
-	if !ok {
-		return fmt.Errorf("keys.introspection_signing.alg %q does not implement introspection-response signing", alg)
-	}
-	b.opts = append(b.opts, sso.WithIntrospectionSigning(signer))
-	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "introspection-external-signer", extSigner)
-	b.logger.Info("introspection signing: enabled (RFC 9701 JWT introspection responses)", "signing_alg", alg)
 	return nil
 }

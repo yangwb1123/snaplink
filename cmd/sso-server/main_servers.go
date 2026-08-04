@@ -230,17 +230,20 @@ func registerAdminGRPCServices(s *grpc.Server, a *app) {
 	}
 	if a.snapshotPipeline != nil {
 		adminv1.RegisterSnapshotAdminServiceServer(s, grpcserver.NewSnapshotAdminService(
-			a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder))
+			a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder, a.operationStore))
 	}
 	if a.releaseStore != nil {
 		adminv1.RegisterReleaseAdminServiceServer(s, grpcserver.NewReleaseAdminService(
-			a.releaseRegistry, a.releaseStore, a.recorder))
+			a.releaseRegistry, a.releaseStore, a.recorder, a.operationStore))
+	}
+	if a.operationStore != nil {
+		adminv1.RegisterOperationAdminServiceServer(s, grpcserver.NewOperationAdminService(a.operationStore))
 	}
 	if a.tenantStore != nil {
 		adminv1.RegisterTenantAdminServiceServer(s, grpcserver.NewTenantAdminService(
 			a.tenantStore, a.recorder, a.server.InvalidateTenantSuspensionCache,
 			a.server.InvalidateTenantResidencyCache,
-			func(ctx context.Context, id string) { _, _ = a.server.RevokeTenantRefreshTokens(ctx, id) }))
+			a.server.RevokeTenantCredentials))
 	}
 }
 

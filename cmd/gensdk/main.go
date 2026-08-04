@@ -1,22 +1,22 @@
-// Command gensdk regenerates the hand-scoped consumer SDKs committed at
+// Command gensdk regenerates the consumer SDKs committed at
 // docs/sdks/typescript/client.ts and docs/sdks/python/client.py from
-// docs/openapi.yaml — the "TS/Python consumer SDKs" half of the
-// "multi-language SDK generation + developer portal" backlog item
-// (docs/deferred-backlog.md).
+// docs/openapi.yaml — the "multi-language SDK generation + developer
+// portal" backlog item (docs/deferred-backlog.md).
 //
 // This is deliberately NOT a general-purpose OpenAPI-to-any-language
 // codegen tool (that is what oapi-codegen/openapi-generator are for, and
 // this repo's minimal-dependency philosophy rules out adding either as a
-// build-time Go/Node dependency — see AGENTS.md). It is a small, curated
-// generator covering ONE fixed operationId allowlist (coreSurface in
-// operations.go: core OAuth2/OIDC + token lifecycle + self-service + a
-// small representative admin sample — see docs/sdks/*/README.md for the
-// exact list and what's deferred) with a schema resolver that handles the
-// shapes docs/openapi.yaml actually uses ($ref, arrays, objects, simple
+// build-time Go/Node dependency — see AGENTS.md). It is a small generator
+// covering the operationId set declared in the committed SDK-surface
+// registry ops/build/sdk-surface.json (core OAuth2/OIDC, token lifecycle,
+// self-service, admin, SCIM, SSF and Federation — see
+// docs/sdks/*/README.md) with a schema resolver that handles the shapes
+// docs/openapi.yaml actually uses ($ref, arrays, objects, simple
 // oneOf/single-entry allOf, additionalProperties maps) rather than the
 // full JSON-Schema/OpenAPI object model.
 //
-// Regenerate after any docs/openapi.yaml change to the covered surface:
+// Regenerate after any docs/openapi.yaml or ops/build/sdk-surface.json
+// change:
 //
 //	go run ./cmd/gensdk --lang=ts
 //	go run ./cmd/gensdk --lang=py
@@ -26,7 +26,8 @@
 // the opt-in admin API-docs viewer (interfaces/apidocs, sso.WithAPIDocsUI)
 // serves, so both stay in lockstep with docs/openapi.yaml without a
 // separate copy. Pass --spec to point at a different file (e.g. while
-// iterating on a not-yet-committed spec change).
+// iterating on a not-yet-committed spec change) and --surface to point at
+// a different sdk-surface registry.
 package main
 
 import (
@@ -41,6 +42,8 @@ import (
 	"github.com/yangwb1123/snaplink/docs"
 )
 
+var defaultSurfacePath = filepath.Join("ops", "build", "sdk-surface.json")
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "gensdk:", err)
@@ -50,6 +53,10 @@ func main() {
 
 func run(args []string) error {
 	opts, err := parseFlags(args)
+	if err != nil {
+		return err
+	}
+	surface, err := loadSurface(opts.surfacePath)
 	if err != nil {
 		return err
 	}
@@ -66,7 +73,7 @@ func run(args []string) error {
 	}
 
 	reg := NewRegistry(doc)
-	ops := Extract(doc, reg) // populates reg's named-schema set as a side effect
+	ops := Extract(doc, reg, surface) // populates reg's named-schema set as a side effect
 	info, _ := doc["info"].(map[string]interface{})
 	title, version := stringField(info, "title"), stringField(info, "version")
 
@@ -92,17 +99,19 @@ func generate(opts cliOptions, title, version string, reg *Registry, ops []Opera
 }
 
 type cliOptions struct {
-	lang     string
-	specPath string
-	outTS    string
-	outPy    string
+	lang        string
+	specPath    string
+	surfacePath string
+	outTS       string
+	outPy       string
 }
 
 func parseFlags(args []string) (cliOptions, error) {
 	fs := flag.NewFlagSet("gensdk", flag.ContinueOnError)
-	opts := cliOptions{}
+	opts := cliOptions{surfacePath: defaultSurfacePath}
 	fs.StringVar(&opts.lang, "lang", "all", "target language: ts | py | all")
 	fs.StringVar(&opts.specPath, "spec", "", "override the OpenAPI spec path (default: the embedded docs.OpenAPISpec)")
+	fs.StringVar(&opts.surfacePath, "surface", defaultSurfacePath, "path to the sdk-surface registry (ops/build/sdk-surface.json)")
 	fs.StringVar(&opts.outTS, "out-ts", filepath.Join("docs", "sdks", "typescript", "client.ts"), "TypeScript output path")
 	fs.StringVar(&opts.outPy, "out-py", filepath.Join("docs", "sdks", "python", "client.py"), "Python output path")
 	if err := fs.Parse(args); err != nil {

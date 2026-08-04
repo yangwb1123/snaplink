@@ -158,6 +158,40 @@ func userSchema() SchemaResource {
 	}
 }
 
+// enterpriseUserSchema describes every Enterprise User extension attribute
+// accepted and round-tripped by Resource. It is always advertised alongside
+// the core User schema because enterprise support does not require optional
+// Handler wiring.
+func enterpriseUserSchema() SchemaResource {
+	readWriteString := func(name string) schemaAttribute {
+		return schemaAttribute{
+			Name: name, Type: "string", Mutability: "readWrite", Returned: "default",
+		}
+	}
+	return SchemaResource{
+		Schemas:     []string{SchemaSchema},
+		ID:          SchemaEnterpriseUser,
+		Name:        "EnterpriseUser",
+		Description: "Enterprise User Extension",
+		Attributes: []schemaAttribute{
+			readWriteString("employeeNumber"),
+			readWriteString("costCenter"),
+			readWriteString("organization"),
+			readWriteString("division"),
+			readWriteString("department"),
+			{
+				Name: "manager", Type: "complex", Mutability: "readWrite", Returned: "default",
+				SubAttributes: []schemaAttribute{
+					readWriteString("value"),
+					{Name: "$ref", Type: "reference", Mutability: "readWrite", Returned: "default"},
+					readWriteString("displayName"),
+				},
+			},
+		},
+		Meta: &Meta{ResourceType: "Schema"},
+	}
+}
+
 // groupSchema returns the description of the subset of the core Group
 // schema this slice implements (RFC 7643 §4.2) — displayName plus the
 // multi-valued members attribute. Advertised by GET /Schemas only when

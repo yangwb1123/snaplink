@@ -45,18 +45,19 @@ func ValidateTokenWithIntrospect(ctx context.Context, token string, cfg Config) 
 		return nil, ErrTokenInactive
 	}
 	claims := &Claims{
-		Issuer:     w.Iss,
-		Subject:    w.Sub,
-		Audience:   audienceValues(w.Aud),
-		ClientID:   w.ClientID,
-		Scope:      w.Scope,
-		JTI:        w.JTI,
-		ExpiresAt:  w.Exp,
-		NotBefore:  w.Nbf,
-		IssuedAt:   w.Iat,
-		RenewAfter: w.RenewAfter,
-		CnfJKT:     w.Cnf.JKT,
-		Raw:        w.raw,
+		Issuer:        w.Iss,
+		Subject:       w.Sub,
+		Audience:      audienceValues(w.Aud),
+		ClientID:      w.ClientID,
+		Scope:         w.Scope,
+		JTI:           w.JTI,
+		ExpiresAt:     w.Exp,
+		NotBefore:     w.Nbf,
+		IssuedAt:      w.Iat,
+		RenewAfter:    w.RenewAfter,
+		CnfJKT:        w.Cnf.JKT,
+		ServingRegion: w.ServingRegion,
+		Raw:           w.raw,
 	}
 	if err := validateIntrospectedClaims(claims, cfg); err != nil {
 		return nil, err
@@ -128,6 +129,15 @@ func validateIntrospectedClaims(c *Claims, cfg Config) error {
 	}
 	if c.ExpiresAt != 0 && time.Now().Unix() >= c.ExpiresAt+int64(cfg.skew().Seconds()) {
 		return ErrTokenExpired
+	}
+	// Region governance gate (opt-in, FAILS CLOSED — deliberately a
+	// different shape from the iss/aud/exp neighbors above, which are
+	// optional-in-response and enforced only when present): an AS that
+	// doesn't echo serving_region (older AS, opaque issuer) must deny when
+	// the operator declared a region-constrained deployment — unverifiable
+	// provenance is a mismatch, not a pass.
+	if len(cfg.AllowedServingRegions) > 0 && !c.HasServingRegionIn(cfg.AllowedServingRegions) {
+		return fmt.Errorf("%w: serving_region %q", ErrServingRegionMismatch, c.ServingRegion)
 	}
 	return nil
 }

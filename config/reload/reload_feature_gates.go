@@ -24,15 +24,22 @@ func (r *Reloader) SetAdminAPIGateHook(fn func(enabled bool) bool) {
 	r.setAdminAPIGate = fn
 }
 
-// SetWebSPAGateHook is feature_gates.web_spa's analog of
-// SetAdminAPIGateHook — typically Server.SetWebSPAGateEnabled. See the
-// package doc for the one asymmetry that survives even with a hook wired:
-// the hook itself can still report false (no SPA filesystem was ever
-// wired), which Reload also surfaces as Ignored, not Applied.
-func (r *Reloader) SetWebSPAGateHook(fn func(enabled bool) bool) {
+// SetBrandingGateHook wires the callback Reload uses to apply a live
+// feature_gates.branding change — typically Server.SetBrandingGateEnabled.
+// nil (the default) makes a detected branding change appear in
+// Result.Ignored instead of Result.Applied, mirroring every other unwired-
+// hook contract in this file. The legacy name SetWebSPAGateHook remains as
+// a deprecated alias.
+func (r *Reloader) SetBrandingGateHook(fn func(enabled bool) bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.setWebSPAGate = fn
+	r.setBrandingGate = fn
+}
+
+// SetWebSPAGateHook is the deprecated alias of SetBrandingGateHook,
+// retained for source compatibility. See SetBrandingGateHook.
+func (r *Reloader) SetWebSPAGateHook(fn func(enabled bool) bool) {
+	r.SetBrandingGateHook(fn)
 }
 
 // SetOIDCGateHook wires the callback Reload uses to apply a live
@@ -109,22 +116,24 @@ func (r *Reloader) applyAdminAPIGate(newCfg *config.Config) string {
 	return fmt.Sprintf("feature_gates.admin_api: %v -> %v", old, resolved)
 }
 
-// applyWebSPAGate is feature_gates.web_spa's analog of applyAdminAPIGate.
-// Unlike admin_api, the wired hook (Server.SetWebSPAGateEnabled) CAN report
-// false here — when no SPA filesystem was ever wired at NewServer time there
+// applyBrandingGate is feature_gates.branding's analog of applyAdminAPIGate.
+// Unlike admin_api, the wired hook (Server.SetBrandingGateEnabled) CAN report
+// false here — when no tenant store was ever wired at NewServer time there
 // is no already-mounted route for this gate to affect, so the change is
-// reported as Ignored (by the "" return) rather than falsely Applied.
-func (r *Reloader) applyWebSPAGate(newCfg *config.Config) string {
-	if r.setWebSPAGate == nil {
+// reported as Ignored (by the "" return) rather than falsely Applied. The
+// deprecated /feature_gates/web_spa reload path lands here too; the
+// normalized config carries the value in FeatureGates.Branding either way.
+func (r *Reloader) applyBrandingGate(newCfg *config.Config) string {
+	if r.setBrandingGate == nil {
 		return ""
 	}
-	old := resolveGate(r.current.FeatureGates.WebSPA)
-	resolved := resolveGate(newCfg.FeatureGates.WebSPA)
-	if !r.setWebSPAGate(resolved) {
+	old := resolveGate(r.current.FeatureGates.Branding)
+	resolved := resolveGate(newCfg.FeatureGates.Branding)
+	if !r.setBrandingGate(resolved) {
 		return ""
 	}
-	r.current.FeatureGates.WebSPA = newCfg.FeatureGates.WebSPA
-	return fmt.Sprintf("feature_gates.web_spa: %v -> %v", old, resolved)
+	r.current.FeatureGates.Branding = newCfg.FeatureGates.Branding
+	return fmt.Sprintf("feature_gates.branding: %v -> %v", old, resolved)
 }
 
 // applyOIDCGate is feature_gates.oidc's analog of applyAdminAPIGate — the

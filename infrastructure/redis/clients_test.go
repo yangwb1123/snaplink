@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
@@ -15,6 +16,7 @@ func newClient(id string) *sso.Client {
 		Active:                  true,
 		RegistrationAccessToken: "rat-" + id,
 		TenantID:                "acme",
+		LoginPageURI:            "https://login.example/authorize",
 	}
 }
 
@@ -31,7 +33,7 @@ func TestRedisClientStore_AddGetRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.ID != "c1" || got.TenantID != "acme" || !got.Active {
+	if got.ID != "c1" || got.TenantID != "acme" || !got.Active || got.LoginPageURI == "" {
 		t.Errorf("round-trip mismatch: %+v", got)
 	}
 	// Secret must be hashed at rest, not the plaintext.
@@ -163,5 +165,85 @@ func TestRedisClientStore_RotateSecret(t *testing.T) {
 	// Rotating a missing client surfaces ErrNoSuchClient.
 	if _, err := cs.RotateSecret(ctx, "missing"); !errors.Is(err, sso.ErrNoSuchClient) {
 		t.Errorf("RotateSecret missing = %v, want ErrNoSuchClient", err)
+	}
+}
+
+func TestRedisClientStore_RotateSecretOverlapPersists(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	cs := NewClientStore(rdb)
+	ctx := context.Background()
+	if err := cs.Add(ctx, newClient("overlap")); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	newSecret, err := cs.RotateSecretWithOverlap(ctx, "overlap", time.Hour)
+	if err != nil {
+		t.Fatalf("RotateSecretWithOverlap: %v", err)
+	}
+	if err := cs.ValidateSecret(ctx, "overlap", newSecret); err != nil {
+		t.Fatalf("new secret inside overlap: %v", err)
+	}
+	if err := cs.ValidateSecret(ctx, "overlap", "s3cr3t-overlap"); err != nil {
+		t.Fatalf("old secret inside overlap: %v", err)
+	}
+	client, err := cs.Get(ctx, "overlap")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if client.PreviousSecret == "s3cr3t-overlap" || !client.SecretOverlapUntil.After(time.Now()) || client.SecretRotatedAt.IsZero() {
+		t.Fatalf("overlap metadata not persisted safely: %+v", client)
+	}
+	client.SecretOverlapUntil = time.Now().Add(-time.Second)
+	if err := cs.Update(ctx, client); err != nil {
+		t.Fatalf("expire overlap: %v", err)
+	}
+	if err := cs.ValidateSecret(ctx, "overlap", "s3cr3t-overlap"); err == nil {
+		t.Fatal("old secret after overlap must be rejected")
+	}
+	due, err := cs.ListDueForRotation(ctx, time.Now().Add(time.Hour))
+	if err != nil || len(due) != 1 || due[0] != "overlap" {
+		t.Fatalf("persisted rotation timestamp not listable: due=%v err=%v", due, err)
+	}
+}
+
+func TestRedisClientStore_SecretExpiryPersistsAndIsEnforced(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	cs := NewClientStore(rdb)
+	ctx := context.Background()
+	expires := time.Now().UTC().Add(-time.Minute)
+	client := newClient("expired")
+	client.SecretExpiresAt = expires
+	if err := cs.Add(ctx, client); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	stored, err := cs.Get(ctx, "expired")
+	if err != nil || stored.SecretExpiresAt.UnixNano() != expires.UnixNano() {
+		t.Fatalf("expiry did not round-trip: client=%+v err=%v", stored, err)
+	}
+	if err := cs.ValidateSecret(ctx, "expired", "s3cr3t-expired"); err == nil {
+		t.Fatal("expired client secret must be rejected")
+	}
+}
+
+func TestRedisClientStore_DCRRATOverlapPersists(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	cs := NewClientStore(rdb)
+	ctx := context.Background()
+	client := newClient("rat-overlap")
+	client.PreviousRegistrationAccessToken = "previous-rat"
+	client.RegistrationAccessTokenOverlapUntil = time.Now().UTC().Add(time.Hour)
+	if err := cs.Add(ctx, client); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	stored, err := cs.Get(ctx, "rat-overlap")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if stored.PreviousRegistrationAccessToken == "previous-rat" ||
+		stored.PreviousRegistrationAccessToken == "" ||
+		stored.RegistrationAccessTokenOverlapUntil.IsZero() {
+		t.Fatalf("RAT overlap did not persist safely: %+v", stored)
 	}
 }

@@ -115,8 +115,10 @@ dist/modules/prototype/snaplink modules --json
 go version -m dist/modules/prototype/snaplink
 ```
 
-The inventory contains the profile ID, ordered module IDs and canonical lock
-digest. The lock records the resolved capability and Go module graphs plus
+The inventory contains the profile ID, ordered module IDs, sorted capability
+IDs and canonical lock digest. Set `server.required_capabilities` to make
+startup and `--validate-only` reject a binary that cannot honor a deployment's
+contract. The lock records the resolved capability and Go module graphs plus
 build inputs; it is not a binary package inventory or an SBOM. Use
 `go version -m`, symbol inspection and the release SBOM to prove physical
 dependency removal.

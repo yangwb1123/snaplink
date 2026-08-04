@@ -5,7 +5,10 @@ import (
 	"net"
 	"testing"
 
+	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/operations"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 )
@@ -111,4 +114,30 @@ func TestRecordAdmin_NilPeerInContextIsSafe(t *testing.T) {
 	if events[0].ActorIP != "" {
 		t.Errorf("expected no ActorIP from a nil peer, got %q", events[0].ActorIP)
 	}
+}
+
+func TestOperationAdminService_QueriesDurableState(t *testing.T) {
+	ctx := context.Background()
+	store, err := operations.NewFileStore(t.TempDir())
+	requireOK(t, err, "NewFileStore")
+	operation, err := operations.Start(ctx, store, "release_rollback", "rel-1")
+	requireOK(t, err, "Start")
+	requireOK(t, operations.BeginStep(ctx, store, &operation, "apply_release"), "BeginStep")
+	requireOK(t, operations.FinishStep(ctx, store, &operation, nil), "FinishStep")
+	requireOK(t, operations.Finish(ctx, store, &operation, []byte(`{"ok":true}`), nil), "Finish")
+
+	svc := NewOperationAdminService(store)
+	got, err := svc.GetOperation(ctx, &adminv1.GetOperationRequest{Id: operation.ID})
+	requireOK(t, err, "GetOperation")
+	if got.Operation.GetState() != operations.StateSucceeded ||
+		got.Operation.GetSteps()[0].GetName() != "apply_release" {
+		t.Fatalf("operation = %+v", got.Operation)
+	}
+	list, err := svc.ListOperations(ctx, &adminv1.ListOperationsRequest{})
+	requireOK(t, err, "ListOperations")
+	if len(list.Operations) != 1 || list.Operations[0].GetId() != operation.ID {
+		t.Fatalf("operations = %+v", list.Operations)
+	}
+	_, err = svc.GetOperation(ctx, &adminv1.GetOperationRequest{Id: "op_missing"})
+	requireCode(t, err, codes.NotFound)
 }

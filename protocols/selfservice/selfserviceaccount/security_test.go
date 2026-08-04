@@ -7,12 +7,15 @@ import (
 	"testing"
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorecredential"
+	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func TestHandleChangeMyPassword_HappyPath(t *testing.T) {
 	t.Parallel()
 	d := newTestDeps()
+	sink := audit.NewMemorySink(8)
+	d.auditor = audit.New(sink)
 	_ = d.passwords.SetPassword(t.Context(), "user-1", "old-password")
 
 	ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{"current_password":"old-password","new_password":"new-password-123"}`)
@@ -23,6 +26,10 @@ func TestHandleChangeMyPassword_HappyPath(t *testing.T) {
 	}
 	if err := d.passwords.VerifyPassword(t.Context(), "user-1", "new-password-123"); err != nil {
 		t.Errorf("new password not set: %v", err)
+	}
+	events, err := sink.Query(t.Context(), audit.Query{Type: audit.EventPasswordChanged})
+	if err != nil || len(events) != 1 || events[0].ActorID != "user-1" {
+		t.Fatalf("password change events=%#v err=%v", events, err)
 	}
 }
 

@@ -49,6 +49,14 @@ var wantUncategorizedEventTypes = []audit.EventType{
 	audit.EventInvalidationBusDegraded, audit.EventInvalidationBusReconnected,
 	audit.EventDegradationModeChanged, audit.EventFeatureGatesDisabled,
 	audit.EventConnectionAuthenticatorBuildFailed,
+	// Fail-open degradation canary for the idempotency capture path.
+	// Rate is unbounded by construction (one event per request that carried
+	// an Idempotency-Key and reached commit without a capture wrapper — a
+	// misconfig/regression detector, not a per-actor action), and the
+	// metadata carries only a sha-256 prefix of the key. No SOC2 evidentiary
+	// role for the pass; deliberately uncategorized so a future bucket
+	// decision must be explicit.
+	audit.EventIdempotencyCaptureMissing,
 }
 
 // namedAreaEventTypes returns the union of every controlAreaDefs entry's

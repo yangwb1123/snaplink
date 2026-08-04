@@ -9,8 +9,11 @@
 
 server:
   issuer: sso-server
+  required_capabilities: [core.runtime.v1, server.stock.v1]
   base_url: http://sso-server.snaplink-sso.svc.cluster.local:8080
   listen: ":8080"
+  topology:
+    mode: single
   session_ttl: 24h
   token_ttl: 1h
   default_token_strategy: jwt

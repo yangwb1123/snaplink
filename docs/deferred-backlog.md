@@ -29,11 +29,11 @@ Retired audits, plans, and migration records are summarized in
 |---|---|---|
 | Go SDK | **Implemented** | `interfaces/sso` exposes the broadest option surface. An SDK option is not automatically a stock-binary YAML feature. |
 | `sso-server` | **Implemented** | Pure API backend: OAuth/OIDC, self-service/admin HTTP APIs and gRPC control plane. |
-| `cmd/sso-minimal` / `prototype` / `minimal` | **Partial** | Two buildable single-process editions: `prototype` exposes SSO/OAuth and JSON logs; `minimal` adds OIDC and tracing. They share a physical dependency graph and are not production topologies or browser-E2E artifacts. |
-| Hosted login, admin, self-service, developer and setup UIs | **External** | Separate frontend projects, normally reverse-proxied beside the server. No static SPA is served by this repository. |
+| `cmd/sso-minimal` / `prototype` / `minimal` | **Implemented** | Two buildable single-process editions: `prototype` exposes SSO/OAuth and JSON logs; `minimal` adds OIDC and tracing. Physical isolation from the durable/admin/observability graph is declared in `ops/build/profile-isolation.json` and proven by `python cli.py profiles evidence` (packages, modules, symbols, size). Not production topologies or browser-E2E artifacts. |
+| Hosted login, admin, self-service, developer and setup UIs | **External** | Separate frontend projects, normally reverse-proxied beside the server. No static SPA is served by this repository; the API contract those projects must consume is [frontend-contract.md](frontend-contract.md). |
 | Admin API-doc viewer | **Implemented** | `WithAPIDocsUI` serves an admin-gated, self-contained API reference. It is not an application UI. |
-| TypeScript/Python SDKs | **Partial** | Generated curated subset; not complete parity with admin/SCIM/SSF/Federation routes. |
-| Nested protocol/infrastructure modules | **Partial** | Strict cold-build profiles and the Kafka static adapter are implemented. A versioned registrar outside `cmd/` is still required before other module families can use the standard host API. |
+| TypeScript/Python SDKs | **Implemented** | Generated from `docs/openapi.yaml` via the `ops/build/sdk-surface.json` registry (full documented operation set: admin, SCIM, SSF, Federation included); validated by `python cli.py sdk-surface check`. Not yet published as versioned packages. |
+| Nested protocol/infrastructure modules | **Partial** | Strict cold-build profiles and the Kafka static adapter are implemented. The standard host API (`interfaces/ssoext` on `platform/registrar`) now exists outside `cmd/`; migrating SAML/LDAP/Kerberos/RADIUS/KMS families onto it is the remaining work. |
 
 ## Partial capabilities
 
@@ -49,13 +49,12 @@ module lock and compiled inventory are implemented. The edition hierarchy is:
 | `full` | Supported, buildable | Inherits `minimal`; selects the complete current stock `cmd/sso-server` composition and registered Kafka audit cold module |
 | `standard`, `standard-kafka` | Supported | Compatibility builds, not edition-layer isolation evidence |
 
-The two smaller editions use an opaque HttpOnly cookie but have no bundled
-login UI or browser end-to-end proof. Their adapter lives in
-`cmd/sso-minimal`; the canonical authorization-code flow still needs to create
-the real OP session, propagate its SID through code and tokens, and register
-isolated routes through a standard typed host API. Until package, symbol, size
-and SBOM checks show otherwise, their runtime difference must not be presented
-as physical dependency isolation.
+The two smaller editions use an opaque HttpOnly cookie bound to the
+CANONICAL session (created by the authorization-code flow, SID propagated
+through code and tokens) but have no bundled login UI or browser end-to-end
+proof. Their session adapter lives in `cmd/sso-minimal`; package, symbol,
+size and SBOM checks (`python cli.py profiles evidence`) now back the
+physical dependency isolation claim.
 
 `oauth-client-credentials` is an independent optional machine-to-machine
 module, not an SSO edition baseline.
@@ -67,10 +66,12 @@ audit taps and the external-process supervisor are not implemented. See
 
 ### Static HTTP contract and generated clients
 
-The runtime has recently added SSF, Federation, FGA, branding, provider and
-device/security administration routes faster than the OpenAPI/generated-client
-surface was updated. The configured replica's admin endpoint inventory is the
-runtime truth; contract reconciliation is P0 in the roadmap.
+Contract reconciliation is complete: `python cli.py check-routes` keeps the
+runtime route inventory and OpenAPI in lockstep, and
+`python cli.py sdk-surface check` keeps the generated clients reconciled with
+both. The configured replica's admin endpoint inventory
+(`GET /api/v1/admin/endpoints`) remains the runtime truth for what a given
+deployment actually registers.
 
 ### Official protocol certification
 
@@ -81,28 +82,41 @@ not part of default CI. See [sso/oidc-conformance.md](sso/oidc-conformance.md).
 
 ### Disaster-recovery snapshot scope
 
-Snapshot schema v1 covers clients, users, roles, assignments, menus, network
-policy and bootstrap state. It intentionally excludes sessions/tokens, and
-currently also excludes tenants, enterprise connections, pairwise subject
-mappings, MFA enrollments and signing private keys. Raw Postgres, Redis, SQLite
-and etcd recovery remains operator-managed. See
-[dr-framework.md](dr-framework.md).
+Snapshot schema v2 adds an explicit category manifest plus tenants,
+tenant-domain routing and enterprise connections while retaining v1 read
+compatibility. It also preserves pairwise subject mappings and broadcasts a
+full control-plane cache invalidation after a committed restore. It
+intentionally excludes sessions/tokens, MFA enrollments and signing private
+keys. Raw Postgres, Redis, SQLite and etcd recovery remains operator-managed.
+See [dr-framework.md](dr-framework.md).
 
 ### Multi-language SDK parity
 
-The TypeScript/Python generators deliberately expose a curated surface. Go SDK
-and direct HTTP/gRPC consumers have access to more features.
+The TypeScript/Python generators expose the complete documented operation
+surface (parity with the OpenAPI contract). Go SDK and direct HTTP/gRPC
+consumers may still access runtime features that are not yet documented in
+OpenAPI.
 
 ### Identity linking
 
-The stock binary wires an in-memory identity-link store. The merge policy is an
-extension point for custom login integrations; the stock `/auth/login` handler
-does not perform account merging.
+The stock binary supports memory, SQLite and Postgres identity-link stores and
+wires them into static and connection-backed OIDC federation. `link_only`
+atomically moves identity-link ownership but deliberately does not merge
+sessions, consents, tokens, MFA enrollments or historical audit ownership.
+A first-party “connect another identity” ceremony remains an external
+frontend/custom-authenticator flow because it requires fresh proof from both
+accounts; the API never accepts an unverified provider/subject claim.
 
 ### User lifecycle
 
-Lifecycle state is governance metadata with a memory store. It does not replace
-`core.User.IsActive` and does not itself gate authentication.
+Lifecycle state now gates every stock end-user login continuation, user token
+grant (including the human behind agent delegation), server-side access/ID-token
+validation across the full `sub`/`act` chain, and introspection; non-active
+transitions also revoke sessions and refresh tokens. It remains additive to
+`core.User.IsActive`, and `client_credentials` remains outside this user gate.
+The stock Postgres/Cockroach backend persists state and append-only history for
+multi-replica deployments. A standardized event channel for resource servers
+that validate JWTs fully offline remains future work.
 
 ### SMTP transport
 
@@ -110,10 +124,15 @@ The built-in sender uses `net/smtp`: STARTTLS is negotiated when advertised but
 may fall back to plaintext. Implicit TLS on port 465 is not supported. Require
 TLS at the relay/edge when plaintext fallback is unacceptable.
 
-### CIBA
+### CIBA user-code enrollment boundary
 
-Poll, ping and push delivery seams exist. CIBA `user_code` mode is not
-implemented.
+Poll, ping and push delivery, `requested_expiry`, exactly-one-hint validation,
+and the optional `WithCIBAUserCodeVerifier` protocol seam are implemented.
+The verifier owns user-code enrollment, rotation, constant-time comparison and
+attempt limits; Snaplink does not store the submitted code or silently reuse
+the user's OP password. CIBA Core deliberately leaves code registration out of
+scope, so a first-party code-management ceremony remains an external frontend
+or operator integration rather than a protocol-handler responsibility.
 
 ## External/operator responsibilities
 

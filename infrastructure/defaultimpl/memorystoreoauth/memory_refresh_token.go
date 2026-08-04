@@ -139,6 +139,7 @@ func (m *MemoryRefreshTokenStore) Issue(_ context.Context, token string, info *o
 		IssuedAt:             info.IssuedAt,
 		ExpiresAt:            info.ExpiresAt,
 		FamilyID:             info.FamilyID,
+		JTI:                  info.JTI,
 		Resources:            resources,
 		AuthorizationDetails: cloneRawBytes(info.AuthorizationDetails),
 		SID:                  info.SID,

@@ -2,12 +2,14 @@ package main
 
 import (
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildauthn"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
 	"github.com/yangwb1123/snaplink/config"
 )
 
@@ -211,5 +213,101 @@ func TestBuildApp_PARStoreDisabledOmitsEndpoint(t *testing.T) {
 	doc := fetchDiscovery(t, srv.URL)
 	if _, present := doc["pushed_authorization_request_endpoint"]; present {
 		t.Error("PAR endpoint advertised when not enabled — omitempty broken")
+	}
+}
+
+// TestBuildOAuthStores_PostgresNeedsBlock: oauth.backend=postgres without a
+// postgres block must fail loud at boot (the errPostgresNotConfigured shape),
+// never fall back to memory.
+func TestBuildOAuthStores_PostgresNeedsBlock(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		fn   func() error
+	}{
+		{"auth_code", func() error {
+			_, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "postgres"}, nil, nil, "")
+			return err
+		}},
+		{"refresh_token", func() error {
+			_, err := serverbuildstore.BuildRefreshTokenStore(config.OAuthConfig{Backend: "postgres"}, nil, nil, "")
+			return err
+		}},
+		{"device_code", func() error {
+			_, err := serverbuildstore.BuildDeviceCodeStore(config.OAuthConfig{Backend: "postgres"}, nil, nil, "")
+			return err
+		}},
+		{"par", func() error {
+			_, err := serverbuildstore.BuildPARStore(config.OAuthConfig{Backend: "postgres"}, nil, nil, "")
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		err := tc.fn()
+		if err == nil {
+			t.Errorf("%s: expected errPostgresNotConfigured-style error", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), "no postgres block configured") {
+			t.Errorf("%s: err = %v, want 'no postgres block configured' message", tc.name, err)
+		}
+	}
+}
+
+// TestBuildOAuthStores_UnknownBackendListsPostgres: the default error enum
+// must advertise postgres so operators see the supported set.
+func TestBuildOAuthStores_UnknownBackendListsPostgres(t *testing.T) {
+	t.Parallel()
+	_, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "etcd"}, nil, nil, "")
+	if err == nil || !strings.Contains(err.Error(), "memory, sqlite, redis, postgres") {
+		t.Fatalf("err = %v, want supported-enum message listing postgres", err)
+	}
+}
+
+// TestBuildApp_OAuthPostgresEndToEnd boots the full stock binary with
+// oauth.backend=postgres + rotation_grace_backend=postgres against a real
+// postgres pool (SSO_TEST_POSTGRES_DSN-gated, matching the postgres_test.go
+// harness; CI sets the DSN).
+func TestBuildApp_OAuthPostgresEndToEnd(t *testing.T) {
+	dsn := os.Getenv("SSO_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("SSO_TEST_POSTGRES_DSN not set — skipping postgres boot test")
+	}
+	cfg := &config.Config{}
+	cfg.Postgres.DSN = dsn
+	cfg.OAuth.Backend = "postgres"
+	cfg.OAuth.AuthCode = config.OAuthAuthCodeConfig{OAuthStoreConfig: config.OAuthStoreConfig{Enabled: true, TTL: 10 * time.Minute}}
+	cfg.OAuth.RefreshToken = config.OAuthRefreshTokenConfig{OAuthStoreConfig: config.OAuthStoreConfig{
+		Enabled: true, TTL: 30 * 24 * time.Hour, RotationGraceWindow: time.Minute, RotationGraceBackend: "postgres",
+	}}
+	cfg.OAuth.DeviceCode = config.OAuthDeviceCodeConfig{
+		Enabled:             true,
+		TTL:                 10 * time.Minute,
+		PollInterval:        5 * time.Second,
+		VerificationBaseURL: "https://example.com/device",
+	}
+	cfg.OAuth.PAR = config.OAuthPARConfig{OAuthStoreConfig: config.OAuthStoreConfig{Enabled: true, TTL: 90 * time.Second}}
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp with oauth.backend=postgres: %v", err)
+	}
+	defer func() { _ = a.registry.Close() }()
+	if a.server == nil {
+		t.Fatal("server is nil after buildApp")
+	}
+}
+
+// TestBuildApp_OAuthPostgresGraceNeedsBlock: rotation_grace_backend=postgres
+// without a postgres block fails loud.
+func TestBuildApp_OAuthPostgresGraceNeedsBlock(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{}
+	cfg.OAuth.RefreshToken = config.OAuthRefreshTokenConfig{OAuthStoreConfig: config.OAuthStoreConfig{
+		Enabled: true, RotationGraceWindow: time.Minute, RotationGraceBackend: "postgres",
+	}}
+	_, err := buildApp(cfg, quietLogger())
+	if err == nil || !strings.Contains(err.Error(), "no postgres block configured") {
+		t.Fatalf("err = %v, want loud no-postgres-block error", err)
 	}
 }

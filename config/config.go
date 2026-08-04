@@ -5,8 +5,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
@@ -90,6 +92,32 @@ type Config struct {
 	ThreatAction         ThreatActionConfig              `yaml:"threat_action"`
 	Webhooks             WebhooksConfig                  `yaml:"webhooks"`
 	SMTP                 SMTPConfig                      `yaml:"smtp"`
+	AuthPipeline         AuthPipelineConfig              `yaml:"auth_pipeline"`
+	Notifications        NotificationsConfig             `yaml:"notifications"`
+}
+
+// AuthPipelineConfig wires the safe built-in lifecycle hooks. Custom and WASM
+// hooks remain code-injected because executable policy is not YAML data.
+type AuthPipelineConfig struct {
+	IPSkipMFACIDRs            []string `yaml:"ip_skip_mfa_cidrs"`
+	RequiredProfileAttributes []string `yaml:"required_profile_attributes"`
+}
+
+// NotificationsConfig enables the end-user security inbox and audit router.
+type NotificationsConfig struct {
+	Enabled              bool                     `yaml:"enabled"`
+	Backend              string                   `yaml:"backend"`
+	SQLite               NotificationSQLiteConfig `yaml:"sqlite"`
+	EmailEnabled         bool                     `yaml:"email_enabled"`
+	Cooldown             time.Duration            `yaml:"cooldown"`
+	QueueSize            int                      `yaml:"queue_size"`
+	Workers              int                      `yaml:"workers"`
+	SessionExpiryWarning time.Duration            `yaml:"session_expiry_warning"`
+	SessionScanInterval  time.Duration            `yaml:"session_scan_interval"`
+}
+
+type NotificationSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
 }
 
 // FeatureGatesConfig controls which optional protocol surfaces the server
@@ -123,7 +151,33 @@ type FeatureGatesConfig struct {
 	Federation  *bool `yaml:"federation"`
 	SelfService *bool `yaml:"self_service"`
 	AdminAPI    *bool `yaml:"admin_api"`
-	WebSPA      *bool `yaml:"web_spa"`
+	// Branding is the canonical name of the gate that controls the public
+	// per-host branding lookup (GET /branding). It was historically called
+	// web_spa; WebSPA below remains accepted as a deprecated alias.
+	Branding *bool `yaml:"branding"`
+	// WebSPA is the deprecated YAML alias of Branding. Setting both keys is
+	// a startup error; setting only web_spa logs a deprecation warning and
+	// behaves exactly as branding.
+	WebSPA *bool `yaml:"web_spa"`
+}
+
+// normalizeFeatureGates resolves the branding/web_spa alias pair: web_spa
+// (deprecated) is folded into branding so the rest of the system reads one
+// canonical field. Both set → error (ambiguous); only web_spa → deprecation
+// warning. Called from validate so an invalid combination fails loud at
+// boot.
+func (c *Config) normalizeFeatureGates() error {
+	fg := &c.FeatureGates
+	if fg.Branding != nil && fg.WebSPA != nil {
+		return errors.New("config: feature_gates.branding and feature_gates.web_spa are aliases; set only one (web_spa is deprecated)")
+	}
+	if fg.WebSPA != nil {
+		slog.Warn("config: feature_gates.web_spa is deprecated; use feature_gates.branding " +
+			"(the gate controls only the public GET /branding lookup)")
+		fg.Branding = fg.WebSPA
+		fg.WebSPA = nil
+	}
+	return nil
 }
 
 // toSSOGates converts the YAML/env-sourced config into the sso.FeatureGates
@@ -138,7 +192,7 @@ func (c FeatureGatesConfig) toSSOGates() sso.FeatureGates {
 		Federation:  c.Federation,
 		SelfService: c.SelfService,
 		AdminAPI:    c.AdminAPI,
-		WebSPA:      c.WebSPA,
+		Branding:    c.Branding,
 	}
 }
 
@@ -151,7 +205,7 @@ func (c FeatureGatesConfig) toSSOGates() sso.FeatureGates {
 // behaviorally equivalent.
 func (c FeatureGatesConfig) anySet() bool {
 	return c.OIDC != nil || c.CIBA != nil || c.CAEP != nil || c.Federation != nil ||
-		c.SelfService != nil || c.AdminAPI != nil || c.WebSPA != nil
+		c.SelfService != nil || c.AdminAPI != nil || c.Branding != nil || c.WebSPA != nil
 }
 
 // CurrentSchemaVersion is the expected version value for the current

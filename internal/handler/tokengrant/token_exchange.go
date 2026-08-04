@@ -132,7 +132,7 @@ func HandleTokenExchangeGrant(d TokenExchangeDeps, ctx core.HandlerContext, clie
 	// Chain-level TTL (independent of any single hop's token TTL): the whole
 	// delegation chain traces back to one credential-establishing event
 	// (AuthTime), so this is checked as soon as st.claims is resolved.
-	if tokExEnforceChainLifetime(d, ctx, st) {
+	if lifecycleGrantBlocked(d, ctx, st.claims.Subject) || tokExEnforceChainLifetime(d, ctx, st) {
 		return
 	}
 	if tokExStepUp(ctx, req, st) {
@@ -286,14 +286,16 @@ func tokExMintIDToken(d TokenExchangeDeps, ctx core.HandlerContext, client *core
 	// so the issuer stamps OIDC Core §3.1.3.6 at_hash. No nonce: there is no
 	// authorization request in a token-exchange.
 	idToken, iErr := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-		Subject:     st.issuedSub,
-		Audience:    client.ID,
-		AuthTime:    st.claims.AuthTime,
-		ACR:         st.claims.ACR,
-		AMR:         append([]string(nil), st.claims.AMR...),
-		Claims:      st.claims.Extra,
-		SID:         st.claims.SID,
-		AccessToken: st.token.AccessToken,
+		Subject:       st.issuedSub,
+		Audience:      client.ID,
+		AuthTime:      st.claims.AuthTime,
+		ACR:           st.claims.ACR,
+		AMR:           append([]string(nil), st.claims.AMR...),
+		Claims:        st.claims.Extra,
+		SID:           st.claims.SID,
+		ServingRegion: servingRegionFrom(ctx),
+		AccessToken:   st.token.AccessToken,
+		GrantedScopes: st.scopes, GrantedResources: st.resources, AuthorizationDetails: st.claims.AuthorizationDetails,
 	})
 	if iErr != nil {
 		d.SrvLogger().Error("token exchange id_token issue failed", "client", client.ID, "error", iErr)

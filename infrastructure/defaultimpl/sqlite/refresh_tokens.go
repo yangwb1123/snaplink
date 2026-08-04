@@ -18,11 +18,19 @@ import (
 // introspection / revocation work against this backend out of the
 // box — same contract the memory backend exposes.
 type RefreshTokenStore struct {
-	db *sql.DB
+	db             *sql.DB
+	lookupHMACKeys [][]byte
+	reaper         *sqliteExpiryReaper
 	// MaxRotationsPerWindow and RotationWindow configure the optional per-family
 	// rotation velocity cap (§2 oracle-safe). Both must be positive to arm it.
 	MaxRotationsPerWindow int
 	RotationWindow        time.Duration
+}
+
+// SetLookupHMACKeys enables current-key writes plus previous-key and legacy
+// plaintext reads for rolling migration. Keys are copied before retention.
+func (s *RefreshTokenStore) SetLookupHMACKeys(keys ...[]byte) {
+	s.lookupHMACKeys = cloneLookupKeys(keys...)
 }
 
 func NewRefreshTokenStore(dsn string) (*RefreshTokenStore, error) {
@@ -53,6 +61,7 @@ func (s *RefreshTokenStore) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
+	_ = s.reaper.Close()
 	err := s.db.Close()
 	s.db = nil
 	return err
@@ -85,16 +94,17 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 	// a zero FamilyCreatedAt (a caller that never threaded it — pre-feature
 	// record, or the absolute-max-lifetime cap never configured) also stores
 	// 0, which SKIPS that cap check rather than fabricating a start time.
+	lookup := opaqueLookupKey(firstLookupKey(s.lookupHMACKeys), "refresh_token", token)
 	_, err = s.db.ExecContext(ctx, `
         INSERT INTO refresh_tokens (token, user_id, client_id, provider,
-            scopes, attributes, issued_at, expires_at, family_id, resources,
+            scopes, attributes, issued_at, expires_at, family_id, jti, resources,
             authorization_details, sid, amr, acr, auth_time, confirmation_jkt,
             generation, family_created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		token, info.UserID, info.ClientID, info.Provider,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		lookup, info.UserID, info.ClientID, info.Provider,
 		string(scopes), string(attrs),
 		info.IssuedAt.UnixNano(), info.ExpiresAt.UnixNano(),
-		info.FamilyID, string(resources),
+		info.FamilyID, info.JTI, string(resources),
 		string(info.AuthorizationDetails), info.SID,
 		string(amr), info.Acr, unixNanoOrZero(info.AuthTime), info.ConfirmationJKT,
 		info.Generation, unixNanoOrZero(info.FamilyCreatedAt),
@@ -102,7 +112,7 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 	if err != nil {
 		return fmt.Errorf("sqlite: insert refresh_token: %w", err)
 	}
-	return s.mirrorRefreshFamily(ctx, token, info.FamilyID)
+	return s.mirrorRefreshFamily(ctx, lookup, info.FamilyID, info.ExpiresAt)
 }
 
 // marshalRefreshJSONCols JSON-encodes the slice/map columns of a RefreshToken
@@ -123,22 +133,6 @@ func marshalRefreshJSONCols(info *oauth.RefreshToken) (scopes, attrs, resources,
 	return scopes, attrs, resources, amr, nil
 }
 
-// mirrorRefreshFamily records the (token, family_id) pair in the reuse-detection
-// ledger so reuse detection survives the active row's Consume DELETE. Empty
-// FamilyID = caller opted out of family tracking; no-op.
-func (s *RefreshTokenStore) mirrorRefreshFamily(ctx context.Context, token, familyID string) error {
-	if familyID == "" {
-		return nil
-	}
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT OR REPLACE INTO refresh_token_families (token, family_id) VALUES (?, ?)`,
-		token, familyID,
-	); err != nil {
-		return fmt.Errorf("sqlite: insert refresh_token_families: %w", err)
-	}
-	return nil
-}
-
 // Consume atomically deletes + returns the row. Single-use rotation
 // semantics enforced via DELETE...RETURNING.
 //
@@ -147,18 +141,28 @@ func (s *RefreshTokenStore) mirrorRefreshFamily(ctx context.Context, token, fami
 // — return oauth.ErrRefreshTokenReused with the family_id stamped on the
 // returned oauth.RefreshToken so the handler can kill the entire family.
 func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.RefreshToken, error) {
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "refresh_token", token) {
+		out, err := s.consume(ctx, candidate)
+		if !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
+			return out, err
+		}
+	}
+	return nil, oauth.ErrRefreshTokenNotFound
+}
+
+func (s *RefreshTokenStore) consume(ctx context.Context, lookup string) (*oauth.RefreshToken, error) {
 	row := s.db.QueryRowContext(ctx, `
         DELETE FROM refresh_tokens WHERE token = ?
         RETURNING user_id, client_id, provider, scopes, attributes,
-                  issued_at, expires_at, family_id, resources,
+                  issued_at, expires_at, family_id, jti, resources,
                   authorization_details, sid, amr, acr, auth_time,
-                  confirmation_jkt, generation, family_created_at`, token)
+                  confirmation_jkt, generation, family_created_at`, lookup)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Reuse-detection path.
 		var familyID string
 		ferr := s.db.QueryRowContext(ctx,
-			`SELECT family_id FROM refresh_token_families WHERE token = ?`, token,
+			`SELECT family_id FROM refresh_token_families WHERE token = ?`, lookup,
 		).Scan(&familyID)
 		if errors.Is(ferr, sql.ErrNoRows) {
 			return nil, oauth.ErrRefreshTokenNotFound
@@ -181,12 +185,22 @@ func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.R
 // SELECT. Expired entries are deleted opportunistically (single-row
 // GC) so the table self-trims as it's read.
 func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.RefreshToken, error) {
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "refresh_token", token) {
+		out, err := s.inspect(ctx, candidate)
+		if !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
+			return out, err
+		}
+	}
+	return nil, oauth.ErrRefreshTokenNotFound
+}
+
+func (s *RefreshTokenStore) inspect(ctx context.Context, lookup string) (*oauth.RefreshToken, error) {
 	row := s.db.QueryRowContext(ctx, `
         SELECT user_id, client_id, provider, scopes, attributes,
-               issued_at, expires_at, family_id, resources,
+               issued_at, expires_at, family_id, jti, resources,
                authorization_details, sid, amr, acr, auth_time,
                confirmation_jkt, generation, family_created_at
-        FROM refresh_tokens WHERE token = ?`, token)
+        FROM refresh_tokens WHERE token = ?`, lookup)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, oauth.ErrRefreshTokenNotFound
@@ -195,8 +209,8 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.R
 		return nil, fmt.Errorf("sqlite: inspect refresh_token: %w", err)
 	}
 	if out.IsExpired() {
-		_, _ = s.db.ExecContext(ctx, `DELETE FROM refresh_tokens WHERE token = ?`, token)
-		_, _ = s.db.ExecContext(ctx, `DELETE FROM refresh_token_families WHERE token = ?`, token)
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM refresh_tokens WHERE token = ?`, lookup)
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM refresh_token_families WHERE token = ?`, lookup)
 		return nil, oauth.ErrRefreshTokenNotFound
 	}
 	return out, nil
@@ -206,11 +220,13 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.R
 // Wipes the families ledger too so an explicit /token/revoke can't
 // subsequently mis-trigger a reuse-detection event on the same token.
 func (s *RefreshTokenStore) Delete(ctx context.Context, token string) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM refresh_tokens WHERE token = ?`, token); err != nil {
-		return fmt.Errorf("sqlite: delete refresh_token: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM refresh_token_families WHERE token = ?`, token); err != nil {
-		return fmt.Errorf("sqlite: delete refresh_token_families: %w", err)
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "refresh_token", token) {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM refresh_tokens WHERE token = ?`, candidate); err != nil {
+			return fmt.Errorf("sqlite: delete refresh_token: %w", err)
+		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM refresh_token_families WHERE token = ?`, candidate); err != nil {
+			return fmt.Errorf("sqlite: delete refresh_token_families: %w", err)
+		}
 	}
 	return nil
 }
@@ -375,7 +391,7 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 	var (
 		out                                        oauth.RefreshToken
 		provider, scopesJSON, attrsJSON, resources string
-		familyID, authDetails, sid                 string
+		familyID, jti, authDetails, sid            string
 		amrJSON, acr                               string
 		issuedAtUnixNs, expiresAtUnixNs            int64
 		authTimeUnixNs                             int64
@@ -387,7 +403,7 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 		&out.UserID, &out.ClientID, &provider,
 		&scopesJSON, &attrsJSON,
 		&issuedAtUnixNs, &expiresAtUnixNs,
-		&familyID, &resources,
+		&familyID, &jti, &resources,
 		&authDetails, &sid,
 		&amrJSON, &acr, &authTimeUnixNs,
 		&confirmationJKT, &generation, &familyCreatedAtUnixNs,
@@ -396,6 +412,7 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 	}
 	out.ConfirmationJKT = confirmationJKT
 	out.Generation = generation
+	out.JTI = jti
 	if authDetails != "" {
 		out.AuthorizationDetails = json.RawMessage(authDetails)
 	}

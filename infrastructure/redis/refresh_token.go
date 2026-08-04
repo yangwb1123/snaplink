@@ -45,7 +45,8 @@ const (
 // SubjectCounter / ClientPurger / FamilyTracker extensions — the same
 // surface the SQLite peer exposes.
 type RefreshTokenStore struct {
-	rdb goredis.Cmdable
+	rdb            goredis.Cmdable
+	lookupHMACKeys [][]byte
 	// familyTTL bounds how long the family-membership marker + family index
 	// live past a token's own TTL so reuse detection has a window. Defaults
 	// to the longest refresh TTL the operator expects; a marker older than
@@ -95,6 +96,12 @@ func NewRefreshTokenStore(rdb goredis.Cmdable, opts ...RefreshTokenOption) *Refr
 	return s
 }
 
+// SetLookupHMACKeys enables current-key writes plus previous-key and legacy
+// plaintext reads for no-logout rotation.
+func (s *RefreshTokenStore) SetLookupHMACKeys(keys ...[]byte) {
+	s.lookupHMACKeys = cloneLookupKeys(keys...)
+}
+
 // Ping reports Redis health for [sso.WithReadyCheck].
 func (s *RefreshTokenStore) Ping(ctx context.Context) error {
 	if s == nil || s.rdb == nil {
@@ -132,7 +139,8 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 		// Already expired; do not persist a no-TTL key.
 		return nil
 	}
-	if err := s.rdb.Set(ctx, rtKey(token), blob, ttl).Err(); err != nil {
+	lookup := opaqueLookupKey(firstLookupKey(s.lookupHMACKeys), "refresh_token", token)
+	if err := s.rdb.Set(ctx, rtKey(lookup), blob, ttl).Err(); err != nil {
 		return fmt.Errorf("redis: insert refresh_token: %w", err)
 	}
 	// Index for bulk revocation. Index TTL >= token TTL so the index
@@ -141,14 +149,14 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 	if idxTTL < s.familyTTL {
 		idxTTL = s.familyTTL
 	}
-	s.indexAdd(ctx, rtSubjectKey(info.UserID, info.ClientID), token, idxTTL)
-	s.indexAdd(ctx, rtClientKey(info.ClientID), token, idxTTL)
+	s.indexAdd(ctx, rtSubjectKey(info.UserID, info.ClientID), lookup, idxTTL)
+	s.indexAdd(ctx, rtClientKey(info.ClientID), lookup, idxTTL)
 	if info.FamilyID != "" {
 		// Only the family INDEX (for DeleteFamily) is seeded at Issue. The famof
 		// reuse-detection marker is deliberately NOT written here — it is written
 		// at Consume, so a never-consumed token leaves no marker and its post-expiry
 		// replay reads as not-found rather than a spurious family-kill (see Consume).
-		s.indexAdd(ctx, rtFamilyKey(info.FamilyID), token, s.familyTTL)
+		s.indexAdd(ctx, rtFamilyKey(info.FamilyID), lookup, s.familyTTL)
 	}
 	return nil
 }
@@ -184,29 +192,44 @@ func (s *RefreshTokenStore) indexAdd(ctx context.Context, key, member string, tt
 	_ = indexAddScript.Run(ctx, s.rdb, []string{key}, member, ttlSecs).Err()
 }
 
-// Consume atomically removes + returns the active token via GETDEL — one
-// server-side get-and-delete (Redis 6.2+), the analogue of SQLite's
-// DELETE ... RETURNING. The DEL is the single-use gate: a second Consume
-// of the same token finds the active key gone and so cannot succeed,
-// race-free regardless of concurrency. The family-membership marker is
-// reuse-detection bookkeeping ONLY and is never a second-redeem path —
-// GETDEL remains the sole single-use gate.
-//
-// On a SUCCESSFUL consume it stamps the famof marker (token -> family_id) so a
-// later replay of this now-rotated token is recognized as reuse-after-rotation.
-// On a miss it consults that marker: a token with a marker was consumed before,
-// so its replay is a reuse — return ErrRefreshTokenReused with the FamilyID so
-// the handler kills the whole family (BCP §4.13), regardless of the replayed
-// token's own expiry (the kill revokes the attacker's still-live sibling).
-// Unknown / never-consumed-then-TTL-evicted / opted-out (no marker) all collapse
-// to ErrRefreshTokenNotFound (oracle-resistance §2).
+func (s *RefreshTokenStore) activeBlob(ctx context.Context, token string, consume bool) ([]byte, string, error) {
+	for _, lookup := range opaqueLookupCandidates(s.lookupHMACKeys, "refresh_token", token) {
+		var blob []byte
+		var err error
+		if consume {
+			blob, err = s.rdb.GetDel(ctx, rtKey(lookup)).Bytes()
+		} else {
+			blob, err = s.rdb.Get(ctx, rtKey(lookup)).Bytes()
+		}
+		if err == nil {
+			return blob, lookup, nil
+		}
+		if !errors.Is(err, goredis.Nil) {
+			return nil, "", err
+		}
+	}
+	return nil, "", goredis.Nil
+}
+
+func (s *RefreshTokenStore) consumedFamily(ctx context.Context, token string) (string, error) {
+	for _, lookup := range opaqueLookupCandidates(s.lookupHMACKeys, "refresh_token", token) {
+		familyID, err := s.rdb.Get(ctx, rtFamilyMemKey(lookup)).Result()
+		if err == nil {
+			return familyID, nil
+		}
+		if !errors.Is(err, goredis.Nil) {
+			return "", err
+		}
+	}
+	return "", goredis.Nil
+}
+
+// Consume keeps GETDEL as the atomic single-use gate while trying current,
+// previous, then legacy lookup identifiers.
 func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.RefreshToken, error) {
-	blob, err := s.rdb.GetDel(ctx, rtKey(token)).Bytes()
+	blob, lookup, err := s.activeBlob(ctx, token, true)
 	if errors.Is(err, goredis.Nil) {
-		// Active key gone. A famof marker means this token was previously CONSUMED
-		// (the marker is written only on a successful consume) -> reuse-after-
-		// rotation. No marker -> never consumed (TTL-evicted) or unknown -> not-found.
-		fid, ferr := s.rdb.Get(ctx, rtFamilyMemKey(token)).Result()
+		fid, ferr := s.consumedFamily(ctx, token)
 		if errors.Is(ferr, goredis.Nil) {
 			return nil, oauth.ErrRefreshTokenNotFound
 		}
@@ -232,14 +255,14 @@ func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.R
 	// false single-use win — GETDEL already deleted the key). Empty FamilyID opts
 	// out of family tracking.
 	if out.FamilyID != "" {
-		_ = s.rdb.Set(ctx, rtFamilyMemKey(token), out.FamilyID, s.familyTTL).Err()
+		_ = s.rdb.Set(ctx, rtFamilyMemKey(lookup), out.FamilyID, s.familyTTL).Err()
 	}
 	return &out, nil
 }
 
 // Inspect implements [oauth.RefreshTokenInspector] — non-destructive read.
 func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.RefreshToken, error) {
-	blob, err := s.rdb.Get(ctx, rtKey(token)).Bytes()
+	blob, lookup, err := s.activeBlob(ctx, token, false)
 	if errors.Is(err, goredis.Nil) {
 		return nil, oauth.ErrRefreshTokenNotFound
 	}
@@ -257,8 +280,8 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.R
 		// reuse event. Two single-key DELs (not one multi-key DEL) so the op
 		// is Redis-Cluster-safe — the active key and marker hash to different
 		// slots; the cleanup needs no cross-key atomicity (both are idempotent).
-		_ = s.rdb.Del(ctx, rtKey(token)).Err()
-		_ = s.rdb.Del(ctx, rtFamilyMemKey(token)).Err()
+		_ = s.rdb.Del(ctx, rtKey(lookup)).Err()
+		_ = s.rdb.Del(ctx, rtFamilyMemKey(lookup)).Err()
 		return nil, oauth.ErrRefreshTokenNotFound
 	}
 	return &out, nil
@@ -273,11 +296,13 @@ func (s *RefreshTokenStore) Delete(ctx context.Context, token string) error {
 	// family marker hash to different slots, so a combined DEL is a CROSSSLOT
 	// error on a real cluster. Revoke is idempotent (RFC 7009 §2.2), so the
 	// two deletes need no cross-key atomicity — a retry cleans up either half.
-	if err := s.rdb.Del(ctx, rtKey(token)).Err(); err != nil {
-		return fmt.Errorf("redis: delete refresh_token: %w", err)
-	}
-	if err := s.rdb.Del(ctx, rtFamilyMemKey(token)).Err(); err != nil {
-		return fmt.Errorf("redis: delete refresh_token family marker: %w", err)
+	for _, lookup := range opaqueLookupCandidates(s.lookupHMACKeys, "refresh_token", token) {
+		if err := s.rdb.Del(ctx, rtKey(lookup)).Err(); err != nil {
+			return fmt.Errorf("redis: delete refresh_token: %w", err)
+		}
+		if err := s.rdb.Del(ctx, rtFamilyMemKey(lookup)).Err(); err != nil {
+			return fmt.Errorf("redis: delete refresh_token family marker: %w", err)
+		}
 	}
 	return nil
 }

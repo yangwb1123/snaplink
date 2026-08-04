@@ -22,12 +22,14 @@ type (
 
 // Subject is the authenticated identity returned by ValidateToken. It is a
 // dedicated client-facing type (not aliased from sso.Subject) so it can
-// carry both standard claims (Sub, Aud) and propagation metadata (Scopes,
-// ExpiresAt) without leaking server-side internals.
+// carry both standard claims (Sub, Iss, Aud) and propagation metadata
+// (Scopes, ExpiresAt) without leaking server-side internals.
 type Subject struct {
-	ID        string            // "sub" claim
-	Audience  []string          // "aud" claim — typically a Client.ID
-	Scopes    []string          // OAuth-style scopes
+	ID       string   // "sub" claim
+	Issuer   string   // "iss" claim — the verified mint identity, surfaced by both implementations
+	Audience []string // "aud" claim — RFC 8707 resource indicators on access tokens (a client ID appears only in ID tokens, which this facade rejects)
+	Scopes   []string // OAuth-style scopes
+
 	ExpiresAt int64             // unix seconds; 0 if not set
 	Attrs     map[string]string // extra claims (email, etc.)
 }

@@ -2,6 +2,7 @@ package sso
 
 import (
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/identitylink"
@@ -176,7 +177,7 @@ type selfServiceState struct {
 	// byte-identical to a build without it.
 	recoveryCodeStore RecoveryCodeStore
 
-	// trustedDeviceStore backs the self-service GET/POST/DELETE /me/devices*
+	// trustedDeviceStore backs GET/POST/DELETE /me/trusted-devices*
 	// "remember this device" surface AND the /auth/login step-up-skip check
 	// (WithTrustedDeviceStore). Nil ⇒ the self-service routes are NOT mounted
 	// and a login NEVER skips a risk-scorer-demanded MFA challenge —
@@ -292,6 +293,7 @@ type selfServiceState struct {
 	// (WithIdempotentStore). When non-nil, the token handler checks for
 	// an Idempotency-Key header and caches successful responses.
 	idempotentCache core.IdempotentCache
+	idempotentMu    sync.Mutex
 
 	// userLifecycleStore backs the user-lifecycle state-machine admin endpoints
 	// (GET/POST /api/v1/admin/users/:id/lifecycle) and the auto-deprovisioning

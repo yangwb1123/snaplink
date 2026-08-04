@@ -338,6 +338,11 @@ type AccessPolicyConfig struct {
 	// dry_run policy entries, confirm the admin governance view looks right,
 	// THEN flip this on.
 	Enforce bool `yaml:"enforce"`
+	// SessionSweepInterval is the cadence for active-session re-evaluation.
+	// Zero takes the engine default (5m) when Enforce is true.
+	SessionSweepInterval time.Duration `yaml:"session_sweep_interval"`
+	// SessionSweepBatchSize bounds sessions mutated per pass; zero defaults 500.
+	SessionSweepBatchSize int `yaml:"session_sweep_batch_size"`
 }
 
 // DegradationConfig opts into the disaster-recovery degraded-service control
@@ -413,7 +418,7 @@ type SessionTrustDecayConfig struct {
 //
 // Enabling this ALSO wires the wave-1 token-usage recorder
 // (sso.WithTokenUsageRecorder) as the detector's telemetry substrate: the
-// detector is a tokenusage.Store decorator, so it only observes events the
+// detector is a metering.Store decorator, so it only observes events the
 // recorder drains off the request path. That co-wiring also mounts the
 // token-usage / portfolio admin read APIs — the recorder is not independently
 // configurable this wave (it exists only to feed the detector).

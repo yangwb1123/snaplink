@@ -166,22 +166,19 @@ func HandleAdminDeleteUserDevice(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrNotFound))
 		return
 	}
+	sessions := device.RevokeSessions(
+		ctx.Request().Context(), d.SessionMgr(), userID, deviceID, dev.LastIP,
+	)
+	result := device.MutationResult{
+		DeviceID: deviceID, DeviceStatus: device.MutationDeleted, Sessions: sessions,
+	}
 	if err := store.Delete(ctx.Request().Context(), deviceID); err != nil {
 		d.Logger().Error("admin: delete user device", "error", err, "device_id", deviceID)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-		return
-	}
-	if sm := d.SessionMgr(); sm != nil {
-		if sessions, err := sm.ListByUser(ctx.Request().Context(), userID); err == nil {
-			for _, s := range sessions {
-				if s.DeviceID == deviceID || (s.DeviceID == "" && s.IP == dev.LastIP) {
-					_ = sm.Destroy(ctx.Request().Context(), s.ID)
-				}
-			}
-		}
+		result.DeviceStatus = device.MutationFailed
+		result.DeviceError = "device_delete_failed"
 	}
 	d.Logger().Info("admin: revoked user device", "user_id", userID, "device_id", deviceID, "device_ip", dev.LastIP)
-	ctx.JSON(http.StatusOK, map[string]any{core.KeyStatus: core.StatusOK})
+	writeAdminDeviceMutation(ctx, result)
 }
 
 func HandleAdminListAllDevices(d Deps, ctx core.HandlerContext) {
@@ -314,21 +311,40 @@ func HandleAdminBulkRevokeDevices(d Deps, ctx core.HandlerContext) {
 	}
 	matched := matchDevices(devices, req.TrustBelow, req.Suspicious, req.Platform, req.DeviceType)
 	revoked := 0
+	results := make([]device.MutationResult, 0, len(matched))
 	for _, dev := range matched {
-		if sm := d.SessionMgr(); sm != nil {
-			if sessions, err := sm.ListByUser(ctx.Request().Context(), dev.UserID); err == nil {
-				for _, s := range sessions {
-					if s.DeviceID == dev.ID {
-						_ = sm.Destroy(ctx.Request().Context(), s.ID)
-					}
-				}
-			}
+		result := device.MutationResult{DeviceID: dev.ID, DeviceStatus: device.MutationDeleted,
+			Sessions: device.RevokeSessions(ctx.Request().Context(), d.SessionMgr(), dev.UserID, dev.ID, dev.LastIP)}
+		if err := store.Delete(ctx.Request().Context(), dev.ID); err != nil {
+			d.Logger().Error("admin: bulk revoke device", "error", err, "device_id", dev.ID)
+			result.DeviceStatus = device.MutationFailed
+			result.DeviceError = "device_delete_failed"
 		}
-		_ = store.Delete(ctx.Request().Context(), dev.ID)
-		revoked++
+		if result.Succeeded() {
+			revoked++
+		}
+		results = append(results, result)
 	}
 	d.Logger().Info("admin: bulk revoke devices", "matched", len(matched), "revoked", revoked)
-	ctx.JSON(http.StatusOK, map[string]any{core.KeyStatus: core.StatusOK, "matched": len(matched), "revoked": revoked})
+	code, status := http.StatusOK, core.StatusOK
+	if revoked != len(matched) {
+		code = http.StatusMultiStatus
+		status = "partial_failure"
+	}
+	ctx.JSON(code, map[string]any{
+		core.KeyStatus: status, "matched": len(matched), "revoked": revoked,
+		"failed": len(matched) - revoked, "results": results,
+	})
+}
+
+func writeAdminDeviceMutation(ctx core.HandlerContext, result device.MutationResult) {
+	code := http.StatusOK
+	status := core.StatusOK
+	if !result.Succeeded() {
+		code = http.StatusMultiStatus
+		status = "partial_failure"
+	}
+	ctx.JSON(code, map[string]any{core.KeyStatus: status, "result": result})
 }
 
 func HandleAdminListUserLoginHistory(d Deps, ctx core.HandlerContext) {

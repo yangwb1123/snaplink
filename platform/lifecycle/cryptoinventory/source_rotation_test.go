@@ -2,6 +2,7 @@ package cryptoinventory
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -128,7 +129,7 @@ func TestRotationSource_RetireKey_TriggersSchedulerCompromise(t *testing.T) {
 	}
 }
 
-func TestRotationSource_RetireKey_NilSchedulerIsNoop(t *testing.T) {
+func TestRotationSource_RetireKey_NilSchedulerReportsUnsupported(t *testing.T) {
 	reg := rotation.NewRegistry()
 	rot := &fakeRotator{version: 1}
 	if err := reg.Register(rot, time.Hour); err != nil {
@@ -139,20 +140,20 @@ func TestRotationSource_RetireKey_NilSchedulerIsNoop(t *testing.T) {
 	if _, err := src.Keys(context.Background()); err != nil {
 		t.Fatalf("Keys: %v", err)
 	}
-	if err := src.RetireKey(context.Background(), "test_cred/v1"); err != nil {
-		t.Fatalf("RetireKey with nil Scheduler should be a no-op, got err: %v", err)
+	if err := src.RetireKey(context.Background(), "test_cred/v1"); !errors.Is(err, ErrRetirementUnsupported) {
+		t.Fatalf("RetireKey with nil Scheduler = %v, want unsupported", err)
 	}
 	if rot.compromiseCalls != 0 {
 		t.Errorf("compromiseCalls = %d, want 0 (no Scheduler wired)", rot.compromiseCalls)
 	}
 }
 
-func TestRotationSource_RetireKey_UnknownKeyIsNoop(t *testing.T) {
+func TestRotationSource_RetireKey_UnknownKeyReportsUnsupported(t *testing.T) {
 	reg := rotation.NewRegistry()
 	sched := rotation.NewScheduler(reg)
 	src := &RotationSource{Registry: reg, Scheduler: sched}
 
-	if err := src.RetireKey(context.Background(), "never-seen"); err != nil {
-		t.Fatalf("RetireKey for an unknown keyID should be a no-op, got err: %v", err)
+	if err := src.RetireKey(context.Background(), "never-seen"); !errors.Is(err, ErrRetirementUnsupported) {
+		t.Fatalf("RetireKey for unknown key = %v, want unsupported", err)
 	}
 }

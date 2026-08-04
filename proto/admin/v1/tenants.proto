@@ -121,13 +121,35 @@ message UpdateTenantRequest  { Tenant tenant = 1; }
 message UpdateTenantResponse { Tenant tenant = 1; }
 
 message DeleteTenantRequest  { string id = 1; }
-message DeleteTenantResponse {}
+message DeleteTenantResponse {
+  TenantCredentialRevocationReport credential_revocation = 1;
+}
 
 message SetTenantStatusRequest {
   string id     = 1;
   string status = 2;
 }
-message SetTenantStatusResponse { Tenant tenant = 1; }
+message SetTenantStatusResponse {
+  Tenant tenant = 1;
+  TenantCredentialRevocationReport credential_revocation = 2;
+}
+
+message CredentialRevocationResult {
+  string idempotency_key = 1;
+  string kind = 2;
+  string resource_id = 3;
+  string status = 4;
+  int32 revoked_count = 5;
+  string error = 6;
+}
+
+message TenantCredentialRevocationReport {
+  string tenant_id = 1;
+  int32 refresh_tokens_revoked = 2;
+  int32 sessions_revoked = 3;
+  bool complete = 4;
+  repeated CredentialRevocationResult results = 5;
+}
 
 message ListDomainsRequest {
   string tenant_id  = 1;

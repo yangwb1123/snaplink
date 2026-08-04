@@ -65,28 +65,6 @@ func (s *Server) finishLoginDispatch(ctx HandlerContext, result *AuthResult, req
 	s.finishLoginDirectMint(ctx, result, req, client)
 }
 
-// upsertLoginUser provisions/refreshes the local user record from the
-// authentication result when a UserProvider is wired. On a store failure it has
-// ALREADY written the exact 500 internal body and returns halted=true; the
-// caller must return immediately. No provider = no-op (halted=false).
-func (s *Server) upsertLoginUser(ctx HandlerContext, result *AuthResult, state string) bool {
-	if s.userProvider == nil {
-		return false
-	}
-	user := &User{
-		ID:         result.UserID,
-		ExternalID: result.ExternalID,
-		Provider:   result.Provider,
-		Attributes: result.Attributes,
-	}
-	if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
-		s.logger.Error("failed to upsert user", "error", err)
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
-		return true
-	}
-	return false
-}
-
 // validateAndAuthorizeScope runs the pre-side-effect gates shared by both login
 // branches and resolves the granted scope set. On any halt it has ALREADY written
 // the exact 400 body (unsupported_response_type / invalid_request / invalid_scope)
@@ -130,7 +108,31 @@ func (s *Server) validateAndAuthorizeScope(ctx HandlerContext, req *login.Reques
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidScope, req.State))
 		return nil, true
 	}
-	return granted, false
+	restricted := restrictGrantedScopes(granted, req.PolicyScopeRestriction)
+	if policyScopeRemovedAll(granted, restricted, req.PolicyScopeRestriction) {
+		return nil, s.rejectPolicyScopeGrant(ctx, req)
+	}
+	return restricted, false
+}
+
+// restrictGrantedScopes applies a conditional-access allowlist only after the
+// client's own scope validation succeeds. It can remove but never add scopes,
+// and preserves the request/client-default ordering used on the wire.
+func restrictGrantedScopes(granted, allowed []string) []string {
+	if allowed == nil {
+		return granted
+	}
+	set := make(map[string]struct{}, len(allowed))
+	for _, scope := range allowed {
+		set[scope] = struct{}{}
+	}
+	restricted := make([]string, 0, len(granted))
+	for _, scope := range granted {
+		if _, ok := set[scope]; ok {
+			restricted = append(restricted, scope)
+		}
+	}
+	return restricted
 }
 
 func (s *Server) prepareDirectMintSession(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) (*Session, *deviceContext, string, bool) {
@@ -144,7 +146,7 @@ func (s *Server) prepareDirectMintSession(ctx HandlerContext, result *AuthResult
 	if deviceCtx != nil {
 		devID = deviceCtx.ID
 	}
-	session, err := s.createSession(ctx, result.UserID, client.ID, client.TenantID, devID)
+	session, err := s.createSession(ctx, result.UserID, client.ID, client.TenantID, req.Scope, result.AuthTime, devID)
 	if err == nil {
 		s.linkGlobalSession(ctx.Request().Context(), session, result.UserID)
 		return session, deviceCtx, devID, true
@@ -164,7 +166,7 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 	if !ok {
 		return
 	}
-	if s.devicePolicy.RequireMFAForNewDevice && deviceCtx != nil && deviceCtx.SecurityCtx != nil && deviceCtx.SecurityCtx.DeviceIsNew && s.mfaProvider != nil && s.mfaChallengeStore != nil {
+	if s.devicePolicy.RequireMFAForNewDevice && deviceCtx != nil && deviceCtx.SecurityCtx != nil && deviceCtx.SecurityCtx.DeviceIsNew && !authenticationHasMFA(result) && !authHookSkipsMFA(ctx) && s.mfaProvider != nil && s.mfaChallengeStore != nil {
 		s.issueMFAChallenge(ctx, result, *req, client)
 		return
 	}
@@ -292,17 +294,21 @@ func (s *Server) emitLoginIDToken(ctx HandlerContext, result *AuthResult, req *l
 		claims = oidc.ProjectIDTokenClaims(claims, req.Claims)
 	}
 	idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-		Subject:         issuedSub,
-		Audience:        client.ID,
-		Nonce:           req.Nonce,
-		AuthTime:        time.Now(),
-		AMR:             handler.AmrForResult(result),
-		ACR:             result.AchievedACR,
-		Claims:          claims,
-		SID:             sid,
-		AccessToken:     accessToken,
-		DeviceSecret:    deviceSecret,
-		RequestedClaims: req.Claims,
+		Subject:              issuedSub,
+		Audience:             client.ID,
+		Nonce:                req.Nonce,
+		AuthTime:             time.Now(),
+		AMR:                  handler.AmrForResult(result),
+		ACR:                  result.AchievedACR,
+		Claims:               claims,
+		SID:                  sid,
+		ServingRegion:        servingRegionFrom(ctx),
+		AccessToken:          accessToken,
+		DeviceSecret:         deviceSecret,
+		RequestedClaims:      req.Claims,
+		GrantedScopes:        req.Scope,
+		GrantedResources:     req.Resource,
+		AuthorizationDetails: req.AuthorizationDetails,
 	})
 	if err != nil {
 		s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", result.UserID)
@@ -400,19 +406,34 @@ func (s *Server) finishLoginCodeFlow(ctx HandlerContext, result *AuthResult, req
 	if handled {
 		return
 	}
-	code, err := s.issueAuthCode(ctx.Request().Context(), result, req, client, dpopJKT)
+	// Canonical OP-session lifecycle: a login that resumed an existing
+	// session (SessionID) or requested one (CreateSession) gets its session
+	// created/validated HERE, in the authorization-code flow — the SID then
+	// rides the code into the exchanged tokens instead of living in an
+	// edition-local cookie store. Fail-open: a session-manager outage or a
+	// stale resumed session drops the sid (login proceeds; auditors see the
+	// empty session on recordLoginSuccess) rather than blocking the login.
+	sessionID := s.codeFlowSession(ctx, result, req, client)
+	code, err := s.issueAuthCode(ctx.Request().Context(), result, req, client, dpopJKT, sessionID)
 	if err != nil {
 		s.logger.Error("failed to issue auth code", "error", err)
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
 		return
 	}
-	// WithTrustScoreSerialization is NOT wired here (meta=nil): this branch
-	// persists a code and mints no token until a LATER, separate /token
-	// exchange (possibly a different replica) — there is no synchronous
-	// login-success session/token pair to attach a trust score to. Only the
-	// direct-mint branch (finishLoginDirectMint) serializes a trust score.
-	s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, "", nil)
-	s.renderAuthCodeResponse(ctx, req, client, code)
+	s.recordCodeFlowSuccess(ctx, result, req, client, code, sessionID)
+}
+
+// recordCodeFlowSuccess persists the login-success audit row (with the
+// canonical session ID when the login carried one) and renders the code
+// response. WithTrustScoreSerialization is NOT wired here (meta=nil): this
+// branch persists a code and mints no token until a LATER, separate /token
+// exchange — there is no synchronous login-success session/token pair to
+// attach a trust score to. Only the direct-mint branch serializes one.
+// The session ID IS persisted: codeFlowSession created/resumed it, and the
+// /token exchange propagates it into the id_token sid claim.
+func (s *Server) recordCodeFlowSuccess(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, code, sessionID string) {
+	s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, sessionID, nil)
+	s.renderAuthCodeResponse(ctx, req, client, code, sessionID)
 }
 
 // renderAuthCodeResponse writes the authorization_code result in the negotiated
@@ -420,21 +441,41 @@ func (s *Server) finishLoginCodeFlow(ctx HandlerContext, result *AuthResult, req
 // the default JSON body. The caller has already issued the code and recorded
 // success; a JARM signing failure fails closed with invalid_request rather than
 // leaking the bare code under the shared key.
-func (s *Server) renderAuthCodeResponse(ctx HandlerContext, req *login.Request, client *Client, code string) {
+func (s *Server) renderAuthCodeResponse(ctx HandlerContext, req *login.Request, client *Client, code, sessionID string) {
 	if req.ResponseMode == ResponseModeFormPost {
 		s.renderFormPostResponse(ctx, req.RedirectURI, code, req.State)
 		return
 	}
 	if oidc.IsJARMResponseMode(req.ResponseMode) {
 		signer, ok := s.jarmSignerForClient(client)
-		if !ok || !oidc.RenderJARMResponse(ctx, signer, req.ResponseMode, req.RedirectURI, s.resolveIssuer(ctx), client.ID, code, req.State) {
+		if !ok {
 			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
+			return
 		}
+		if req.ResponseMode != oidc.ResponseModeFormPostJWT && ctx.Request().Method != http.MethodGet {
+			response, err := oidc.SignJARMResponse(ctx.Request().Context(), signer, s.resolveIssuer(ctx), client.ID, code, req.State)
+			if err == nil {
+				ctx.JSON(http.StatusOK, map[string]any{oidc.KeyResponse: response})
+				return
+			}
+		} else if oidc.RenderJARMResponse(ctx, signer, req.ResponseMode, req.RedirectURI, s.resolveIssuer(ctx), client.ID, code, req.State) {
+			return
+		}
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return
 	}
 	resp := map[string]any{
 		KeyCode: code,
 		KeyIss:  s.resolveIssuer(ctx),
+	}
+	// The OP session created/resumed for this login rides the JSON body as
+	// session_id (same key the direct-mint branch returns) so a first-party
+	// frontend can bind its own browser state to the canonical session
+	// (e.g. an OP-session cookie for prompt=none resume). Empty = the login
+	// carried no session (stock-server behavior) — the key is omitted and
+	// the wire body is byte-identical to the pre-session code flow.
+	if sessionID != "" {
+		resp[KeySessionID] = sessionID
 	}
 	if req.State != "" {
 		resp[KeyState] = req.State

@@ -11,9 +11,11 @@ import (
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/bootstrap"
 	"github.com/yangwb1123/snaplink/platform/bootstrap/memory"
 	"github.com/yangwb1123/snaplink/platform/netpolicy"
 	netmemory "github.com/yangwb1123/snaplink/platform/netpolicy/memory"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // fixture builds a populated source environment: 2 clients, 2 users,
@@ -338,13 +340,16 @@ func TestRestore_DryRun_NoMutation(t *testing.T) {
 }
 
 // fixtureBlank holds the destination side of restore tests — separate
-// type so it doesn't accidentally inherit fixture's pre-seeding.
+// type so it doesn't accidentally inherit fixture's pre-seeding. Fields are
+// interface-typed so tests can inject failing wrappers (failFirst*) and
+// capability-limited backends (barePairwiseStore) at exactly one seam.
 type fixtureBlank struct {
-	clients *defaultimpl.MemoryClientStore
-	users   *defaultimpl.MemoryUserProvider
-	perms   *permissions.MemoryProvider
-	netpol  *netmemory.Store
-	tracker *memory.Tracker
+	clients  sso.ClientStore
+	users    sso.UserProvider
+	perms    permissions.Provider
+	netpol   netpolicy.Store
+	tracker  bootstrap.Tracker
+	pairwise security.PairwiseSubjectStore
 }
 
 func (f *fixtureBlank) restorer() *snapshot.Restorer {
@@ -353,7 +358,19 @@ func (f *fixtureBlank) restorer() *snapshot.Restorer {
 		Users:       f.users,
 		Permissions: f.perms,
 		NetPolicy:   f.netpol,
+		Pairwise:    f.pairwise,
 		Tracker:     f.tracker,
+		Namespace:   "sso-server",
+	}
+}
+
+func (f *fixtureBlank) snapshotter() *snapshot.Snapshotter {
+	return &snapshot.Snapshotter{
+		Clients:     f.clients,
+		Users:       f.users,
+		Permissions: f.perms,
+		NetPolicy:   f.netpol,
+		Pairwise:    f.pairwise,
 		Namespace:   "sso-server",
 	}
 }

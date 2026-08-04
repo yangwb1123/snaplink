@@ -24,27 +24,50 @@ uses the APIs below and is normally reverse-proxied beside the server.
 | `security.jti_replay.fail_closed` | Store error → reject (treat-as-replay) instead of fail-open |
 | `identity.client_cache.{enabled,ttl}` | Per-login ClientStore.Get TTL cache (default 30s); `KindClientChange` bus-invalidated on every mutation |
 | `client_registration.default_active` | `true` (default) activates a new DCR registration immediately; `false` opts into the developer-app registration review workflow — the client registers pending (`Active=false`, unable to authenticate on ANY grant) until an admin calls `POST /api/v1/admin/clients/{id}/approve` or `/reject` (`ClientAdminService`) |
+| `client_registration.rotate_access_token_overlap` | Recovery window for RFC 7592 registration-token rotation. The credential used for a successful PUT remains valid for retries during this interval; `<= 0` defaults to 5 minutes. |
+
+## Clients
+
+| Key | Effect |
+|---|---|
+| `clients[].login_page_uri` | Absolute hosted-login URL used after a verified upstream OIDC/SAML callback. Required for federated RP authorization: Snaplink redirects here with a fresh one-use `login_transaction_id` in the fragment, then the page POSTs it to `/auth/login` to resume the original post-PAR/JAR request through policy, MFA, consent, and response delivery. Must be HTTPS, except HTTP loopback URLs used for local development. Missing or unsafe values make `authorization_request_passthrough_supported=false` and federated kickoff fails closed. |
 
 ## Server
 
 | Key | Effect |
 |---|---|
 | `server.http2.enabled` | Controls HTTP/2 server-side support. `false` (default) disables HTTP/2 via `GODEBUG=http2server=0` (safe behind a reverse proxy). `true` enables HTTP/2 — required for gRPC or direct-client deployments. If the `GODEBUG` env var is already explicitly set, this field is ignored (explicit env override takes precedence). See `config.HTTP2Config`. |
-| `hosted_login.enabled` | Compatibility placeholder only. The field is parsed but the current stock binary has no hosted-login filesystem or route wiring, so setting it does not mount `/login/` or any other frontend. Use a separate frontend project. Do not use this key as a readiness/capability signal. |
+| `server.topology.{mode,allow_per_pod_state}` | `mode: single` declares one process; `mode: multi` makes per-process OAuth, session, replay, identity, CIBA, MFA challenge, pairwise-subject, identity-link, and enabled user-lifecycle stores a boot error. `allow_per_pod_state: true` is an explicit development-only escape hatch and is rejected unless mode is `multi`. |
+| `hosted_login.enabled` | **Deprecated no-op.** The field is parsed (with a startup warning when enabled) but the stock binary has no hosted-login filesystem or route wiring, so setting it never mounts `/login/` or any other frontend. Deploy the login UI as a separate project and drive it through the APIs in [frontend-contract.md](frontend-contract.md). Do not use this key as a readiness/capability signal. Removed with the next schema-version bump. |
 
 ## OIDC
 
 | Key | Effect |
 |---|---|
 | `server.issuer` | MUST differ from `sso.DefaultIssuer`; stamped into JWT `iss`, discovery `issuer`, every RFC 9207 `iss` |
+| `server.required_capabilities` | Optional build/deployment contract. Startup and `--validate-only` fail closed unless every listed capability ID appears in the immutable inventory embedded by `python cli.py configure`; inspect with `sso-server modules --json` |
 | `oidc.response_encryption.backend` | JWE-encrypts `id_token` + `/userinfo` responses for clients registering `id_token_encrypted_response_alg`/`userinfo_encrypted_response_alg`: `""` (off, default) \| `rsa` (RSA-OAEP-256) \| `ecdh` (ECDH-ES[+A256KW]) \| `multi` (both, routed per-client by registered key type). Stateless — reads each recipient's public key from the client's registered JWKS |
+| `backchannel_logout.enabled` | Enables OIDC Back-Channel Logout for `/logout` and `/end_session`. Each RP delivery has a shared 5-second budget and retries transient transport, 408, 429, and 5xx failures up to three total attempts with jittered exponential backoff. Retry tokens are freshly signed to avoid the RP's `jti` replay guard, and delivery preserves request values while ignoring browser/gateway cancellation. |
+| `backchannel_logout.max_concurrent` | Bounds simultaneous RP notifications in multi-RP fan-out; `<=0` uses 8. |
+| `backchannel_logout.index.backend` | Subject-to-client fan-out index: `memory` (single replica), `sqlite`, or `redis`. Successfully notified clients are removed; failed clients remain indexed for a later logout/session-hub retry. |
+| `backchannel_logout.failure_queue.backend` | Exhausted-delivery queue: `""` disables it; `memory` enables bounded process-local governance; `redis` persists failures across restart and coordinates replay leases across replicas. The queue stores subject/client/SID/URI inputs, never the signed logout token. |
+| `backchannel_logout.failure_queue.retry_interval` | Background sweep cadence and first retry delay; default `30s`. Recoverable transport/timeout/408/429/5xx/issuer failures are retried; permanent RP 4xx entries remain visible for manual replay without background hammering. |
+| `backchannel_logout.failure_queue.batch_size` | Maximum due entries claimed per sweep; default 50, admin list/replay APIs clamp requests to 200. |
+| `backchannel_logout.failure_queue.lease_duration` | Per-entry replay ownership lease; default `30s`. Prevents concurrent workers/admins from sending one entry at the same time and expires after a crashed worker. |
+
+When a failure queue is wired, administrators gain `GET
+/api/v1/admin/backchannel-logout/failures`, single-item `POST
+.../failures/{id}/replay`, and due-batch `POST .../failures/replay`. GET requires
+`admin:read`; POST requires `admin:write`. Successful replay acknowledges the
+entry and removes the matching subject/client fan-out index record. Shutdown
+waits for the replay worker to stop before Redis closes.
 
 ## Security
 
 | Key | Effect |
 |---|---|
 | `security.mtls.backend` | `tls`\|`header`; `header` for reverse-proxy edges (`X-SSL-Client-Cert`); edge MUST strip from untrusted traffic |
-| `security.trusted_proxies.{cidrs,hops}` | CIDR allowlist compiled once (`peertrust.Checker`) gating the supported proxy-supplied consumers on the direct peer (`RemoteAddr`): the XFF chain walk (rate-limit IP keying + geo/risk-scorer IP; untrusted peer ⇒ RemoteAddr), base-URL derivation from `X-Forwarded-Proto/Host` (issuer/discovery/registration URIs/DPoP `htu`; untrusted peer ⇒ direct Host/TLS), the mesh ext_authz endpoint (untrusted peer ⇒ 401 `invalid_token`, no `X-Auth-*` — include the sidecar's CIDR when `mesh.ext_authz.enabled`), the `region.header_name` resolver (untrusted peer ⇒ pinned default), and the `security.mtls.backend: header` cert extractor (untrusted peer ⇒ no cert ⇒ unbound token / normal `invalid_token` path). Known readers not yet gated are audit IP enrichment, `domains/tenant/middleware.go` XFH tenant resolution, `interfaces/ssoclient/rs`, and push-callback client IP; do not treat their headers as trustworthy at an untrusted edge. Unset = legacy first-hop trust on the supported consumers above |
+| `security.trusted_proxies.{cidrs,hops}` | CIDR allowlist compiled once (`peertrust.Checker`) gating proxy-supplied input on the direct peer (`RemoteAddr`): XFF client IP (rate limit, geo/risk, audit, push callback), `X-Forwarded-Host/Proto` (issuer/discovery/registration/DPoP `htu`, tenant domain routing), mesh `X-Auth-*`, serving-region headers, and header-backed mTLS certificates. Untrusted peer ⇒ direct IP/Host/TLS or the consumer's normal unauthenticated fallback. The resource-server SDK accepts the same middleware through `rs.Config.TrustedProxies`. Unset = legacy first-hop trust |
 | `security.security_headers.{enabled,csp_directives,permissions_policy}` | Off by default. Adds CSP (with a per-request `script-src` nonce) + Permissions-Policy to API responses; also adds `Clear-Site-Data` on `POST /logout` and a non-dry-run `POST /me/account/erase`. Separately deployed frontends must set their own static-asset CSP. `csp_directives`/`permissions_policy` override the SDK's conservative default (`handler.DefaultSecurityHeadersPolicy`) — leave unset to use it |
 | `spiffe.{enabled,trust_domain,audience,jwks_file,max_clock_skew}` | Enabled requires ALL of `trust_domain`+`audience`+`jwks_file`; cmd fails loud on missing |
 | `security.rar_limits.{max_bytes,max_elements,max_depth}` | Bounds an RFC 9396 `authorization_details` payload's SHAPE (serialized size / top-level array element count / max nesting depth) BEFORE it is fully unmarshaled, on `/auth/login` and `/par`. Each sub-field `<= 0` (default) = unbounded — composes with, does not replace, `security.body_limit`. Rejects with the existing `invalid_authorization_details` code. Maps to `sso.WithAuthorizationDetailsLimits` |
@@ -61,7 +84,7 @@ uses the APIs below and is normally reverse-proxied beside the server.
 | `keys.rotation.grace_period` | Overlap window the demoted key stays verify-only. Also the DEFAULT for on-demand `POST /api/v1/admin/keys/rotate` (see below); when unset the admin rotate falls back to a 24h constant. MUST be >= the max access-token TTL or tokens minted just before a rotation are stranded |
 | `POST /api/v1/admin/keys/rotate`, `GET /api/v1/admin/keys` | On-demand `KeyAdminService` (admin:write / admin:read): rotate the primary signing key now (reusing the scheduled side effects) or list public key metadata. Request `grace_seconds` (>=60) overrides `grace_period`; external-signer builds refuse (412), non-rotatable issuers return 501 |
 | `keys.rotation.coordinated_cutover` | `WithCoordinatedKeyRotation`: broadcasts demoted+new kids + `now+GracePeriod` retire deadline over `cluster.Bus` (`KindSigningKeyRotation`); FAIL-SAFE: deferred retire only widens verify window, never retires early |
-| `keys.signing.revocation_backend` | `With{Algo}RevocationStore` for durable revocation across restarts; `SeedRevocations` re-seeds at boot |
+| `keys.signing.revocation_backend` | `With{Algo}RevocationStore` for restart/recovery-safe revocation; `SeedRevocations` re-seeds at boot and after invalidation-bus recovery. `redis` uses the shared top-level client and is required when `server.topology.mode=multi` and `cluster.cross_replica_revocation=true`; memory/SQLite cannot recover an event missed by another pod. |
 | `keys.signing_key_registry.{backend,replica_id,lease_ttl}` | Opt-in leaderless aggregation (`memory`\|`etcd`). `WithSigningKeyReplicaID` REQUIRED when wired. Degraded → `/readyz` 503 + `signing_key_aggregation_degraded` audit |
 | `keys.signing.fips_mode` | Off by default. When `true`, `BuildSigningIssuer` requires the binary's Go Cryptographic Module to actually be active (`GOFIPS140`/`GODEBUG=fips140`) and validates `keys.signing.alg` against a FIPS 186-5-approved allowlist (default: all four supported algs — see [docs/fips.md](fips.md) for why Ed25519 is included) before constructing the issuer |
 | `keys.signing.fips_allowed_algs` | Optional narrower allowlist consulted only when `fips_mode` is `true`; empty (default) = the package's full approved set |
@@ -81,6 +104,8 @@ Values below are exactly what the binary's boot-time dispatch accepts
 | Clients + Users (durable identity) | `identity.backend` | `memory` · `sqlite` · `postgres` |
 | Sessions (hot; falls back to `identity.backend`) | `identity.session_backend` | `memory` · `sqlite` · `redis` · `postgres` |
 | OAuth hot stores (auth_code / refresh_token / device_code / par — one key) | `oauth.backend` | `memory` · `sqlite` · `redis` |
+| OAuth opaque lookup protection | `oauth.{sqlite,redis}.{lookup_hmac_key_file,lookup_hmac_previous_key_file}` | Optional files containing at least 32 bytes. New authorization codes, refresh tokens, device/user codes and PAR URIs are stored only as domain-separated HMAC lookup keys. Redis also protects refresh-token index members and removes raw device/user codes from stored JSON and pointer values. Reads try current key, previous key, then legacy plaintext so rollout and rotation preserve in-flight grants. Remove the previous key only after the longest artifact TTL has elapsed; plaintext fallback exists solely for pre-feature records. |
+| OAuth expiry cleanup | `oauth.{auth_code,refresh_token,device_code,par}.reap_interval` | Positive cadence starts background cleanup for memory and SQLite stores; Redis relies on native key TTL. SQLite cleanup uses each table's `expires_at` index. Refresh cleanup also expires the consumed-token family ledger after the token validity window, preventing unbounded reuse-history growth without weakening live-token replay detection. `0` disables background cleanup. |
 | Refresh rotation grace | `oauth.refresh_token.rotation_grace_backend` | `memory` · `sqlite` · `redis` |
 | CIBA requests | `ciba.backend` | `memory` · `sqlite` · `redis` |
 | MFA challenge | `mfa.challenge.backend` | `memory` · `sqlite` · `redis` |
@@ -103,9 +128,9 @@ Values below are exactly what the binary's boot-time dispatch accepts
 | Audit primary sink | `audit.backend` | `memory` · `sqlite` · `postgres` |
 | Permissions | `permissions.backend` | `memory` · `sqlite` · `postgres` |
 | Anomaly detectors | `anomaly.{recent_login,ip_failure}.backend` | `memory` · `sqlite` |
-| Signing-key revocation | `keys.signing.revocation_backend` | `memory` · `sqlite` |
+| Signing-key revocation | `keys.signing.revocation_backend` | off · `memory` · `sqlite` · `redis` |
 | Signing-key registry | `keys.signing_key_registry.backend` | off · `memory` · `etcd` |
-| Cross-replica bus | `cluster.bus.backend` | off · `memory` · `etcd` |
+| Cross-replica bus | `cluster.bus.backend` | off · `memory` · `etcd` · `redis` |
 | Service registry | `registry.backend` | `memory` · `etcd` |
 | Network policy store | `network.store` | `memory` · `etcd` |
 | Bootstrap lock | `bootstrap.lock.backend` | `noop` · `file` · `etcd` |
@@ -115,6 +140,12 @@ All `backend: redis` **hot** stores share the ONE `redis:` block below. All
 a shared *sql.DB pool per replica, not one pool per store. Selecting
 `redis`/`postgres` without its block is a boot error:
 `<domain>.backend=postgres but no postgres block configured (set postgres.dsn)`.
+
+The Redis invalidation bus and revocation set carry complete bearer tokens.
+Production Redis ACLs and network policy MUST limit the application identity to
+its `snaplink:cluster:bus` channel and `sso:jwt:revocations` key (plus the other
+explicitly configured Snaplink keyspaces), and TLS MUST protect traffic outside
+a trusted private network.
 
 ### B2B connection email-domain verification
 
@@ -150,8 +181,9 @@ natively probe) via `sso.WithConnectionProber`. Each probe increments
 | Key | Effect |
 |---|---|
 | `self_service.consent.max_ttl` | Hard server-wide ceiling on consent grant lifetime (`WithConsentTTL`): every recorded grant gets `ExpiresAt = GrantedAt + max_ttl`, after which `GetConsent` treats it as absent and `/auth/login` re-prompts. `0` (default) = no server-enforced expiry — permanent until revoked. Independent of, and can only be tightened by, a client's own `consent_refresh_interval`. Requires `self_service.consent.backend` to be set. |
-| `self_service.identity_link.enabled` | Builds an in-memory `identitylink.Store` and wires `sso.WithIdentityLinkStore`, mounting `GET`/`DELETE /me/identities` — list and unlink the caller's own linked external identities. Disabled by default: byte-identical to a build without the feature |
-| `self_service.identity_link.merge_policy` | `""` / `"reject"` (**default, safe**): wires NO `MergePolicy` Option — a nil policy is already treated as `identitylink.RejectPolicy{}` by `identitylink.Resolve`, the package's own conservative baseline for "an operator who hasn't decided how to merge two accounts should never have that decided for them silently". `"link_only"` wires `identitylink.NewLinkOnlyMergePolicy`, which auto-merges a losing account's identity links onto the winner (sessions/consents/tokens are NOT touched — see the package doc). Any other value fails loud at boot. This only affects the `MergePolicy` EXTENSION POINT (`Server.IdentityLinkStore`/`Server.IdentityMergePolicy`, consulted by a custom login integration) — the stock `/auth/login` handler never calls it |
+| `self_service.identity_link.enabled` | Wires `sso.WithIdentityLinkStore`, mounting `GET`/`DELETE /me/identities` and mapping subjects in built-in static/connection-backed OIDC federation. Disabled by default |
+| `self_service.identity_link.backend` | `memory` (default/compatibility, single process), `sqlite` (durable one-host install; requires `.sqlite.dsn`), or `postgres` (uses the global Postgres pool for multi-replica consistency). One active `(provider, subject)` can belong to exactly one local account |
+| `self_service.identity_link.merge_policy` | `""` / `"reject"` (**default, safe**) rejects conflicting account ownership. `"link_only"` atomically reassigns the losing account's active identity links to the existing owner; sessions, consents, OAuth/refresh tokens, MFA and audit ownership are deliberately NOT merged. Any other value fails at boot |
 
 ## Setup Wizard (first-run onboarding)
 
@@ -222,13 +254,60 @@ is ASYNC fire-and-forget (a background goroutine bounded by `smtp.timeout`) so
 | `smtp.from` | Envelope + `From:` header address |
 | `smtp.starttls` | Documents intent; `net/smtp.SendMail` negotiates STARTTLS automatically whenever the server advertises it and falls back to plaintext otherwise |
 | `smtp.timeout` | Per-send bound for the background dispatch goroutine; 0 = 10s default |
-| `smtp.templates_dir` | Filesystem overlay for the five go:embed default templates (`password_reset`/`email_verification`/`email_change`/`invitation`/`otp`); empty = embedded defaults only |
+| `smtp.templates_dir` | Filesystem overlay for the six go:embed default templates (`password_reset`/`email_verification`/`email_change`/`invitation`/`otp`/`notification`); empty = embedded defaults only |
 | `smtp.link_base_url` | Prefixed to reset/verify/invite links — required because the sender only ever sees the token/target its `spi.*Sender` method receives, never `server.issuer` |
+
+## User Notifications
+
+The notification subsystem is opt-in. When enabled, security-relevant audit
+events are routed asynchronously to the in-app inbox and, when configured, to
+email. Delivery failure never changes the result of the originating security
+operation. See [notifications.md](notifications.md) for event mappings and API
+semantics.
+
+| Key | Effect |
+|---|---|
+| `notifications.enabled` | Enables the notification stores, audit-event router, self-service inbox/preferences API, and subject-filtered SSE feed. Default `false` |
+| `notifications.backend` | Inbox and preference persistence: `memory` (default) or `sqlite` |
+| `notifications.sqlite.dsn` | Required when `backend: sqlite`; both notification tables share this database |
+| `notifications.email_enabled` | Also deliver enabled notification types through the built-in SMTP sender. Requires `smtp.enabled` and a resolvable user email; otherwise only in-app delivery is wired |
+| `notifications.cooldown` | Per-`{subject,type}` duplicate suppression window. Default `5m`; `0` disables suppression |
+| `notifications.queue_size` | Bounded asynchronous audit-event queue capacity. Default `256`; must be positive |
+| `notifications.workers` | Delivery worker count. Default `2`; must be positive |
+| `notifications.session_expiry_warning` | Notify once an active server-side session enters this remaining-lifetime window. Default `30m`; must be positive |
+| `notifications.session_scan_interval` | How often the session index is scanned for expiry warnings. Default `1m`; must be positive |
+
+```yaml
+notifications:
+  enabled: true
+  backend: sqlite
+  sqlite:
+    dsn: file:/var/lib/snaplink/notifications.db
+  email_enabled: true
+  cooldown: 5m
+  queue_size: 256
+  workers: 2
+  session_expiry_warning: 30m
+  session_scan_interval: 1m
+```
 
 ## SMS
 
 The phone one-time-code authenticator (`authenticators.phone`) dials an
 `authenticators.SMSSender`; `authenticators.phone.sms` selects the transport.
+All built-in email/SMS OTP and magic-link authenticators share three abuse
+controls in their `CodeStore`: a 60-second resend cooldown, at most five failed
+verification attempts per issued value, and fixed-window send budgets. The
+default budgets are 20 sends per tenant-scoped identity and 1,000 sends per
+tenant every 24 hours. Redis reserves the identity and tenant counters in one
+Lua operation, so multiple replicas cannot overspend the budget. The fifth mismatch
+invalidates that value while returning the same generic credential error as
+an ordinary mismatch. If a synchronous delivery call fails, the built-in
+memory and Redis stores conditionally remove that undelivered value and release
+its cooldown and quota reservation, allowing an immediate retry without risking
+deletion of a newer issuance. Quota exhaustion is deliberately returned as the
+same HTTP 200 `{"status":"sent"}` response as a successful send and does not call
+the transport, preventing account/target and budget-state probing.
 `provider` unset or `"log"` (the default) logs the code instead of sending
 it — byte-identical to the stub that shipped before this config section
 existed. `provider: "http"` dispatches over the built-in
@@ -240,6 +319,15 @@ fails the boot loudly rather than silently falling back to the log stub.
 
 | Key | Effect |
 |---|---|
+| `authenticators.code_send_quota.identity_limit` | Maximum sends to one target inside one tenant and window; default 20. `-1` disables this dimension; `0` selects the default |
+| `authenticators.code_send_quota.tenant_limit` | Maximum sends across all targets in one tenant and window; default 1,000. `-1` disables this dimension; `0` selects the default |
+| `authenticators.code_send_quota.window` | Fixed-window duration shared by both limits; default `24h` and must be positive after defaults are applied |
+| `authenticators.code_delivery.async` | Enables the bounded in-memory OTP/magic-link worker queue; default `false` preserves synchronous delivery |
+| `authenticators.code_delivery.queue_size` | Maximum accepted pending deliveries; default 256, maximum 10,000. A full queue fails the request and conditionally invalidates the freshly stored code |
+| `authenticators.code_delivery.workers` | Concurrent delivery workers; default 2, maximum 64 |
+| `authenticators.code_delivery.attempts` | Maximum provider attempts per accepted delivery; default 3, maximum 10 |
+| `authenticators.code_delivery.attempt_timeout` | Per-provider-attempt timeout; default `10s`, maximum `2m` |
+| `authenticators.code_delivery.retry_backoff` | Initial exponential retry delay; default `200ms`, maximum `30s` |
 | `authenticators.phone.sms.provider` | `""` / `"log"` (default; log-only stub) \| `"http"` (real SMS via `infrastructure/sms`) |
 | `authenticators.phone.sms.account_sid` | Twilio (or compatible) Account SID — HTTP Basic Auth username AND the Messages-resource path segment; required when `provider: "http"` |
 | `authenticators.phone.sms.auth_token` | HTTP Basic Auth password — supports `secret://` resolution (`config/secrets.go`) and the `SSO_AUTHENTICATORS__PHONE__SMS__AUTH_TOKEN` env override; never commit a plaintext value; required when `provider: "http"` |
@@ -324,6 +412,18 @@ does not do so today.
 | `config_audit.enabled` / `.backend` / `.sqlite.dsn` | Runtime-config audit (`platform/configaudit`): when enabled, cmd builds the `configaudit.Store` (`memory`\|`sqlite`), captures the redacted applied-config snapshot once at boot, and wires `sso.WithConfigSnapshots` + `WithConfigAuditStore`, mounting `GET /api/v1/admin/config/{running,applied,diff,history}` + the client/tenant/policy change-capture hook |
 | `config_audit.drift.interval` | `sso.WithConfigDriftDetection` — cross-replica config-digest broadcast (`cluster.KindConfigDigest`) + compare loop; `<= 0` (default) = off, report-only |
 
+## Authentication Pipeline
+
+Optional built-in lifecycle Hooks. An absent block registers no Hooks and keeps
+the original authentication/token path unchanged. See
+[Authentication Pipeline Hooks](auth-pipeline-hooks.md) for the SDK SPI, custom
+Hooks, failure semantics, and WASM/SIEM adapters.
+
+| Key | Effect |
+|---|---|
+| `auth_pipeline.ip_skip_mfa_cidrs` | CIDRs whose successfully authenticated requests may skip MFA challenges. CIDRs are validated at startup; risk and conditional-access deny verdicts still reject. Empty = no Hook. |
+| `auth_pipeline.required_profile_attributes` | Authenticated-user attribute names that must be non-empty before session/token side effects. Empty/duplicate names fail startup. Empty list = no Hook. |
+
 ## Config JSON Schema & Validation
 
 `config/schema` reflects over `config.Config`'s `yaml` struct tags to generate a
@@ -354,7 +454,7 @@ feature existed (no extra signal handler is even registered).
 | `SIGHUP` (running `sso-server` process) | Re-reads config from the SAME source chain (file + env + etcd + flag) it booted with, diffs it against the previously-tracked config (`platform/configaudit.Diff`, the same JSON-Patch engine the admin running-vs-applied endpoint uses), applies the safe subset, and logs `config reload applied` with `applied` (what changed live) and `ignored_requires_restart` (everything else that changed but was left untouched) |
 | `logging.level` | Swaps the server's `*slog.LevelVar`, so verbosity changes with no restart and no dropped log lines |
 | `security.rate_limit.*` | Rebuilds the WHOLE `ratelimit.Policy` (via the same `serverbuildplatform.BuildRateLimitPolicy` the boot path uses) and hot-swaps it into the already-mounted middleware (`ratelimit.DynamicMiddleware` reads its Policy from a `ratelimit.PolicyStore` fresh on every request, instead of a plain `ratelimit.Middleware`'s baked-in-by-value closure). Every changed leaf under the block (a prefix's `per_sec`, `default_burst`, …) triggers exactly ONE rebuild, not one per leaf. In-memory limiter bucket state resets on rebuild (a safe, side-effect-free change — no correctness impact). Enabling/disabling rate limiting ENTIRELY (the `enabled` flag going from `false` to `true`, when no `WithRateLimit` was ever wired) still needs a restart — there is no middleware slot to swap into if it was never installed |
-| `feature_gates.{admin_api,web_spa,oidc,ciba,caep,federation,self_service}` | `interfaces/sso` registers the applicable route groups at `Mount()` time and checks live gate state through `shared/core.GatedRouter`. Each `Set*GateHook` flips reachable routes in both directions without a restart; gate-off returns a router-native 404. A gate cannot create missing dependencies: `web_spa` is ignored when no tenant store exists (it now gates only `/branding`), `caep` cannot create an unwired receiver/stream store, and `federation` cannot create an unwired entity/connection store. |
+| `feature_gates.{admin_api,branding,oidc,ciba,caep,federation,self_service}` | `interfaces/sso` registers the applicable route groups at `Mount()` time and checks live gate state through `shared/core.GatedRouter`. Each `Set*GateHook` flips reachable routes in both directions without a restart; gate-off returns a router-native 404. A gate cannot create missing dependencies: `branding` is ignored when no tenant store exists (it now gates only `/branding`), `caep` cannot create an unwired receiver/stream store, and `federation` cannot create an unwired entity/connection store. The deprecated `web_spa` name is accepted as an alias of `branding` (both set = startup error). |
 | Storage backends, `server.listen`, TLS material, cluster/etcd endpoints, … | Detected if changed, reported under `ignored_requires_restart`, and left COMPLETELY untouched — never silently misapplied. These require closing and re-opening a connection or listener; applying them live risks leaking the old one or serving with an inconsistent half-applied state. See `config/reload`'s package doc for the full rationale |
 | A failed reload (e.g. the file was hand-edited into an invalid state) | Logged (`config reload failed; continuing with previous configuration`) and otherwise ignored — the process keeps running on its last-good configuration; SIGHUP can never crash a running server |
 
@@ -421,9 +521,17 @@ Downstream identity resolution uses `externalId` (RFC 7643 §3.1) + a `filter=ex
 
 | Key | Effect |
 |---|---|
-| `snapshot.redact_secrets` | Zeros `Client.Secret` on export-local copies (NOT restorable — use encryption for backup); default nil ⇒ byte-identical |
+| `snapshot.redact_secrets` | Removes client credentials, known user credential attributes and secret-bearing enterprise-connection config keys from export-local copies (NOT restorable — use encryption for backup); default nil ⇒ byte-identical |
 | `snapshot.storage.backend` | Where `Pipeline` persists envelopes: `file` (default; `snapshot.storage.file.dir`, defaults to `./snapshots`) \| `inline` (in-memory; tests only) |
 | `snapshot.encryption.backend` | Sealer for snapshot envelopes: `none` (default; plaintext JSON) \| `passphrase` (argon2id + XChaCha20-Poly1305; `passphrase`/`passphrase_file`) \| `key` (operator-supplied 32-byte `key`/`key_file`, e.g. from a KMS-issued DEK) |
+
+Snapshot schema v2 carries an explicit category manifest and adds tenants,
+tenant-domain routing, enterprise connections and pairwise-subject mappings.
+Readers continue accepting v1; a v1 replace restore cannot delete categories
+that v1 could not represent. After a successful non-dry-run restore, the server
+flushes every local control-plane cache and broadcasts the same full
+invalidation to peer replicas. Sessions and live tokens remain deliberately
+excluded.
 
 ## Releases
 
@@ -469,6 +577,17 @@ Disabled by default; the read-only governance inventory (`GET /api/v1/admin/cred
 | `rotation.tick` | Scheduler due-check poll resolution (how late a due rotation can fire, NOT the cadence); `<=0` = `rotation.DefaultSchedulerTick` |
 | `rotation.retry_base` / `rotation.retry_max` | Failure-retry backoff (base doubled per consecutive failure, capped) while the old credential keeps serving; `<=0` = package defaults |
 
+OAuth client secrets use the same scheduler but have an independent cadence and a storage-backed zero-downtime rollout window:
+
+| Key | Effect |
+|---|---|
+| `client_secret_rotation.enabled` | Enables scheduled rotation for active confidential clients. The configured client store must implement due-listing and overlap rotation; memory, SQLite, Postgres, Redis, and the built-in cache/federation decorators do |
+| `client_secret_rotation.interval` | How old a client secret may become and how often that credential class is scheduled; required (`> 0`) when enabled |
+| `client_secret_rotation.overlap` | How long the previous bcrypt hash remains valid after rotation. `0` selects the 24h default; an explicit value must be at least 1h. The new secret works immediately, the old secret works only before the persisted deadline, and a later rotation replaces the prior fallback |
+| `client_secret_rotation.lifetime` | Validity of each newly rotated secret. `0` selects `interval + overlap`; an explicit value must be greater than `interval`, preventing scheduler jitter from expiring a secret before its replacement is installed |
+
+The admin `RotateSecret` RPC uses a 24h default overlap and 90-day lifetime even when scheduled rotation is disabled, allowing operators to deploy the newly returned secret without downtime. It accepts explicit `overlap_seconds` / `lifetime_seconds`, returns `client_secret_expires_at`, and `GET /api/v1/admin/clients/expiring?within_seconds=` provides the 30-day warning view. Direct store calls with no overlap remain an immediate-cutover primitive for compromise response and tests. Previous hashes and overlap deadlines are persisted by every production client-store backend but never appear in client DTOs, snapshots, or discovery metadata; expiry itself is safe admin metadata and is included in the admin/DCR projections.
+
 Enabling `rotation` also wires `sso.WithCredentialCompromise` against the SAME Scheduler, mounting the emergency `POST /api/v1/admin/credentials/{type}/compromise` (`admin:write`) — force-rotates a leaked credential class OFF schedule with NO overlap window; the response is the new version's governance metadata only, never the secret.
 
 ## Token Policies
@@ -482,11 +601,13 @@ Token-policy governance engine (`domains/tokenpolicy`, `sso.WithTokenPolicy`). D
 
 ## Conditional Access
 
-Zero-trust conditional-access (CAP) engine (`domains/conditionalaccess`, `sso.WithConditionalAccess`), mounting the read-only view `GET /api/v1/admin/access-policies`. Disabled by default. The engine is ALWAYS evaluable via `Server.EvaluateConditionalAccess`; it additionally becomes a LIVE Policy Enforcement Point on `/auth/login` — after credential validation, before token/session issuance — only when `access_policies.enforce` is `true`. With `enforce` left `false` (the default), a wired store changes no live auth decision, matching every prior release's advisory-only behavior. Provide policies via EITHER `access_policies.file` OR `access_policies.policies`; both fails loud.
+Zero-trust conditional-access (CAP) engine (`domains/conditionalaccess`, `sso.WithConditionalAccess`), mounting `GET /api/v1/admin/access-policies` and the immediate convergence operation `POST /api/v1/admin/access-policies/converge`. Disabled by default. The engine is ALWAYS evaluable via `Server.EvaluateConditionalAccess`; when `access_policies.enforce` is `true` it additionally becomes a LIVE Policy Enforcement Point after credential validation on `/auth/login`, on `prompt=none` renewal, before every refresh-token successor is issued, and in a periodic active-session convergence worker. With `enforce` left `false` (the default), a wired store changes no live auth decision, matching every prior release's advisory-only behavior. Provide policies via EITHER `access_policies.file` OR `access_policies.policies`; both fails loud.
 
-A matched `deny` verdict returns `403 conditional_access_denied`; a matched `require_step_up` verdict routes through the SAME MFA orchestration `mfa.*` configures (`WithMFAProvider` + `WithMFAChallengeStore`) — without both wired it decays to allow, never inventing a step-up path the deployment hasn't configured. A trust-scorer or policy-store outage always FAILS OPEN on `/auth/login` (logs and proceeds), regardless of `default_deny` — a risk signal must never become an account-lockout oracle.
+A matched `deny` verdict returns `403 conditional_access_denied` during interactive login; a matched `require_step_up` verdict routes through the SAME MFA orchestration `mfa.*` configures (`WithMFAProvider` + `WithMFAChallengeStore`). Without both MFA dependencies wired, the resolved operator policy fails closed with `403 conditional_access_denied` instead of being bypassed. `restrict_scopes` is intersected with the client-authorized scope set and survives MFA and consent continuations, so authorization codes, access tokens, and refresh tokens all inherit the reduced authority; `log: true` emits the resolved structured decision. `prompt=none` silent renewal re-evaluates the same policy after validating the ID-token hint and its exact `sid`: deny is blocked, required step-up returns `interaction_required`, and scope restrictions cap the renewed token. The hint binds its original scopes, RFC 8707 resources, and RFC 9396 authorization details; renewal may preserve or reduce that grant but expansion returns `400 consent_required` and requires an interactive flow. Refresh-token use re-evaluates current groups, device, trust, geo, session age, and authentication age: deny collapses to `400 invalid_grant`, step-up (or a continuously verified session marked `StepUpRequired`) returns `400 insufficient_user_authentication`, and scope restriction can only shrink the successor grant. The caller must restart an interactive login to satisfy a refresh-time step-up. A trust-scorer or policy-store outage still FAILS OPEN on login, silent renewal, and refresh (logs and proceeds), regardless of `default_deny` — an unavailable risk signal must never become an account-lockout oracle.
 
-Pair with `sso.WithTrustScorer` (a `shared/trust.TrustScorer`, typically a `trust.WeightedComposite` — see "Trust Scoring" below for the reference-implementation cmd wiring) and `sso.WithDeviceFingerprint` (a `conditionalaccess.DeviceFingerprint`, e.g. `conditionalaccess.NewMemoryDeviceFingerprint()`) to feed the engine real trust-score and device-posture signals; `WithDeviceFingerprint` remains a Go-level SDK option with no YAML surface (no reference implementation to declare declaratively), so operators wire a custom device-posture source directly like a custom `RiskScorer`.
+Pair with `sso.WithTrustScorer` (a `shared/trust.TrustScorer`, typically a `trust.WeightedComposite` — see "Trust Scoring" below for the reference-implementation cmd wiring) and `sso.WithDeviceFingerprint` (a `conditionalaccess.DeviceFingerprint`, e.g. `conditionalaccess.NewMemoryDeviceFingerprint()`) to feed the engine real composite-trust and managed-posture signals. `user.member_of` reads the current per-user/client role codes from `permissions.Provider`; `device.type` is parsed from User-Agent, while `device.trust_level`, `device.is_new`, and `device.is_new_location` read the physical device inventory wired by `sso.WithDeviceStore`. `session.age_seconds` and `authentication.age_seconds` are inclusive minimum ages used for periodic reauthentication; a missing or future-dated timestamp does not match. `session.max_concurrent` is a per-subject/client ceiling: login evaluates existing sessions plus the prospective new one, while convergence removes newest excess sessions until the count is within the ceiling. Missing/erroring role, device, geo, or session-count sources degrade to an absent signal instead of denying.
+
+When enforcement is active, server-side sessions persist client, scope, authentication-time, device and trust context across memory, SQLite, Redis and Postgres backends. Each sweep uses one policy snapshot: deny revokes; step-up writes `StepUpRequired`; scope restriction persists an authorization ceiling that refresh may preserve or reduce but never re-expand. The first sweep runs at process startup, later sweeps use the configured interval, and the admin POST runs the same bounded pass immediately. Policy-store failure mutates nothing and is retried on the next interval.
 
 | Key | Effect |
 |---|---|
@@ -494,7 +615,9 @@ Pair with `sso.WithTrustScorer` (a `shared/trust.TrustScorer`, typically a `trus
 | `access_policies.policies` | Inline CAP rule list (`name`, `priority`, `enabled`, `dry_run`, `conditions`, `actions`) |
 | `access_policies.degraded_trust` | Conservative trust value substituted when a signal is missing; `<=0` or `>1` normalizes to the engine default (`0.3`) |
 | `access_policies.default_deny` | Flips the no-policy-matched verdict from allow to deny (a zero-trust posture) and governs the fallback when the store is unavailable |
-| `access_policies.enforce` | Activates the live `/auth/login` PEP. `false` (default) keeps the engine advisory-only even with policies configured — stage policies (`dry_run` entries, `enforce: false`) and check the admin governance view before flipping this on |
+| `access_policies.enforce` | Activates live enforcement on `/auth/login`, `prompt=none`, and refresh-token issuance. `false` (default) keeps the engine advisory-only even with policies configured — stage policies (`dry_run` entries, `enforce: false`) and check the admin governance view before flipping this on |
+| `access_policies.session_sweep_interval` | Active-session convergence cadence when enforcement is enabled. `0` takes `5m`; negative values fail startup |
+| `access_policies.session_sweep_batch_size` | Maximum sessions evaluated/mutated per pass. `0` takes `500`; negative values fail startup. The cursor advances between passes |
 
 ## Trust Scoring
 
@@ -581,20 +704,25 @@ Emergency ("break-glass") admin sessions. Disabled by default; without it no bre
 
 ## User Lifecycle
 
-User-lifecycle state-machine admin surface (`domains/userlifecycle`, `sso.WithUserLifecycle`), mounting `GET`/`POST /api/v1/admin/users/:id/lifecycle`. GOVERNANCE metadata only — it NEVER gates authentication (`core.User.IsActive` still owns the login decision). Disabled by default: an absent/`false` section wires nothing, byte-identical to a build without the feature. Only a memory backend exists today (`domains/userlifecycle/memory`).
+User lifecycle is both an admin state machine (`domains/userlifecycle`, `sso.WithUserLifecycle`) and an end-user authentication gate. It mounts `GET`/`POST /api/v1/admin/users/:id/lifecycle`; only `active` accounts may complete interactive, MFA or federated continuation login, redeem/renew/exchange an end-user grant (authorization code, refresh, device, CIBA, token exchange, JWT bearer, SAML bearer or agent delegation), or pass the server's access/ID-token validation path. Validation checks both `sub` and every RFC 8693 `act` link, so suspending a delegating human also stops an agent token. `client_credentials` is deliberately unaffected because it has no user subject. A missing lifecycle record is implicitly `active`; a lifecycle-store read failure fails closed. This is additive to SCIM/core `User.IsActive`: either control can deny an account.
+
+The stock server synchronously revokes the subject's live sessions and all refresh tokens when a transition enters `invited`, `suspended`, `inactive`, `archived`, or `purged`. Stateless access tokens cannot be physically deleted, but subsequent validation by this server rejects them and RFC 7662 introspection returns `active: false`; lifecycle state and the complete `act` chain are rechecked even on an introspection-cache hit. A resource server that validates JWTs entirely offline must use introspection or a separate revocation/event channel when immediate lifecycle enforcement is required.
+
+Disabled by default: an absent/`false` section wires nothing, byte-identical to a build without the feature. The default `memory` backend is process-local and loses state on restart. `postgres` stores the current state and append-only transition history on the shared top-level Postgres/Cockroach pool; state advancement and history insertion commit atomically. `server.topology.mode: multi` requires this shared backend when lifecycle enforcement is enabled, unless the explicitly unsafe `allow_per_pod_state` development override is set.
 
 `user_lifecycle.auto_deprovision` is a SEPARATE, independently-gated opt-in — mirrors `sso.WithUserAutoDeprovision` itself requiring `sso.WithUserLifecycle` at the SDK layer, since the sweep persists through the SAME store. Enabling it with `user_lifecycle.enabled: false` fails loud at boot rather than silently building a sweep with nowhere to persist its transitions. When armed, `Server.RunUserAutoDeprovision` runs in a background goroutine (standard cancel/done shutdown lifecycle) advancing dormant accounts: `ACTIVE` → `INACTIVE` past `dormant_after`, and — when `archive_after > 0` — `INACTIVE` → `ARCHIVED` past `dormant_after + archive_after`. Activity is derived from the wired `SessionManager` (`userlifecycle.SessionLastActive`) — a user with no live session reads as "unknown" and is never touched (fail-safe by design; no other activity backend exists in this wiring today).
 
 | Key | Effect |
 |---|---|
-| `user_lifecycle.enabled` | Builds the `userlifecycle.Store` and wires `sso.WithUserLifecycle`, mounting the admin state-machine endpoints |
+| `user_lifecycle.enabled` | Builds the selected `userlifecycle.Store`, mounts the admin state-machine endpoints, enables the fail-closed end-user auth/token gate, and wires transition-triggered session/refresh-token revocation |
+| `user_lifecycle.backend` | `memory` (default; single-process) or `postgres` (shared, restart-safe state and history). `postgres` requires the top-level `postgres` block and is the only HA-safe stock backend |
 | `user_lifecycle.auto_deprovision.enabled` | Arms the background dormancy sweep. Requires `user_lifecycle.enabled: true`, plus `dormant_after` and `sweep_interval` both `> 0` (fails loud at boot otherwise) |
 | `user_lifecycle.auto_deprovision.dormant_after` | How long an `ACTIVE` account may be idle before the sweep moves it to `INACTIVE`. `<=0` disables the sweep |
 | `user_lifecycle.auto_deprovision.archive_after` | ADDITIONAL idle time beyond `dormant_after` before an `INACTIVE` account advances to `ARCHIVED` (measured from last activity). `<=0` leaves `INACTIVE` accounts untouched indefinitely |
 | `user_lifecycle.auto_deprovision.max_per_sweep` | Caps transitions applied per sweep (a deprovisioning-storm guard); `0` = unlimited |
 | `user_lifecycle.auto_deprovision.sweep_interval` | `Server.RunUserAutoDeprovision` background-loop cadence; `<=0` disables the loop even when `dormant_after` is set |
 
-Every applied transition (admin- or sweep-driven) emits `admin_user_lifecycle_changed` (see `docs/error-codes.md`'s "User lifecycle state machine" section for the full state table and wire error codes).
+Every applied transition (admin- or sweep-driven) emits `admin_user_lifecycle_changed` and runs the same revocation reaction (see `docs/error-codes.md`'s "User lifecycle state machine" section for the full state table and wire error codes).
 
 ## Admin Governance Framework
 
@@ -621,10 +749,11 @@ framework" for the wire error codes each mechanism returns.
 
 | Key | Effect |
 |---|---|
-| `feature_gates.{oidc,ciba,caep,federation,self_service,admin_api,web_spa}` | Each is `*bool`; omitted (default) or `true` = reachable when the surface's own dependencies are wired; explicit `false` = request-time gate returns the router-native 404. A gate never constructs a missing store/handler. |
+| `feature_gates.{oidc,ciba,caep,federation,self_service,admin_api,branding}` | Each is `*bool`; omitted (default) or `true` = reachable when the surface's own dependencies are wired; explicit `false` = request-time gate returns the router-native 404. A gate never constructs a missing store/handler. |
 | `feature_gates.oidc` | Gates `/userinfo` + `/end_session`; discovery drops `userinfo_endpoint`/`end_session_endpoint` (both `omitempty`) when off |
 | `feature_gates.ciba` | Gates `POST /backchannel-authentication` (previously mounted unconditionally, 501-ing without a CIBA store — this is the first way to make it a 404 instead) |
 | `feature_gates.admin_api` | Gates the ENTIRE `/api/v1/admin/*` group (incl. the `GET /api/v1/admin/endpoints` runtime inventory); off ⇒ every route in the group answers a router-native 404 — the group itself is always registered (so this gate is SIGHUP hot-reloadable in both directions; see "Hot Reload" above), reachability is what the gate controls |
-| `feature_gates.web_spa` | Legacy name retained for compatibility. With a tenant store wired it gates only public `GET /branding`; no SPA/static frontend is mounted. |
+| `feature_gates.branding` | Canonical name (formerly `web_spa`). With a tenant store wired it gates only public `GET /branding`; no SPA/static frontend is mounted. |
+| `feature_gates.web_spa` | Deprecated alias of `feature_gates.branding`, parsed with a startup warning. Setting BOTH keys is a startup error. Removed with the next schema-version bump. |
 | GET `/api/v1/admin/endpoints` | Admin-gated (`admin:read`) runtime inventory: method + path + `feature_gates` surface (or `core`) for every route THIS replica actually registered |
 | Startup visibility | Any explicitly-disabled gate emits a `feature_gates_disabled` audit event + log line + sets `sso_feature_gate_enabled{feature=...}` to 0 (1 for every enabled gate) — attack-surface changes are security-relevant |

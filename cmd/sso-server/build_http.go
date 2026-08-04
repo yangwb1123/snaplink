@@ -11,6 +11,7 @@ import (
 	"github.com/yangwb1123/snaplink/config"
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/interfaces/grpcserver"
+	"github.com/yangwb1123/snaplink/interfaces/ssoext"
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -180,6 +181,9 @@ func adminGatewayResourcePaths() []string {
 		// "{id}:restore".
 		"/api/v1/admin/snapshots",
 		"/api/v1/admin/snapshots/{id}",
+		// durable multi-step operation journal
+		"/api/v1/admin/operations",
+		"/api/v1/admin/operations/{id}",
 		// tenants — proto/admin/v1/tenants.proto. "{id}" also catches
 		// "{id}:set-status".
 		"/api/v1/admin/tenants",
@@ -371,12 +375,12 @@ func mountSAMLHandler(cfg *config.Config, a *app, logger spi.Logger) error {
 	if cfg.SAML.Handler == "" {
 		return nil
 	}
-	factory, ok := lookupSAMLHandlerFactory(cfg.SAML.Handler)
+	factory, ok := ssoext.LookupSAMLHandlerFactory(cfg.SAML.Handler)
 	if !ok {
-		return fmt.Errorf("saml.handler %q is not registered (call RegisterSAMLHandlers from your forked main); registered: %v",
-			cfg.SAML.Handler, RegisteredSAMLHandlers())
+		return fmt.Errorf("saml.handler %q is not registered (call ssoext.RegisterSAMLHandlers from your forked main); registered: %v",
+			cfg.SAML.Handler, ssoext.RegisteredSAMLHandlers())
 	}
-	set, err := factory(context.Background(), SAMLServerDeps{
+	set, err := factory(context.Background(), ssoext.SAMLServerDeps{
 		IssuerForClient:       a.server.IssuerForClient,
 		ClientStore:           a.clientStore,
 		SessionManager:        a.sessionMgr,
@@ -385,6 +389,7 @@ func mountSAMLHandler(cfg *config.Config, a *app, logger spi.Logger) error {
 		AuditRecorder:         a.recorder,
 		Logger:                logger,
 		RegisterAuthenticator: a.server.RegisterAuthenticator,
+		ResumeFederatedLogin:  a.server.ResumeFederatedLogin,
 	})
 	if err != nil {
 		return fmt.Errorf("saml handler %q: %w", cfg.SAML.Handler, err)
@@ -440,25 +445,39 @@ func registerAdminGateway(ctx context.Context, gw *runtime.ServeMux, a *app) err
 			return fmt.Errorf("gateway keys: %w", err)
 		}
 	}
-	if a.snapshotPipeline != nil {
-		if err := adminv1.RegisterSnapshotAdminServiceHandlerServer(ctx, gw, grpcserver.NewSnapshotAdminService(
-			a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder)); err != nil {
-			return fmt.Errorf("gateway snapshots: %w", err)
-		}
-	}
-	if a.releaseStore != nil {
-		if err := adminv1.RegisterReleaseAdminServiceHandlerServer(ctx, gw, grpcserver.NewReleaseAdminService(
-			a.releaseRegistry, a.releaseStore, a.recorder)); err != nil {
-			return fmt.Errorf("gateway releases: %w", err)
-		}
+	if err := registerLifecycleGateway(ctx, gw, a); err != nil {
+		return err
 	}
 	if a.tenantStore != nil {
 		if err := adminv1.RegisterTenantAdminServiceHandlerServer(ctx, gw, grpcserver.NewTenantAdminService(
 			a.tenantStore, a.recorder, a.server.InvalidateTenantSuspensionCache,
 			a.server.InvalidateTenantResidencyCache,
-			func(ctx context.Context, id string) { _, _ = a.server.RevokeTenantRefreshTokens(ctx, id) })); err != nil {
+			a.server.RevokeTenantCredentials)); err != nil {
 			return fmt.Errorf("gateway tenants: %w", err)
 		}
+	}
+	return nil
+}
+
+func registerLifecycleGateway(ctx context.Context, gw *runtime.ServeMux, a *app) error {
+	if a.snapshotPipeline != nil {
+		if err := adminv1.RegisterSnapshotAdminServiceHandlerServer(ctx, gw, grpcserver.NewSnapshotAdminService(
+			a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder, a.operationStore)); err != nil {
+			return fmt.Errorf("gateway snapshots: %w", err)
+		}
+	}
+	if a.releaseStore != nil {
+		if err := adminv1.RegisterReleaseAdminServiceHandlerServer(ctx, gw, grpcserver.NewReleaseAdminService(
+			a.releaseRegistry, a.releaseStore, a.recorder, a.operationStore)); err != nil {
+			return fmt.Errorf("gateway releases: %w", err)
+		}
+	}
+	if a.operationStore == nil {
+		return nil
+	}
+	if err := adminv1.RegisterOperationAdminServiceHandlerServer(
+		ctx, gw, grpcserver.NewOperationAdminService(a.operationStore)); err != nil {
+		return fmt.Errorf("gateway operations: %w", err)
 	}
 	return nil
 }

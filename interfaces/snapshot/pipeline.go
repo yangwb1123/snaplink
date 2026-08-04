@@ -72,6 +72,14 @@ type SealedEnvelope struct {
 	EncryptionParams []byte `json:"encryption_params,omitempty"`
 	ChecksumSHA256   string `json:"plaintext_sha256_hex"`
 	Body             []byte `json:"body"`
+
+	// Kind mirrors Snapshot.Kind as an additive header field (empty for
+	// ordinary exports). It lives HERE, not in the body, so retention and
+	// List can classify artifacts with PeekEnvelope alone (no decryption)
+	// and pre-change binaries still decode every body byte-identically
+	// (the body codec rejects unknown fields). Old readers ignore the
+	// unknown header field; new readers treat its absence as "ordinary".
+	Kind string `json:"kind,omitempty"`
 }
 
 // Pipeline composes a Codec + Sealer + Storage. Construct one and re-use
@@ -112,6 +120,7 @@ func (p *Pipeline) Save(ctx context.Context, snap *Snapshot, dst Storage, name s
 		EncryptionParams: params,
 		ChecksumSHA256:   hex.EncodeToString(sum[:]),
 		Body:             cipher,
+		Kind:             snap.Kind,
 	}
 	raw, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
@@ -163,7 +172,15 @@ func (p *Pipeline) Load(ctx context.Context, src Storage, name string) (*Snapsho
 	if !bytesEq(sum[:], want) {
 		return nil, ErrChecksumMismatch
 	}
-	return codec.Unmarshal(plain)
+	snap, err := codec.Unmarshal(plain)
+	if err != nil {
+		return nil, err
+	}
+	// Kind is header-only; re-attach it so in-memory consumers (the
+	// orchestrator's recursion guard, rollback validation) see the same
+	// classification PeekEnvelope reports.
+	snap.Kind = env.Kind
+	return snap, nil
 }
 
 // PeekEnvelope decodes the SealedEnvelope wrapper from raw bytes

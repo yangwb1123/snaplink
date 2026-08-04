@@ -1,11 +1,78 @@
 package sso
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"strconv"
+	"time"
+
 	"github.com/yangwb1123/snaplink/domains/threataction"
 	"github.com/yangwb1123/snaplink/domains/tokenexchange"
 	"github.com/yangwb1123/snaplink/interfaces/admin"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/notification"
+	"github.com/yangwb1123/snaplink/platform/sse"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
+
+const ctxKeyAuthHookSkipMFA = "auth_hook_skip_mfa"
+
+type notificationState struct {
+	notificationStore           core.NotificationStore
+	notificationPreferenceStore core.NotificationPreferenceStore
+	notificationRouter          *notification.Router
+}
+
+// WithNotificationStore mounts the authenticated inbox and preference API.
+func WithNotificationStore(store core.NotificationStore, preferences core.NotificationPreferenceStore) Option {
+	return func(s *Server) {
+		s.notificationStore, s.notificationPreferenceStore = store, preferences
+	}
+}
+
+// WithNotificationRouter attaches the asynchronous audit-event delivery tap.
+func WithNotificationRouter(router *notification.Router) Option {
+	return func(s *Server) { s.notificationRouter = router }
+}
+
+func (s *Server) NotificationStore() core.NotificationStore { return s.notificationStore }
+func (s *Server) NotificationPreferenceStore() core.NotificationPreferenceStore {
+	return s.notificationPreferenceStore
+}
+func (s *Server) NotificationBroker() *sse.Broker {
+	if s.notificationRouter == nil {
+		return nil
+	}
+	return s.notificationRouter.Broker()
+}
+
+// StartNotificationRouter starts the optional delivery workers.
+func (s *Server) StartNotificationRouter(ctx context.Context) <-chan struct{} {
+	if s.notificationRouter != nil {
+		return s.notificationRouter.Start(ctx)
+	}
+	done := make(chan struct{})
+	close(done)
+	return done
+}
+
+func (s *Server) applyNotificationErasureWiring() {
+	if s.accountEraser == nil {
+		return
+	}
+	s.accountEraser.Notifications = s.notificationStore
+	s.accountEraser.NotificationPreferences = s.notificationPreferenceStore
+}
+
+// ShutdownNotificationRouter stops and drains the optional delivery workers.
+func (s *Server) ShutdownNotificationRouter(ctx context.Context) error {
+	if s.notificationRouter == nil {
+		return nil
+	}
+	return s.notificationRouter.Close(ctx)
+}
 
 // Active ITDR threat-policy admin route-path re-exports.
 const PathAdminThreatPolicies = core.PathAdminThreatPolicies
@@ -133,4 +200,228 @@ func (s *Server) mountAdminTokenExchangeChainRoutes() {
 	}
 	api := core.NewGatedRouter(s.router.Group(PathAPIPrefix), s.adminAPIGateOn)
 	api.GET(core.PathAdminTokenExchangeChain, s.handleAdminTokenExchangeChain)
+}
+
+// authPipelineState holds the optional lifecycle extension registry. It lives
+// here because interfaces/sso is at its frozen production-file ceiling.
+type authPipelineState struct {
+	authHooks *core.AuthHookRegistry
+}
+
+// WithAuthHook registers one ordered authentication lifecycle extension.
+// Invalid or duplicate registrations panic during server construction so a
+// security control can never be silently omitted due to bad startup wiring.
+func WithAuthHook(hooks ...core.AuthHook) Option {
+	return func(s *Server) {
+		if s.authHooks == nil {
+			s.authHooks = core.NewAuthHookRegistry(s.observeAuthHook)
+		}
+		for _, hook := range hooks {
+			if err := s.authHooks.Register(hook); err != nil {
+				panic(fmt.Sprintf("sso: register auth hook: %v", err))
+			}
+		}
+	}
+}
+
+// WithConfiguredAuthHook registers one hook with configuration supplied by the
+// composition root instead of the hook implementation.
+func WithConfiguredAuthHook(hook core.AuthHook, config core.AuthHookConfig) Option {
+	return func(s *Server) {
+		if s.authHooks == nil {
+			s.authHooks = core.NewAuthHookRegistry(s.observeAuthHook)
+		}
+		if err := s.authHooks.Register(hook, config); err != nil {
+			panic(fmt.Sprintf("sso: register configured auth hook: %v", err))
+		}
+	}
+}
+
+func (s *Server) runPreAuthenticateHook(ctx HandlerContext, req *login.Request, client *Client) bool {
+	if s.authHooks == nil || !s.authHooks.Has(core.PhasePreAuthenticate) {
+		return false
+	}
+	_, err := s.authHooks.Execute(ctx.Request().Context(), s.loginHookInput(ctx, req, client, nil, core.PhasePreAuthenticate))
+	return s.rejectAuthHook(ctx, req, err)
+}
+
+func (s *Server) runPostAuthenticateHook(ctx HandlerContext, req *login.Request, client *Client, result *AuthResult) bool {
+	if s.authHooks == nil || !s.authHooks.Has(core.PhasePostAuthenticate) {
+		return false
+	}
+	input := s.loginHookInput(ctx, req, client, result, core.PhasePostAuthenticate)
+	output, err := s.authHooks.Execute(ctx.Request().Context(), input)
+	if s.rejectAuthHook(ctx, req, err) {
+		return true
+	}
+	if output != nil {
+		mergeAuthResultAttributes(result, output.Attributes)
+		if output.SkipMFA {
+			ctx.Set(ctxKeyAuthHookSkipMFA, true)
+		}
+	}
+	return false
+}
+
+func (s *Server) notifyLoginFailedHook(ctx HandlerContext, req *login.Request, code string) {
+	if s.authHooks == nil || !s.authHooks.Has(core.PhaseOnLoginFailed) {
+		return
+	}
+	input := s.loginHookInput(ctx, req, nil, nil, core.PhaseOnLoginFailed)
+	input.FailureCode = code
+	_, _ = s.authHooks.Execute(ctx.Request().Context(), input)
+}
+
+func (s *Server) loginHookInput(ctx HandlerContext, req *login.Request, client *Client, result *AuthResult, phase core.LoginPhase) *core.HookInput {
+	input := &core.HookInput{Phase: phase, ClientID: req.ClientID, Provider: req.Provider,
+		IP: audit.ClientIP(ctx.Request()), Headers: firstHeaderValues(ctx.Request().Header), Scopes: append([]string(nil), req.Scope...)}
+	if client != nil {
+		input.TenantID = client.TenantID
+	}
+	if result != nil {
+		input.UserID, input.AuthResult = result.UserID, result
+	}
+	return input
+}
+
+func (s *Server) rejectAuthHook(ctx HandlerContext, req *login.Request, err error) bool {
+	if err == nil {
+		return false
+	}
+	status, code, ok := core.AuthHookHTTPError(err)
+	if !ok {
+		status, code = http.StatusForbidden, core.ErrAuthHookRejected
+	}
+	s.logErrorCtx(ctx, "authentication hook rejected request", "error", err)
+	s.recordLoginFailure(ctx, req.ClientID, req.Provider, code)
+	s.notifyLoginFailedHook(ctx, req, code)
+	ctx.JSON(status, s.authzErrorBodyWithState(ctx, code, req.State))
+	return true
+}
+
+func authHookSkipsMFA(ctx HandlerContext) bool {
+	value, ok := ctx.Get(ctxKeyAuthHookSkipMFA).(bool)
+	return ok && value
+}
+
+func mergeAuthResultAttributes(result *AuthResult, additions map[string]string) {
+	if len(additions) == 0 {
+		return
+	}
+	if result.Attributes == nil {
+		result.Attributes = make(map[string]string, len(additions))
+	}
+	for key, value := range additions {
+		result.Attributes[key] = value
+	}
+}
+
+func firstHeaderValues(headers http.Header) map[string]string {
+	values := make(map[string]string, len(headers))
+	for name, entries := range headers {
+		if len(entries) != 0 {
+			values[name] = entries[0]
+		}
+	}
+	return values
+}
+
+func (s *Server) authHookIssuer(client *Client, issuer TokenIssuer) TokenIssuer {
+	if s.authHooks == nil || (!s.authHooks.Has(core.PhasePreTokenIssuance) && !s.authHooks.Has(core.PhasePostTokenIssuance)) {
+		return issuer
+	}
+	tenantID := ""
+	if client != nil {
+		tenantID = client.TenantID
+	}
+	return &pipelineTokenIssuer{inner: issuer, hooks: s.authHooks, tenantID: tenantID}
+}
+
+type pipelineTokenIssuer struct {
+	inner    TokenIssuer
+	hooks    *core.AuthHookRegistry
+	tenantID string
+}
+
+func (i *pipelineTokenIssuer) Issue(ctx context.Context, subject *Subject, scopes []string) (*Token, error) {
+	subjectCopy := cloneHookSubject(subject)
+	input := &core.HookInput{Phase: core.PhasePreTokenIssuance, ClientID: subjectCopy.ClientID,
+		TenantID: i.tenantID, Provider: subjectCopy.Provider, UserID: subjectCopy.ID,
+		Claims: subjectCopy.Claims, Scopes: append([]string(nil), scopes...), SessionID: subjectCopy.SID}
+	if output, err := i.hooks.Execute(ctx, input); err != nil {
+		return nil, err
+	} else if output != nil {
+		mergeSubjectClaims(subjectCopy, output.Claims)
+	}
+	token, err := i.inner.Issue(ctx, subjectCopy, scopes)
+	if err != nil {
+		return nil, err
+	}
+	input.Phase, input.Token = core.PhasePostTokenIssuance, token
+	_, _ = i.hooks.Execute(ctx, input)
+	return token, nil
+}
+
+func (i *pipelineTokenIssuer) Validate(ctx context.Context, token string) (*TokenClaims, error) {
+	return i.inner.Validate(ctx, token)
+}
+
+func (i *pipelineTokenIssuer) Revoke(ctx context.Context, token string) error {
+	return i.inner.Revoke(ctx, token)
+}
+
+func cloneHookSubject(subject *Subject) *Subject {
+	clone := *subject
+	clone.Claims = make(map[string]string, len(subject.Claims))
+	for key, value := range subject.Claims {
+		clone.Claims[key] = value
+	}
+	clone.Resources = append([]string(nil), subject.Resources...)
+	clone.AMR = append([]string(nil), subject.AMR...)
+	clone.AuthorizationDetails = append([]byte(nil), subject.AuthorizationDetails...)
+	clone.RequestedClaims = append([]byte(nil), subject.RequestedClaims...)
+	return &clone
+}
+
+func mergeSubjectClaims(subject *Subject, additions map[string]string) {
+	if len(additions) == 0 {
+		return
+	}
+	if subject.Claims == nil {
+		subject.Claims = make(map[string]string, len(additions))
+	}
+	for key, value := range additions {
+		subject.Claims[key] = value
+	}
+}
+
+func (s *Server) observeAuthHook(ctx context.Context, execution core.AuthHookExecution) {
+	if s.metrics != nil {
+		s.metrics.ObserveAuthHookExecution(string(execution.Phase), execution.Name, execution.Outcome, execution.Duration)
+	}
+	if s.auditor == nil {
+		return
+	}
+	eventType, outcome := audit.EventAuthHookExecuted, audit.OutcomeSuccess
+	if execution.Outcome != "success" {
+		eventType, outcome = audit.EventAuthHookFailed, audit.OutcomeFailure
+	}
+	event := &audit.Event{Type: eventType, Outcome: outcome, ActorID: execution.UserID,
+		ActorIP: execution.IP, ClientID: execution.ClientID, TenantID: execution.TenantID, Reason: execution.Code}
+	audit.SetMeta(event, "auth_hook.phase", string(execution.Phase))
+	audit.SetMeta(event, "auth_hook.name", execution.Name)
+	audit.SetMeta(event, "auth_hook.duration_ms", strconv.FormatInt(execution.Duration.Milliseconds(), 10))
+	audit.SetMeta(event, "auth_hook.continued", strconv.FormatBool(execution.Continued))
+	s.auditor.Record(ctx, event)
+}
+
+func (s *Server) recordPasswordExpiring(ctx HandlerContext, req *login.Request, result *AuthResult, remaining time.Duration) {
+	if s.auditor == nil || remaining > 7*24*time.Hour {
+		return
+	}
+	event := &audit.Event{Type: audit.EventPasswordExpiring, Outcome: audit.OutcomeSuccess,
+		ActorID: result.UserID, ActorIP: audit.ClientIP(ctx.Request()), ClientID: req.ClientID}
+	days := int((remaining + 24*time.Hour - 1) / (24 * time.Hour))
+	audit.SetMeta(event, "days_remaining", strconv.Itoa(days))
+	s.auditor.Record(ctx.Request().Context(), event)
 }

@@ -1,7 +1,8 @@
-# 代码实现 Pipeline - 非聚合设计草案
+# 代码实现 Pipeline - 聚合模式
 #
-# 当前 runner 会把架构师与 Tech Lead 的输出分别扇出为实现任务，可能对同一
-# 工作树重复或冲突修改。修复聚合语义前仅做 dry-run，不要执行真实实现。
+# 各 from_outputs 阶段启用 aggregate: true：下游角色一次性看到上游全部输出
+# （架构师 + Tech Lead 方案合并给实现任务），避免笛卡尔扇出和对同一工作树的
+# 重复/冲突修改。执行前先用 --dry-run 检查；实现类任务不要在生产分支直接运行。
 #
 # 使用方法：
 #   python3 ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline-code-impl.yaml --dry-run
@@ -24,6 +25,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: technical-design
     from_outputs: requirement-analysis
+    aggregate: true
     tasks:
       - role: architect
         prompt_template: ai-dev/prompts/architect.md
@@ -49,6 +51,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: code-implementation
     from_outputs: technical-design
+    aggregate: true
     tasks:
       - role: implementer
         prompt_template: ai-dev/prompts/code-implementer.md
@@ -67,6 +70,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: code-review
     from_outputs: code-implementation
+    aggregate: true
     tasks:
       - role: reviewer
         prompt_template: ai-dev/prompts/staff_engineer.md
@@ -92,6 +96,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: test-writing
     from_outputs: code-review
+    aggregate: true
     tasks:
       - role: qa-engineer
         prompt_template: ai-dev/prompts/qa_lead.md
@@ -110,6 +115,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: final-review
     from_outputs: test-writing
+    aggregate: true
     tasks:
       - role: tech-lead
         prompt_template: ai-dev/prompts/tech_lead.md

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -84,13 +85,13 @@ func mintHint(t *testing.T, d *silentDeps, sub, clientID string, scopes ...strin
 	if len(scopes) == 0 {
 		scopes = []string{"openid"}
 	}
-	tok, err := d.issuer.Issue(context.Background(), &core.Subject{
-		ID: sub, ClientID: clientID, AuthTime: time.Now(),
-	}, scopes)
+	tok, err := d.issuer.IssueIDToken(context.Background(), &oidc.IDTokenRequest{
+		Subject: sub, Audience: clientID, AuthTime: time.Now(), GrantedScopes: scopes,
+	})
 	if err != nil {
 		t.Fatalf("mint hint: %v", err)
 	}
-	return tok.AccessToken
+	return tok
 }
 
 func decodeBody(t *testing.T, b []byte) map[string]any {
@@ -153,6 +154,80 @@ func TestHandleSilentRenewal_ClientMismatchLoginRequired(t *testing.T) {
 	oidc.HandleSilentRenewal(d, ctx, []string{"none"}, oidc.SilentRenewalRequest{IDTokenHint: hint}, &core.Client{ID: "client-B"})
 	if got := decodeBody(t, rec.Body.Bytes())[core.KeyError]; got != core.ErrLoginRequired {
 		t.Errorf("error = %v, want login_required (cross-RP)", got)
+	}
+}
+
+func TestHandleSilentRenewal_RejectsAccessTokenHint(t *testing.T) {
+	t.Parallel()
+	d := newSilentDeps(t)
+	_, _ = d.sessions.Create(context.Background(), "user-1")
+	tok, err := d.issuer.Issue(context.Background(), &core.Subject{ID: "user-1", ClientID: "c"}, []string{"openid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, rec := newCtx(http.MethodGet, "/auth/login")
+	oidc.HandleSilentRenewal(d, ctx, []string{"none"}, oidc.SilentRenewalRequest{IDTokenHint: tok.AccessToken}, &core.Client{ID: "c"})
+	if got := decodeBody(t, rec.Body.Bytes())[core.KeyError]; got != core.ErrLoginRequired {
+		t.Fatalf("access-token hint error=%v, want login_required", got)
+	}
+}
+
+func TestHandleSilentRenewal_RejectsGrantExpansion(t *testing.T) {
+	t.Parallel()
+	d := newSilentDeps(t)
+	_, _ = d.sessions.Create(context.Background(), "user-1")
+	hint := mintHint(t, d, "user-1", "c", "openid", "profile")
+	ctx, rec := newCtx(http.MethodGet, "/auth/login")
+	oidc.HandleSilentRenewal(d, ctx, []string{"none"}, oidc.SilentRenewalRequest{
+		IDTokenHint: hint, Scope: []string{"openid", "email"},
+	}, &core.Client{ID: "c"})
+	if got := decodeBody(t, rec.Body.Bytes())[core.KeyError]; got != core.ErrConsentRequired {
+		t.Fatalf("expanded scope error=%v, want consent_required", got)
+	}
+}
+
+func TestHandleSilentRenewal_BindsExactSessionID(t *testing.T) {
+	t.Parallel()
+	d := newSilentDeps(t)
+	oldSession, _ := d.sessions.Create(context.Background(), "user-1")
+	hint, err := d.issuer.IssueIDToken(context.Background(), &oidc.IDTokenRequest{
+		Subject: "user-1", Audience: "c", AuthTime: time.Now(), SID: oldSession.ID,
+		GrantedScopes: []string{"openid"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = d.sessions.Destroy(context.Background(), oldSession.ID)
+	_, _ = d.sessions.Create(context.Background(), "user-1")
+	ctx, rec := newCtx(http.MethodGet, "/auth/login")
+	oidc.HandleSilentRenewal(d, ctx, []string{"none"}, oidc.SilentRenewalRequest{IDTokenHint: hint}, &core.Client{ID: "c"})
+	if got := decodeBody(t, rec.Body.Bytes())[core.KeyError]; got != core.ErrLoginRequired {
+		t.Fatalf("destroyed sid with another live session error=%v, want login_required", got)
+	}
+}
+
+func TestHandleSilentRenewal_PreservesBoundResourceAndRAR(t *testing.T) {
+	t.Parallel()
+	d := newSilentDeps(t)
+	_, _ = d.sessions.Create(context.Background(), "user-1")
+	details := json.RawMessage(`[{"type":"payment","limit":10}]`)
+	hint, err := d.issuer.IssueIDToken(context.Background(), &oidc.IDTokenRequest{
+		Subject: "user-1", Audience: "c", AuthTime: time.Now(), GrantedScopes: []string{"openid"},
+		GrantedResources: []string{"https://api.example"}, AuthorizationDetails: details,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, rec := newCtx(http.MethodGet, "/auth/login")
+	oidc.HandleSilentRenewal(d, ctx, []string{"none"}, oidc.SilentRenewalRequest{IDTokenHint: hint}, &core.Client{ID: "c"})
+	body := decodeBody(t, rec.Body.Bytes())
+	access, _ := body[core.KeyAccessToken].(string)
+	claims, err := d.issuer.Validate(context.Background(), access)
+	if err != nil {
+		t.Fatalf("validate renewed token: %v (body=%v)", err, body)
+	}
+	if !slices.Equal(claims.Audience, []string{"https://api.example"}) || string(claims.AuthorizationDetails) != string(details) {
+		t.Fatalf("renewed grant audience=%v authorization_details=%s", claims.Audience, claims.AuthorizationDetails)
 	}
 }
 

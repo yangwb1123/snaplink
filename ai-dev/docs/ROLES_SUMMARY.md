@@ -31,8 +31,9 @@ python ai-dev/pi-batch.py \
   --dry-run
 ```
 
-Current pipelines do not aggregate parallel role output, and their command
-hooks do not provide a working failure gate. Inspect with `--dry-run`; invoke a
+Pipelines aggregate upstream outputs per role template when a stage sets
+`aggregate: true`, and post-stage command failures now fail the run with a
+non-zero exit. Inspect long pipelines with `--dry-run` first; invoke a
 bounded role independently and run repository checks directly before treating
 any result as implementation evidence.
 

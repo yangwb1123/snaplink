@@ -90,6 +90,7 @@ const (
 	EventPasswordResetRequested EventType = "password_reset_requested"
 	EventPasswordResetCompleted EventType = "password_reset_completed"
 	EventPasswordResetFailed    EventType = "password_reset_failed"
+	EventPasswordChanged        EventType = "password_changed"
 )
 
 // TOTP enrollment events.
@@ -161,6 +162,8 @@ const (
 const (
 	EventPasswordWeak        EventType = "password_weak"
 	EventPasswordCompromised EventType = "password_compromised"
+	EventPasswordExpiring    EventType = "password_expiring"
+	EventMFARemoved          EventType = "mfa_removed"
 )
 
 // SPIFFE JWT-SVID acceptance.
@@ -215,6 +218,12 @@ const (
 	EventDegradationModeChanged EventType = "degradation_mode_changed"
 )
 
+// Pluggable authentication-pipeline execution events.
+const (
+	EventAuthHookExecuted EventType = "auth_hook_executed"
+	EventAuthHookFailed   EventType = "auth_hook_failed"
+)
+
 // KnownEventTypes is the set of every event type the SDK emits itself
 // (across this file plus event_types_admin.go and event_types_system.go).
 // It exists so operator-facing tooling — e.g. the audit webhook subscription
@@ -239,7 +248,7 @@ var KnownEventTypes = map[EventType]struct{}{
 	// webauthn
 	EventWebAuthnRegistered: {}, EventWebAuthnAttestationDenied: {},
 	// password reset + TOTP enroll
-	EventPasswordResetRequested: {}, EventPasswordResetCompleted: {}, EventPasswordResetFailed: {},
+	EventPasswordResetRequested: {}, EventPasswordResetCompleted: {}, EventPasswordResetFailed: {}, EventPasswordChanged: {},
 	EventTOTPEnrolled: {}, EventTOTPEnrollFailed: {},
 	// MFA recovery-code regeneration (self-service)
 	EventRecoveryCodesRegenerated: {},
@@ -263,6 +272,8 @@ var KnownEventTypes = map[EventType]struct{}{
 	// CIBA + native SSO
 	EventCIBAAuthRequest: {}, EventCIBAApproved: {}, EventCIBADenied: {}, EventCIBAPingFailed: {},
 	EventNativeSSOExchange: {}, EventNativeSSOExchangeFailure: {},
+	EventAuthHookExecuted: {}, EventAuthHookFailed: {},
+	EventPasswordExpiring: {}, EventMFARemoved: {},
 	// admin control-plane (event_types_admin.go)
 	EventAdminClientCreated: {}, EventAdminClientUpdated: {}, EventAdminClientDeleted: {},
 	EventAdminClientSecretRotated: {}, EventAdminClientApproved: {}, EventAdminClientRejected: {},
@@ -304,6 +315,7 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventInvalidationBusDegraded: {}, EventInvalidationBusReconnected: {},
 	EventFeatureGatesDisabled: {}, EventSessionTrustStepUp: {},
 	EventConnectionAuthenticatorBuildFailed: {},
+	EventIdempotencyCaptureMissing:          {},
 	// agent delegation + identity linking + cross-tenant exchange + DR
 	EventAgentDelegationTokenIssued: {}, EventAgentSessionRevoked: {},
 	EventIdentityUnlinked: {}, EventIdentityMerged: {}, EventIdentityMergeRejected: {},

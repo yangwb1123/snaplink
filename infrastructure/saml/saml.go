@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
-	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/interfaces/ssoext"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
 	"github.com/yangwb1123/snaplink/saml/idp"
 	"github.com/yangwb1123/snaplink/saml/sp"
@@ -24,39 +24,19 @@ import (
 // inside the factory closure (see the package doc for the copy-pasteable
 // adaptation).
 //
-// Deps mirrors the shape of cmd's SAMLServerDeps so the adaptation is a
-// field-for-field copy.
+// Deps is the ROOT-module-typed dependency bundle saml.Build needs. It embeds
+// the standard host-API bundle (interfaces/ssoext.SAMLServerDeps — the exact
+// seams the stock server hands a SAML handler factory) and adds the
+// SAML-specific stores. Embedding (not aliasing) keeps every existing field
+// name: a fork's factory receives ssoext.SAMLServerDeps from
+// ssoext.RegisterSAMLHandlers and constructs `saml.Deps{SAMLServerDeps: d, ...}`
+// with no field-for-field copy — see the package doc.
 type Deps struct {
-	// ClientStore / SessionManager / UserProvider are the same stores the rest
-	// of the server reads, so a SAML login lands on the one identity model.
-	// SessionManager + UserProvider are REQUIRED by the ACS handler (it upserts
-	// the user + creates the session through them); ClientStore is carried for
-	// parity + future per-client SAML policy. SessionManager nil ⇒ Build errors.
-	ClientStore    sso.ClientStore
-	SessionManager sso.SessionManager
-	UserProvider   sso.UserProvider
-
-	// IssuerForClient is the server's per-tenant access-token issuer selector
-	// (tenant -> client strategy -> default). The SP side does NOT use it (it
-	// returns a session id). The IdP side REQUIRES it: it resolves the SP
-	// client's per-tenant signing key through this path (then borrows the key
-	// via the issuer's CryptoSigner() seam) so an assertion is signed with the
-	// SAME key published in that tenant's metadata. REQUIRED when IdP is
-	// enabled; may be nil for an SP-only build.
-	IssuerForClient func(c *sso.Client) (string, sso.TokenIssuer, error)
-
-	// Issuer is the configured AS issuer URL. REQUIRED when IdP is enabled (the
-	// IdP entity id is Issuer + "/saml", stamped into every assertion Issuer +
-	// the published metadata). Unused by the session-only SP ACS.
-	Issuer string
-
-	// AuditRecorder is the shared audit pipeline. The IdP records a
-	// login_success (provider "saml-idp") on it per issued assertion. Nil ⇒ the
-	// IdP issues without an audit event (the SP side never used it).
-	AuditRecorder *audit.Recorder
-
-	// Logger is the server logger. Nil ⇒ a no-op logger is used.
-	Logger spi.Logger
+	// SAMLServerDeps carries the root-module-typed seams the stock server
+	// passes a registered SAML handler factory (ClientStore /
+	// SessionManager / UserProvider, IssuerForClient, Issuer,
+	// AuditRecorder, Logger, RegisterAuthenticator).
+	ssoext.SAMLServerDeps
 
 	// SAMLSessionIndex enables the IdP-side SLO back-channel FAN-OUT (global
 	// single logout): it records, per subject, the SAML SPs that subject has an
@@ -231,6 +211,7 @@ func Build(deps Deps, cfg Config) (*BuildResult, error) {
 			users:        deps.UserProvider,
 			logger:       logger,
 			sessionHub:   deps.SessionHub,
+			resumeOAuth:  deps.ResumeFederatedLogin,
 		}
 		handlers = append(handlers, HandlerSpec{
 			Method:  http.MethodPost,
@@ -318,6 +299,7 @@ type acsHandler struct {
 	sessions     sso.SessionManager
 	users        sso.UserProvider
 	logger       spi.Logger
+	resumeOAuth  func(http.ResponseWriter, *http.Request, string, *sso.AuthResult) bool
 
 	// sessionHub, when non-nil (Deps.SessionHub), records this login's
 	// cross-protocol global_sid: a "core" leg (the just-created session) plus
@@ -369,6 +351,9 @@ func (h *acsHandler) serve(w http.ResponseWriter, r *http.Request) {
 		// ProcessAssertion already collapsed every validation failure to the
 		// single oracle-safe error; map it to the wire code with no detail.
 		writeError(w, http.StatusBadRequest, sso.ErrSAMLAssertionInvalid)
+		return
+	}
+	if h.resumeOAuth != nil && h.resumeOAuth(w, r, relayState, result) {
 		return
 	}
 

@@ -42,6 +42,16 @@ type RefreshToken struct {
 	// token. Empty FamilyID means the store doesn't track families.
 	FamilyID string
 
+	// JTI is the refresh record's correlation id, stamped once at first
+	// issue (the new-family branch) and propagated UNCHANGED through
+	// rotation — the same lineage discipline as FamilyID. It is never a
+	// JWT claim (refresh tokens are opaque): it exists so the
+	// refresh-introspect Offer can feed the per-token observation table
+	// via metering.Thumbprint(JTI), giving a rotation chain one stable
+	// thumbprint. Empty on legacy rows (or a rotation that predates the
+	// field) => Thumbprint "" => pre-feature behavior (no observation).
+	JTI string `json:"jti,omitempty"`
+
 	// Resources carries RFC 8707 resource indicators captured at
 	// the original authorization. The rotation grant stamps these
 	// into the new access token's aud claim so a refresh of a
@@ -140,6 +150,13 @@ type RefreshAuthContext struct {
 	// at first issue — IssueRefreshToken stamps "now" itself when it mints a
 	// brand-new FamilyID, so callers only need to thread this at ROTATION.
 	FamilyCreatedAt time.Time
+	// JTI propagates the family's correlation id unchanged across rotation
+	// (see RefreshToken.JTI) — the same propagate-unchanged discipline as
+	// FamilyID, via this bucket so the long IssueRefreshToken signature does
+	// not gain a positional parameter. Empty at first issue: the fresh-family
+	// branch stamps one. A rotation whose parent predates the field leaves it
+	// empty — pre-feature behavior (thumbprint-less introspection).
+	JTI string
 }
 
 // IsExpired reports whether the refresh token's lifetime has elapsed.

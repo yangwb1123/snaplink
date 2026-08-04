@@ -65,7 +65,7 @@ func (s *Server) Handle(method, path string, handler http.HandlerFunc) error {
 	if s.router == nil {
 		return fmt.Errorf("sso: Mount() must be called before Handle()")
 	}
-	wrap := func(ctx HandlerContext) { handler(ctx.ResponseWriter(), ctx.Request()) }
+	wrap := func(ctx HandlerContext) { handler(ctx.ResponseWriter(), requestWithHandlerContext(ctx)) }
 	switch strings.ToUpper(method) {
 	case http.MethodGet:
 		s.router.GET(path, wrap)
@@ -130,6 +130,14 @@ func (s *Server) mountMiddleware() {
 	// (nil-default byte-identical, matching geo's discipline).
 	if s.regionResolver != nil {
 		s.router.Use(region.Middleware(s.regionResolver, s.regionMiddlewareOpts))
+	}
+	// Misconfiguration guard for the discovery advertisement: advertising a
+	// region the tokens never carry would make an RS region gate (decision 3)
+	// fail closed on every token. Warn loudly (spi.Logger has no Warn level,
+	// so Error is the loudest channel) but keep serving — fail-open, matching
+	// every other With* option's nil-discipline.
+	if s.servingRegionAdvertisement != "" && s.regionResolver == nil && s.logger != nil {
+		s.logger.Error("WithServingRegionAdvertisement wired without WithRegionMiddleware: discovery advertises a serving region the tokens will not carry; RS region gates will fail closed")
 	}
 }
 
@@ -205,14 +213,14 @@ func gateOn(explicit *bool) bool {
 // seeded from s.featureGates once in NewServer) rather than s.featureGates
 // directly — each is hot-reloadable via its matching Set*GateEnabled method
 // (accessors_feature_gates.go for the five here; SetAdminAPIGateEnabled/
-// SetWebSPAGateEnabled live in accessors.go).
+// SetBrandingGateEnabled live in accessors.go).
 func (s *Server) oidcGateOn() bool        { return s.oidcLive.Load() }
 func (s *Server) cibaGateOn() bool        { return s.cibaLive.Load() }
 func (s *Server) caepGateOn() bool        { return s.caepLive.Load() }
 func (s *Server) federationGateOn() bool  { return s.federationLive.Load() }
 func (s *Server) selfServiceGateOn() bool { return s.selfServiceLive.Load() }
 func (s *Server) adminAPIGateOn() bool    { return s.adminAPILive.Load() }
-func (s *Server) webSPAGateOn() bool      { return s.webSPALive.Load() }
+func (s *Server) brandingGateOn() bool    { return s.brandingLive.Load() }
 
 // mountOIDCUserEndpoints registers the OIDC-specific /userinfo,
 // /end_session, and (session-management-gated) /check_session_iframe

@@ -115,3 +115,55 @@ func TestJTIConcurrentSingleWinner(t *testing.T) {
 		t.Fatalf("atomic first-sighting violated: %d firsts, want 1", firsts)
 	}
 }
+
+func TestRevocationStoreSharedLoadAndPrune(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	writer := NewRevocationStore(rdb)
+	reader := NewRevocationStore(rdb)
+	ctx := context.Background()
+	now := time.Now().Unix()
+	boundary := now + 60
+	future := now + 120
+
+	for token, exp := range map[string]int64{
+		"expired":  now - 1,
+		"boundary": boundary,
+		"future":   future,
+	} {
+		if err := writer.Revoke(ctx, token, exp); err != nil {
+			t.Fatalf("Revoke(%q): %v", token, err)
+		}
+	}
+	if count, err := rdb.ZCard(ctx, revocationSetKey).Result(); err != nil || count != 2 {
+		t.Fatalf("stored revocations = (%d, %v), want two live entries", count, err)
+	}
+
+	loaded, err := reader.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := loaded["expired"]; ok {
+		t.Fatal("Load returned an expired revocation")
+	}
+	if loaded["boundary"] != boundary || loaded["future"] != future {
+		t.Fatalf("shared revocations = %#v, want boundary and future entries", loaded)
+	}
+
+	if err := reader.Prune(ctx, boundary); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	loaded, err = writer.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load after Prune: %v", err)
+	}
+	if loaded["boundary"] != boundary || loaded["future"] != future {
+		t.Fatalf("boundary prune revocations = %#v, want boundary and future entries", loaded)
+	}
+	if err := reader.Prune(ctx, future+1); err != nil {
+		t.Fatalf("final Prune: %v", err)
+	}
+	if count, err := rdb.ZCard(ctx, revocationSetKey).Result(); err != nil || count != 0 {
+		t.Fatalf("stored revocations after final Prune = (%d, %v), want empty", count, err)
+	}
+}

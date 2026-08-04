@@ -24,8 +24,11 @@ cmd/ · config/ · docs/ · gen/ · proto/ · test/ · ops/ · checks/  composit
 for the stock compatibility composition. `prototype` and `minimal` target the
 dedicated `cmd/sso-minimal` composition root. `prototype` exposes SSO/OAuth,
 basic JSON logs and the stable `default` tenant seam; `minimal` adds OIDC and
-tracing. Both still import `interfaces/sso`, so their distinct logical
-boundaries currently share a larger linked package/dependency graph. Neither
+tracing. Both share `interfaces/sso` (the product SDK surface) but are
+physically isolated from the durable/admin/observability graph — the
+boundary is declared in `ops/build/profile-isolation.json` and proven by
+`python cli.py profiles evidence` (packages, modules, symbols, size; see
+[`profile-isolation.md`](profile-isolation.md)). Neither
 bundles a login UI or represents a production topology.
 
 `ops/build/` owns strict manifests/profiles and `ops/scripts/` materializes an

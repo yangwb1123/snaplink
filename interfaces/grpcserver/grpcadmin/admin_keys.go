@@ -91,6 +91,8 @@ func (s *KeyAdminService) RotateSigningKey(ctx context.Context, in *adminv1.Rota
 		OldKid:       oldKID,
 		NewKid:       newKID,
 		GraceSeconds: int64(grace / time.Second),
+		KeyClass:     "token_signing",
+		RolloutState: "new_active_old_verify_only",
 	}, nil
 }
 

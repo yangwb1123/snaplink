@@ -25,7 +25,7 @@ func TestHarness_LoginAndValidateOverJWKS(t *testing.T) {
 		t.Fatal("login returned no access token")
 	}
 
-	auth := remote.NewAuthClient(remote.NewJWKSCache(h.JWKSURL()))
+	auth := remote.NewAuthClient(remote.NewJWKSCache(h.JWKSURL()), remote.WithIssuer(testkit.DefaultIssuer))
 	sub, err := auth.ValidateToken(context.Background(), res.AccessToken)
 	if err != nil {
 		t.Fatalf("downstream ValidateToken over JWKS: %v", err)
@@ -72,7 +72,7 @@ func TestHarness_DirectIssuerMint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("direct Issue: %v", err)
 	}
-	auth := remote.NewAuthClient(remote.NewJWKSCache(h.JWKSURL()))
+	auth := remote.NewAuthClient(remote.NewJWKSCache(h.JWKSURL()), remote.WithIssuer(testkit.DefaultIssuer))
 	sub, err := auth.ValidateToken(context.Background(), tok.AccessToken)
 	if err != nil {
 		t.Fatalf("validate directly-minted token: %v", err)

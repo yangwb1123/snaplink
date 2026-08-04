@@ -21,7 +21,11 @@
 // omitted, the server skips instrumentation entirely (zero overhead).
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 // Metrics groups every collector the SSO server publishes. Construct
 // once at server boot, pass into [sso.WithMetrics].
@@ -58,7 +62,9 @@ type Metrics struct {
 	// WithConditionalAccess isn't wired). Bounded {action} ∈ {allow, deny,
 	// require_step_up} — the resolved CAP verdict, never a per-policy or
 	// per-subject label (§5).
-	ConditionalAccessDecisionsTotal *prometheus.CounterVec // labels: action
+	ConditionalAccessDecisionsTotal *prometheus.CounterVec   // labels: action
+	AuthHookExecutionDuration       *prometheus.HistogramVec // labels: phase, hook, outcome
+	NotificationDeliveryFailed      *prometheus.CounterVec   // labels: channel
 
 	// SessionTrustStepUpTotal counts live sessions the ContinuousVerification
 	// agent marked for step-up because their decayed trust fell below the floor
@@ -359,6 +365,12 @@ type Metrics struct {
 	// governance signal (force-refresh), NOT an issuance denial, so it is its
 	// own unlabeled counter rather than a DenyReason on DenialsTotal.
 	TokenPolicyRenewRequiredTotal prometheus.Counter
+	// TokenPolicyRoleResolutionErrorsTotal counts tenant-roster lookup failures
+	// at the session seam (fail-open role resolution — roles stay empty and
+	// role selectors stop matching, so the widening window must be observable).
+	// No labels: bounded-cardinality discipline (a tenant/user label would be
+	// unbounded); the logged error carries the identifiers.
+	TokenPolicyRoleResolutionErrorsTotal prometheus.Counter
 
 	// Token-behavior anomaly findings (opt-in via WithTokenAnomalyDetector +
 	// WithMetrics). Zero traffic when no detector is wired — OPT-IN via
@@ -452,6 +464,23 @@ func (m *Metrics) ObserveConditionalAccessDecision(action string) {
 		return
 	}
 	m.ConditionalAccessDecisionsTotal.WithLabelValues(action).Inc()
+}
+
+// ObserveAuthHookExecution records bounded startup-registered hook names and
+// closed phase/outcome values. Nil-safe when metrics are not wired.
+func (m *Metrics) ObserveAuthHookExecution(phase, hook, outcome string, duration time.Duration) {
+	if m == nil || m.AuthHookExecutionDuration == nil {
+		return
+	}
+	m.AuthHookExecutionDuration.WithLabelValues(phase, hook, outcome).Observe(duration.Seconds())
+}
+
+// ObserveNotificationDelivery records only failed or dropped deliveries.
+func (m *Metrics) ObserveNotificationDelivery(channel, outcome string) {
+	if m == nil || m.NotificationDeliveryFailed == nil || (outcome != "failed" && outcome != "dropped") {
+		return
+	}
+	m.NotificationDeliveryFailed.WithLabelValues(channel).Inc()
 }
 
 // ObserveSessionTrustStepUp bumps the zero-trust continuous-verification step-up

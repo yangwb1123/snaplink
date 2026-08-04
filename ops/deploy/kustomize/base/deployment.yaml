@@ -6,19 +6,10 @@ metadata:
     app.kubernetes.io/name: sso-server
     app.kubernetes.io/part-of: snaplink-sso
 spec:
-  # 2 replicas is the smallest count that survives a single-node drain;
-  # bump up once an HPA (left out of the base — too opinionated) or a
-  # PodDisruptionBudget is layered on in an overlay.
-  #
-  # IMPORTANT — shared state: >1 replica is only CORRECT with a SHARED store.
-  # The binary's default stores are `memory` (per-pod), so with this base config
-  # the OAuth authorization_code flow breaks across replicas (a code minted on
-  # one pod is unknown to another, and login vs token come from different origins
-  # so LB affinity can't help). For real HA set the hot stores to `backend: redis`
-  # (a shared `redis:` block, mode: cluster) + the etcd cluster Bus — see
-  # docs/deployment.md §6. For a correct single-instance base instead, set
-  # replicas: 1 with sqlite on a PVC.
-  replicas: 2
+  # The base uses process-local stores and therefore runs exactly one replica.
+  # The production overlay declares server.topology.mode=multi, selects shared
+  # stores, and is the only supported path to horizontal scaling.
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: sso-server

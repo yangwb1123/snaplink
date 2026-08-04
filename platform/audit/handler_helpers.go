@@ -8,6 +8,7 @@ import (
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/platform/geo"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 // tracer is the package-level helper for parsing W3C traceparent headers
@@ -120,6 +121,9 @@ func SetMeta(e *Event, key, val string) {
 // precedence: X-Forwarded-For (first hop) → X-Real-IP → RemoteAddr
 // (port stripped). Only trust forwarded headers behind a known edge.
 func ClientIP(r *http.Request) string {
+	if info, ok := peertrust.RequestInfoFrom(r); ok && info.ClientIP != "" {
+		return info.ClientIP
+	}
 	if h := r.Header.Get("X-Forwarded-For"); h != "" {
 		if i := strings.IndexByte(h, ','); i > 0 {
 			return strings.TrimSpace(h[:i])

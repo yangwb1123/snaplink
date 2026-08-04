@@ -2,11 +2,44 @@ package emailsmtp
 
 import (
 	"context"
+	"errors"
 	"net/smtp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yangwb1123/snaplink/shared/core"
 )
+
+func TestNotificationSenderResolvesRecipientAndReturnsTransportError(t *testing.T) {
+	wantErr := errors.New("smtp unavailable")
+	calls := 0
+	sender, err := New(Config{Host: "smtp.example", Port: 25, From: "security@example.com"}, nil,
+		WithSendFunc(func(_ string, _ smtp.Auth, _ string, to []string, message []byte) error {
+			calls++
+			if len(to) != 1 || to[0] != "alice@example.com" {
+				t.Fatalf("to=%v", to)
+			}
+			if !strings.Contains(string(message), "Account locked") || !strings.Contains(string(message), "Review activity") {
+				t.Fatalf("message=%s", message)
+			}
+			return wantErr
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := NewNotificationSender(sender, func(_ context.Context, subjectID string) (string, error) {
+		if subjectID != "alice" {
+			t.Fatalf("subject=%q", subjectID)
+		}
+		return "alice@example.com", nil
+	})
+	err = adapter.SendNotification(context.Background(), &core.NotificationEvent{SubjectID: "alice",
+		Title: "Account locked", Body: "Review activity"})
+	if !errors.Is(err, wantErr) || calls != 1 {
+		t.Fatalf("err=%v calls=%d", err, calls)
+	}
+}
 
 // captured is one delivery observed by captureSend.
 type captured struct {
@@ -69,6 +102,9 @@ func TestSender_SendResetToken(t *testing.T) {
 	if !strings.Contains(got.msg, "Subject:") {
 		t.Fatal("no Subject header in rendered message")
 	}
+	if !strings.Contains(got.msg, "flow=reset_password&amp;token=tok-123") {
+		t.Fatalf("reset action URL is not explicit or escaped: %q", got.msg)
+	}
 }
 
 func TestSender_SendEmailVerificationToken(t *testing.T) {
@@ -86,6 +122,9 @@ func TestSender_SendEmailVerificationToken(t *testing.T) {
 	}
 	if !strings.Contains(got.msg, "verify-tok") {
 		t.Fatal("token missing from rendered message")
+	}
+	if !strings.Contains(got.msg, "flow=verify_email&amp;token=verify-tok") {
+		t.Fatalf("verification action URL is not explicit: %q", got.msg)
 	}
 }
 
@@ -107,6 +146,9 @@ func TestSender_SendEmailChangeToken(t *testing.T) {
 	if !strings.Contains(got.msg, "change-tok") {
 		t.Fatal("token missing from rendered message")
 	}
+	if !strings.Contains(got.msg, "flow=change_email&amp;token=change-tok") {
+		t.Fatalf("email-change action URL is not explicit: %q", got.msg)
+	}
 }
 
 func TestSender_SendInvitation(t *testing.T) {
@@ -127,6 +169,9 @@ func TestSender_SendInvitation(t *testing.T) {
 	}
 	if !strings.Contains(got.msg, "tenant-42") || !strings.Contains(got.msg, "admin") {
 		t.Fatal("tenant/role missing from rendered message")
+	}
+	if !strings.Contains(got.msg, "flow=invitation&amp;token=invite-tok") {
+		t.Fatalf("invitation action URL is not explicit: %q", got.msg)
 	}
 }
 

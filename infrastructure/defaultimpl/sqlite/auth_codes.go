@@ -4,7 +4,10 @@ import "github.com/yangwb1123/snaplink/protocols/oauth"
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +15,37 @@ import (
 
 	"github.com/yangwb1123/snaplink/platform/migrate"
 )
+
+const opaqueLookupPrefix = "h1:"
+
+func opaqueLookupKey(key []byte, kind, raw string) string {
+	if len(key) == 0 {
+		return raw
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte(kind))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write([]byte(raw))
+	return opaqueLookupPrefix + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func opaqueLookupCandidates(keys [][]byte, kind, raw string) []string {
+	out := make([]string, 0, len(keys)+1)
+	for _, key := range keys {
+		out = append(out, opaqueLookupKey(key, kind, raw))
+	}
+	return append(out, raw)
+}
+
+func cloneLookupKeys(keys ...[]byte) [][]byte {
+	out := make([][]byte, 0, len(keys))
+	for _, key := range keys {
+		if len(key) > 0 {
+			out = append(out, append([]byte(nil), key...))
+		}
+	}
+	return out
+}
 
 // authCodeSchema covers the OAuth 2.0 authorization_code grant data
 // model — short-lived (10 min default), single-use, optionally bound
@@ -154,7 +188,15 @@ func authCodeColumnExists(ctx context.Context, x migrate.Execer, column string) 
 // [oauth.AuthCodeStore]. Suitable for multi-replica deployments since
 // every replica can issue + consume against the same database.
 type AuthCodeStore struct {
-	db *sql.DB
+	db             *sql.DB
+	lookupHMACKeys [][]byte
+	reaper         *sqliteExpiryReaper
+}
+
+// SetLookupHMACKeys enables current-key writes plus previous-key and legacy
+// plaintext reads for rolling migration. Keys are copied before retention.
+func (s *AuthCodeStore) SetLookupHMACKeys(keys ...[]byte) {
+	s.lookupHMACKeys = cloneLookupKeys(keys...)
 }
 
 // NewAuthCodeStore opens dsn, migrates the schema, and returns the
@@ -189,6 +231,7 @@ func (s *AuthCodeStore) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
+	_ = s.reaper.Close()
 	err := s.db.Close()
 	s.db = nil
 	return err
@@ -241,7 +284,8 @@ func (s *AuthCodeStore) Issue(ctx context.Context, code string, info *oauth.Auth
             confirmation_jkt, auth_time, amr, acr, resources,
             authorization_details, sid, requested_claims, expires_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		code, info.UserID, info.ClientID, info.RedirectURI,
+		opaqueLookupKey(firstLookupKey(s.lookupHMACKeys), "auth_code", code),
+		info.UserID, info.ClientID, info.RedirectURI,
 		string(scopes), info.Nonce, info.Provider, string(attrs),
 		info.CodeChallenge, info.CodeChallengeMethod, info.ConfirmationJKT,
 		unixNanoOrZero(info.AuthTime), string(amr), info.ACR, string(resources),
@@ -261,12 +305,22 @@ func (s *AuthCodeStore) Issue(ctx context.Context, code string, info *oauth.Auth
 // Consume calls could each return the code before either delete
 // fires.
 func (s *AuthCodeStore) Consume(ctx context.Context, code string) (*oauth.AuthCode, error) {
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "auth_code", code) {
+		out, err := s.consume(ctx, candidate)
+		if !errors.Is(err, oauth.ErrAuthCodeNotFound) {
+			return out, err
+		}
+	}
+	return nil, oauth.ErrAuthCodeNotFound
+}
+
+func (s *AuthCodeStore) consume(ctx context.Context, lookup string) (*oauth.AuthCode, error) {
 	row := s.db.QueryRowContext(ctx, `
         DELETE FROM auth_codes WHERE code = ?
         RETURNING user_id, client_id, redirect_uri, scopes, nonce,
                   provider, attributes, code_challenge, code_challenge_method,
                   confirmation_jkt, auth_time, amr, acr, resources,
-                  authorization_details, sid, requested_claims, expires_at`, code)
+                  authorization_details, sid, requested_claims, expires_at`, lookup)
 	out, err := scanAuthCode(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, oauth.ErrAuthCodeNotFound
@@ -281,6 +335,13 @@ func (s *AuthCodeStore) Consume(ctx context.Context, code string) (*oauth.AuthCo
 		return nil, oauth.ErrAuthCodeNotFound
 	}
 	return out, nil
+}
+
+func firstLookupKey(keys [][]byte) []byte {
+	if len(keys) == 0 {
+		return nil
+	}
+	return keys[0]
 }
 
 func scanAuthCode(s scanner) (*oauth.AuthCode, error) {

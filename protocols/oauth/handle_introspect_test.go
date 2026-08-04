@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
@@ -31,7 +31,7 @@ type introspectDeps struct {
 	issuers       map[string]core.TokenIssuer
 	validate      func(ctx context.Context, token string) (*core.TokenClaims, string, error)
 	verifyCA      func(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
-	usageRecorder *tokenusage.Recorder
+	usageRecorder *metering.Recorder
 	// renewExceeded stands in for the token-policy require_renew seam. Nil =
 	// default-off (never exceeded, zero renewAt), so an unset hook keeps
 	// introspection byte-identical to a build without a wired policy.
@@ -44,7 +44,9 @@ type introspectDeps struct {
 	// sessionMgr stands in for the session-liveness gate. Nil (the zero
 	// value every other test in this file relies on) reproduces the
 	// default-off, byte-identical behavior of an unwired SessionManager.
-	sessionMgr core.SessionManager
+	sessionMgr         core.SessionManager
+	introspectionCache IntrospectionCache
+	cacheTTL           time.Duration
 }
 
 func (d *introspectDeps) ClientStoreAccessor() core.ClientStore     { return d.clients }
@@ -59,9 +61,9 @@ func (d *introspectDeps) VerifyJWTClientAssertion(ctx context.Context, a, f, i s
 	return d.verifyCA(ctx, a, f, i)
 }
 
-func (d *introspectDeps) IntrospectionCache() IntrospectionCache   { return nil }
-func (d *introspectDeps) IntrospectionCacheTTL() time.Duration     { return 0 }
-func (d *introspectDeps) TokenUsageRecorder() *tokenusage.Recorder { return d.usageRecorder }
+func (d *introspectDeps) IntrospectionCache() IntrospectionCache { return d.introspectionCache }
+func (d *introspectDeps) IntrospectionCacheTTL() time.Duration   { return d.cacheTTL }
+func (d *introspectDeps) TokenUsageRecorder() *metering.Recorder { return d.usageRecorder }
 func (d *introspectDeps) IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) (bool, time.Time) {
 	if d.renewExceeded == nil {
 		return false, time.Time{}
@@ -711,6 +713,24 @@ func TestIntrospectionEmitsCnf(t *testing.T) {
 	}
 }
 
+func TestIntrospectionEmitsServingRegion(t *testing.T) {
+	t.Parallel()
+	// Mint-region evidence echoes onto the RFC 7662 body so an RS region
+	// gate can enforce without an extra round-trip.
+	body := map[string]any{}
+	populateAccessIntrospectionBody(body, &core.TokenClaims{Subject: "u", ServingRegion: "eu-west-1"})
+	if got := body[core.KeyServingRegion]; got != "eu-west-1" {
+		t.Errorf("serving_region = %v, want eu-west-1", got)
+	}
+
+	// Empty mint region -> NO member (byte-identical to pre-region builds).
+	body = map[string]any{}
+	populateAccessIntrospectionBody(body, &core.TokenClaims{Subject: "u"})
+	if _, present := body[core.KeyServingRegion]; present {
+		t.Errorf("serving_region emitted for a token without mint region: %v", body)
+	}
+}
+
 // TestIntrospectionTokenTypeReflectsDPoPBinding is the RFC 9449 §7 regression
 // guard: a DPoP-bound token (cnf.jkt present) MUST introspect with
 // token_type=DPoP, not Bearer — mirroring the /token endpoint's
@@ -772,4 +792,16 @@ func TestIntrospectionTokenTypeReflectsDPoPBinding(t *testing.T) {
 			t.Fatalf("token_type = %v, want %s for a DPoP-bound refresh token", got, core.TokenTypeNameDPoP)
 		}
 	})
+}
+
+func TestIntrospectAccessRejectsExplicitIDTokenUse(t *testing.T) {
+	t.Parallel()
+	d := newIntrospectDeps(newMemClientStore(), newMemRefreshStore())
+	d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
+		return &core.TokenClaims{TokenUse: core.TokenUseIDToken, Subject: "user-1"}, "jwt", nil
+	}
+	ctx, _ := newCtx(http.MethodPost, core.ContentTypeJSON, "")
+	if _, _, active := introspectAccess(d, ctx, "signed-id-token"); active {
+		t.Fatal("ID token must not introspect as an active access token")
+	}
 }

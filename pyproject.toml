@@ -3,6 +3,9 @@ name = "snaplink-sso"
 version = "0.1.0"
 description = "SSO server engineering CLI"
 requires-python = ">=3.12"
+dependencies = [
+    "PyYAML>=6.0",  # ai-dev review/pipeline runners parse YAML contexts and task files
+]
 
 [project.scripts]
 agent = "cli:main"

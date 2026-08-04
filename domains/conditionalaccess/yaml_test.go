@@ -3,6 +3,7 @@ package conditionalaccess
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 const sampleBundle = `
@@ -14,6 +15,9 @@ policies:
       user.member_of: ["admin"]
       device.managed: false
       risk_score: "> 0.5"
+      session.age_seconds: 3600
+      authentication.age_seconds: 1800
+      session.max_concurrent: 3
     actions:
       require_step_up: mfa
       restrict_scopes: ["admin:read"]
@@ -48,6 +52,9 @@ func TestLoadPolicies_ParsesGrammar(t *testing.T) {
 	if p.Conditions.RiskScore != "> 0.5" {
 		t.Errorf("risk_score = %q", p.Conditions.RiskScore)
 	}
+	if p.Conditions.SessionAgeSeconds != 3600 || p.Conditions.AuthenticationAgeSeconds != 1800 || p.Conditions.MaxConcurrentSessions != 3 {
+		t.Errorf("age conditions = session:%d authentication:%d", p.Conditions.SessionAgeSeconds, p.Conditions.AuthenticationAgeSeconds)
+	}
 	if p.Actions.RequireStepUp != "mfa" || len(p.Actions.RestrictScopes) != 1 || !p.Actions.Log {
 		t.Errorf("actions = %+v", p.Actions)
 	}
@@ -59,7 +66,18 @@ func TestLoadPolicies_LoadedBundleEvaluates(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 	// A low-trust (risk 0.9) unmanaged admin trips the step-up policy.
-	ac := AccessContext{Groups: []string{"admin"}, TrustScore: 0.1, TrustScoreKnown: true, DevicePosture: PostureUnmanaged}
+	now := time.Now()
+	ac := AccessContext{
+		Groups:                  []string{"admin"},
+		TrustScore:              0.1,
+		TrustScoreKnown:         true,
+		DevicePosture:           PostureUnmanaged,
+		Now:                     now,
+		SessionCreatedAt:        now.Add(-2 * time.Hour),
+		AuthTime:                now.Add(-time.Hour),
+		ConcurrentSessions:      4,
+		ConcurrentSessionsKnown: true,
+	}
 	d := Decide(Config{}, policies, ac)
 	if d.Verdict != VerdictRequireStepUp || d.MatchedPolicy != "restrict-admin-access" {
 		t.Fatalf("verdict %q matched %q, want require_step_up/restrict-admin-access", d.Verdict, d.MatchedPolicy)

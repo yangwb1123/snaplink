@@ -1,0 +1,112 @@
+# 完整闭环案例：从一句话到带验收的功能提案（含对抗验证、裁决门、决策日志、git 提交与归档）
+#
+# 软件开发流程映射：
+#   需求分析 → 架构设计 → 交叉对抗审查（多角色并发）→ 裁决门 → 实现+工程门禁 → 验收门
+#   → git 提交 → 产物归档（工作区整洁，git 历史保留一切）
+#
+# 执行（用户亲自运行，需要 PATH 中有 pi 且 API 可用）：
+#   python ai-dev/pi-batch.py ai-dev/examples/quickstart-full-sdlc.yaml \
+#     --log-file logs/full-sdlc.log
+#
+# 产物：
+#   docs/proposals/requirements.md        需求分析（3 个证据改进点）
+#   docs/proposals/design.md              架构设计
+#   docs/proposals/<角色>.md              对抗审查角色交付物（编排者现场挑选）
+#   docs/proposals/gate.md                裁决（VERDICT: PASS 才放行实现）
+#   docs/proposals/impl.md                实现方案
+#   docs/proposals/acceptance.md          验收裁决（VERDICT: PASS 才算完成）
+#   docs/DECISIONS.md                     决策日志（每阶段决策点+理由+证据+裁决）
+#   docs/archive/...                      全部产物在成功完成后归档（git commit 之后）
+#
+# 对抗验证语义：meta 阶段让编排者按当前交付物挑选审查角色（架构/安全/
+# 协议/QA/性能...）并发执行、交叉质疑；gate 阶段独立裁决 PASS/FAIL，
+# FAIL 或缺失 VERDICT 即阻断后续阶段（fail closed）。所有决策（含被否
+# 定的方案）追加进 DECISIONS.md。
+# 完成后：git_commit 把交付物提交进版本库，archive_dir 把中间 md 移入
+# 归档目录，工作区只留决策日志与归档目录。
+
+# 提交完成的任务产物到 git（滚动/批量场景保持历史）
+git_commit: true
+# 成功完成后把交付物移动到 docs/archive/<pipeline>-<时间戳>/，保持目录整洁
+decision_log: docs/DECISIONS.md
+archive_dir: docs/archive
+
+stages:
+  # ── 1. 需求分析：一句话起点 ──
+  - name: requirements
+    from_prompt: |
+      Analyze the snaplink MFA subsystem (domains/mfa/,
+      interfaces/sso/me_mfa.go) against docs/feature-matrix.md and
+      docs/error-codes.md. Propose exactly 3 evidence-backed improvement
+      points. For each: name, problem, evidence (file/symbol), proposed
+      behavior, acceptance check. Output a markdown document.
+    output: docs/proposals/requirements.md
+    mode: serial
+
+  # ── 2. 架构设计：基于需求分析 ──
+  - name: design
+    from_outputs: requirements
+    mode: serial
+    tasks:
+      - prompt: |
+          You are the architect. Read {input_content} and produce a
+          design doc: API surface, storage model, failure modes, and
+          what could break the design. Use markdown headings (## ...)
+          for each decision so it can be indexed in the decision log.
+        output: docs/proposals/design.md
+
+  # ── 3. 交叉对抗验证：编排者现场挑选审查角色，并发执行 ──
+  - name: adversarial_review
+    from_outputs: design
+    meta: true
+    role_dir: ai-dev/prompts
+    output_dir: docs/proposals
+    max_iterations: 2
+    mode: serial
+
+  # ── 4. 裁决门：独立 gatekeeper 读全部产出，VERDICT: PASS/FAIL ──
+  - name: gate
+    from_outputs: adversarial_review
+    aggregate: true
+    gate: true
+    mode: serial
+    tasks:
+      - prompt: |
+          You are the gatekeeper. Read {input_content} (requirements,
+          design, review deliverables). Cross-check the review findings
+          against the design: are they resolved or dismissed with
+          reasons? Output the verdict on the last line:
+          VERDICT: PASS
+          or
+          VERDICT: FAIL - <the blocking issues>
+          FAIL blocks the implementation stage.
+        output: docs/proposals/gate.md
+
+  # ── 5. 实现：代码实现者 + 工程门禁（Go 编译/测试）──
+  - name: impl
+    from_outputs: gate
+    aggregate: true
+    mode: serial
+    validate: quick
+    tasks:
+      - prompt: |
+          You are the code implementer. Read {input_content} and write
+          an implementation plan with concrete files, symbols, and
+          tests for each accepted improvement.
+        output: docs/proposals/impl.md
+
+  # ── 6. 验收门：QA 验收裁决，PASS 才算闭环完成 ──
+  - name: acceptance
+    from_outputs: impl
+    aggregate: true
+    gate: true
+    mode: serial
+    tasks:
+      - prompt: |
+          You are the QA lead. Read {input_content} and verify each
+          improvement's acceptance check is covered by the plan.
+          Output the verdict on the last line:
+          VERDICT: PASS
+          or
+          VERDICT: FAIL - <missing coverage>
+        output: docs/proposals/acceptance.md

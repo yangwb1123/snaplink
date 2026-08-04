@@ -49,11 +49,17 @@ func defaultSendFunc(addr string, a smtp.Auth, from string, to []string, msg []b
 // actually enforces the bound. Errors are logged WITHOUT the token/target —
 // only host + error, never the message contents.
 func (s *Sender) dispatch(to string, msg []byte) {
+	if err := s.sendMessage(context.Background(), to, msg); err != nil {
+		s.log.Error("emailsmtp: send failed", "host", s.cfg.Host, "error", err)
+	}
+}
+
+func (s *Sender) sendMessage(parent context.Context, to string, msg []byte) error {
 	timeout := s.cfg.Timeout
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
@@ -65,11 +71,9 @@ func (s *Sender) dispatch(to string, msg []byte) {
 	go func() { done <- s.send(addr, auth, s.cfg.From, []string{to}, msg) }()
 	select {
 	case err := <-done:
-		if err != nil {
-			s.log.Error("emailsmtp: send failed", "host", s.cfg.Host, "error", err)
-		}
+		return err
 	case <-ctx.Done():
-		s.log.Error("emailsmtp: send timed out", "host", s.cfg.Host, "timeout", timeout)
+		return ctx.Err()
 	}
 }
 

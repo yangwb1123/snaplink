@@ -41,11 +41,18 @@ func NewClampingIssuer(inner core.TokenIssuer, store Store) core.TokenIssuer {
 // requested scopes and clamps subject.TTL downward before delegating to the
 // wrapped issuer. Evaluate guarantees EffectiveTTL is never above a positive
 // RequestedTTL, so this never RAISES a client-configured lifetime.
+//
+// MINT-SITE CONTRACT: a site that mints via IssuerForClient MUST stamp
+// Subject.TenantID (from the client being served) or tenant-scoped max_ttl
+// rules silently never clamp that flow. A missing stamp is fail-open (TTL
+// unclamped) — the per-site clamp tests pin every known site; review any new
+// Subject literal against that census.
 func (c *ClampingIssuer) Issue(ctx context.Context, subject *core.Subject, scopes []string) (*core.Token, error) {
 	if subject != nil {
 		if policies, err := c.store.Policies(ctx); err == nil {
 			dec := Evaluate(PolicyInput{
 				ClientID:     subject.ClientID,
+				TenantID:     subject.TenantID,
 				Scopes:       scopes,
 				Kind:         KindAccess,
 				RequestedTTL: subject.TTL,

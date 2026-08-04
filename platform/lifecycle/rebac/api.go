@@ -1,7 +1,9 @@
 package rebac
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -142,8 +144,17 @@ func HandleCheckAccess(d TupleDeps, ctx core.HandlerContext) {
 
 // batchTupleRequest is the request body for HandleBatchWriteTuples.
 type batchTupleRequest struct {
-	Writes  []Tuple `json:"writes,omitempty"`
-	Deletes []Tuple `json:"deletes,omitempty"`
+	IdempotencyKey string  `json:"idempotency_key,omitempty"`
+	Writes         []Tuple `json:"writes,omitempty"`
+	Deletes        []Tuple `json:"deletes,omitempty"`
+}
+
+type batchTupleResult struct {
+	IdempotencyKey string `json:"idempotency_key"`
+	Operation      string `json:"operation"`
+	Status         string `json:"status"`
+	Tuple          Tuple  `json:"tuple"`
+	Error          string `json:"error,omitempty"`
 }
 
 // HandleBatchWriteTuples serves POST /authz/tuples/batch — executes a
@@ -167,19 +178,41 @@ func HandleBatchWriteTuples(d TupleDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, d.ErrorBodyDesc(core.ErrInvalidRequest, "invalid JSON"))
 		return
 	}
-	for _, t := range req.Writes {
-		if err := store.Write(ctx.Request().Context(), t); err != nil {
-			ctx.JSON(http.StatusBadRequest, d.ErrorBodyDesc(core.ErrInvalidRequest, err.Error()))
-			return
+	key := req.IdempotencyKey
+	if headerKey := ctx.Request().Header.Get(core.HeaderIdempotencyKey); headerKey != "" {
+		key = headerKey
+	}
+	if key == "" {
+		sum := sha256.Sum256(raw)
+		key = fmt.Sprintf("rebac-batch:%x", sum[:12])
+	}
+	results := tupleBatchResults(key, req.Writes, req.Deletes, "applied", "")
+	if err := store.ApplyBatch(ctx.Request().Context(), req.Writes, req.Deletes); err != nil {
+		results = tupleBatchResults(key, req.Writes, req.Deletes, "not_applied", err.Error())
+		ctx.JSON(http.StatusBadRequest, map[string]any{
+			core.KeyError: "invalid_batch", "idempotency_key": key, "items": results,
+		})
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{
+		"status": "ok", "idempotency_key": key, "items": results,
+		"written": len(req.Writes), "deleted": len(req.Deletes),
+	})
+}
+
+func tupleBatchResults(key string, writes, deletes []Tuple, status, message string) []batchTupleResult {
+	out := make([]batchTupleResult, 0, len(writes)+len(deletes))
+	appendResults := func(operation string, tuples []Tuple) {
+		for i, tuple := range tuples {
+			out = append(out, batchTupleResult{
+				IdempotencyKey: fmt.Sprintf("%s:%s:%d", key, operation, i),
+				Operation:      operation, Status: status, Tuple: tuple, Error: message,
+			})
 		}
 	}
-	for _, t := range req.Deletes {
-		if err := store.Delete(ctx.Request().Context(), t); err != nil {
-			ctx.JSON(http.StatusBadRequest, d.ErrorBodyDesc(core.ErrInvalidRequest, err.Error()))
-			return
-		}
-	}
-	ctx.JSON(http.StatusOK, map[string]any{"status": "ok", "written": len(req.Writes), "deleted": len(req.Deletes)})
+	appendResults("write", writes)
+	appendResults("delete", deletes)
+	return out
 }
 
 // HandleReverseExpand serves GET /authz/graph — given a subject,

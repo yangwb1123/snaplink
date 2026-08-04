@@ -1,0 +1,42 @@
+# 通用分析流水线 — 任意项目/想法 + 动态角色编排（自优化）
+#
+# 不绑定任何具体项目：起点可以是一句话 prompt（from_prompt），也可以是指定
+# 目录里的需求文档（from_dir）；角色模板目录、输出目录全部可配置，可直接
+# 复制到任意仓库使用（把 role_dir 换成目标项目的角色模板，或直接复用：
+# 角色模板引用 AGENTS.md 时按目标项目调整）。
+#
+# 自优化机制：review 阶段是 meta 编排 —— 执行中由 agent 分析当前产出，
+# 从 role_dir 动态挑选还需要哪些审查角色（输出 JSON 角色列表），逐个执行
+# 角色模板，并把角色产出折回证据，再问一轮，直到编排者报告"无需更多角色"
+# 或达到 max_iterations。角色集在运行中发现，而不是写死在流水线里。
+#
+# 运行（从仓库根）：
+#   python ai-dev/pi-batch.py ai-dev/examples/meta-review-pipeline.yaml \
+#     --log-file logs/meta.log
+#
+# 说明：
+#   - 编排者输出不可信：角色名必须对应 role_dir 内的 .md 模板（防路径穿越）
+#   - --reuse/--retries/--max-rounds 等机制对 meta 阶段同样生效
+#   - 角色交付物写入 output_dir，可被下游阶段 from_outputs 继续消费
+
+git_commit: false
+
+stages:
+  # ── 阶段 1：起点输入 ──
+  # 一句话 prompt 即可启动（无需写 md 文件）；也可以换成 from_dir 读目录
+  # - name: kickoff
+  #   from_dir: docs/requirements
+  - name: kickoff
+    from_prompt: "Analyze the idea: offline-first sync for the todo app. Summarize the design questions."
+    output: docs/reviews/kickoff.md
+    mode: serial
+
+  # ── 阶段 2：动态角色审查（meta 编排）──
+  # 编排者每轮：分析产出 → 挑角色 → 执行 → 折回证据 → 再问
+  - name: review
+    from_outputs: kickoff
+    meta: true
+    role_dir: ai-dev/prompts
+    output_dir: docs/reviews
+    max_iterations: 3
+    mode: serial

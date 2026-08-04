@@ -146,6 +146,9 @@ const (
 	// check, so a distinct code here leaks nothing about whether a guessed
 	// password was ever valid. See AGENTS.md §3 Anti-Enumeration.
 	ErrPasswordExpired            = "password_expired"
+	ErrAuthHookRejected           = "hook_rejected"
+	ErrAuthHookTimeout            = "hook_timeout"
+	ErrProfileIncomplete          = "profile_incomplete"
 	ErrInvitationInvalid          = "invitation_invalid"
 	ErrTOTPInvalidCode            = "totp_invalid_code"
 	ErrTOTPEnrollmentNotSupported = "totp_enrollment_not_supported"
@@ -171,6 +174,7 @@ const (
 	ErrCIBANotConfigured          = "ciba_not_configured"
 	ErrUnknownUserID              = "unknown_user_id"
 	ErrMissingUserCode            = "missing_user_code"
+	ErrInvalidUserCode            = "invalid_user_code"
 	ErrLoginRequired              = "login_required"
 	ErrInteractionRequired        = "interaction_required"
 	ErrConsentRequired            = "consent_required"
@@ -300,6 +304,9 @@ const (
 	// existence or another org's roster (anti-enumeration). It is NOT a credential
 	// oracle: a subject already knows its own memberships via /me/organizations.
 	ErrForbidden = "forbidden"
+	// ErrNotificationStoreUnavailable is returned when a configured inbox
+	// backend cannot safely serve or mutate the authenticated subject's data.
+	ErrNotificationStoreUnavailable = "notification_store_unavailable"
 	// ErrLastOrgAdmin is the 409 returned when removing or demoting the FINAL
 	// admin of an org (including self-removal / self-demotion) — doing so would
 	// orphan the org with no one able to administer it.
@@ -314,4 +321,9 @@ const (
 	// failure vs. a well-formed-but-invalid value. Always paired with an
 	// error_description naming the specific violated field.
 	ErrInvalidPolicy = "invalid_policy"
+	// Back-channel logout failure replay admin API wire codes. Not-found
+	// deliberately also covers cross-tenant ids to avoid resource enumeration.
+	ErrBCLFailureNotFound  = "bcl_failure_not_found"
+	ErrBCLReplayInProgress = "bcl_replay_in_progress"
+	ErrBCLDeliveryFailed   = "bcl_delivery_failed"
 )

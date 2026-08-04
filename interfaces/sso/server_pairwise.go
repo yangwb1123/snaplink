@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
 
@@ -60,6 +63,57 @@ func (s *Server) resolveLocalSubject(ctx context.Context, sub string) (string, e
 		return sub, nil
 	}
 	return sub, err
+}
+
+// LifecycleState resolves pairwise subjects before reading the optional user
+// lifecycle store. An unwired store returns the implicit ACTIVE state, so all
+// enforcement callers remain byte-identical unless WithUserLifecycle is used.
+func (s *Server) LifecycleState(ctx context.Context, subject string) (userlifecycle.State, error) {
+	if s.userLifecycleStore == nil {
+		return userlifecycle.DefaultState, nil
+	}
+	local, err := s.resolveLocalSubject(ctx, subject)
+	if err != nil {
+		return userlifecycle.StateNone, err
+	}
+	return userlifecycle.ReadState(ctx, s.userLifecycleStore, local)
+}
+
+func (s *Server) lifecycleAuthenticationError(ctx context.Context, subject string) error {
+	state, err := s.LifecycleState(ctx, subject)
+	if err != nil {
+		s.logger.Error("user lifecycle authentication lookup failed (fail-closed)", "user", subject, "error", err)
+		return userlifecycle.ErrAuthenticationBlocked
+	}
+	if userlifecycle.AllowsAuthentication(state) {
+		return nil
+	}
+	s.logger.Info("user lifecycle state blocked authentication", "user", subject, "state", string(state))
+	return userlifecycle.ErrAuthenticationBlocked
+}
+
+func (s *Server) lifecycleClaimsError(ctx context.Context, claims *TokenClaims) error {
+	if claims == nil {
+		return userlifecycle.ErrAuthenticationBlocked
+	}
+	if err := s.lifecycleAuthenticationError(ctx, claims.Subject); err != nil {
+		return err
+	}
+	for actor := claims.Actor; actor != nil; actor = actor.Actor {
+		if err := s.lifecycleAuthenticationError(ctx, actor.Subject); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) rejectLifecycleBlockedUser(ctx HandlerContext, req *login.Request, userID string) bool {
+	if s.lifecycleAuthenticationError(ctx.Request().Context(), userID) == nil {
+		return false
+	}
+	s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrAccountLocked)
+	ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrAccountLocked, req.State))
+	return true
 }
 
 // WithPairwiseSubjectStore enables OIDC Core §8 pairwise subject
@@ -161,6 +215,9 @@ func resolveAssertionClient(ctx context.Context, clientStore ClientStore, sub st
 		// authenticate via private_key_jwt just because ValidateSecret's
 		// Active gate (the OTHER client-auth path) doesn't run this path.
 		return nil, errors.New("jwt_client_assertion: client inactive")
+	}
+	if method := client.TokenEndpointAuthMethod; method != "" && method != "private_key_jwt" {
+		return nil, errors.New("jwt_client_assertion: client not registered for private_key_jwt")
 	}
 	if len(client.JWKS) == 0 {
 		return nil, errors.New("jwt_client_assertion: client has no registered JWKS")

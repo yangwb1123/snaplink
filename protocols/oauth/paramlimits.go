@@ -1,6 +1,12 @@
 package oauth
 
-import "github.com/yangwb1123/snaplink/shared/core"
+import (
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/yangwb1123/snaplink/shared/core"
+)
 
 // Authorize request parameter length limits — hard caps that prevent
 // a single large parameter (state, scope, redirect_uri, nonce) from
@@ -84,4 +90,63 @@ func CheckAuthParamLengths(state, redirectURI, scope, nonce string, resources []
 		}
 	}
 	return ""
+}
+
+func validateCIBARequestShape(d CIBADeps, ctx core.HandlerContext, req *cibaRequest) bool {
+	hints := 0
+	for _, hint := range []string{req.LoginHint, req.IDTokenHint, req.LoginHintToken} {
+		if hint != "" {
+			hints++
+		}
+	}
+	if hints > 1 || (req.RequestedExpiry != nil && *req.RequestedExpiry <= 0) {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return false
+	}
+	if req.UserCode != "" && d.CIBAUserCodeVerifier() == nil {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return false
+	}
+	return true
+}
+
+func verifyCIBAUserCode(d CIBADeps, ctx core.HandlerContext, clientID, subjectID, userCode string) bool {
+	verifier := d.CIBAUserCodeVerifier()
+	if verifier == nil {
+		return true
+	}
+	err := verifier.VerifyCIBAUserCode(ctx.Request().Context(), clientID, subjectID, userCode)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, ErrCIBAUserCodeRequired):
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrMissingUserCode))
+	case errors.Is(err, ErrCIBAUserCodeInvalid):
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidUserCode))
+	default:
+		// A custom verifier error might accidentally contain the submitted
+		// secret. Keep the wire response and logs constant; the verifier owns
+		// its internal diagnostics.
+		d.SrvLogger().Error("ciba user-code verifier unavailable", "client_id", clientID)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+	}
+	return false
+}
+
+func effectiveCIBARequestTTL(configured time.Duration, requested *int) time.Duration {
+	if configured <= 0 {
+		configured = DefaultCIBARequestTTL
+	}
+	if requested == nil {
+		return configured
+	}
+	seconds := int64(*requested)
+	if seconds > (1<<63-1)/int64(time.Second) {
+		return configured
+	}
+	wanted := time.Duration(seconds) * time.Second
+	if wanted < configured {
+		return wanted
+	}
+	return configured
 }

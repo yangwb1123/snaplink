@@ -24,14 +24,14 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/migrate"
+	"github.com/yangwb1123/snaplink/shared/core"
 
 	_ "modernc.org/sqlite" // register the "sqlite" driver name.
 )
 
-// userSchema is applied at NewUserProvider time via CREATE-IF-NOT-EXISTS.
-// Migration framework deferred — for v1 the single table is stable;
-// future schema changes can layer on a real migration runner without
-// rewriting the existing data layout.
+// userSchema is the version-1 users table. NewUserProvider applies it through
+// the migration runner before the SCIM userName uniqueness index in version 2.
 //
 // Timestamps stored as INTEGER (Unix NANOSECONDS) — SQLite has no
 // native timestamp type and integer-vs-text is faster for the
@@ -55,6 +55,20 @@ CREATE INDEX IF NOT EXISTS idx_users_provider_external
     ON users(provider, external_id)
     WHERE provider IS NOT NULL AND external_id IS NOT NULL;
 `
+
+// userSchemaV2 makes the SCIM userName stored in attributes atomically unique
+// without duplicating it into a second column. The expression index also
+// validates existing rows when an installation is upgraded.
+const userSchemaV2 = `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_username
+    ON users(lower(json_extract(attributes, '$."scim:userName"')))
+    WHERE json_extract(attributes, '$."scim:userName"') IS NOT NULL;
+`
+
+var userMigrations = []migrate.Migration{
+	{Version: 1, Name: "baseline", SQL: userSchema},
+	{Version: 2, Name: "scim_username_unique", SQL: userSchemaV2},
+}
 
 // UserProvider is the SQLite-backed implementation of [sso.UserProvider].
 type UserProvider struct {
@@ -80,7 +94,7 @@ func NewUserProvider(dsn string) (*UserProvider, error) {
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
 	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
-	if err := ensureSchema(db, "users", userSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "users", userMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate: %w", err)
 	}
@@ -179,6 +193,9 @@ func (p *UserProvider) CreateOrUpdate(ctx context.Context, u *sso.User) error {
 		nullable(u.Email), nullable(u.Name),
 		string(attrs), u.CreatedAt.UnixNano(), u.UpdatedAt.UnixNano())
 	if err != nil {
+		if isUniqueViolation(err) {
+			return sso.ErrUserExists
+		}
 		return fmt.Errorf("sqlite: upsert: %w", err)
 	}
 	return nil
@@ -208,6 +225,48 @@ func (p *UserProvider) List(ctx context.Context) ([]*sso.User, error) {
 		return nil, fmt.Errorf("sqlite: list rows: %w", err)
 	}
 	return out, nil
+}
+
+// ListPaginated implements [core.UserPaginationProvider] without loading the
+// full user table into the process. Ordering matches List.
+func (p *UserProvider) ListPaginated(ctx context.Context, offset, limit int) ([]*sso.User, int, error) {
+	var total int
+	if err := p.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("sqlite: count users: %w", err)
+	}
+	offset, limit = normalizeUserPage(offset, limit)
+	rows, err := p.db.QueryContext(ctx, `
+        SELECT id, external_id, provider, email, name, attributes, created_at, updated_at
+          FROM users ORDER BY id ASC LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("sqlite: list paginated: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]*sso.User, 0, limit)
+	for rows.Next() {
+		u, scanErr := scanUser(rows)
+		if scanErr != nil {
+			return nil, 0, scanErr
+		}
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("sqlite: paginated rows: %w", err)
+	}
+	return out, total, nil
+}
+
+func normalizeUserPage(offset, limit int) (int, int) {
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	return offset, limit
 }
 
 // Delete implements [sso.UserProvider]. Idempotent — missing ids
@@ -267,3 +326,4 @@ func nullable(s string) sql.NullString {
 
 // Compile-time interface assertion.
 var _ sso.UserProvider = (*UserProvider)(nil)
+var _ core.UserPaginationProvider = (*UserProvider)(nil)

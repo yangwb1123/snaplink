@@ -3,9 +3,11 @@ package serverbuildplatform
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/operations"
 	"github.com/yangwb1123/snaplink/platform/releases"
 	"github.com/yangwb1123/snaplink/shared/spi"
 
@@ -21,6 +23,35 @@ import (
 
 	releasememory "github.com/yangwb1123/snaplink/platform/releases/storememory"
 )
+
+// BuildOperationStore creates the restart-durable journal shared by snapshot
+// restore and release pin/rollback. It lives beside the configured file-backed
+// lifecycle data, or under ./operations for memory/demo backends.
+func BuildOperationStore(cfg *config.Config, logger spi.Logger) (operations.Store, error) {
+	if !cfg.Snapshot.Enabled && !cfg.Releases.Enabled {
+		return nil, nil
+	}
+	baseDir := "./operations"
+	if cfg.Snapshot.Enabled && strings.ToLower(cfg.Snapshot.Storage.Backend) != "inline" {
+		baseDir = cfg.Snapshot.Storage.File.Dir
+		if baseDir == "" {
+			baseDir = "./snapshots"
+		}
+		baseDir = filepath.Join(baseDir, ".operations")
+	} else if cfg.Releases.Enabled && strings.ToLower(cfg.Releases.Store.Backend) != "memory" {
+		baseDir = cfg.Releases.Store.File.Dir
+		if baseDir == "" {
+			baseDir = "./releases"
+		}
+		baseDir = filepath.Join(baseDir, ".operations")
+	}
+	store, err := operations.NewFileStore(baseDir)
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("operation store: file", "dir", baseDir)
+	return store, nil
+}
 
 func BuildReleaseSubsystem(cfg *config.Config, logger spi.Logger) (*releases.Registry, releases.ReleaseStore, error) {
 	if !cfg.Releases.Enabled {

@@ -2,6 +2,7 @@ package cryptoinventory
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -10,8 +11,10 @@ import (
 // reported-compromised key id. It is deliberately tiny — no key material,
 // nothing a Source doesn't already tell us except the fact of the report.
 type compromiseRecord struct {
-	at     time.Time
-	reason string
+	at               time.Time
+	reason           string
+	retirementStatus RetirementStatus
+	retirementError  string
 }
 
 // MemoryInventory is the process-local, non-durable Inventory reference
@@ -83,6 +86,8 @@ func (m *MemoryInventory) applyOverlay(e Entry) Entry {
 	e.Status = StatusCompromised
 	e.CompromisedAt = rec.at
 	e.CompromiseReason = rec.reason
+	e.RetirementStatus = rec.retirementStatus
+	e.RetirementError = rec.retirementError
 	return e
 }
 
@@ -91,33 +96,55 @@ func (m *MemoryInventory) applyOverlay(e Entry) Entry {
 // Source also implements Retirer). ErrKeyNotFound when no Source's current
 // Keys() lists keyID.
 func (m *MemoryInventory) ReportKeyCompromise(ctx context.Context, keyID, reason string) (Entry, error) {
-	entry, retirer, found := m.locate(ctx, keyID)
+	entry, source, retirer, found := m.locate(ctx, keyID)
 	if !found {
 		return Entry{}, ErrKeyNotFound
 	}
 
 	now := time.Now().UTC()
+	retirementStatus, retirementError := retirementOutcome(ctx, source, retirer, keyID)
 	m.mu.Lock()
-	m.compromised[keyID] = compromiseRecord{at: now, reason: reason}
-	m.mu.Unlock()
-
-	if retirer != nil {
-		// Best-effort: retirement is NOT this package's job (see the
-		// package doc) — a Source that declines or errors still leaves the
-		// key correctly recorded compromised above.
-		_ = retirer.RetireKey(ctx, keyID)
+	m.compromised[keyID] = compromiseRecord{
+		at: now, reason: reason,
+		retirementStatus: retirementStatus, retirementError: retirementError,
 	}
+	m.mu.Unlock()
 
 	entry.Status = StatusCompromised
 	entry.CompromisedAt = now
 	entry.CompromiseReason = reason
+	entry.RetirementStatus = retirementStatus
+	entry.RetirementError = retirementError
 	return entry, nil
 }
 
-// locate finds keyID among every registered Source's current Keys(),
-// returning its Entry and, when the owning Source implements Retirer, that
-// Retirer.
-func (m *MemoryInventory) locate(ctx context.Context, keyID string) (Entry, Retirer, bool) {
+func retirementOutcome(
+	ctx context.Context, source Source, retirer Retirer, keyID string,
+) (RetirementStatus, string) {
+	if retirer == nil {
+		return RetirementUnsupported, ""
+	}
+	if err := retirer.RetireKey(ctx, keyID); err != nil {
+		if errors.Is(err, ErrRetirementUnsupported) {
+			return RetirementUnsupported, ""
+		}
+		return RetirementFailed, err.Error()
+	}
+	keys, err := source.Keys(ctx)
+	if err != nil {
+		return RetirementPending, err.Error()
+	}
+	for _, key := range keys {
+		if key.KeyID == keyID && key.Status != StatusRetired && key.Status != StatusCompromised {
+			return RetirementPending, ""
+		}
+	}
+	return RetirementCompleted, ""
+}
+
+func (m *MemoryInventory) locate(
+	ctx context.Context, keyID string,
+) (Entry, Source, Retirer, bool) {
 	for _, src := range m.sources {
 		keys, err := src.Keys(ctx)
 		if err != nil {
@@ -126,9 +153,9 @@ func (m *MemoryInventory) locate(ctx context.Context, keyID string) (Entry, Reti
 		for _, e := range keys {
 			if e.KeyID == keyID {
 				r, _ := src.(Retirer)
-				return e, r, true
+				return e, src, r, true
 			}
 		}
 	}
-	return Entry{}, nil, false
+	return Entry{}, nil, nil, false
 }

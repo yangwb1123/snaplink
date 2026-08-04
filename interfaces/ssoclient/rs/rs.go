@@ -15,6 +15,16 @@
 // ValidateTokenWithDPoP adds the RFC 9449 §7.1 resource-server checks for
 // sender-constrained (cnf.jkt-bound) tokens on top of either mode.
 //
+// Region governance: Config.AllowedServingRegions optionally constrains a
+// deployment to tokens minted by specific serving regions — the AS's
+// `serving_region` claim (a SnapLink extension), echoed by introspection.
+// The gate is opt-in (empty config skips it entirely) and FAIL-CLOSED when
+// configured: a token without the claim is rejected, because a
+// region-pinned deployment cannot accept unverifiable mint provenance. It
+// is a governance denial — mapped to 403 region_not_allowed without a
+// bearer challenge by the middleware — not a token-validity failure. See
+// the Config field doc for the load-bearing rollout order.
+//
 // The package deliberately depends only on net/http plus the repo's shared
 // verification kernel — no gRPC, no metrics, no framework adapters — so
 // pulling it into a consumer stays cheap.
@@ -25,6 +35,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/interfaces/ssoclient/remote"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
@@ -89,9 +100,32 @@ type Config struct {
 	// ExpectedAud, when set, requires the token's `aud` to contain it.
 	ExpectedAud string
 
+	// AllowedServingRegions, when non-empty, requires the token's
+	// `serving_region` claim to be present and in this set — a token
+	// without the claim is REJECTED (fail-closed): an operator who
+	// declares a region-constrained deployment cannot accept unverifiable
+	// mint provenance. Enforced in BOTH validation modes (local JWT and
+	// introspection) and mapped to 403 region_not_allowed by the
+	// middleware. Empty (the default) skips the gate entirely —
+	// byte-identical to pre-region builds. Rollout order is load-bearing:
+	// enable this only AFTER the AS fleet mints/echoes the claim (an older
+	// AS that omits it from introspection responses denies every token).
+	// Expressed as "this deployment only serves tokens minted by these
+	// regions" — complements, does not replace, the AS's own residency
+	// gates (the RS cannot observe the caller's region, only the token's
+	// provenance). Refresh rotation re-stamps the claim with the region
+	// that SERVED the rotation (mint-time semantics) — a rotated token may
+	// carry a new region.
+	AllowedServingRegions []string
+
 	// DPoPVerifier tunes RFC 9449 proof checking; nil uses a process-wide
 	// default (one shared jti replay cache — see DPoPVerifier).
 	DPoPVerifier *DPoPVerifier
+
+	// TrustedProxies gates DPoP htu reconstruction on the direct peer and
+	// canonicalizes X-Forwarded-* once. Build it with
+	// middleware.NewTrustedProxies. Nil preserves legacy first-hop trust.
+	TrustedProxies *middleware.TrustedProxies
 
 	// MaxClockSkew bounds exp/nbf/iat comparison drift; <=0 selects
 	// DefaultMaxClockSkew.

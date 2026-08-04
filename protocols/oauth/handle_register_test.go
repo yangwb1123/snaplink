@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -359,6 +360,38 @@ func TestHandleRegistrationPut(t *testing.T) {
 		}
 	})
 
+	t.Run("lost rotation response is recoverable with overlapping token", func(t *testing.T) {
+		d, cs := newRegisterDeps(&DCRPolicy{
+			AllowOpenRegistration: true, RotateRegistrationAccessToken: true,
+			RegistrationAccessTokenOverlap: time.Minute,
+		})
+		cs.put(&core.Client{ID: "c1", RegistrationAccessToken: "rat", Active: true}, "")
+		body := `{"client_name":"n","redirect_uris":["https://rp.test/cb"]}`
+
+		first := serveMgmt(d, mgmtHandler(d, HandleRegistrationPut), http.MethodPut, body, "c1", "rat")
+		if first.Code != http.StatusOK {
+			t.Fatalf("first PUT status=%d body=%s", first.Code, first.Body.String())
+		}
+		// Simulate a lost response: the caller still knows only "rat".
+		retry := serveMgmt(d, mgmtHandler(d, HandleRegistrationPut), http.MethodPut, body, "c1", "rat")
+		if retry.Code != http.StatusOK {
+			t.Fatalf("retry with overlapping RAT status=%d body=%s", retry.Code, retry.Body.String())
+		}
+		recovered, _ := decodeBody(t, retry)["registration_access_token"].(string)
+		if recovered == "" || recovered == "rat" {
+			t.Fatalf("retry did not return a recoverable fresh RAT: %q", recovered)
+		}
+
+		confirmed := serveMgmt(d, mgmtHandler(d, HandleRegistrationPut), http.MethodPut, body, "c1", recovered)
+		if confirmed.Code != http.StatusOK {
+			t.Fatalf("PUT with recovered RAT status=%d", confirmed.Code)
+		}
+		old := serveMgmt(d, mgmtHandler(d, HandleRegistrationGet), http.MethodGet, "", "c1", "rat")
+		if old.Code != http.StatusUnauthorized {
+			t.Fatalf("old RAT remained valid after recovered RAT use: %d", old.Code)
+		}
+	})
+
 	t.Run("unauthorized put 401", func(t *testing.T) {
 		d, cs := newRegisterDeps(&DCRPolicy{AllowOpenRegistration: true})
 		cs.put(&core.Client{ID: "c1", RegistrationAccessToken: "rat"}, "")
@@ -367,6 +400,52 @@ func TestHandleRegistrationPut(t *testing.T) {
 			t.Fatalf("status = %d, want 401", rec.Code)
 		}
 	})
+}
+
+func TestRegistrationGetPutRoundTripPreservesCompleteMetadata(t *testing.T) {
+	t.Parallel()
+	d, cs := newRegisterDeps(&DCRPolicy{InitialAccessToken: "iat"})
+	req := &DCRRequest{
+		ClientName: "complete", RedirectURIs: []string{"https://rp.test/cb"},
+		GrantTypes:    []string{"authorization_code", "refresh_token"},
+		ResponseTypes: []string{"code"}, Contacts: []string{"dev@example.com"},
+		TokenEndpointAuthMethod: "client_secret_basic", TenantID: "tenant-1",
+		AllowedResources: []string{"https://api.test"}, RequirePKCE: true,
+	}
+	client := buildRegisteredClient(req, d.policy, "c1", "secret", "rat", false)
+	cs.put(client, "secret")
+
+	getRec := serveMgmt(d, mgmtHandler(d, HandleRegistrationGet), http.MethodGet, "", "c1", "rat")
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+	getBody := getRec.Body.String()
+	wire := decodeBody(t, getRec)
+	for _, key := range []string{"grant_types", "response_types", "contacts", "tenant_id"} {
+		if _, ok := wire[key]; !ok {
+			t.Fatalf("GET omitted %s: %v", key, wire)
+		}
+	}
+
+	putRec := serveMgmt(d, mgmtHandler(d, HandleRegistrationPut), http.MethodPut,
+		getBody, "c1", "rat")
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT status=%d body=%s", putRec.Code, putRec.Body.String())
+	}
+	stored, _ := cs.Get(t.Context(), "c1")
+	if len(stored.GrantTypes) != 2 || stored.TenantID != "tenant-1" {
+		t.Fatalf("stored metadata drifted: %+v", stored)
+	}
+	projected := projectClientToDCRResponse(stored, newProjectContext(t))
+	if len(projected.ResponseTypes) != 1 || len(projected.Contacts) != 1 {
+		t.Fatalf("structured metadata drifted: %+v", projected)
+	}
+}
+
+func newProjectContext(t *testing.T) core.HandlerContext {
+	t.Helper()
+	ctx, _ := newCtx(http.MethodGet, core.ContentTypeJSON, "")
+	return ctx
 }
 
 func TestHandleRegistrationDelete(t *testing.T) {

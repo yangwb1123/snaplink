@@ -1,6 +1,7 @@
 package serverbuildauthn
 
 import (
+	"context"
 	"database/sql"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -40,6 +41,12 @@ func BuildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 // pg may be nil (no postgres block) — backends that require it then fail loud at
 // boot rather than silently using per-pod state.
 func BuildAuthenticatorsDurable(cfg *config.Config, logger spi.Logger, passwordStore sso.PasswordCredentialStore, userProvider sso.UserProvider, rdb goredis.Cmdable, pg *sql.DB, dialect postgresbackend.Dialect) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
+	return BuildAuthenticatorsDurableWithLinker(cfg, logger, passwordStore, userProvider, rdb, pg, dialect, nil)
+}
+
+// BuildAuthenticatorsDurableWithLinker wires linker into every configured
+// static OIDC federation authenticator.
+func BuildAuthenticatorsDurableWithLinker(cfg *config.Config, logger spi.Logger, passwordStore sso.PasswordCredentialStore, userProvider sso.UserProvider, rdb goredis.Cmdable, pg *sql.DB, dialect postgresbackend.Dialect, linker authenticators.UserLinker) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
 	var auths []sso.Authenticator
 	var tempStore authenticators.TempTokenStore
 	var totpAuth *authenticators.TOTPAuthenticator
@@ -48,7 +55,7 @@ func BuildAuthenticatorsDurable(cfg *config.Config, logger spi.Logger, passwordS
 	// self-service /me/mfa + TOTP enrollment over the SAME secret store the
 	// authenticator reads. Nil when TOTP is off.
 	var totpEnrollStore sso.MFAEnrollmentStore
-	codeStore := buildCodeStore(rdb)
+	codeStore := buildCodeStore(cfg.Authenticators.CodeSendQuota, rdb)
 
 	// Replay-defense store for the keypair (nonce) + TOTP (consumed-code)
 	// authenticators, built once and shared (their keys live in disjoint
@@ -80,9 +87,7 @@ func BuildAuthenticatorsDurable(cfg *config.Config, logger spi.Logger, passwordS
 		return nil, nil, nil, nil, err
 	}
 
-	// linker nil: no identitylink.Store is built in this binary yet (see
-	// appendOIDCFederationAuthenticators's doc for the wiring seam this leaves).
-	auths = appendOIDCFederationAuthenticators(auths, cfg.Authenticators.OIDCFederation, logger, nil)
+	auths = appendOIDCFederationAuthenticators(auths, cfg.Authenticators.OIDCFederation, logger, linker)
 	return auths, tempStore, totpAuth, totpEnrollStore, nil
 }
 
@@ -96,29 +101,80 @@ func appendCodeBasedAuthenticators(auths []sso.Authenticator, cfg *config.Config
 	if err != nil {
 		return nil, err
 	}
-	auths, err = appendPhoneAuthenticator(auths, cfg.Authenticators.Phone, codeStore, logger)
+	auths, err = appendPhoneAuthenticator(auths, cfg.Authenticators.Phone, codeStore, logger, cfg.Authenticators.CodeDelivery)
 	if err != nil {
 		return nil, err
 	}
-	auths, err = appendEmailAuthenticator(auths, cfg.Authenticators.Email, codeStore, cfg.SMTP, logger)
+	auths, err = appendEmailAuthenticator(auths, cfg.Authenticators.Email, codeStore, cfg.SMTP, logger, cfg.Authenticators.CodeDelivery)
 	if err != nil {
 		return nil, err
 	}
 	// Magic-link shares the SAME CodeStore + SMTP sender as email-OTP — the
 	// two flows use disjoint key namespaces (keyPrefixEmail vs
 	// keyPrefixMagicLink) so requesting both for one address never collides.
-	return appendMagicLinkAuthenticator(auths, cfg.Authenticators.MagicLink, codeStore, cfg.SMTP, logger)
+	return appendMagicLinkAuthenticator(auths, cfg.Authenticators.MagicLink, codeStore, cfg.SMTP, logger, cfg.Authenticators.CodeDelivery)
+}
+
+func asyncCodeSenderConfig(cfg config.CodeDeliveryConfig) authenticators.AsyncCodeSenderConfig {
+	return authenticators.AsyncCodeSenderConfig{
+		QueueSize: cfg.QueueSize, Workers: cfg.Workers, Attempts: cfg.Attempts,
+		AttemptTimeout: cfg.AttemptTimeout, RetryBackoff: cfg.RetryBackoff,
+	}
+}
+
+func wrapEmailCodeSender(sender authenticators.EmailSender, cfg config.CodeDeliveryConfig, logger spi.Logger, channel string) authenticators.EmailSender {
+	if !cfg.Async {
+		return sender
+	}
+	return authenticators.NewAsyncCodeSender(sender.Send, asyncCodeSenderConfig(cfg), codeDeliveryObserver(logger, channel))
+}
+
+func wrapSMSCodeSender(sender authenticators.SMSSender, cfg config.CodeDeliveryConfig, logger spi.Logger) authenticators.SMSSender {
+	if !cfg.Async {
+		return sender
+	}
+	return authenticators.NewAsyncCodeSender(sender.Send, asyncCodeSenderConfig(cfg), codeDeliveryObserver(logger, "sms"))
+}
+
+func codeDeliveryObserver(logger spi.Logger, channel string) func(context.Context, string, error) {
+	return func(ctx context.Context, outcome string, err error) {
+		if err != nil {
+			if contextual, ok := logger.(spi.ContextLogger); ok {
+				contextual.ErrorCtx(ctx, "code delivery failed", "channel", channel, "outcome", outcome, "error", err)
+				return
+			}
+			logger.Error("code delivery failed", "channel", channel, "outcome", outcome, "error", err)
+			return
+		}
+		logger.Debug("code delivery completed", "channel", channel, "outcome", outcome)
+	}
 }
 
 // buildCodeStore selects the passwordless email/phone OTP code store. Send and
 // verify span two requests that can land on different replicas, so the store
 // MUST be cluster-shared on a multi-replica deploy — auto-select redis when a
 // cluster is wired; the single-process binary keeps the in-memory store.
-func buildCodeStore(rdb goredis.Cmdable) authenticators.CodeStore {
+func buildCodeStore(cfg config.CodeSendQuotaConfig, rdb goredis.Cmdable) authenticators.CodeStore {
+	quota := codeSendQuota(cfg)
 	if rdb != nil {
-		return redisbackend.NewCodeStore(rdb)
+		return redisbackend.NewCodeStoreWithQuota(rdb, quota)
 	}
-	return authenticators.NewMemoryCodeStore()
+	return authenticators.NewMemoryCodeStoreWithQuota(authenticators.DefaultCodeResendCooldown, quota)
+}
+
+func codeSendQuota(cfg config.CodeSendQuotaConfig) authenticators.CodeSendQuota {
+	identityLimit, tenantLimit := cfg.IdentityLimit, cfg.TenantLimit
+	if identityLimit == 0 {
+		identityLimit = authenticators.DefaultCodeIdentitySendLimit
+	} else if identityLimit < 0 {
+		identityLimit = 0
+	}
+	if tenantLimit == 0 {
+		tenantLimit = authenticators.DefaultCodeTenantSendLimit
+	} else if tenantLimit < 0 {
+		tenantLimit = 0
+	}
+	return authenticators.CodeSendQuota{IdentityLimit: identityLimit, TenantLimit: tenantLimit, Window: cfg.Window}
 }
 
 // buildTempTokenStore selects the single-use temp-token store (also backs the

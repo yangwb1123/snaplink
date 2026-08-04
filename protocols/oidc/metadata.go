@@ -182,6 +182,17 @@ type ProviderMetadata struct {
 	OpTosURI             string `json:"op_tos_uri,omitempty"`
 	ServiceDocumentation string `json:"service_documentation,omitempty"`
 
+	// ServingRegion (SnapLink extension; non-standard OIDC discovery
+	// field) advertises the deployment's PINNED serving region — the
+	// machine-readable routing contract for clients hit with
+	// region_not_allowed. Present ONLY when
+	// [sso.WithServingRegionAdvertisement] is wired; the value MUST be
+	// deployment-static because the discovery document is cached per
+	// base URL and every token minted in this process carries the same
+	// serving_region. Omitted otherwise (byte-identical discovery for
+	// deployments that never opt in).
+	ServingRegion string `json:"serving_region,omitempty"`
+
 	// OIDC Discovery §3 `claim_types_supported`. RPs introspect
 	// what claim shapes the AS emits — "normal" (claims are
 	// inline in the id_token / userinfo response), "aggregated"

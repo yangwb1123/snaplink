@@ -8,6 +8,7 @@ import (
 	"github.com/yangwb1123/snaplink/domains/authenticators/device"
 	"github.com/yangwb1123/snaplink/domains/identitylink"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/sse"
 	"github.com/yangwb1123/snaplink/protocols/compliance"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -134,7 +135,7 @@ type Deps interface {
 	// when device tracking is not configured.
 	DeviceStore() device.Store
 
-	// Trusted-device MFA-skip self-service (GET/POST/DELETE /me/devices*).
+	// Trusted-device MFA-skip self-service (GET/POST/DELETE /me/trusted-devices*).
 	// Nil TrustedDeviceStore ⇒ those routes are not mounted. TrustedDeviceTTL
 	// is consulted by the Trust handler when minting a fresh grant.
 	TrustedDeviceStore() core.TrustedDeviceStore
@@ -153,6 +154,10 @@ type Deps interface {
 	// PasswordHistoryStore returns the wired password-history store, or nil
 	// when history enforcement is not configured (WithPasswordHistoryStore).
 	PasswordHistoryStore() core.PasswordHistoryStore
+
+	NotificationStore() core.NotificationStore
+	NotificationPreferenceStore() core.NotificationPreferenceStore
+	NotificationBroker() *sse.Broker
 }
 
 // RecordSelfErase emits a subject_self_erased audit event for GDPR Art. 17

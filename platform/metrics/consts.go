@@ -11,6 +11,8 @@ const (
 	NameTokensIssuedTotal               = "sso_tokens_issued_total"
 	NameRiskDecisionsTotal              = "sso_risk_decisions_total"
 	NameConditionalAccessDecisionsTotal = "sso_conditional_access_decisions_total"
+	NameAuthHookExecutionDuration       = "sso_auth_hook_execution_duration_seconds"
+	NameNotificationDeliveryFailed      = "sso_notifications_delivery_failed_total"
 	NameSessionTrustStepUpTotal         = "sso_zero_trust_session_stepup_total"
 	NameMFAChallengesTotal              = "sso_mfa_challenges_total"
 	NameMFACompletionsTotal             = "sso_mfa_completions_total"
@@ -65,6 +67,11 @@ const (
 	NameTokenPolicyEvaluationsTotal   = "sso_token_policy_evaluations_total"
 	NameTokenPolicyDenialsTotal       = "sso_token_policy_denials_total"
 	NameTokenPolicyRenewRequiredTotal = "sso_token_policy_renew_required_total"
+	// NameTokenPolicyRoleResolutionErrorsTotal counts failed tenant-roster
+	// lookups at the session seam (fail-open: roles stay empty and role
+	// selectors stop matching). No labels — a per-tenant/user label would be
+	// unbounded (§5); the logged error carries the identifiers.
+	NameTokenPolicyRoleResolutionErrorsTotal = "sso_token_policy_role_resolution_errors_total"
 
 	// Token-behavior anomaly detection (opt-in via WithTokenAnomalyDetector +
 	// WithMetrics). Bounded labels: the closed finding-type set × severity.

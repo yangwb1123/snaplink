@@ -175,7 +175,7 @@ func issueWebAuthnToken(r *http.Request, deps *WebAuthnDeps, clientID, userID st
 		return nil, err
 	}
 	if slices.Contains(scopes, sso.ScopeOpenID) {
-		idToken, err := issueWebAuthnIDToken(ctx, deps, client, userID, authTime, token.AccessToken)
+		idToken, err := issueWebAuthnIDToken(ctx, deps, client, userID, authTime, token.AccessToken, scopes)
 		if err != nil {
 			return nil, err
 		}
@@ -280,7 +280,7 @@ func resolveWebAuthnIssuer(deps *WebAuthnDeps, client *sso.Client) (sso.TokenIss
 // uses. The issuer is resolved PER-TENANT so a tenant's id_token is signed by
 // the tenant's key (same key as its access + id tokens elsewhere), not the
 // shared key; a misconfigured/unregistered tenant issuer fails closed (500).
-func issueWebAuthnIDToken(ctx context.Context, deps *WebAuthnDeps, client *sso.Client, userID string, authTime time.Time, accessToken string) (string, error) {
+func issueWebAuthnIDToken(ctx context.Context, deps *WebAuthnDeps, client *sso.Client, userID string, authTime time.Time, accessToken string, scopes []string) (string, error) {
 	idIssuer, emit, resErr := idTokenIssuerForWebAuthn(deps, client)
 	if resErr != nil {
 		return "", fmt.Errorf("%w: %v", errWebAuthnIDToken, resErr)
@@ -289,11 +289,12 @@ func issueWebAuthnIDToken(ctx context.Context, deps *WebAuthnDeps, client *sso.C
 		return "", nil
 	}
 	idToken, err := idIssuer.IssueIDToken(ctx, &oidc.IDTokenRequest{
-		Subject:     userID,
-		Audience:    client.ID,
-		AuthTime:    authTime,
-		AMR:         []string{"webauthn"},
-		AccessToken: accessToken,
+		Subject:       userID,
+		Audience:      client.ID,
+		AuthTime:      authTime,
+		AMR:           []string{"webauthn"},
+		AccessToken:   accessToken,
+		GrantedScopes: scopes,
 	})
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", errWebAuthnIDToken, err)

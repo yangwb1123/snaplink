@@ -20,14 +20,19 @@ const DefaultDeadLetterListLimit = 100
 // the operator-queryable audit trail of "this subscription didn't get this
 // event" so a downstream outage doesn't silently lose events.
 type DeadLetterEntry struct {
-	ID             string
-	SubscriptionID string
-	URL            string
-	Event          audit.Event
-	Attempts       int
-	LastError      string
-	FirstFailedAt  time.Time
-	LastFailedAt   time.Time
+	ID                   string      `json:"id"`
+	SubscriptionID       string      `json:"subscription_id"`
+	URL                  string      `json:"url"`
+	Event                audit.Event `json:"event"`
+	Attempts             int         `json:"attempts"`
+	LastError            string      `json:"last_error"`
+	FirstFailedAt        time.Time   `json:"first_failed_at"`
+	LastFailedAt         time.Time   `json:"last_failed_at"`
+	ReplayState          string      `json:"replay_state,omitempty"`
+	ReplayIdempotencyKey string      `json:"replay_idempotency_key,omitempty"`
+	ReplayStartedAt      time.Time   `json:"replay_started_at,omitempty"`
+	DeliveredAt          time.Time   `json:"delivered_at,omitempty"`
+	CleanupError         string      `json:"cleanup_error,omitempty"`
 }
 
 // DeadLetterFilter narrows DeadLetterStore.List. A zero filter (Limit left
@@ -55,3 +60,20 @@ type DeadLetterStore interface {
 
 // ErrDeadLetterNotFound is returned by Get/Replay for an unknown id.
 var ErrDeadLetterNotFound = errors.New("webhook: dead-letter entry not found")
+
+var (
+	// ErrReplayInProgress prevents a second operator request from sending an
+	// event while the first replay has an ambiguous/in-flight outcome.
+	ErrReplayInProgress = errors.New("webhook: replay is already in progress")
+	// ErrReplayCleanup marks a replay whose delivery succeeded but whose DLQ
+	// cleanup did not. The delivered marker remains queryable and makes a
+	// later retry cleanup-only.
+	ErrReplayCleanup = errors.New("webhook: replay delivered but DLQ cleanup failed")
+)
+
+const (
+	ReplayStateInProgress      = "in_progress"
+	ReplayStateCleanupPending  = "delivered_cleanup_pending"
+	ReplayStateDeliveryFailed  = "delivery_failed"
+	replayIdempotencyKeyPrefix = "snaplink-webhook-replay:"
+)

@@ -1,10 +1,10 @@
 // Package tokenanomaly is the token-behavior anomaly detection subsystem —
-// Phase 3 of token governance, layered on the wave-1 domains/tokenusage
+// Phase 3 of token governance, layered on the wave-1 domains/metering
 // telemetry.
 //
 // It runs OFF the request hot path, mirroring domains/anomaly: the wave-1
-// [tokenusage.Recorder] drains usage Events into a [Detector] (a
-// tokenusage.Store decorator) on a background goroutine, and a periodic
+// [metering.Recorder] drains usage Events into a [Detector] (a
+// metering.Store decorator) on a background goroutine, and a periodic
 // [Detector.Analyze] sweep inspects the accumulated per-thumbprint
 // observations plus the aggregated usage buckets and emits [Finding]s. It is
 // DETECTION / REPORTING ONLY — a Finding NEVER feeds an authentication or
@@ -25,7 +25,7 @@
 //     OWN trailing baseline by SpikeFactor (an adaptive, per-client multiple),
 //     gated by a small absolute floor so tiny volumes don't trip it.
 //
-// Privacy (consistent with tokenusage.Event): a Finding carries only the
+// Privacy (consistent with metering.Event): a Finding carries only the
 // token thumbprint (the wave-1 SHA-256(jti), NEVER the token value), a coarse
 // ISO-3166 geo set, the owning client id, and the subject id — the single
 // PII field. It never carries a token value, a full IP, or finer-grained geo.

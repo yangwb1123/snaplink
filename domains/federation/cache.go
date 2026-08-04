@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/connections"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -44,4 +45,46 @@ func WriteEntityStatement(w http.ResponseWriter, r *http.Request, compact []byte
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(compact)
+}
+
+// RoutesDeps is the union of the federation-surface handler deps plus the
+// mount-wiring accessors: the entity handler (presence + sub-feature checks)
+// and the B2B connection store (home-realm — kept by interfaces/sso beside
+// its body-bearing handler). The peer-health admin route lives in the health
+// subpackage (health imports federation, so reaching it from here would be an
+// import cycle). *sso.Server satisfies it via accessors.
+type RoutesDeps interface {
+	Deps
+	ResolveDeps
+	ListDeps
+	TrustMarkStatusDeps
+	FetchDeps
+	FederationEntity() *EntityHandler
+	ConnectionStore() connections.Store
+}
+
+// MountRoutes registers the OpenID Federation 1.0 entity surface on r,
+// wrapped in a core.GatedRouter so the routes hot-toggle with the federation
+// feature gate exactly as they did when registered from interfaces/sso
+// (mountFederationEndpoints). Home-realm discovery + protected-resource
+// metadata + historical-keys routes stay
+// registered by interfaces/sso beside their body-bearing handlers. gate must
+// be non-nil — the Server's live federationGateOn method value; nil is a
+// programmer error.
+func MountRoutes(r core.Router, d RoutesDeps, gate func() bool) {
+	if gate == nil {
+		panic("federation: MountRoutes requires a non-nil gate")
+	}
+	gr := core.NewGatedRouter(r, gate)
+	if d.FederationEntity() != nil {
+		gr.GET(core.PathFederationEntityConfig, func(ctx core.HandlerContext) { HandleEntityConfiguration(d, ctx) })
+		if d.FederationEntity().HasSubordinates() {
+			gr.GET(core.PathFederationFetch, func(ctx core.HandlerContext) { HandleFederationFetch(d, ctx) })
+			gr.GET(core.PathFederationList, func(ctx core.HandlerContext) { HandleFederationList(d, ctx) })
+		}
+		if d.FederationEntity().Resolver().Enabled() {
+			gr.GET(core.PathFederationResolve, func(ctx core.HandlerContext) { HandleFederationResolve(d, ctx) })
+		}
+	}
+	gr.GET(core.PathFederationTrustMarkStatus, func(ctx core.HandlerContext) { HandleTrustMarkStatus(d, ctx) })
 }

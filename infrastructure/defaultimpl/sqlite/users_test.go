@@ -57,6 +57,20 @@ func TestUserProvider_CreateThenGetByID(t *testing.T) {
 	}
 }
 
+func TestUserProvider_SCIMUserNameUniqueCaseInsensitive(t *testing.T) {
+	t.Parallel()
+	p := newTestProvider(t)
+	ctx := context.Background()
+	first := &sso.User{ID: "u1", Attributes: map[string]string{"scim:userName": "Alice@example.com"}}
+	second := &sso.User{ID: "u2", Attributes: map[string]string{"scim:userName": "alice@example.com"}}
+	if err := p.CreateOrUpdate(ctx, first); err != nil {
+		t.Fatalf("first CreateOrUpdate: %v", err)
+	}
+	if err := p.CreateOrUpdate(ctx, second); !errors.Is(err, sso.ErrUserExists) {
+		t.Fatalf("duplicate CreateOrUpdate = %v, want ErrUserExists", err)
+	}
+}
+
 func TestUserProvider_GetByID_MissingReturnsErrNoSuchUser(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)
@@ -164,6 +178,26 @@ func TestUserProvider_List_OrderById(t *testing.T) {
 		if u.ID != want[i] {
 			t.Errorf("List[%d].ID = %q, want %q", i, u.ID, want[i])
 		}
+	}
+}
+
+func TestUserProvider_ListPaginated(t *testing.T) {
+	t.Parallel()
+	p := newTestProvider(t)
+	ctx := context.Background()
+	for _, id := range []string{"e", "a", "d", "b", "c"} {
+		_ = p.CreateOrUpdate(ctx, &sso.User{ID: id})
+	}
+	page, total, err := p.ListPaginated(ctx, 1, 2)
+	if err != nil {
+		t.Fatalf("ListPaginated: %v", err)
+	}
+	if total != 5 || len(page) != 2 || page[0].ID != "b" || page[1].ID != "c" {
+		t.Fatalf("page=%v total=%d, want [b c], 5", page, total)
+	}
+	empty, total, err := p.ListPaginated(ctx, 99, 10)
+	if err != nil || total != 5 || len(empty) != 0 {
+		t.Fatalf("past-end page=%v total=%d err=%v", empty, total, err)
 	}
 }
 

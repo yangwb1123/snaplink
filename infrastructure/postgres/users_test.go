@@ -57,6 +57,19 @@ func TestUser_CreateThenGetByID(t *testing.T) {
 	}
 }
 
+func TestUser_SCIMUserNameUniqueCaseInsensitive(t *testing.T) {
+	p := freshUserProvider(t)
+	ctx := context.Background()
+	first := &core.User{ID: "u1", Attributes: map[string]string{"scim:userName": "Alice@example.com"}}
+	second := &core.User{ID: "u2", Attributes: map[string]string{"scim:userName": "alice@example.com"}}
+	if err := p.CreateOrUpdate(ctx, first); err != nil {
+		t.Fatalf("first CreateOrUpdate: %v", err)
+	}
+	if err := p.CreateOrUpdate(ctx, second); !errors.Is(err, core.ErrUserExists) {
+		t.Fatalf("duplicate CreateOrUpdate = %v, want ErrUserExists", err)
+	}
+}
+
 func TestUser_GetByID_MissingReturnsErrNoSuchUser(t *testing.T) {
 	t.Parallel()
 	p := freshUserProvider(t)
@@ -220,5 +233,23 @@ func TestUser_NanosecondRoundTrip(t *testing.T) {
 	// nanosecond (no truncation to seconds/micros).
 	if got.UpdatedAt.UnixNano()%1000 == 0 && got.UpdatedAt.Nanosecond() == 0 {
 		t.Logf("updated_at = %v (note: zero sub-second is possible but rare)", got.UpdatedAt)
+	}
+}
+
+func TestUser_ListPaginated(t *testing.T) {
+	t.Parallel()
+	p := freshUserProvider(t)
+	ctx := context.Background()
+	for _, id := range []string{"e", "a", "d", "b", "c"} {
+		if err := p.CreateOrUpdate(ctx, &core.User{ID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, total, err := p.ListPaginated(ctx, 1, 2)
+	if err != nil {
+		t.Fatalf("ListPaginated: %v", err)
+	}
+	if total != 5 || len(page) != 2 || page[0].ID != "b" || page[1].ID != "c" {
+		t.Fatalf("page=%v total=%d, want [b c], 5", page, total)
 	}
 }

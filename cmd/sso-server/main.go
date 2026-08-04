@@ -26,6 +26,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/buildinfo"
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	"github.com/yangwb1123/snaplink/platform/configaudit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/operations"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -34,10 +35,10 @@ import (
 	"github.com/yangwb1123/snaplink/domains/connections"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/domains/tenant"
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
 	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/dr"
 	"github.com/yangwb1123/snaplink/platform/metrics"
@@ -88,13 +89,14 @@ func main() {
 	if err != nil {
 		fail("config: %v", err)
 	}
+	validateBuildCapabilities(cfg.Server.RequiredCapabilities)
 
 	logger := newSlogLogger(cfg.Logging.Level)
 
 	// --validate-only: load + validate config, then exit without
 	// starting the server. Useful for CI and pre-deployment checks.
 	if flags.validateOnly {
-		logger.Info("config valid")
+		logger.Info("config valid", "build_profile", buildinfo.BuildProfile, "required_capabilities", cfg.Server.RequiredCapabilities)
 		return
 	}
 
@@ -112,6 +114,12 @@ func main() {
 	if err := run(cfg, logger, flags.tlsCert, flags.tlsKey, flags.grpcListen, reloader); err != nil {
 		logger.Error("server exited with error", "error", err)
 		os.Exit(1)
+	}
+}
+
+func validateBuildCapabilities(required []string) {
+	if err := buildinfo.ValidateRequiredCapabilities(required); err != nil {
+		fail("config capability contract: %v", err)
 	}
 }
 
@@ -189,6 +197,7 @@ type app struct {
 	// Releases subsystem (Phase D-3). Both nil when releases disabled.
 	releaseRegistry *releases.Registry
 	releaseStore    releases.ReleaseStore
+	operationStore  operations.Store
 
 	// auditAsyncSink is non-nil when audit.async.enabled wraps the
 	// configured sink; Close drains the buffer during shutdown.
@@ -332,13 +341,15 @@ type app struct {
 	// (session_trust_decay enabled), nil when off.
 	continuousVerifyCancel context.CancelFunc
 	continuousVerifyDone   <-chan struct{}
+	capConvergenceCancel   context.CancelFunc
+	capConvergenceDone     <-chan struct{}
 
 	// tokenUsageRecorder is the bounded-buffer token-usage telemetry recorder
 	// backing the wave-4 anomaly detector (token_anomaly.enabled); its queue is
 	// drained at shutdown so events captured in the final milliseconds still feed
 	// the detector. tokenAnomalySweep* stops the RunTokenAnomalyDetection loop via
 	// the standard scheduler lifecycle. All nil when off.
-	tokenUsageRecorder      *tokenusage.Recorder
+	tokenUsageRecorder      *metering.Recorder
 	tokenAnomalySweepCancel context.CancelFunc
 	tokenAnomalySweepDone   <-chan struct{}
 

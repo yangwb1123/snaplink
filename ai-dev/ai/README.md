@@ -28,28 +28,49 @@ Run only the stages that match the decision: `02 → 04 → 06` for a pre-merge
 feature review, `02 → 03 → 06` for production hardening, or one focused stage
 for a specific question.
 
-## Current runner limits
+## Runner status
 
-`--dry-run` reliably renders the selected prompt. Live runs currently stream
-agent output to the terminal but do not persist the advertised
-`stage-NN.out.md` file because the subprocess is not captured. `--all` runs
-stages in order but does not inject one stage's output into the next.
+- `--dry-run` renders the selected prompt without invoking an agent.
+- Live runs stream agent output to the terminal and persist it to
+  `stage-NN.out.md` under the review output directory (default
+  `ai-dev/ai/reviews/<context>`; `--output-dir` overrides). Partial output is
+  kept when a stage fails, so failures leave inspectable evidence.
+- `--all` runs stages in order and injects each completed stage's output into
+  the paste-style variables of downstream stages (Stage 00 →
+  `PRODUCT_DISCOVERY_OUTPUT`; Stage 01 → `ARCHITECTURE_OUTPUT`; completed
+  stages → `PRIOR_FINDINGS`, `CRITICAL_HIGH_FINDINGS`,
+  `ALL_PRIOR_FINDINGS_SUMMARY`, `COMMITTED_STORIES`). Explicit context or CLI
+  values win over chained output.
+- `--all --resume` continues a previous session: stages whose `stage-NN.out.md`
+  already exists are skipped (the agent is not called again) and the saved
+  outputs chain into the remaining stages, so a run interrupted by quota,
+  rate limits, or offline conditions picks up exactly where it stopped.
+- Omitted context fields render as `(not provided: ...)` or `(unknown)`; the
+  runner no longer fabricates storage, team-size, or sprint-length facts.
+- `--agent-bin` overrides the agent binary configured in
+  `ai-dev/pi-batch.yaml` (default `pi`).
+- Agent results are validated before saving: non-zero exit, empty output, or
+  a provider/CLI failure signature (quota, rate limit, billing, auth error
+  codes such as `insufficient_quota` or `rate_limit_error`, `429 Too Many
+  Requests`, offline/DNS/TLS/proxy failures such as `network is unreachable`,
+  `connection refused`, `curl: (7)`, leading `ERROR:`/`fatal:` banners)
+  rejects the stage and no `stage-NN.out.md` is written. Generic words like
+  "error" or "timeout" are not treated as failures, so review findings about
+  timeouts or unauthorized responses are not misclassified. A per-stage
+  deadline (`--timeout`, default 600s) kills a hung agent so an offline
+  machine cannot block the runner. Rejected stages fail the run and are
+  skipped by downstream chaining.
 
-Until the runner is repaired, capture output explicitly and copy any prior
-finding into the context fields needed by the next stage. Exploratory review
-directories are ignored by Git; promote verified conclusions into maintained
-project documents instead of committing the raw corpus.
-
-Omitted values are not all neutral: the current mapper assumes
-`Redis Cluster, PostgreSQL` for storage, team size `3`, and a two-week sprint.
-Override those fields or treat them as unknown rather than project facts.
-The context file's `repo:` value fills the prompt only; pass `--repo /path`
-explicitly to set the live agent process working directory.
+Exploratory review directories are ignored by Git; promote verified
+conclusions into maintained project documents instead of committing the raw
+corpus. The context file's `repo:` value fills the prompt only; pass
+`--repo /path` explicitly to set the live agent process working directory.
 
 ## Usage
 
-Context YAML requires PyYAML, which this repository does not install as a
-managed Python dependency: `python -m pip install PyYAML`.
+Context YAML requires PyYAML, which is managed in `pyproject.toml`;
+install the project with `uv sync` (or `pip install -e .`) before running
+the runners.
 
 Render a prompt without invoking an agent:
 
@@ -103,5 +124,5 @@ To add or rename a stage, update `sdlc.yaml` and its prompt; the runner loads
 the stage map dynamically. Preserve every `{{VARIABLE}}` used by the schema.
 
 For individual role prompts, or to inspect multi-input pipelines with
-`--dry-run`, use `ai-dev/pi-batch.py`; see its current limitations in
+`--dry-run`, use `ai-dev/pi-batch.py`; see its runner status in
 [`../docs/AUTOMATION_WORKFLOW_SUMMARY.md`](../docs/AUTOMATION_WORKFLOW_SUMMARY.md).

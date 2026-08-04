@@ -17,7 +17,7 @@ func TestRender_EscapesInterpolatedFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, body, err := ts.render(tmplInvitation, tmplData{
-		TenantID: "acme", Role: `<script>alert(1)</script>`, Token: "tok", LinkBaseURL: "https://x",
+		TenantID: "acme", Role: `<script>alert(1)</script>`, Token: "tok", ActionURL: "https://x",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestRender_SubjectStripsHeaderInjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	subject, _, err := ts.render(tmplInvitation, tmplData{
-		TenantID: "acme\r\nBcc: attacker@evil.example", Role: "admin", Token: "tok", LinkBaseURL: "https://x",
+		TenantID: "acme\r\nBcc: attacker@evil.example", Role: "admin", Token: "tok", ActionURL: "https://x",
 	})
 	if err != nil {
 		t.Fatal(err)

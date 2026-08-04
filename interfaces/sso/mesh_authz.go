@@ -181,7 +181,7 @@ func (s *Server) MeshAuthorize(ctx context.Context, req MeshAuthorizeRequest) Me
 		return res
 	}
 	claims, _, err := s.validateAnyToken(ctx, tokenString)
-	if err != nil {
+	if err != nil || !core.IsAccessTokenClaims(claims) {
 		return s.meshDenyInvalidToken(hctx, res, "The access token is invalid or expired")
 	}
 	// Sender-constraint: a bound token without a matching proof/cert collapses

@@ -2,12 +2,14 @@ package sso_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // RevokeTenantRefreshTokens enumerates a tenant's clients and purges every
@@ -135,5 +137,38 @@ func TestServer_RevokeTenant_DestroysSessionsByRoster(t *testing.T) {
 	// A user not on the roster keeps their session.
 	if _, err := sm.Get(ctx, outsider.ID); err != nil {
 		t.Errorf("non-member session destroyed: %v", err)
+	}
+}
+
+type failingTenantSessionManager struct{ core.SessionManager }
+
+func (failingTenantSessionManager) Destroy(context.Context, string) error {
+	return errors.New("injected tenant session destroy failure")
+}
+
+func TestServer_RevokeTenantCredentials_ReturnsSessionFailures(t *testing.T) {
+	ctx := context.Background()
+	base := defaultimpl.NewMemorySessionManager(time.Hour)
+	session, _ := base.Create(ctx, "alice")
+	members := defaultimpl.NewMemoryTenantUserStore()
+	if err := members.Add(ctx, &sso.TenantMembership{
+		TenantID: "t1", UserID: "alice", Role: sso.TenantRoleMember,
+	}); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	srv := sso.NewServer(
+		sso.WithIssuer("sso-test"),
+		sso.WithSessionManager(failingTenantSessionManager{SessionManager: base}),
+		sso.WithTenantUserStore(members),
+	)
+
+	report := srv.RevokeTenantCredentials(ctx, "t1")
+	if report.Complete() || report.SessionsRevoked != 0 || len(report.Results) != 1 {
+		t.Fatalf("report = %+v", report)
+	}
+	result := report.Results[0]
+	if result.Kind != "session" || result.ResourceID != session.ID ||
+		result.Status != "failed" || result.IdempotencyKey == "" || result.Error == "" {
+		t.Fatalf("result = %+v", result)
 	}
 }

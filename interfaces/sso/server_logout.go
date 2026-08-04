@@ -50,7 +50,7 @@ func (s *Server) captureBackchannelTarget(ctx HandlerContext, bearer string) (bc
 		return "", "", ""
 	}
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer)
-	if err != nil || claims == nil {
+	if err != nil || !core.IsAccessTokenClaims(claims) {
 		return "", "", ""
 	}
 	bcSubject = claims.Subject
@@ -133,14 +133,8 @@ func (s *Server) handleSendCode(ctx HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrProviderDoesNotSendCodes))
 		return
 	}
-	if err := sender.SendCode(ctx.Request().Context(), req.Target); err != nil {
-		s.logger.Error("send code failed", "provider", req.Provider, "error", err)
-		s.recordCodeSent(ctx, req.Provider, req.Target, false)
-		if errors.Is(err, spi.ErrCodeCooldownActive) {
-			ctx.JSON(http.StatusTooManyRequests, errorBody(ctx, ErrResendTooSoon))
-			return
-		}
-		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrSendFailed))
+	if s.handleCodeSendFailure(ctx, req.Provider, req.Target,
+		sender.SendCode(s.codeSendContext(ctx), req.Target)) {
 		return
 	}
 	s.recordCodeSent(ctx, req.Provider, req.Target, true)
@@ -348,7 +342,7 @@ func (s *Server) ensureJITMembership(ctx HandlerContext, client *Client, userID 
 // createSession mints a session capturing device context (IP/UA) and enforcing
 // session caps (max_active_sessions, per-user, tenant quota). Eviction is
 // scoped to tenantID; listing/eviction errors fail-open (logged, not blocking).
-func (s *Server) createSession(ctx HandlerContext, userID, clientID, tenantID string, deviceID ...string) (*Session, error) {
+func (s *Server) createSession(ctx HandlerContext, userID, clientID, tenantID string, scopes []string, authTime time.Time, deviceID ...string) (*Session, error) {
 	rctx := ctx.Request().Context()
 	var devID string
 	if len(deviceID) > 0 {
@@ -360,7 +354,7 @@ func (s *Server) createSession(ctx HandlerContext, userID, clientID, tenantID st
 	// rejected login leaves no orphaned session or quota drift. Returns a
 	// sentinel WITHOUT writing a response — the login caller owns the single
 	// wire write (a clean access_denied), avoiding a double WriteHeader.
-	if s.sessionPolicyCapExceeded(ctx, userID, clientID) {
+	if s.sessionPolicyCapExceeded(ctx, userID, clientID, tenantID) {
 		return nil, errMaxActiveSessions
 	}
 	// Tenant-level session quota check (quota.go's chargeSessionQuota). When
@@ -379,7 +373,7 @@ func (s *Server) createSession(ctx HandlerContext, userID, clientID, tenantID st
 			return nil, errMaxActiveSessions
 		}
 	}
-	sess, err := s.createSessionRecord(ctx, rctx, userID, tenantID, devID)
+	sess, err := s.createSessionRecord(ctx, rctx, userID, clientID, tenantID, scopes, authTime, devID)
 	if err != nil && charged {
 		s.releaseSessionQuota(rctx, tenantID)
 	}
@@ -387,7 +381,7 @@ func (s *Server) createSession(ctx HandlerContext, userID, clientID, tenantID st
 }
 
 // createSessionRecord writes the session (CreateWithMeta or plain Create).
-func (s *Server) createSessionRecord(ctx HandlerContext, rctx context.Context, userID, tenantID string, deviceID ...string) (*Session, error) {
+func (s *Server) createSessionRecord(ctx HandlerContext, rctx context.Context, userID, clientID, tenantID string, scopes []string, authTime time.Time, deviceID ...string) (*Session, error) {
 	mc, ok := s.sessionMgr.(SessionMetaCreator)
 	if !ok {
 		return s.sessionMgr.Create(rctx, userID)
@@ -397,10 +391,12 @@ func (s *Server) createSessionRecord(ctx HandlerContext, rctx context.Context, u
 		devID = deviceID[0]
 	}
 	meta := SessionMeta{
-		IP:        audit.ClientIP(ctx.Request()),
-		UserAgent: ctx.Request().UserAgent(),
-		TenantID:  tenantID,
-		DeviceID:  devID,
+		IP: audit.ClientIP(ctx.Request()), UserAgent: ctx.Request().UserAgent(),
+		TenantID: tenantID, DeviceID: devID, ClientID: clientID,
+		AuthorizedScopes: append([]string(nil), scopes...), AuthTime: authTime,
+	}
+	if meta.AuthTime.IsZero() {
+		meta.AuthTime = time.Now()
 	}
 	// Zero-trust: bind the initial trust score + decay baseline at login when
 	// WithSessionTrustDecay is wired. Uses device trust score when available

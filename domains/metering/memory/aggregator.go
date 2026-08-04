@@ -18,8 +18,8 @@ type Aggregator struct {
 	records []*metering.TenantUsage
 }
 
-// New returns an empty Aggregator.
-func New() *Aggregator { return &Aggregator{} }
+// NewAggregator returns an empty tenant-usage Aggregator.
+func NewAggregator() *Aggregator { return &Aggregator{} }
 
 // Record adds a pre-computed TenantUsage entry. Use in tests to
 // pre-populate the aggregator without a real audit log.

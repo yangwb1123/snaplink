@@ -11,6 +11,7 @@ import (
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/interfaces/grpcserver"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -28,7 +29,7 @@ func startTenantAdminGRPC(t *testing.T, store tenant.Store, recorder *audit.Reco
 // startTenantAdminGRPCFull additionally injects the residency-cache
 // invalidation callback (fired on Create/Update with residency) and the
 // active-revocation hook fired when a tenant is suspended (nil = no-op each).
-func startTenantAdminGRPCFull(t *testing.T, store tenant.Store, recorder *audit.Recorder, invalidate func(string), invalidateResidency func(string), revoke func(context.Context, string)) *grpc.ClientConn {
+func startTenantAdminGRPCFull(t *testing.T, store tenant.Store, recorder *audit.Recorder, invalidate func(string), invalidateResidency func(string), revoke func(context.Context, string) core.TenantCredentialRevocationReport) *grpc.ClientConn {
 	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
 	srv := grpc.NewServer()
@@ -346,9 +347,10 @@ func TestTenantAdmin_SuspendFiresTokenRevocation(t *testing.T) {
 	conn := startTenantAdminGRPCFull(t, store, audit.New(audit.NewMemorySink(10)),
 		func(string) {},
 		nil,
-		func(_ context.Context, id string) {
+		func(_ context.Context, id string) core.TenantCredentialRevocationReport {
 			revoked.Add(1)
 			lastID.Store(id)
+			return core.TenantCredentialRevocationReport{TenantID: id}
 		})
 	c := adminv1.NewTenantAdminServiceClient(conn)
 	ctx := context.Background()
@@ -389,9 +391,10 @@ func TestTenantAdmin_DeleteFiresTokenRevocation(t *testing.T) {
 	conn := startTenantAdminGRPCFull(t, store, audit.New(audit.NewMemorySink(10)),
 		func(string) {},
 		nil,
-		func(_ context.Context, id string) {
+		func(_ context.Context, id string) core.TenantCredentialRevocationReport {
 			revoked.Add(1)
 			lastID.Store(id)
+			return core.TenantCredentialRevocationReport{TenantID: id}
 		})
 	c := adminv1.NewTenantAdminServiceClient(conn)
 	ctx := context.Background()

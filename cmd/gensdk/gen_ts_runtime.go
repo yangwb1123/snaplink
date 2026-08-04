@@ -33,7 +33,7 @@ export class SSOError extends Error {
 }
 
 interface requestOptions {
-  query?: Record<string, string | number | boolean | undefined>;
+  query?: Record<string, string | number | boolean | readonly (string | number | boolean)[] | undefined>;
   body?: unknown;
   auth?: boolean;
   clientAuth?: boolean;
@@ -141,7 +141,11 @@ const tsClientHeader = `export class SSOClient {
     if (opts.query) {
       const qs = new URLSearchParams();
       for (const [k, v] of Object.entries(opts.query)) {
-        if (v !== undefined) qs.set(k, String(v));
+		if (Array.isArray(v)) {
+		  for (const item of v) qs.append(k, String(item));
+		} else if (v !== undefined) {
+		  qs.set(k, String(v));
+		}
       }
       const s = qs.toString();
       if (s) url += "?" + s;

@@ -88,6 +88,11 @@ COPY . .
 # binary that runs on distroless static. -trimpath strips local paths
 # from stack traces for reproducibility. GOFIPS140 (see ARG above) is a
 # pure-Go stdlib build flag — orthogonal to CGO_ENABLED=0, never requires it.
+# The distroless runtime has no shell or network tools; build the tiny Go
+# health probe (test/oidc-conformance/healthcheck) fully static for the
+# compose healthcheck and debug exec.
+RUN cd test/oidc-conformance/healthcheck && CGO_ENABLED=0 go build -o /out/healthcheck .
+
 RUN resolved_build_time="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"; \
     resolved_git_hash="${GIT_HASH:-$(git rev-parse HEAD 2>/dev/null || true)}"; \
     resolved_modified="${BUILD_MODIFIED:-$(test -z "$(git status --porcelain 2>/dev/null)" || echo true)}"; \
@@ -129,6 +134,7 @@ ENTRYPOINT ["/sso-mcp"]
 FROM gcr.io/distroless/static:nonroot AS sso-server
 
 COPY --from=builder /out/sso-server /sso-server
+COPY --from=builder /out/healthcheck /healthcheck
 
 # HTTP REST surface (per consts.go: PathHealth, PathLogin, JWKS).
 EXPOSE 8080

@@ -243,6 +243,11 @@ type BreakGlassStore interface {
 	// first. Revoked and expired records are excluded.
 	List(ctx context.Context) ([]AdminSession, error)
 
+	// Activate atomically transitions a pending record to active for the
+	// creating admin and attaches the sessions minted after Create succeeded.
+	// This ordering prevents a failed Create from orphaning a derived session.
+	Activate(ctx context.Context, id, adminID string, sessionIDs []string) (AdminSession, error)
+
 	// Approve atomically transitions a pending record to active, stamping
 	// ApprovedBy and attaching the impersonation sessionIDs minted for the
 	// activation. MUST reject approverID == AdminUserID with

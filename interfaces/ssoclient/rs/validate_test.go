@@ -103,6 +103,95 @@ func TestValidateToken_WrongAudience(t *testing.T) {
 	}
 }
 
+// TestValidateToken_ServingRegionGate is the decision-3 local-mode matrix:
+// configured allowlist + in-set token passes; out-of-set OR missing claim
+// fails closed with ErrServingRegionMismatch; empty config skips the gate
+// (byte-identical). The typed projection (Claims.ServingRegion +
+// HasServingRegion) is pinned here too.
+func TestValidateToken_ServingRegionGate(t *testing.T) {
+	t.Parallel()
+	iss := newTestIssuer(t)
+	mint := func(region string) string {
+		t.Helper()
+		claims := map[string]any{"sub": "user-1", "aud": "api://orders"}
+		if region != "" {
+			claims["serving_region"] = region
+		}
+		tok, err := iss.MintAccessToken(claims)
+		if err != nil {
+			t.Fatalf("MintAccessToken: %v", err)
+		}
+		return tok
+	}
+	cfg := newTestConfig(t, iss, "api://orders")
+
+	// In-set region + configured allowlist -> valid, typed claim populated.
+	inSet := cfg
+	inSet.AllowedServingRegions = []string{"eu-west-1", "us-east-1"}
+	claims, err := rs.ValidateToken(context.Background(), mint("eu-west-1"), inSet)
+	if err != nil {
+		t.Fatalf("ValidateToken(in-set): %v", err)
+	}
+	if claims.ServingRegion != "eu-west-1" || !claims.HasServingRegion() {
+		t.Errorf("ServingRegion = %q, HasServingRegion = %v", claims.ServingRegion, claims.HasServingRegion())
+	}
+
+	// Out-of-set region -> governance sentinel.
+	outOfSet := cfg
+	outOfSet.AllowedServingRegions = []string{"eu-west-1"}
+	_, err = rs.ValidateToken(context.Background(), mint("us-east-1"), outOfSet)
+	if !errors.Is(err, rs.ErrServingRegionMismatch) {
+		t.Fatalf("err = %v, want ErrServingRegionMismatch (out-of-set)", err)
+	}
+
+	// Missing claim + configured allowlist -> FAIL CLOSED (no verifiable
+	// provenance in a region-pinned deployment).
+	_, err = rs.ValidateToken(context.Background(), mint(""), outOfSet)
+	if !errors.Is(err, rs.ErrServingRegionMismatch) {
+		t.Fatalf("err = %v, want ErrServingRegionMismatch (missing claim)", err)
+	}
+
+	// Empty config -> gate skipped; both in-set and claim-less tokens pass.
+	claims, err = rs.ValidateToken(context.Background(), mint("us-east-1"), cfg)
+	if err != nil {
+		t.Fatalf("ValidateToken(unconfigured, with claim): %v", err)
+	}
+	if claims.ServingRegion != "us-east-1" {
+		t.Errorf("ServingRegion = %q, want us-east-1", claims.ServingRegion)
+	}
+	if _, err = rs.ValidateToken(context.Background(), mint(""), cfg); err != nil {
+		t.Fatalf("ValidateToken(unconfigured, no claim): %v", err)
+	}
+	// HasServingRegionIn never reports a claim-less token in the set.
+	if claims.HasServingRegionIn([]string{"eu-west-1"}) {
+		t.Errorf("HasServingRegionIn(eu-west-1) = true for a us-east-1 token")
+	}
+}
+
+// TestValidateToken_ServingRegionGateRunsLast pins the gate order: a
+// garbage/expired token still reports its higher-priority sentinel, so the
+// region gate can never be probed with an invalid token.
+func TestValidateToken_ServingRegionGateRunsLast(t *testing.T) {
+	t.Parallel()
+	iss := newTestIssuer(t)
+	past := time.Now().Add(-time.Hour)
+	tok, err := iss.MintAccessToken(map[string]any{
+		"sub":            "user-1",
+		"exp":            past.Add(time.Minute).Unix(),
+		"serving_region": "eu-west-1",
+	})
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+	cfg := newTestConfig(t, iss, "")
+	cfg.AllowedServingRegions = []string{"us-east-1"}
+
+	_, err = rs.ValidateToken(context.Background(), tok, cfg)
+	if !errors.Is(err, rs.ErrTokenExpired) {
+		t.Fatalf("err = %v, want ErrTokenExpired (expiry outranks region gate)", err)
+	}
+}
+
 func TestValidateToken_WrongIssuer(t *testing.T) {
 	t.Parallel()
 	iss := newTestIssuer(t)

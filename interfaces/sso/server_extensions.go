@@ -16,6 +16,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
 	"github.com/yangwb1123/snaplink/protocols/caep"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oidc/bcl"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
@@ -56,14 +57,20 @@ const (
 // the routes absent when unwired makes that admin surface byte-identical to a
 // build without the optional lifecycle feature.
 func (s *Server) mountWebhookAdminAPI(api Router) {
-	if s.webhookEngine == nil {
+	if s.webhookEngine != nil {
+		api.GET(PathAdminWebhookSubscriptions, s.handleWebhookListSubscriptions)
+		api.POST(PathAdminWebhookSubscriptions, s.handleWebhookCreateSubscription)
+		api.DELETE(PathAdminWebhookSubscriptionByID, s.handleWebhookDeleteSubscription)
+		api.GET(PathAdminWebhookDeadLetters, s.handleWebhookListDeadLetters)
+		api.POST(PathAdminWebhookDeadLetterReplay, s.handleWebhookReplayDeadLetter)
+	}
+	manager, ok := s.logoutNotifier.(bcl.AdminManager)
+	if !ok {
 		return
 	}
-	api.GET(PathAdminWebhookSubscriptions, s.handleWebhookListSubscriptions)
-	api.POST(PathAdminWebhookSubscriptions, s.handleWebhookCreateSubscription)
-	api.DELETE(PathAdminWebhookSubscriptionByID, s.handleWebhookDeleteSubscription)
-	api.GET(PathAdminWebhookDeadLetters, s.handleWebhookListDeadLetters)
-	api.POST(PathAdminWebhookDeadLetterReplay, s.handleWebhookReplayDeadLetter)
+	api.GET(core.PathAdminBCLFailures, func(ctx HandlerContext) { bcl.HandleList(manager, ctx) })
+	api.POST(core.PathAdminBCLFailureReplay, func(ctx HandlerContext) { bcl.HandleReplay(manager, ctx) })
+	api.POST(core.PathAdminBCLFailuresReplay, func(ctx HandlerContext) { bcl.HandleReplayDue(manager, ctx) })
 }
 
 // temporarily fails.
@@ -293,7 +300,7 @@ func (s *Server) ResolveCIBAHint(ctx context.Context, loginHint, idTokenHint, lo
 	// id_token_hint: validate the token and trust its subject. The
 	// validator rejects expired / wrong-alg / bad-signature tokens.
 	if idTokenHint != "" {
-		if claims, err := s.ValidateToken(ctx, idTokenHint); err == nil && claims != nil && claims.Subject != "" {
+		if claims, err := s.ValidateToken(ctx, idTokenHint); err == nil && core.IsIDTokenClaims(claims) && claims.Subject != "" {
 			return claims.Subject, CIBAAMR, nil
 		}
 	}

@@ -11,8 +11,12 @@ func TestAllCategories_StableContents(t *testing.T) {
 	t.Parallel()
 	got := snapshot.AllCategories()
 	want := []snapshot.ResourceCategory{
+		snapshot.CategoryTenants,
+		snapshot.CategoryTenantDomains,
+		snapshot.CategoryConnections,
 		snapshot.CategoryClients,
 		snapshot.CategoryUsers,
+		snapshot.CategoryPairwise,
 		snapshot.CategoryRoles,
 		snapshot.CategoryAssignments,
 		snapshot.CategoryMenus,
@@ -85,9 +89,12 @@ func TestIsValidSchemaVersion(t *testing.T) {
 	if !snapshot.IsValidSchemaVersion(snapshot.SchemaVersion) {
 		t.Errorf("current SchemaVersion %q rejected by IsValidSchemaVersion", snapshot.SchemaVersion)
 	}
-	for _, bogus := range []string{"", "0", "2", "v1", "1.0"} {
+	if !snapshot.IsValidSchemaVersion("1") {
+		t.Error("schema v1 must remain readable during the v2 migration")
+	}
+	for _, bogus := range []string{"", "0", "3", "v1", "1.0"} {
 		if snapshot.IsValidSchemaVersion(bogus) {
-			t.Errorf("IsValidSchemaVersion(%q) returned true; only %q is currently supported", bogus, snapshot.SchemaVersion)
+			t.Errorf("IsValidSchemaVersion(%q) returned true; only v1 and %q are supported", bogus, snapshot.SchemaVersion)
 		}
 	}
 }

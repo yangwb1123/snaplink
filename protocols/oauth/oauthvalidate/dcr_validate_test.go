@@ -53,12 +53,59 @@ func TestValidateDCRMetadata(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "unsupported auth method",
+			name: "private key JWT requires JWKS",
 			req: &DCRMetadata{
 				TokenEndpointAuthMethod: "private_key_jwt",
 			},
 			policy:  &DCRPolicy{},
 			wantErr: true,
+		},
+		{
+			name: "private key JWT with JWKS",
+			req: &DCRMetadata{
+				TokenEndpointAuthMethod: "private_key_jwt",
+				GrantTypes:              []string{"client_credentials"},
+				HasJWKS:                 true,
+			},
+			policy:  &DCRPolicy{},
+			wantErr: false,
+		},
+		{
+			name: "tls client auth requires certificate binding",
+			req: &DCRMetadata{
+				TokenEndpointAuthMethod: "tls_client_auth",
+				GrantTypes:              []string{"client_credentials"},
+			},
+			policy:  &DCRPolicy{},
+			wantErr: true,
+		},
+		{
+			name: "tls client auth with subject DN",
+			req: &DCRMetadata{
+				TokenEndpointAuthMethod: "tls_client_auth",
+				TLSClientAuthSubjectDN:  "CN=workload",
+				GrantTypes:              []string{"client_credentials"},
+			},
+			policy:  &DCRPolicy{},
+			wantErr: false,
+		},
+		{
+			name: "reject non-loopback HTTP redirect",
+			req: &DCRMetadata{
+				RedirectURIs: []string{"http://example.com/cb"},
+				GrantTypes:   []string{"authorization_code"},
+			},
+			policy:  &DCRPolicy{},
+			wantErr: true,
+		},
+		{
+			name: "allow loopback HTTP redirect",
+			req: &DCRMetadata{
+				RedirectURIs: []string{"http://127.0.0.1:8765/cb"},
+				GrantTypes:   []string{"authorization_code"},
+			},
+			policy:  &DCRPolicy{},
+			wantErr: false,
 		},
 		{
 			name: "supported auth methods",

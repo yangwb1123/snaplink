@@ -1,13 +1,15 @@
 # OIDC Conformance Status
 
-Last verified against the code on 2026-07-27.
+Last verified against the code on 2026-07-31.
 
 ## Certification status
 
 Snaplink has **no recorded OpenID Foundation certification listing or official
-conformance result**. The repository contains protocol tests and an interactive
-Docker Compose harness for the OIDF suite, but that harness is not part of
-default CI and no result artifact is committed.
+conformance result**. The repository contains protocol tests and a
+**headless, repeatable** Docker Compose harness for the OIDF suite
+(`test/oidc-conformance/run-headless.sh`), plus a smoke-topology run archive
+under `test/oidc-conformance/results/<commit>/` (git-ignored; regenerate with
+the script). The harness is not part of default CI.
 
 Therefore:
 
@@ -15,6 +17,25 @@ Therefore:
 - “Implemented” below means code/tests exist, not that an OIDF profile passed.
 - An RFP response must name the exact server commit, configuration and official
   result it relies on.
+
+## Smoke run evidence (HTTP-only local topology)
+
+`test/oidc-conformance/run-headless.sh` against the pinned suite image
+`release-v5.2.1` produced, for the `oidcc-server` module of the Basic
+certification plan (discovery + dynamic-client variants):
+
+- 59 SUCCESS steps covering discovery fetch/validation, JWKS fetch and
+  validation, dynamic client registration, the authorization-code round
+  trip (browser-driven login against the local OP), ID-token verification,
+  userinfo and resource-endpoint calls.
+- One expected FAILURE: `VerifyClientManagementCredentials` requires an
+  `https` client-management URL, which an HTTP-only local issuer cannot
+  provide. An externally reachable HTTPS issuer is required before any
+  certification claim (see the harness README).
+
+This is smoke evidence only — not an OIDF result. Certification language
+still requires an official suite run against an HTTPS topology with archived
+plan/result artifacts and, for "certified", an issued OIDF listing.
 
 ## Current response-type boundary
 
@@ -99,26 +120,32 @@ package-specific engineering floors, not protocol-conformance percentages.
 ## OIDF conformance harness
 
 The manual scaffold lives in
-[`test/oidc-conformance/`](../../test/oidc-conformance/README.md). It is
-currently not runnable as checked in; that README records the missing build,
-configuration, and environment wiring. The workflow remains interactive and
-there are no OIDC-conformance Make targets.
+[`test/oidc-conformance/`](../../test/oidc-conformance/README.md) and is now
+runnable as checked in: it pins the official suite image to a release tag
+(`registry.gitlab.com/openid/conformance-suite:release-v5.2.1`), mounts a
+committed, `--validate-only`-checked server configuration, and defines the
+supported-profile allowlist. The workflow remains browser-interactive and
+not part of `make ci`; there are no OIDC-conformance Make targets.
+
+**Supported OIDF modules** (only code-based profiles; implicit and hybrid
+are rejected by the runtime and must never be selected): `basic` (code),
+`config`, `dynamic`, `formpost`, `session`, `logout`; `jarm`, `fapi`
+(FAPI 2.0 code) and `ciba` only when their wiring is enabled.
 
 Before treating a run as release evidence:
 
-1. Pin the conformance-suite image by version/digest instead of `latest`.
-2. Use HTTPS and issuer/redirect URIs valid for the selected plan.
-3. Select only profiles matching the response types and options actually
-   configured.
+1. Use the pinned conformance-suite image (never `:latest`); record its digest.
+2. Use HTTPS and issuer/redirect URIs valid for the selected plan for the
+   certification run (the committed harness is an HTTP-only smoke topology).
+3. Select only modules from the allowlist above, matching the response types
+   and options actually configured.
 4. Archive the suite version, plan, configuration, server commit and complete
-   result export.
+   result export under `test/oidc-conformance/results/<commit>/` (see the
+   harness README's Evidence section).
 5. Resolve failures without weakening oracle-leak, anti-enumeration or
    signature-validation invariants.
 6. Submit to the OpenID Foundation and wait for an issued listing before
    changing the certification status above.
-
-Treat any profile names in Compose configuration as experiments, not as a
-support matrix; the runtime boundary above and current code are authoritative.
 
 ## Interoperability evidence
 

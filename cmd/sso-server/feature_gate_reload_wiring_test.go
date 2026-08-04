@@ -59,13 +59,13 @@ func TestWireFeatureGateReload_SIGHUPFlipsAdminAPILive(t *testing.T) {
 // TestWireFeatureGateReload_WebSPAIgnoredWhenNoFSWired proves the wiring
 // surfaces the documented asymmetry end-to-end too: a real binary that
 // never wired an admin console / hosted login / portal filesystem gets
-// Result.Ignored for a web_spa change, not a false Applied.
+// Result.Ignored for a branding change, not a false Applied.
 func TestWireFeatureGateReload_WebSPAIgnoredWhenNoFSWired(t *testing.T) {
 	srv := sso.NewServer(sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()))
 	_ = srv.Handler()
 
-	initial := &config.Config{FeatureGates: config.FeatureGatesConfig{WebSPA: fgBoolPtr(true)}}
-	next := &config.Config{FeatureGates: config.FeatureGatesConfig{WebSPA: fgBoolPtr(false)}}
+	initial := &config.Config{FeatureGates: config.FeatureGatesConfig{Branding: fgBoolPtr(true)}}
+	next := &config.Config{FeatureGates: config.FeatureGatesConfig{Branding: fgBoolPtr(false)}}
 	reloader := configreload.New(initial, func(context.Context) (*config.Config, error) { return next, nil }, nil)
 	wireFeatureGateReload(reloader, srv)
 
@@ -78,12 +78,12 @@ func TestWireFeatureGateReload_WebSPAIgnoredWhenNoFSWired(t *testing.T) {
 	}
 	found := false
 	for _, p := range res.Ignored {
-		if p == "/feature_gates/web_spa" {
+		if p == "/feature_gates/branding" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("Ignored = %v, want it to contain /feature_gates/web_spa", res.Ignored)
+		t.Errorf("Ignored = %v, want it to contain /feature_gates/branding", res.Ignored)
 	}
 }
 

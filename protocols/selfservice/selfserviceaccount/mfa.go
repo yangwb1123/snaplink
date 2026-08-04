@@ -64,7 +64,18 @@ func HandleDeleteMyMFAFactor(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return
 	}
+	recordMFARemoved(d, ctx, userID, factorID)
 	ctx.JSON(http.StatusNoContent, nil)
+}
+
+func recordMFARemoved(d Deps, ctx core.HandlerContext, userID, factorID string) {
+	if d.Auditor() == nil {
+		return
+	}
+	event := &audit.Event{Type: audit.EventMFARemoved, Outcome: audit.OutcomeSuccess,
+		ActorID: userID, ActorIP: audit.ClientIP(ctx.Request())}
+	audit.SetMeta(event, "factor_id", factorID)
+	d.Auditor().Record(ctx.Request().Context(), event)
 }
 
 // HandleTOTPEnrollBegin serves POST /me/mfa/totp/begin — the first leg of

@@ -46,11 +46,16 @@ func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	// The later columns must now exist (a SELECT referencing them succeeds) —
 	// including the v3 RFC 9068 auth-context columns (amr/acr/auth_time), the
 	// v4 RFC 9449 DPoP key-binding column (confirmation_jkt), the v5
-	// token-policy max_refresh_depth column (generation), and the v6
-	// absolute-max-lifetime column (family_created_at).
+	// token-policy max_refresh_depth column (generation), the v6
+	// absolute-max-lifetime column (family_created_at), and the v8
+	// refresh-introspect thumbprint column (jti). v7 also adds an expiry
+	// to the consumed-token family ledger.
 	if _, err := db.Exec(`SELECT family_id, resources, authorization_details, sid,
-		amr, acr, auth_time, confirmation_jkt, generation, family_created_at FROM refresh_tokens`); err != nil {
+		amr, acr, auth_time, confirmation_jkt, generation, family_created_at, jti FROM refresh_tokens`); err != nil {
 		t.Errorf("legacy columns not backfilled: %v", err)
+	}
+	if _, err := db.Exec(`SELECT expires_at FROM refresh_token_families`); err != nil {
+		t.Errorf("family ledger expiry not backfilled: %v", err)
 	}
 	// The backfilled generation column defaults to 0 on the pre-existing row.
 	var gen int
@@ -59,13 +64,22 @@ func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	} else if gen != 0 {
 		t.Errorf("legacy row generation = %d, want 0", gen)
 	}
+	// The backfilled jti column defaults to '' on the pre-existing row — a
+	// pre-feature token reads JTI "", so its introspection Offer stays
+	// thumbprint-less (Thumbprint("") => no observation, byte-identical).
+	var jti string
+	if err := db.QueryRow(`SELECT jti FROM refresh_tokens WHERE token='old'`).Scan(&jti); err != nil {
+		t.Errorf("jti not readable: %v", err)
+	} else if jti != "" {
+		t.Errorf("legacy row jti = %q, want ''", jti)
+	}
 	// Existing row preserved.
 	var token string
 	if err := db.QueryRow(`SELECT token FROM refresh_tokens WHERE token='old'`).Scan(&token); err != nil {
 		t.Errorf("legacy row lost: %v", err)
 	}
-	if v, _ := migrate.CurrentVersion(ctx, db, "refresh_tokens"); v != 6 {
-		t.Errorf("version = %d, want 6", v)
+	if v, _ := migrate.CurrentVersion(ctx, db, "refresh_tokens"); v != 8 {
+		t.Errorf("version = %d, want 8", v)
 	}
 }
 

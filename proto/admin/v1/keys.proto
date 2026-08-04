@@ -50,6 +50,10 @@ message RotateSigningKeyResponse {
   string new_kid = 2;
   // The grace window actually applied (seconds).
   int64 grace_seconds = 3;
+  // Runtime rotation is intentionally scoped to this key class.
+  string key_class = 4;
+  // State after promotion and before the grace window elapses.
+  string rollout_state = 5;
 }
 
 message ListSigningKeysRequest {}

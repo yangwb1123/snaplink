@@ -18,6 +18,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // issueDeviceSecret mints a fresh Native SSO device_secret, stores its binding,
@@ -187,17 +188,23 @@ func (s *Server) mintNativeSSOAccessToken(ctx HandlerContext, idTokenClaims *Tok
 	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, localSub)
 
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
-		ID:        issuedSub,
-		ClientID:  client.ID,
-		AuthTime:  idTokenClaims.AuthTime,
-		AMR:       idTokenClaims.AMR,
-		ACR:       idTokenClaims.ACR,
-		SID:       idTokenClaims.SID,
-		Resources: resources,
-		TTL:       client.AccessTokenTTL,
+		ID:            issuedSub,
+		ClientID:      client.ID,
+		TenantID:      client.TenantID,
+		AuthTime:      idTokenClaims.AuthTime,
+		AMR:           idTokenClaims.AMR,
+		ACR:           idTokenClaims.ACR,
+		SID:           idTokenClaims.SID,
+		ServingRegion: servingRegionFrom(ctx),
+		Resources:     resources,
+		TTL:           client.AccessTokenTTL,
 	}, scopes)
 	if err != nil {
 		s.logErrorCtx(ctx, "native sso token issuance failed", "strategy", strategy, "error", err)
+		if status, code, ok := core.AuthHookHTTPError(err); ok {
+			ctx.JSON(status, errorBody(ctx, code))
+			return nil, "", "", false
+		}
 		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return nil, "", "", false
 	}
@@ -220,14 +227,18 @@ func (s *Server) buildNativeSSOResponse(ctx HandlerContext, idTokenClaims *Token
 	if slices.Contains(scopes, ScopeOpenID) {
 		if idIssuer, emit, idErr := s.idTokenIssuerForClient(client); idErr == nil && emit {
 			idToken, iErr := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-				Subject:      issuedSub,
-				Audience:     client.ID,
-				AuthTime:     idTokenClaims.AuthTime,
-				AMR:          idTokenClaims.AMR,
-				ACR:          idTokenClaims.ACR,
-				SID:          idTokenClaims.SID,
-				AccessToken:  token.AccessToken,
-				DeviceSecret: newDeviceSecret,
+				Subject:              issuedSub,
+				Audience:             client.ID,
+				AuthTime:             idTokenClaims.AuthTime,
+				AMR:                  idTokenClaims.AMR,
+				ACR:                  idTokenClaims.ACR,
+				SID:                  idTokenClaims.SID,
+				ServingRegion:        servingRegionFrom(ctx),
+				AccessToken:          token.AccessToken,
+				DeviceSecret:         newDeviceSecret,
+				GrantedScopes:        scopes,
+				GrantedResources:     idTokenClaims.Resources,
+				AuthorizationDetails: idTokenClaims.AuthorizationDetails,
 			})
 			if iErr == nil {
 				if enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {

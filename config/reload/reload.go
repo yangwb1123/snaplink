@@ -85,7 +85,8 @@ import (
 var safeReloadPaths = map[string]bool{
 	"/logging/level":              true,
 	"/feature_gates/admin_api":    true,
-	"/feature_gates/web_spa":      true,
+	"/feature_gates/branding":     true,
+	"/feature_gates/web_spa":      true, // deprecated alias of branding
 	"/feature_gates/oidc":         true,
 	"/feature_gates/ciba":         true,
 	"/feature_gates/caep":         true,
@@ -154,7 +155,7 @@ type Reloader struct {
 	// argument lists).
 	setRateLimitPolicy func(config.RateLimitConfig) error
 
-	// setAdminAPIGate / setWebSPAGate apply a reloaded feature_gates.admin_api
+	// setAdminAPIGate / setBrandingGate apply a reloaded feature_gates.admin_api
 	// / feature_gates.web_spa value live — typically
 	// Server.SetAdminAPIGateEnabled / Server.SetWebSPAGateEnabled. Each
 	// returns false when the change had nowhere to land (see those methods'
@@ -163,11 +164,11 @@ type Reloader struct {
 	// contract. nil (the default) means no hook was wired at all — also
 	// Ignored. Set via SetAdminAPIGateHook / SetWebSPAGateHook.
 	setAdminAPIGate func(enabled bool) bool
-	setWebSPAGate   func(enabled bool) bool
+	setBrandingGate func(enabled bool) bool
 
 	// setOIDCGate / setCIBAGate / setCAEPGate / setFederationGate /
 	// setSelfServiceGate are feature_gates.{oidc,ciba,caep,federation,
-	// self_service}'s analogs of setAdminAPIGate/setWebSPAGate above —
+	// self_service}'s analogs of setAdminAPIGate/setBrandingGate above —
 	// typically the matching Server.Set*GateEnabled method. Each returns
 	// false when the change had nowhere to land (see those methods' docs),
 	// reported as Ignored rather than Applied. nil (the default) means no
@@ -313,8 +314,8 @@ func (r *Reloader) applySafe(path string, newCfg *config.Config) []string {
 		return r.applyLogLevel(newCfg)
 	case "/feature_gates/admin_api":
 		return stringOrNil(r.applyAdminAPIGate(newCfg))
-	case "/feature_gates/web_spa":
-		return stringOrNil(r.applyWebSPAGate(newCfg))
+	case "/feature_gates/branding", "/feature_gates/web_spa":
+		return stringOrNil(r.applyBrandingGate(newCfg))
 	case "/feature_gates/oidc":
 		return stringOrNil(r.applyOIDCGate(newCfg))
 	case "/feature_gates/ciba":
@@ -332,7 +333,7 @@ func (r *Reloader) applySafe(path string, newCfg *config.Config) []string {
 	}
 }
 
-// stringOrNil adapts one of applyAdminAPIGate/applyWebSPAGate's "" == not
+// stringOrNil adapts one of applyAdminAPIGate/applyBrandingGate's "" == not
 // applied contract (matching applyRateLimit's existing string-return
 // convention) onto applySafe's []string contract (matching applyLogLevel's,
 // which can in principle report more than one line).

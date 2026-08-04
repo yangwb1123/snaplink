@@ -273,11 +273,11 @@ func (s *Server) RecordConfigChange(ctx context.Context, actor, tenantID, resour
 // {SUSPENDED, INACTIVE} -> ARCHIVED -> PURGED, each transition validated against
 // the legal-transition table and audited (admin_user_lifecycle_changed).
 //
-// The store is GOVERNANCE metadata: a user with no record reads as ACTIVE, and
-// it NEVER gates authentication (core.User.IsActive still owns the login
-// decision). Nil (the default) leaves the endpoints unmounted — byte-identical
-// to a build without the feature. Pair with WithUserAutoDeprovision to also
-// advance dormant accounts on a schedule.
+// The store is also the live end-user authentication gate: only ACTIVE may
+// create, renew, exchange, introspect, or use user credentials. A user with no
+// record reads as ACTIVE. State-read errors fail closed; nil (the default)
+// leaves both endpoints and enforcement absent. Pair with
+// WithUserAutoDeprovision to advance dormant accounts on a schedule.
 func WithUserLifecycle(store userlifecycle.Store) Option {
 	return func(s *Server) { s.userLifecycleStore = store }
 }

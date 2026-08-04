@@ -16,9 +16,28 @@ import (
 )
 
 type mfaResumeState struct {
-	Result           *AuthResult       `json:"result"`
-	Request          login.Request     `json:"request"`
-	CredentialHealth *CredentialHealth `json:"credential_health,omitempty"`
+	Result                 *AuthResult       `json:"result"`
+	Request                login.Request     `json:"request"`
+	CredentialHealth       *CredentialHealth `json:"credential_health,omitempty"`
+	PolicyScopeRestriction []string          `json:"policy_scope_restriction"`
+	AuthenticationComplete bool              `json:"authentication_complete,omitempty"`
+	TrustDevice            bool              `json:"trust_device,omitempty"`
+	FederatedReturn        bool              `json:"federated_return,omitempty"`
+	FederatedError         string            `json:"federated_error,omitempty"`
+}
+
+func validLoginTransactionState(challenge *spi.MFAChallenge, state *mfaResumeState, submitted login.Request) bool {
+	if state == nil || !state.AuthenticationComplete || state.Request.ClientID != challenge.ClientID {
+		return false
+	}
+	if state.FederatedReturn {
+		if state.FederatedError != "" {
+			return state.Result == nil
+		}
+		return state.Result != nil && state.Result.UserID != "" && state.Result.UserID == challenge.SubjectID
+	}
+	return submitted.ConsentChallengeID != "" && state.Result != nil &&
+		state.Result.UserID == challenge.SubjectID
 }
 
 // issueMFAChallenge mints a single-use challenge ID + persists the
@@ -55,7 +74,10 @@ func (s *Server) persistMFAChallenge(ctx HandlerContext, result *AuthResult, req
 	// Set CredentialHealth explicitly: AuthResult.CredentialHealth is
 	// json:"-", so the embedded Result drops it; this side channel
 	// preserves it for the post-step-up audit in finishLogin.
-	stateBlob, err := json.Marshal(&mfaResumeState{Result: result, Request: req, CredentialHealth: result.CredentialHealth})
+	req.Credential = nil
+	req.DeviceToken = ""
+	stateBlob, err := json.Marshal(&mfaResumeState{Result: result, Request: req,
+		CredentialHealth: result.CredentialHealth, PolicyScopeRestriction: req.PolicyScopeRestriction})
 	if err != nil {
 		s.logger.Error("mfa: failed to marshal resume state", "error", err, "client", client.ID, "user", result.UserID)
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
@@ -322,7 +344,12 @@ func (s *Server) resumeLoginAfterMFA(ctx HandlerContext, challenge *spi.MFAChall
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
 		return
 	}
+	if state.AuthenticationComplete {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
+		return
+	}
 	state.Result.CredentialHealth = state.CredentialHealth
+	state.Request.PolicyScopeRestriction = cloneOptionalScopes(state.PolicyScopeRestriction)
 	state.Result.AuthMethods = handler.WithMFAMethod(state.Result.AuthMethods, method)
 
 	if s.clientStore == nil {
@@ -352,20 +379,29 @@ func (s *Server) resumeLoginAfterMFA(ctx HandlerContext, challenge *spi.MFAChall
 	if s.resumeLoginResidualGates(ctx, state, client) {
 		return
 	}
-	s.finishLoginWithDeviceTrust(ctx, state.Result, state.Request, client, challenge.SubjectID, trustDevice)
+	authzCtx := s.wrapAuthorizationResponse(ctx, &state.Request, client)
+	nextCtx := s.wrapForLoginContinuation(authzCtx, state.Result, state.Request, client, trustDevice)
+	s.finishLoginWithDeviceTrust(nextCtx, state.Result, state.Request, client, challenge.SubjectID, trustDevice)
 }
 
 // resumeLoginResidualGates runs the SECOND-leg gates that must be
 // re-evaluated after MFA success but have no bearing on whether the MFA
 // factor itself was accepted — extracted from resumeLoginAfterMFA to keep it
 // within the per-function line budget. Order mirrors the pre-MFA-challenge
-// sequence: residency -> email-verification -> password-expiry. Returns true
+// sequence: residency -> risk -> conditional access -> email verification ->
+// password expiry. Returns true
 // (response already written) the instant one of them halts.
 func (s *Server) resumeLoginResidualGates(ctx HandlerContext, state *mfaResumeState, client *Client) bool {
 	// Data-residency write-gate on the SECOND leg: the token is minted NOW from
 	// THIS request's serving region (same middleware as /auth/login). No resolver
 	// wired -> never fires (byte-identical).
 	if s.residencyGateLogin(ctx, client.ID, state.Result.Provider, client.TenantID) {
+		return true
+	}
+	if s.evaluateLoginRisk(ctx, state.Result, &state.Request, client) {
+		return true
+	}
+	if s.enforceConditionalAccessLogin(ctx, state.Result, &state.Request, client) {
 		return true
 	}
 	if s.rejectUnverifiedEmail(ctx, &state.Request, state.Result) {

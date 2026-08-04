@@ -16,7 +16,7 @@ import (
 // three tenants on 2026-07-01 (day period): high=500, mid=50, low=5 logins.
 func topTenantsServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	agg := meteringmemory.New()
+	agg := meteringmemory.NewAggregator()
 	start := time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC)
 	agg.Record(&metering.TenantUsage{TenantID: "low", Period: metering.PeriodDay, PeriodStart: start, Logins: 5})
 	agg.Record(&metering.TenantUsage{TenantID: "high", Period: metering.PeriodDay, PeriodStart: start, Logins: 500, TokensIssued: 900})

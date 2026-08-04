@@ -41,9 +41,13 @@ Context YAML format:
 
 import argparse
 import os
+import re
+import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
+from typing import Optional
 
 try:
     import yaml
@@ -128,8 +132,8 @@ _DEFAULT_STAGE_VARS = {
         "PROJECT_NAME": "",
         "SUBSYSTEM": "",
         "SPRINT_GOAL": "",
-        "TEAM_SIZE": "3",
-        "SPRINT_DURATION": "2 weeks",
+        "TEAM_SIZE": "",
+        "SPRINT_DURATION": "",
         "CRITICAL_HIGH_FINDINGS": "(paste Critical/High findings from all prior stages)",
         "ARCHITECTURE_OUTPUT": "(paste Stage 01 ADR)",
         "VELOCITY": "(last sprint velocity, or 'unknown')",
@@ -155,7 +159,7 @@ _DEFAULT_STAGE_VARS = {
         "GRADE_04": "N/A",
         "GRADE_05": "N/A",
         "GRADE_06": "N/A",
-        "TEAM_SIZE": "3",
+        "TEAM_SIZE": "",
         "AGE": "(unknown)",
     },
 }
@@ -192,10 +196,76 @@ def _load_agent_bin() -> str:
 STAGES, STAGE_VARS = _load_stage_schema()
 AGENT_BIN = _load_agent_bin()
 
+# pi-style session flags (shared with pi-batch.py via ai-dev/pi-batch.yaml
+# agent.session_flags when present); {session}/{name} are substituted per run.
+_DEFAULT_SESSION_FLAGS = {
+    "start": ["--session-id", "{session}", "--name", "{name}"],
+    "continue": ["--session-id", "{session}"],
+}
+
+
+def _load_session_flags() -> dict:
+    """Read agent.session_flags from ai-dev/pi-batch.yaml (shared with
+    pi-batch.py); fall back to pi-style flags when absent."""
+    if not yaml:
+        return {k: list(v) for k, v in _DEFAULT_SESSION_FLAGS.items()}
+    path = Path(__file__).parent.parent / "pi-batch.yaml"
+    if not path.exists():
+        return {k: list(v) for k, v in _DEFAULT_SESSION_FLAGS.items()}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    cfg = (data.get("agent") or {}).get("session_flags")
+    if isinstance(cfg, dict):
+        return {k: list(v) for k, v in cfg.items()}
+    return {k: list(v) for k, v in _DEFAULT_SESSION_FLAGS.items()}
+
+
+SESSION_FLAGS = _load_session_flags()
+
+
+def session_flags(key: str, session_id: str, session_name: str) -> list:
+    flags = SESSION_FLAGS.get(key) or _DEFAULT_SESSION_FLAGS[key]
+    return [f.replace("{session}", session_id).replace("{name}", session_name) for f in flags]
+
+
+# Named engineering gates declared in ai-dev/pi-batch.yaml (validators key),
+# shared with pi-batch.py; like engineering.yaml for cli.py.
+_DEFAULT_VALIDATORS = {
+    "quick": "python cli.py check",
+    "gofmt": 'test -z "$(gofmt -l {output})"',
+}
+
+
+def _load_validators() -> dict:
+    if not yaml:
+        return dict(_DEFAULT_VALIDATORS)
+    path = Path(__file__).parent.parent / "pi-batch.yaml"
+    if not path.exists():
+        return dict(_DEFAULT_VALIDATORS)
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    v = data.get("validators")
+    if isinstance(v, dict):
+        merged = dict(_DEFAULT_VALIDATORS)
+        merged.update(v)
+        return merged
+    return dict(_DEFAULT_VALIDATORS)
+
+
+VALIDATORS = _load_validators()
+
+
+def resolve_validators(value: str) -> list:
+    """Expand a comma-separated list into validation commands: registry names
+    are replaced by their pi-batch.yaml command, anything else is used as a
+    raw shell command. Empty value -> no validation."""
+    out = []
+    for item in [x.strip() for x in (value or "").split(",") if x.strip()]:
+        out.append(VALIDATORS.get(item, item))
+    return out
+
 
 def load_context(path: str) -> dict:
     if not yaml:
-        print("ERROR: PyYAML not installed. Run: pip install pyyaml", file=sys.stderr)
+        print("ERROR: PyYAML not installed. Install the project: uv sync (or pip install pyyaml)", file=sys.stderr)
         sys.exit(1)
     fpath = Path(path)
     if not fpath.exists():
@@ -225,14 +295,14 @@ def context_to_vars(ctx: dict, stage: str) -> dict:
         "PRIMARY_FILES": files_str,
         "RFC_REFERENCES": rfcs_str,
         "ARCHITECTURE_SUMMARY": ctx.get("architecture_summary", "(see primary files)"),
-        "STORAGE_SUMMARY": ctx.get("storage", "Redis Cluster, PostgreSQL"),
+        "STORAGE_SUMMARY": ctx.get("storage", ""),
         "LOAD_PROFILE": ctx.get("load_profile", "(not specified)"),
         "INFRA_SUMMARY": ctx.get("infra", "(not specified)"),
         "SLO_TARGETS": ctx.get("slo_targets", "(not specified)"),
         "DEPLOYMENT_TARGET": ctx.get("deployment_target", ctx.get("infra", "(not specified)")),
         "SPRINT_GOAL": ctx.get("sprint_goal", "(not specified)"),
-        "TEAM_SIZE": str(ctx.get("team_size", 3)),
-        "SPRINT_DURATION": ctx.get("sprint_duration", "2 weeks"),
+        "TEAM_SIZE": str(ctx.get("team_size", "")),
+        "SPRINT_DURATION": ctx.get("sprint_duration", ""),
         "VELOCITY": ctx.get("velocity", "(unknown)"),
         "AGE": ctx.get("age", "(unknown)"),
     }
@@ -251,14 +321,132 @@ def fill_template(template_path: Path, variables: dict) -> str:
     return text
 
 
-def run_stage(stage: str, prompt: str, args) -> int:
-    out_dir = Path(args.output_dir) if args.output_dir else Path(__file__).parent / "reviews" / args.context_name
+# Stage output chaining for --all: target stage -> variable -> source stages.
+# Only paste-style variables get chained; explicit context values win (checked
+# in main before chain_variables runs).
+CHAIN_SOURCES = {
+    "01": {"PRODUCT_DISCOVERY_OUTPUT": ["00"]},
+    "02": {"ARCHITECTURE_OUTPUT": ["01"]},
+    "03": {"ARCHITECTURE_OUTPUT": ["01"]},
+    "04": {"PRIOR_FINDINGS": ["01", "02", "03"]},
+    "06": {"PRIOR_FINDINGS": ["02", "03", "04", "05"]},
+    "07": {
+        "CRITICAL_HIGH_FINDINGS": ["00", "01", "02", "03", "04", "05", "06"],
+        "ARCHITECTURE_OUTPUT": ["01"],
+    },
+    "08": {"COMMITTED_STORIES": ["07"]},
+    "09": {"ALL_PRIOR_FINDINGS_SUMMARY": ["00", "01", "02", "03", "04", "05", "06", "07", "08"]},
+}
+
+
+def chain_variables(prior_outputs: dict, stage: str, variables: dict, schema_defaults: dict) -> dict:
+    """Inject completed stage outputs into the current stage's paste-style
+    variables. A variable is treated as explicitly provided (and left
+    untouched) only when it differs from the schema placeholder default or
+    the context-provided value; schema placeholders are chainable slots."""
+    chained = {}
+    for var, sources in CHAIN_SOURCES.get(stage, {}).items():
+        current = variables.get(var)
+        if current and current != schema_defaults.get(var):
+            continue
+        parts = []
+        for src in sources:
+            text = prior_outputs.get(src)
+            if text:
+                parts.append(f"--- Stage {src} output ---\n{text}")
+        if parts:
+            chained[var] = "\n\n".join(parts)
+    return chained
+
+
+def stage_out_dir(args) -> Path:
+    if args.output_dir:
+        return Path(args.output_dir)
+    return Path(__file__).parent / "reviews" / args.context_name
+
+
+# Provider/CLI failure signatures. Only signatures that never appear in
+# legitimate review prose are matched across the whole output; generic words
+# like "error" or "timeout" are intentionally absent so that review findings
+# about timeouts or unauthorized responses are not misclassified. The network
+# group covers offline/DNS/TLS/proxy failures, which agent CLIs report with
+# these exact phrases when the machine loses connectivity.
+_AGENT_ERROR_PATTERNS = (
+    # provider error codes (quota, rate limit, billing, auth)
+    re.compile(r"rate_?limit_?error", re.IGNORECASE),
+    re.compile(r"insufficient_?quota", re.IGNORECASE),
+    re.compile(r"quota_?exceeded", re.IGNORECASE),
+    re.compile(r"credit_?balance_?too_?low", re.IGNORECASE),
+    re.compile(r"billing_?error", re.IGNORECASE),
+    re.compile(r"payment_?required", re.IGNORECASE),
+    re.compile(r"invalid_?api_?key", re.IGNORECASE),
+    re.compile(r"authentication_?error", re.IGNORECASE),
+    re.compile(r"context_?length_?exceeded", re.IGNORECASE),
+    re.compile(r"overloaded_?error", re.IGNORECASE),
+    re.compile(r"429 too many requests", re.IGNORECASE),
+    # network connectivity failures (offline, DNS, TLS, proxy)
+    re.compile(r"network is unreachable", re.IGNORECASE),
+    re.compile(r"no route to host", re.IGNORECASE),
+    re.compile(r"temporary failure in name resolution", re.IGNORECASE),
+    re.compile(r"name or service not known", re.IGNORECASE),
+    re.compile(r"dns resolution failed", re.IGNORECASE),
+    re.compile(r"getaddrinfo", re.IGNORECASE),
+    re.compile(r"max retries exceeded", re.IGNORECASE),
+    re.compile(r"certificate verify failed", re.IGNORECASE),
+    re.compile(r"connectionerror", re.IGNORECASE),
+    re.compile(r"sslerror", re.IGNORECASE),
+    re.compile(r"proxyerror", re.IGNORECASE),
+    re.compile(r"econnrefused", re.IGNORECASE),
+    re.compile(r"econnreset", re.IGNORECASE),
+    re.compile(r"etimedout", re.IGNORECASE),
+    re.compile(r"curl: \(\d+\)", re.IGNORECASE),
+    re.compile(r"connection timed out", re.IGNORECASE),
+    re.compile(r"connect timed out", re.IGNORECASE),
+    re.compile(r"operation timed out", re.IGNORECASE),
+    re.compile(r"connection refused", re.IGNORECASE),
+    re.compile(r"connection reset", re.IGNORECASE),
+    re.compile(r"connection closed", re.IGNORECASE),
+    re.compile(r"broken pipe", re.IGNORECASE),
+    re.compile(r"failed to connect", re.IGNORECASE),
+    re.compile(r"unable to connect", re.IGNORECASE),
+    re.compile(r"could not connect", re.IGNORECASE),
+    # CLI-level failure banners
+    re.compile(r"^\[?error\]?:", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^fatal:", re.IGNORECASE | re.MULTILINE),
+)
+
+
+def agent_failure_reason(returncode: int, output: str) -> str:
+    """Return a short reason when the agent result must be discarded, or ''
+    when the output is a usable result. Non-zero exit, empty output, and
+    provider/CLI failure signatures (quota, rate limit, auth, billing) all
+    reject the result so error replies are never saved as review files."""
+    if returncode != 0:
+        return f"agent exited {returncode}"
+    if not output or not output.strip():
+        return "agent produced no output"
+    for pattern in _AGENT_ERROR_PATTERNS:
+        if pattern.search(output):
+            return f"agent reported provider failure ({pattern.pattern})"
+    return ""
+
+
+def run_stage(stage: str, prompt: str, args, session_flags: Optional[list] = None) -> int:
+    """Invoke the agent and persist only validated output. Output streams to
+    the terminal while running; stage-NN.out.md is written only when the
+    agent exits 0 and the output carries no provider/CLI failure signature.
+    Rejected output is not saved and the stage fails, so quota or rate-limit
+    replies cannot become committed review artifacts."""
+    out_dir = stage_out_dir(args)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / f"stage-{stage}.out.md"
 
-    cmd = [AGENT_BIN, "-p", prompt]
+    agent_bin = args.agent_bin or AGENT_BIN
+    cmd = [agent_bin, "-p", prompt]
     if args.model:
         cmd.extend(["--model", args.model])
+    if session_flags:
+        cmd.extend(session_flags)
 
     print(f"\n{'='*60}", flush=True)
     print(f"  Stage {stage}: {STAGES[stage]}", flush=True)
@@ -266,14 +454,95 @@ def run_stage(stage: str, prompt: str, args) -> int:
     print(f"{'='*60}\n", flush=True)
 
     try:
-        result = subprocess.run(cmd, capture_output=False, text=True, cwd=args.repo or os.getcwd())
-        if result.returncode == 0 and hasattr(result, "stdout") and result.stdout:
-            out_file.write_text(result.stdout, encoding="utf-8")
-            print(f"\nWROTE: {out_file}", flush=True)
-        return result.returncode
+        rc, output = _run_agent(cmd, args.repo or os.getcwd(), getattr(args, "timeout", 0) or 600)
     except FileNotFoundError:
-        print(f"ERROR: '{AGENT_BIN}' not found in PATH.", file=sys.stderr)
+        print(f"ERROR: '{agent_bin}' not found in PATH.", file=sys.stderr)
         return 1
+
+    if rc < 0:
+        print(f"\nStage {stage} REJECTED: agent timed out; output NOT saved to {out_file}", file=sys.stderr, flush=True)
+        return 1
+
+    output = "".join(output)
+    reason = agent_failure_reason(rc, output)
+    if reason:
+        print(f"\nStage {stage} REJECTED: {reason}; output NOT saved to {out_file}", file=sys.stderr, flush=True)
+        return 1
+
+    # Engineering gates: write to a temp file, run every resolved validator
+    # (AND semantics), then atomically rename on success (or delete on
+    # failure) so a result that fails the project checks never lands as a
+    # review file. {output} points at the temp file so gates can inspect it.
+    validate_spec = ",".join(x for x in (getattr(args, "validate", ""), getattr(args, "validate_cmd", "")) if x)
+    commands = resolve_validators(validate_spec)
+    if commands:
+        return _run_validators(stage, out_file, output, commands, args.repo or os.getcwd())
+
+    out_file.write_text(output, encoding="utf-8")
+    print(f"\nWROTE: {out_file}", flush=True)
+    return 0
+
+
+def _run_agent(cmd: list, cwd: str, timeout: int) -> tuple[int, list[str]]:
+    """Run the agent, streaming output to the terminal from a reader
+    thread while the main thread enforces the deadline; a hung agent (e.g.
+    offline machine) must not block the runner forever. Returns (returncode,
+    lines); returncode is -1 on timeout."""
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        cwd=cwd,
+        start_new_session=True,  # own process group so the whole child tree can be killed on timeout
+    )
+    assert proc.stdout is not None
+
+    lines: list[str] = []
+
+    def _read():
+        for line in proc.stdout:
+            print(line, end="", flush=True)
+            lines.append(line)
+
+    reader = threading.Thread(target=_read, daemon=True)
+    reader.start()
+    try:
+        rc = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # Kill the whole group: the direct child may have spawned helpers
+        # (e.g. a shell running sleep) that keep the pipe open.
+        os.killpg(proc.pid, signal.SIGKILL)
+        reader.join(timeout=5)
+        return -1, lines
+    reader.join(timeout=5)
+    return rc, lines
+
+
+def _run_validators(stage: str, out_file, output: str, commands: list, cwd: str) -> int:
+    """Run every resolved validator against a temp copy of the output
+    (AND semantics); atomically rename on success, delete on failure so a
+    result that fails the project checks never lands as a review file."""
+    tmp_file = out_file.with_name(out_file.name + ".tmp")
+    tmp_file.write_text(output, encoding="utf-8")
+    for raw in commands:
+        cmd = raw.replace("{output}", str(tmp_file)).replace("{cwd}", cwd)
+        try:
+            vproc = subprocess.run(cmd, shell=True, cwd=cwd,
+                                   capture_output=True, text=True, timeout=600)
+        except subprocess.TimeoutExpired:
+            vproc = None
+        if vproc is not None and vproc.returncode == 0:
+            continue
+        tmp_file.unlink(missing_ok=True)
+        print(f"\nStage {stage} REJECTED: validation failed{'' if vproc is None else f' (exit={vproc.returncode})'}: {cmd}; output NOT saved to {out_file}", file=sys.stderr, flush=True)
+        if vproc is not None:
+            for line in (vproc.stdout or "").strip().splitlines()[-5:]:
+                print(f"  | {line}", file=sys.stderr)
+        return 1
+    tmp_file.rename(out_file)
+    print(f"\nWROTE: {out_file} (validated)", flush=True)
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -286,6 +555,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Stage number to run (00-09)")
     p.add_argument("--all", action="store_true",
                    help="Run all stages sequentially")
+    p.add_argument("--resume", action="store_true",
+                   help="Resume a previous --all session: skip stages whose output file already exists and chain from the saved outputs")
     p.add_argument("--context", metavar="FILE",
                    help="Context YAML file with subsystem details")
     p.add_argument("--project", help="Project name (overrides context YAML)")
@@ -294,6 +565,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rfcs", help="Comma-separated RFC/standard references")
     p.add_argument("--repo", help="Repository path (default: cwd)")
     p.add_argument("--model", default="", help="Model for pi invocation")
+    p.add_argument("--agent-bin", default="", help="Agent CLI binary (default: ai-dev/pi-batch.yaml agent.bin, else 'pi')")
+    p.add_argument("--timeout", type=int, default=0,
+                   help="Per-stage agent timeout in seconds (default: 600; 0 = default)")
+    p.add_argument("--session-mode", choices=["new", "shared"], default="new",
+                   help="Session reuse across --all stages: new = fresh session per stage (default), shared = one session for the whole review run")
+    p.add_argument("--session-name", default="",
+                   help="Reproducible session base name (default: context name); shared sessions continue across runs")
+    p.add_argument("--validate", default="",
+                   help="Named validators from ai-dev/pi-batch.yaml validators registry, comma-separated (e.g. 'quick,gofmt'); AND semantics. Unknown names are treated as raw shell commands")
+    p.add_argument("--validate-cmd", default="",
+                   help="Engineering gate run against the agent result BEFORE stage-NN.out.md is written; {output} and {cwd} placeholders are substituted. Non-zero exit rejects the stage and leaves no file")
     p.add_argument("--output-dir", metavar="DIR", help="Output directory for review files")
     p.add_argument("--dry-run", action="store_true",
                    help="Print filled prompt without invoking pi")
@@ -303,20 +585,101 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
 
+    ctx = _build_context(args)
+    prompts_dir = Path(__file__).parent / "prompts"
+
+    stages_to_run = _resolve_stages(args)
+
+    out_dir = stage_out_dir(args)
+    failures = []
+    prior_outputs: dict = {}
+    session_name = args.session_name or args.context_name
+    if args.resume:
+        prior_outputs, skipped = _resume_prior(args, stages_to_run, out_dir)
+        print(f"Resume: {skipped} completed stage(s) found, {len(stages_to_run) - skipped} to run", flush=True)
+
+    failures = _run_stage_loop(args, stages_to_run, prompts_dir, ctx, out_dir, session_name, prior_outputs)
+
+    if failures:
+        print(f"\nFailed stages: {', '.join(failures)}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _run_stage_loop(args, stages_to_run: list, prompts_dir, ctx: dict, out_dir, session_name: str, prior_outputs: dict) -> list:
+    """Run each stage in order: skip resumed outputs, fill the template with
+    chained variables, start/continue the shared session, and keep completed
+    outputs for chaining into later stages. Returns the list of failed stages."""
+    failures = []
+    session_active = False
+    for stage in stages_to_run:
+        if args.resume and stage in prior_outputs:
+            print(f"  Stage {stage}: SKIP (output exists: {out_dir / f'stage-{stage}.out.md'})", flush=True)
+            continue
+
+        prompt, missing = _stage_prompt(args, stage, prompts_dir, ctx, prior_outputs)
+        if missing:
+            failures.append(stage)
+            continue
+
+        if args.dry_run:
+            print(f"\n{'='*60}")
+            print(f"  Stage {stage} — DRY RUN")
+            print(f"{'='*60}")
+            print(prompt)
+            continue
+
+        # Shared session: the first executed stage starts the session, later
+        # stages continue it; --resume skips do not consume the session.
+        flags = None
+        if args.session_mode != "new":
+            if not session_active:
+                flags = session_flags("start", session_name, session_name)
+                session_active = True
+            else:
+                flags = session_flags("continue", session_name, session_name)
+
+        rc = run_stage(stage, prompt, args, flags)
+        if rc != 0:
+            failures.append(stage)
+            if not args.all:
+                sys.exit(rc)
+            continue
+
+        # Keep completed output for chaining into later stages of --all.
+        out_file = stage_out_dir(args) / f"stage-{stage}.out.md"
+        if out_file.exists():
+            prior_outputs[stage] = out_file.read_text(encoding="utf-8")
+    return failures
+
+
+def _stage_prompt(args, stage: str, prompts_dir, ctx: dict, prior_outputs: dict) -> tuple[str, bool]:
+    """Fill the stage template with context and chained variables from
+    prior stage outputs. Returns (prompt, missing_template)."""
+    template_file = prompts_dir / STAGES[stage]
+    if not template_file.exists():
+        print(f"ERROR: template not found: {template_file}", file=sys.stderr)
+        return "", True
+
+    defaults = STAGE_VARS.get(stage, {})
+    variables = {k: ctx.get(k.lower(), v) for k, v in defaults.items()}
+    variables.update(context_to_vars(ctx, stage))
+    variables.update(chain_variables(prior_outputs, stage, variables, defaults))
+    return fill_template(template_file, variables), False
+
+
+def _build_context(args) -> dict:
+    """Review context from the ctx file plus CLI overrides; the context
+    name becomes the session base name for shared sessions."""
     prompts_dir = Path(__file__).parent / "prompts"
     if not prompts_dir.exists():
         print(f"ERROR: prompts directory not found: {prompts_dir}", file=sys.stderr)
         sys.exit(1)
-
-    # Build context
     ctx = {}
     if args.context:
         ctx = load_context(args.context)
         args.context_name = Path(args.context).stem
     else:
         args.context_name = args.subsystem or "review"
-
-    # CLI overrides
     if args.project:
         ctx["project"] = args.project
     if args.subsystem:
@@ -327,51 +690,41 @@ def main() -> None:
         ctx["rfcs"] = [r.strip() for r in args.rfcs.split(",")]
     if args.repo:
         ctx["repo"] = args.repo
+    return ctx
 
-    # Determine stages to run
+
+def _resolve_stages(args) -> list:
+    """--all runs every stage; --stage NN runs one. --resume and shared
+    sessions only make sense for a full run, so they are rejected otherwise."""
+    if args.resume and not args.all:
+        print("ERROR: --resume requires --all", file=sys.stderr)
+        sys.exit(1)
+    if args.session_mode != "new" and not args.all:
+        print("ERROR: --session-mode shared requires --all", file=sys.stderr)
+        sys.exit(1)
     if args.all:
-        stages_to_run = sorted(STAGES.keys())
-    elif args.stage:
+        return sorted(STAGES.keys())
+    if args.stage:
         stage = args.stage.zfill(2)
         if stage not in STAGES:
             print(f"ERROR: unknown stage '{args.stage}'. Valid: {', '.join(STAGES.keys())}", file=sys.stderr)
             sys.exit(1)
-        stages_to_run = [stage]
-    else:
-        print("ERROR: specify --stage NN or --all", file=sys.stderr)
-        sys.exit(1)
+        return [stage]
+    print("ERROR: specify --stage NN or --all", file=sys.stderr)
+    sys.exit(1)
 
-    failures = []
+
+def _resume_prior(args, stages_to_run: list, out_dir) -> tuple[dict, int]:
+    """Resume a previous session: load completed outputs from disk so
+    downstream stages chain from them, and skip stages that already produced
+    a non-empty file (they ran and passed validation last time; rejected
+    stages never leave a file, so they rerun). Returns (prior_outputs, count)."""
+    prior_outputs: dict = {}
     for stage in stages_to_run:
-        template_file = prompts_dir / STAGES[stage]
-        if not template_file.exists():
-            print(f"ERROR: template not found: {template_file}", file=sys.stderr)
-            failures.append(stage)
-            continue
-
-        # Build variable map for this stage
-        defaults = STAGE_VARS.get(stage, {})
-        variables = {k: ctx.get(k.lower(), v) for k, v in defaults.items()}
-        variables.update(context_to_vars(ctx, stage))
-
-        prompt = fill_template(template_file, variables)
-
-        if args.dry_run:
-            print(f"\n{'='*60}")
-            print(f"  Stage {stage} — DRY RUN")
-            print(f"{'='*60}")
-            print(prompt)
-            continue
-
-        rc = run_stage(stage, prompt, args)
-        if rc != 0:
-            failures.append(stage)
-            if not args.all:
-                sys.exit(rc)
-
-    if failures:
-        print(f"\nFailed stages: {', '.join(failures)}", file=sys.stderr)
-        sys.exit(1)
+        out_file = out_dir / f"stage-{stage}.out.md"
+        if out_file.exists() and out_file.stat().st_size > 0:
+            prior_outputs[stage] = out_file.read_text(encoding="utf-8")
+    return prior_outputs, len(prior_outputs)
 
 
 if __name__ == "__main__":

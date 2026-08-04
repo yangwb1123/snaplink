@@ -23,7 +23,9 @@ type rotatingIssuer interface {
 // retire the demoted key from JWKS after the grace period, then stop on
 // ctx cancel. RSA uses longer intervals (key generation is slower).
 func TestStartRotation_MultiAlg_RotatesAndRetires(t *testing.T) {
-	t.Parallel()
+	// RSA key generation is deliberately CPU-heavy. Keep this timing-sensitive
+	// cancellation proof out of the package's parallel crypto test pool so the
+	// race build measures scheduler shutdown rather than machine contention.
 	cases := []struct {
 		name            string
 		issuer          rotatingIssuer
@@ -42,7 +44,12 @@ func TestStartRotation_MultiAlg_RotatesAndRetires(t *testing.T) {
 			done := tc.issuer.StartRotation(ctx, defaultimpl.RotationConfig{
 				Interval:    tc.interval,
 				GracePeriod: tc.grace,
-				OnRotate:    func(o, n string) { rotated <- [2]string{o, n} },
+				OnRotate: func(o, n string) {
+					select {
+					case rotated <- [2]string{o, n}:
+					default:
+					}
+				},
 			})
 
 			var first [2]string

@@ -4,9 +4,12 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oidc/bcl"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
 
@@ -33,6 +36,22 @@ func certificateThumbprintS256(cert *x509.Certificate) string {
 	}
 	sum := sha256.Sum256(cert.Raw)
 	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// tokenIdempotencyCacheKey isolates cached token responses by authenticated
+// client, authorization request, and sender constraint. Client-authentication
+// secrets/assertions are deliberately excluded so a retry may authenticate
+// afresh without changing the operation identity.
+func tokenIdempotencyCacheKey(clientID, rawKey string, req oauth.TokenRequest, dpopJKT, mtlsX5T string) string {
+	req.ClientSecret = ""
+	req.ClientAssertion = ""
+	req.ClientAssertionType = ""
+	payload, _ := json.Marshal(struct {
+		ClientID, Key, DPoPJKT, MTLSX5T string
+		Request                         oauth.TokenRequest
+	}{clientID, rawKey, dpopJKT, mtlsX5T, req})
+	sum := sha256.Sum256(payload)
+	return "token:" + base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 // verifyMTLSBearer enforces the resource-side half of RFC 8705 §3.
@@ -380,6 +399,13 @@ func adminAPIEndpointCandidates() []endpointCandidate {
 		{endpointInfo{http.MethodGet, PathAdminFederationHealth, "admin_api"}, on(func(s *Server) bool { return s.federationHealth != nil })},
 		{endpointInfo{http.MethodGet, prefix + PathAdminWebhookSubscriptions, "admin_api"}, on(func(s *Server) bool { return s.webhookEngine != nil })},
 		{endpointInfo{http.MethodGet, prefix + PathAdminWebhookDeadLetters, "admin_api"}, on(func(s *Server) bool { return s.webhookEngine != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminAccessPolicies, "admin_api"}, on(func(s *Server) bool { return s.capStore != nil })},
+		{endpointInfo{http.MethodPost, prefix + PathAdminAccessPolicyConverge, "admin_api"}, on(func(s *Server) bool {
+			return s.capEngine != nil && s.capEngine.Config().Enforce
+		})},
+		{endpointInfo{http.MethodGet, prefix + core.PathAdminBCLFailures, "admin_api"}, on(func(s *Server) bool { _, ok := s.logoutNotifier.(bcl.AdminManager); return ok })},
+		{endpointInfo{http.MethodPost, prefix + core.PathAdminBCLFailureReplay, "admin_api"}, on(func(s *Server) bool { _, ok := s.logoutNotifier.(bcl.AdminManager); return ok })},
+		{endpointInfo{http.MethodPost, prefix + core.PathAdminBCLFailuresReplay, "admin_api"}, on(func(s *Server) bool { _, ok := s.logoutNotifier.(bcl.AdminManager); return ok })},
 		{endpointInfo{http.MethodGet, prefix + PathAdminComplianceDataMap, "admin_api"}, func(s *Server) bool { return s.adminAPIGateOn() }},
 		{endpointInfo{http.MethodGet, prefix + PathAdminComplianceSOC2Evidence, "admin_api"}, on(func(s *Server) bool { return s.auditor != nil })},
 		{endpointInfo{http.MethodGet, prefix + PathAdminComplianceConsents, "admin_api"}, on(func(s *Server) bool { return s.consentStore != nil && s.userProvider != nil })},

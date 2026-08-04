@@ -259,6 +259,13 @@ func evaluateResidency(policy region.ResidencyPolicy, servingRegion region.ID, i
 	return nil
 }
 
+// servingRegionFrom returns the stashed serving region for ctx, or ""
+// when no middleware ran / it resolved none.
+func servingRegionFrom(ctx HandlerContext) string {
+	id, _ := region.FromHandlerContext(ctx)
+	return string(id)
+}
+
 // mapResidencyError maps a checkTenantResidency sentinel onto its public
 // wire error code for the authorization-response body. The two residency
 // sentinels stay DISTINCT governance codes — region_not_allowed and

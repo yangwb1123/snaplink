@@ -209,7 +209,7 @@ func (s *Server) authenticatedSubject(ctx HandlerContext) (userID, clientID stri
 		return "", "", false
 	}
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), tokenString)
-	if err != nil {
+	if err != nil || !core.IsAccessTokenClaims(claims) {
 		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidToken))
 		return "", "", false
 	}

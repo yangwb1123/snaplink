@@ -22,4 +22,7 @@ type RelationTupleStore interface {
 	// to", though that reverse query is O(n) on the Memory reference
 	// store (see memory.go).
 	Read(ctx context.Context, filter TupleFilter) ([]Tuple, error)
+	// ApplyBatch validates every mutation before atomically applying the
+	// complete set. No tuple may change when validation or persistence fails.
+	ApplyBatch(ctx context.Context, writes, deletes []Tuple) error
 }

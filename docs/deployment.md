@@ -196,7 +196,8 @@ install), so JWKS is fleet-consistent with no leader election. `registry`,
 ### 6b. Shared state — the part that decides your topology
 
 Coordination events are not the *primary data*. Auth codes, sessions, refresh
-tokens, PAR/device/CIBA requests and MFA challenges live in **stores**.
+tokens, PAR/device/CIBA requests, MFA challenges, and enabled user-lifecycle
+state live in **stores**.
 `memory` is per-process and a per-pod SQLite DSN is file-local; neither is
 shared across replicas. The stock binary also supports shared Redis hot stores
 and Postgres durable stores, but the operator must select them explicitly.
@@ -229,6 +230,11 @@ So choose a tier:
 > `postgres:` block, and turn on the etcd Bus. Both Redis and Postgres backends
 > are root-module infrastructure packages wired by `cmd/sso-server`.
 
+User lifecycle participates in Tier B when `user_lifecycle.backend: postgres`;
+the state machine and its full transition history then share the durable pool.
+The memory default remains single-process and is rejected when lifecycle is
+enabled in a declared multi-replica topology.
+
 Tier B `config.yaml` (hot → Redis Cluster, durable → Postgres, coordination → etcd;
 secrets via `SSO_REDIS__PASSWORD` / `SSO_POSTGRES__DSN`):
 
@@ -253,19 +259,21 @@ identity: { backend: postgres, session_backend: redis } # durable on DB, session
 permissions: { enabled: true, backend: postgres }
 tenant: { enabled: true, backend: postgres }
 audit: { enabled: true, backend: postgres, hash_chain: true }
+user_lifecycle: { enabled: true, backend: postgres }
 
 cluster:
-  bus: { backend: etcd, endpoints: [etcd-0:2379] }
+  bus: { backend: etcd, etcd_endpoints: [etcd-0:2379] }
   cross_replica_revocation: true
 keys:
+  signing: { revocation_backend: redis }
   signing_key_registry: { backend: etcd, etcd_endpoints: [etcd-0:2379] }
 ```
 
 > **Operator hard requirement:** the Redis auth keyspace MUST run
 > `maxmemory-policy noeviction` (or `volatile-ttl`). Evicting a live
-> refresh-family ledger or a jti key is a SECURITY regression (reuse/replay
-> detection silently fails), not a cache miss. Keep single-use/replay reads on
-> the master (`route_by_latency`/`read_only` off) so replica lag can't let a
+> refresh-family ledger, jti key, or active revocation entry is a SECURITY
+> regression (reuse/replay/recovery silently fails), not a cache miss. Keep
+> single-use/replay reads on the master (`route_by_latency`/`read_only` off) so replica lag can't let a
 > replay slip past detection. Migrating single-node → cluster is NOT drop-in
 > (hash-tag key layout changes) — drain rather than expect key continuity;
 > acceptable since hot state is short-TTL.

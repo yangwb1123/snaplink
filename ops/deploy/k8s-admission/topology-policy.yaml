@@ -1,0 +1,156 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: snaplink-sso-ha-coherence
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [deployments]
+  matchConditions:
+    - name: sso-server
+      expression: >-
+        has(object.metadata.labels) &&
+        "app.kubernetes.io/name" in object.metadata.labels &&
+        object.metadata.labels["app.kubernetes.io/name"] == "sso-server"
+  validations:
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        (has(object.metadata.labels) &&
+         "snaplink.io/topology" in object.metadata.labels &&
+         object.metadata.labels["snaplink.io/topology"] == "multi")
+      message: multi-replica sso-server requires snaplink.io/topology=multi
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          c.env.exists(e, e.name == "SSO_SERVER__TOPOLOGY__MODE" && e.value == "multi"))
+      message: multi-replica sso-server requires topology mode multi as an authoritative env override
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          !c.env.exists(e, e.name == "SSO_SERVER__TOPOLOGY__ALLOW_PER_POD_STATE" &&
+                            e.value.lowerAscii() == "true"))
+      message: multi-replica sso-server forbids allow_per_pod_state
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          c.env.exists(e, e.name == "SSO_OAUTH__BACKEND" &&
+                          e.value in ["sqlite", "redis"]))
+      message: multi-replica sso-server requires a shared OAuth backend
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          c.env.exists(e, e.name == "SSO_IDENTITY__BACKEND" &&
+                          e.value in ["sqlite", "postgres"]))
+      message: multi-replica sso-server requires a shared identity backend
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          c.env.exists(e, e.name == "SSO_IDENTITY__SESSION_BACKEND" &&
+                          e.value in ["sqlite", "redis", "postgres"]))
+      message: multi-replica sso-server requires a shared session backend
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          c.env.exists(e, e.name == "SSO_SECURITY__JTI_REPLAY__BACKEND" &&
+                          e.value in ["sqlite", "redis"]))
+      message: multi-replica sso-server requires a shared JTI replay backend
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          c.env.exists(e, e.name == "SSO_KEYS__SIGNING__REVOCATION_BACKEND" &&
+                          e.value == "redis"))
+      message: multi-replica sso-server requires Redis-backed revocation recovery
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          c.env.exists(e, e.name == "SSO_CIBA__BACKEND" &&
+                          e.value in ["sqlite", "redis"]))
+      message: multi-replica sso-server requires a shared CIBA backend
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          c.env.exists(e, e.name == "SSO_MFA__CHALLENGE__BACKEND" &&
+                          e.value in ["sqlite", "redis"]))
+      message: multi-replica sso-server requires a shared MFA challenge backend
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          c.env.exists(e, e.name == "SSO_SELF_SERVICE__IDENTITY_LINK__BACKEND" &&
+                          e.value in ["sqlite", "postgres"]))
+      message: multi-replica sso-server requires a shared identity-link backend
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          c.env.exists(e, e.name == "SSO_SERVER__PAIRWISE_SUBJECTS__BACKEND" &&
+                          e.value in ["sqlite", "postgres"]))
+      message: multi-replica sso-server requires a shared pairwise-subject backend
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          (c.env.exists(e, e.name == "SSO_USER_LIFECYCLE__ENABLED" &&
+                           e.value.lowerAscii() == "false") ||
+           c.env.exists(e, e.name == "SSO_USER_LIFECYCLE__BACKEND" &&
+                           e.value == "postgres")))
+      message: multi-replica sso-server requires lifecycle disabled or backed by Postgres
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: snaplink-sso-ha-coherence
+spec:
+  policyName: snaplink-sso-ha-coherence
+  validationActions: [Deny, Audit]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: snaplink-sso-ha-scale
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [UPDATE]
+        resources: [deployments/scale]
+  matchConditions:
+    - name: sso-server
+      expression: >-
+        request.name == "sso-server" || request.name.endsWith("-sso-server")
+  validations:
+    - expression: >-
+        object.spec.replicas <= 1 ||
+        (params.data["topology"] == "multi" &&
+         params.data["deployment"] == request.name &&
+         object.spec.replicas <= int(params.data["max_replicas"]))
+      message: scaling sso-server above one requires an admission-validated multi-replica deployment
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: snaplink-sso-ha-scale
+spec:
+  policyName: snaplink-sso-ha-scale
+  paramRef:
+    name: snaplink-sso-ha-coherence
+    parameterNotFoundAction: Deny
+  validationActions: [Deny, Audit]

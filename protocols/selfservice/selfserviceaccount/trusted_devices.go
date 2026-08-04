@@ -10,7 +10,7 @@ import (
 	"github.com/yangwb1123/snaplink/shared/security"
 )
 
-// HandleMyTrustedDevices serves GET /me/devices — lists the authenticated
+// HandleMyTrustedDevices serves GET /me/trusted-devices — lists the authenticated
 // user's live "remember this device" MFA-skip grants. Metadata only (id,
 // client_id, label, timestamps) — the store never returns the token or its
 // hash once Trust has minted it. Credential-adjacent; no-store headers.
@@ -37,7 +37,7 @@ func HandleMyTrustedDevices(d Deps, ctx core.HandlerContext) {
 	ctx.JSON(http.StatusOK, map[string]any{"devices": devices})
 }
 
-// HandleTrustMyDevice serves POST /me/devices/trust — marks the device
+// HandleTrustMyDevice serves POST /me/trusted-devices/trust — marks the device
 // presenting THIS bearer token trusted for the token's client, so a later
 // /auth/login to the SAME client can skip a risk-scorer-demanded MFA
 // challenge for up to the configured TTL.
@@ -96,7 +96,7 @@ func HandleTrustMyDevice(d Deps, ctx core.HandlerContext) {
 	})
 }
 
-// HandleRevokeMyTrustedDevice serves DELETE /me/devices/:id — revokes one of
+// HandleRevokeMyTrustedDevice serves DELETE /me/trusted-devices/:id — revokes one of
 // the authenticated user's own trusted-device grants. A grant belonging to
 // another user (or a missing id) responds with the same 404 as a missing
 // grant — oracle-safe, mirrors HandleDeleteMyMFAFactor: ownership is

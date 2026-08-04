@@ -22,8 +22,9 @@ const (
 // server calls. The decision logic itself lives in the pure Decide function so
 // it can be exhaustively tested without a store.
 type Engine struct {
-	store Store
-	cfg   Config
+	store       Store
+	cfg         Config
+	convergence convergenceState
 }
 
 // NewEngine constructs an Engine over the given store and config.
@@ -212,7 +213,27 @@ func matchPolicy(c Conditions, ac AccessContext, risk float64) (bool, error) {
 	if !matchGeo(c, ac.Country) {
 		return false, nil
 	}
+	if !matchAgeConditions(c, ac) {
+		return false, nil
+	}
 	return matchTime(c, ac.Now)
+}
+
+func matchAgeConditions(c Conditions, ac AccessContext) bool {
+	if c.SessionAgeSeconds > 0 && !ageAtLeast(ac.Now, ac.SessionCreatedAt, c.SessionAgeSeconds) {
+		return false
+	}
+	if c.AuthenticationAgeSeconds > 0 && !ageAtLeast(ac.Now, ac.AuthTime, c.AuthenticationAgeSeconds) {
+		return false
+	}
+	if c.MaxConcurrentSessions > 0 && (!ac.ConcurrentSessionsKnown || ac.ConcurrentSessions <= c.MaxConcurrentSessions) {
+		return false
+	}
+	return true
+}
+
+func ageAtLeast(now, since time.Time, seconds int64) bool {
+	return !now.IsZero() && !since.IsZero() && !now.Before(since) && now.Sub(since) >= time.Duration(seconds)*time.Second
 }
 
 func anyInGroups(have, want []string) bool {

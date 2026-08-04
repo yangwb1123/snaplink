@@ -173,7 +173,10 @@ func appHandlerFor(t *testing.T, h *e2eHarness) *httptest.Server {
 	t.Helper()
 	jwks := remote.NewJWKSCache(h.HTTP.URL + "/.well-known/jwks.json")
 	handler := &appcore.Handler{
-		Auth:  remote.NewAuthClient(jwks),
+		Auth: remote.NewAuthClient(jwks,
+			// Fail-closed issuer pin: the harness server and its token
+			// issuer are both configured with "e2e-sso".
+			remote.WithIssuer("e2e-sso")),
 		Authz: remote.NewAuthzClient(h.GRPC),
 		Audit: remote.NewAuditClient(h.GRPC),
 	}

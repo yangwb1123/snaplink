@@ -5,10 +5,14 @@ import (
 	"errors"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	"github.com/yangwb1123/snaplink/platform/configaudit"
+	"github.com/yangwb1123/snaplink/platform/geo"
 	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // InvalidateConnectionCache publishes a KindConnectionChange event to the
@@ -34,6 +38,20 @@ func (s *Server) InvalidateClientCache(clientID string) {
 		if err := s.invalidationBus.Publish(context.Background(), evt); err != nil {
 			s.logger.Error("invalidation bus publish failed", "kind", string(evt.Kind), "key", clientID, "error", err)
 		}
+	}
+}
+
+// InvalidateRestoredControlPlane flushes every local control-plane cache and
+// asks peer replicas to do the same. Replace restores can delete identifiers
+// absent from the artifact, so granular per-key events cannot cover them.
+func (s *Server) InvalidateRestoredControlPlane() {
+	s.flushInvalidationCaches()
+	if s.invalidationBus == nil {
+		return
+	}
+	evt := cluster.Event{Kind: cluster.KindControlPlaneRestore}
+	if err := s.invalidationBus.Publish(context.Background(), evt); err != nil {
+		s.logger.Error("invalidation bus publish failed", "kind", string(evt.Kind), "error", err)
 	}
 }
 
@@ -297,6 +315,27 @@ func (s *Server) applyInvalidationSafe(ctx context.Context, evt cluster.Event) {
 // bind its deferred-retire timers to it (a clean shutdown cancels them); the
 // cache-invalidation arms ignore it (they are synchronous).
 func (s *Server) applyInvalidation(ctx context.Context, evt cluster.Event) {
+	if s.applyControlPlaneInvalidation(evt) {
+		return
+	}
+	switch evt.Kind {
+	case cluster.KindSigningKeyRotation:
+		s.applyCoordinatedKeyRotation(ctx, evt)
+		s.InvalidateJWKSBodyCache()
+	case cluster.KindSessionSuspended:
+		s.applySessionSuspension(evt)
+	case cluster.KindTokenRevoked:
+		s.applyTokenRevocation(ctx, evt)
+	case cluster.KindConfigDigest:
+		// Handled by configaudit.DriftDetector's own bus subscription.
+	default:
+		// Unknown kind from a newer peer is ignored during mixed-version rollout.
+	}
+}
+
+// applyControlPlaneInvalidation handles cache-only events and reports whether
+// it recognized the kind. Security-state events stay in applyInvalidation.
+func (s *Server) applyControlPlaneInvalidation(evt cluster.Event) bool {
 	switch evt.Kind {
 	case cluster.KindTenantSuspension:
 		if s.tenantSuspensionCache != nil {
@@ -317,34 +356,17 @@ func (s *Server) applyInvalidation(ctx context.Context, evt cluster.Event) {
 		s.invalidateDiscoveryCaches()
 		s.InvalidateJWKSBodyCache()
 	case cluster.KindAuthzPolicyChange:
-		// evt.Key is the clientID whose role definitions changed; drop this
-		// replica's cached bundle so the sidecar's next pull re-renders.
 		s.invalidateAuthzPolicyBundleCacheLocal(evt.Key)
-	case cluster.KindSigningKeyRotation:
-		// A peer rotated its signing key: adopt the new kid verify-only now,
-		// deferring the demoted kid's retirement (see coordinated_key_rotation.go).
-		// No-op unless WithCoordinatedKeyRotation armed this replica.
-		s.applyCoordinatedKeyRotation(ctx, evt)
-		s.InvalidateJWKSBodyCache()
 	case cluster.KindConnectionChange:
 		// evt.Key is the connID whose config changed. No per-replica cache
 		// exists yet to evict; arm kept explicit vs. the default (unknown
 		// kind) branch for a mixed-version rollout.
-	case cluster.KindSessionSuspended:
-		s.applySessionSuspension(evt)
-	case cluster.KindTokenRevoked:
-		// A peer revoked an access token: ADD it to this replica's per-issuer
-		// in-process deny-set via the LOCAL-only revoke path (which never
-		// re-publishes — no broadcast loop). Purely additive + fail-open; no-op
-		// unless WithCrossReplicaRevocation armed this replica. See
-		// cross_replica_revocation.go.
-		s.applyTokenRevocation(ctx, evt)
-	case cluster.KindConfigDigest:
-		// Handled by configaudit.DriftDetector's own bus subscription, not here.
+	case cluster.KindControlPlaneRestore:
+		s.flushInvalidationCaches()
 	default:
-		// Unknown kind from a newer peer — ignore rather than error, so a
-		// mixed-version cluster degrades gracefully during a rollout.
+		return false
 	}
+	return true
 }
 
 // applySessionSuspension handles KindSessionSuspended: evt.Key is the
@@ -370,6 +392,73 @@ func (s *Server) StartConfigDriftDetection(ctx context.Context) (<-chan struct{}
 		s.runningConfigDigest, s.auditor, s.logger, s.onConfigDriftMismatch,
 	)
 	return dd.Run(ctx)
+}
+
+func (s *Server) RunConditionalAccessConvergence(ctx context.Context) (conditionalaccess.ConvergenceSummary, error) {
+	if s.capEngine == nil {
+		return conditionalaccess.ConvergenceSummary{}, nil
+	}
+	return s.capEngine.ConvergeSessions(ctx, s.sessionMgr, s.sessionConvergenceContext)
+}
+
+func (s *Server) StartConditionalAccessConvergence(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
+	if s.capEngine == nil || s.sessionMgr == nil || !s.capEngine.Config().Enforce {
+		close(done)
+		return done
+	}
+	go func() {
+		defer close(done)
+		interval := s.capEngine.Config().SessionSweepInterval
+		if interval <= 0 {
+			interval = conditionalaccess.DefaultSessionSweepInterval
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			if summary, err := s.RunConditionalAccessConvergence(ctx); err != nil {
+				s.logger.Error("conditional access convergence failed; retrying", "error", err)
+			} else if summary.Revoked+summary.StepUpMarked+summary.ScopesRestricted > 0 {
+				s.logger.Info("conditional access sessions converged", "revoked", summary.Revoked, "step_up", summary.StepUpMarked, "restricted", summary.ScopesRestricted)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return done
+}
+
+func (s *Server) sessionConvergenceContext(ctx context.Context, session *core.Session, concurrent int) conditionalaccess.AccessContext {
+	ac := conditionalaccess.AccessContext{
+		TrustScore: session.TrustScore, TrustScoreKnown: !session.TrustSetAt.IsZero(),
+		Now: time.Now(), SessionCreatedAt: session.CreatedAt, AuthTime: session.AuthTime,
+		RequestedScopes: session.AuthorizedScopes, Subject: session.UserID, ClientID: session.ClientID,
+		Groups:             s.conditionalAccessGroups(ctx, session.UserID, session.ClientID),
+		DeviceType:         string(device.ParseUserAgent(session.UserAgent).Type),
+		ConcurrentSessions: concurrent, ConcurrentSessionsKnown: true,
+	}
+	if s.geoProvider != nil && session.IP != "" {
+		if info, err := geo.LookupString(ctx, s.geoProvider, session.IP); err == nil && info != nil {
+			ac.Country = info.CountryCode
+		}
+	}
+	if s.deviceStore == nil || session.DeviceID == "" {
+		return ac
+	}
+	tracked, err := s.deviceStore.Get(ctx, session.DeviceID)
+	if err != nil || tracked == nil {
+		return ac
+	}
+	ac.DeviceType, ac.DeviceTrustLevel = string(tracked.Type), tracked.TrustScore
+	if s.deviceFingerprint != nil {
+		if posture, ok, err := s.deviceFingerprint.Lookup(ctx, tracked.Fingerprint); err == nil && ok {
+			ac.DevicePosture = posture
+		}
+	}
+	return ac
 }
 
 // runningConfigDigest composes RunningConfigSnapshot + configaudit.Digest

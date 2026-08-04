@@ -1,9 +1,8 @@
 # snaplink/sso — TypeScript client (generated)
 
-> **Scope:** convenience client for a curated OpenAPI subset. It is not a
-> complete SDK for every runtime route, is not published to the public npm
-> registry, and does not ship a
-> login page, self-service portal, setup UI, developer portal, or admin console.
+> **Scope:** generated client for the full documented API surface of
+> `docs/openapi.yaml`. It is not an npm package, and does not ship a login
+> page, self-service portal, setup UI, developer portal, or admin console.
 > `sso-server` is a pure API backend; those browser experiences are separate
 > frontend projects.
 
@@ -18,8 +17,9 @@ consumed from a checked-out Snaplink repository with a `file:` dependency.
 go run ./cmd/gensdk --lang=ts
 ```
 
-Regenerate after any change to `docs/openapi.yaml` that touches an operation
-listed below. There is no Node.js/npm build step in this repo — the
+Regenerate after any change to `docs/openapi.yaml` or
+`ops/build/sdk-surface.json` (run `python cli.py sdk-surface generate`, which
+re-emits every language). There is no Node.js/npm build step in this repo — the
 generator is a plain Go program (`cmd/gensdk`) that parses the YAML spec
 (via the `goccy/go-yaml` dependency already in `go.mod`) and writes a
 plain `.ts` file; nothing here runs `npm install` or `tsc` as part of
@@ -32,32 +32,15 @@ claiming complete API coverage.
 
 ## What's covered
 
-A curated, hand-scoped **subset** of `docs/openapi.yaml` — not a full
-mirror of the more than 250 operations the spec currently documents. The full
-allowlist lives
-as `coreSurface` in `cmd/gensdk/operations.go`:
-
-- **Discovery**: JWKS, OpenID Connect discovery document, OAuth
-  Authorization Server Metadata.
-- **Core OAuth 2.0 / OIDC**: `/auth/login`, `/auth/mfa`, `/auth/send-code`,
-  the full `/token` family (token, introspect, revoke, revoke-all), PAR,
-  device flow (code + verify), Dynamic Client Registration (register +
-  the RFC 7592 get/put/delete self-management trio), `/logout`,
-  `/userinfo`.
-- **Self-service** (`/me*`): account overview + profile update, password
-  change, MFA factor listing, session listing/bulk-revoke, consent
-  listing, permissions/roles/menu-tree.
-- **A small representative admin sample**: client lookup by id, the
-  runtime endpoint inventory, local-user listing, per-client role listing,
-  and the audit-event query API — enough to
-  demonstrate the pattern, NOT the full admin
-  grpc-gateway-generated admin CRUD surface (clients/users/tenants/
-  domains/releases/snapshots/tokens/policies/...), nor SCIM, CAEP/SSF,
-  OpenID Federation, webhooks, or compliance export/erase. Widening
-  `coreSurface` to cover more of that surface is mechanical — the
-  parser/resolver already walks the whole spec — but was left out of this
-  pass to keep the generator (and this README's promise about what it
-  covers) honest and reviewable in one sitting.
+The **complete** registered operation set of `docs/openapi.yaml` has a
+generated method, grouped by tag: discovery,
+OAuth 2.0/OIDC auth + token lifecycle, self-service (`/me*`), the full
+admin control plane, SCIM, CAEP/SSF, OpenID Federation, FGA/ReBAC,
+WebAuthn, mesh and operational endpoints. The operationId set is declared
+once in `ops/build/sdk-surface.json` (grouped, capability-linked,
+validated against `docs/openapi.yaml` + `ops/build/capabilities.json` by
+`python cli.py sdk-surface check`) — the generator carries no allowlist of
+its own, so the two language clients cannot drift apart in scope.
 
 Every generated method name is the operation's `operationId` **verbatim**
 (e.g. `client.postToken(...)`, `client.getUserInfo()`) — no derived/shortened

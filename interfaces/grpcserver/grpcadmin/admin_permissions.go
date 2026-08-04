@@ -174,7 +174,8 @@ func (s *PermissionAdminService) AssignRoles(ctx context.Context, in *adminv1.As
 	if err := s.prov.AssignRoles(ctx, in.UserId, in.ClientId, in.Roles); err != nil {
 		return nil, status.Errorf(codes.Internal, "assign: %v", err)
 	}
-	recordAdmin(ctx, s.recorder, audit.EventAdminRoleAssigned, in.ClientId+"/"+in.UserId)
+	recordAdminMeta(ctx, s.recorder, audit.EventAdminRoleAssigned, in.ClientId+"/"+in.UserId,
+		map[string]string{"target_user_id": in.UserId})
 	return &adminv1.AssignRolesResponse{}, nil
 }
 
@@ -188,7 +189,8 @@ func (s *PermissionAdminService) UnassignRoles(ctx context.Context, in *adminv1.
 	if err := s.prov.UnassignRoles(ctx, in.UserId, in.ClientId, in.Roles); err != nil {
 		return nil, status.Errorf(codes.Internal, "unassign: %v", err)
 	}
-	recordAdmin(ctx, s.recorder, audit.EventAdminRoleUnassigned, in.ClientId+"/"+in.UserId)
+	recordAdminMeta(ctx, s.recorder, audit.EventAdminRoleUnassigned, in.ClientId+"/"+in.UserId,
+		map[string]string{"target_user_id": in.UserId})
 	return &adminv1.UnassignRolesResponse{}, nil
 }
 

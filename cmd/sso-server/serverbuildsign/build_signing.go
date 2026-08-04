@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -18,6 +20,7 @@ import (
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 
 	"github.com/yangwb1123/snaplink/platform/metrics"
 	"github.com/yangwb1123/snaplink/shared/security/fipspolicy"
@@ -50,13 +53,13 @@ type SigningIssuer interface {
 // The third return value is the instrumented external signer (nil for the
 // in-process key path) — the caller hands it to AppendReadyCheck so a
 // wedged KMS/HSM trips /readyz.
-func BuildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *metrics.Metrics, logger spi.Logger) (SigningIssuer, string, crypto.Signer, error) {
+func BuildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, rdb goredis.Cmdable, m *metrics.Metrics, logger spi.Logger) (SigningIssuer, string, crypto.Signer, error) {
 	extSigner, extKID, err := resolveExternalSigner(sc, m, logger)
 	if err != nil {
 		return nil, "", nil, err
 	}
 
-	revStore, err := BuildRevocationStore(sc)
+	revStore, err := BuildRevocationStore(sc, rdb)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -83,10 +86,9 @@ func BuildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *met
 
 // BuildRevocationStore constructs the optional durable RevocationStore from
 // keys.signing.revocation_backend so access-token revocations survive a
-// restart (defaultimpl.RevocationStore). "" = nil (in-process only). The
-// sqlite store's *sql.DB lives for the process lifetime like the signing
-// issuer it backs (no /readyz ping wired yet — a follow-on).
-func BuildRevocationStore(sc config.SigningConfig) (defaultimpl.RevocationStore, error) {
+// restart (defaultimpl.RevocationStore). "" = nil (in-process only). Redis
+// reuses the process-wide client so every replica seeds from the same set.
+func BuildRevocationStore(sc config.SigningConfig, rdb goredis.Cmdable) (defaultimpl.RevocationStore, error) {
 	switch strings.ToLower(strings.TrimSpace(sc.RevocationBackend)) {
 	case "":
 		return nil, nil
@@ -102,8 +104,13 @@ func BuildRevocationStore(sc config.SigningConfig) (defaultimpl.RevocationStore,
 			return nil, fmt.Errorf("keys.signing.revocation: %w", err)
 		}
 		return st, nil
+	case "redis":
+		if rdb == nil {
+			return nil, fmt.Errorf("keys.signing.revocation_backend redis requires the shared redis block (set redis.addrs)")
+		}
+		return redisbackend.NewRevocationStore(rdb), nil
 	default:
-		return nil, fmt.Errorf("keys.signing.revocation_backend %q unsupported (supported: memory, sqlite)", sc.RevocationBackend)
+		return nil, fmt.Errorf("keys.signing.revocation_backend %q unsupported (supported: memory, sqlite, redis)", sc.RevocationBackend)
 	}
 }
 

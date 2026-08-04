@@ -23,6 +23,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/ssoext"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
 	samlmod "github.com/yangwb1123/snaplink/saml"
 	"github.com/yangwb1123/snaplink/saml/sp"
@@ -44,9 +45,11 @@ func buildTestServer(t *testing.T) (http.HandlerFunc, sso.SessionManager, sso.Us
 	users := defaultimpl.NewMemoryUserProvider()
 
 	res, err := samlmod.Build(samlmod.Deps{
-		SessionManager: sessions,
-		UserProvider:   users,
-		ClientStore:    defaultimpl.NewMemoryClientStore(),
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: sessions,
+			UserProvider:   users,
+			ClientStore:    defaultimpl.NewMemoryClientStore(),
+		},
 	}, samlmod.Config{
 		SPs: []sp.SPConfig{{
 			Name:        "test-idp",
@@ -120,6 +123,49 @@ func TestACS_ValidAssertion_CreatesSession(t *testing.T) {
 	// The user was upserted under the NameID.
 	if _, err := users.GetByID(context.Background(), "alice@example.com"); err != nil {
 		t.Errorf("user not upserted: %v", err)
+	}
+}
+
+func TestACS_ValidAssertion_ResumesOAuthTransaction(t *testing.T) {
+	t.Parallel()
+	idp := newIDPKey(t)
+	sessions := defaultimpl.NewMemorySessionManager()
+	users := defaultimpl.NewMemoryUserProvider()
+	var gotState, gotUser string
+	res, err := samlmod.Build(samlmod.Deps{
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: sessions, UserProvider: users,
+			ClientStore: defaultimpl.NewMemoryClientStore(),
+			ResumeFederatedLogin: func(w http.ResponseWriter, _ *http.Request, state string, result *sso.AuthResult) bool {
+				gotState, gotUser = state, result.UserID
+				w.WriteHeader(http.StatusFound)
+				return true
+			},
+		},
+	}, samlmod.Config{SPs: []sp.SPConfig{{
+		Name: "test-idp", EntityID: spEntity, ACSURL: acsURL,
+		IDPCert: idp.certPEM(), IDPEntityID: idpEntity,
+	}}})
+	if err != nil {
+		t.Fatalf("saml.Build: %v", err)
+	}
+	var acs http.HandlerFunc
+	for _, handler := range res.Handlers {
+		if handler.Path == sso.PathSAMLSSOCallback && handler.Method == http.MethodPost {
+			acs = handler.Handler
+		}
+	}
+	response := mintSignedResponse(t, idp, "alice@example.com", nil)
+	rec := postACS(acs, response, "test-idp:slf.opaque")
+	if rec.Code != http.StatusFound || gotState != "test-idp:slf.opaque" || gotUser != "alice@example.com" {
+		t.Fatalf("OAuth resume = %d state=%q user=%q", rec.Code, gotState, gotUser)
+	}
+	all, _ := sessions.ListAll(context.Background())
+	if len(all) != 0 {
+		t.Fatalf("ACS created a legacy session before OAuth resume: %v", all)
+	}
+	if _, err := users.GetByID(context.Background(), "alice@example.com"); err == nil {
+		t.Fatal("ACS upserted a user outside the resumed OAuth pipeline")
 	}
 }
 
@@ -217,10 +263,12 @@ func TestACS_ValidAssertion_LinksCoreAndSAMLLegs(t *testing.T) {
 	hub := sessionhub.NewCoordinator(spy, nil, nil, nil)
 
 	res, err := samlmod.Build(samlmod.Deps{
-		SessionManager: defaultimpl.NewMemorySessionManager(),
-		UserProvider:   defaultimpl.NewMemoryUserProvider(),
-		ClientStore:    defaultimpl.NewMemoryClientStore(),
-		SessionHub:     hub,
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: defaultimpl.NewMemorySessionManager(),
+			UserProvider:   defaultimpl.NewMemoryUserProvider(),
+			ClientStore:    defaultimpl.NewMemoryClientStore(),
+		},
+		SessionHub: hub,
 	}, samlmod.Config{
 		SPs: []sp.SPConfig{{
 			Name:        "test-idp",
@@ -277,15 +325,19 @@ func TestACS_ValidAssertion_LinksCoreAndSAMLLegs(t *testing.T) {
 func TestBuild_RejectsMissingDeps(t *testing.T) {
 	t.Parallel()
 	_, err := samlmod.Build(samlmod.Deps{
-		UserProvider: defaultimpl.NewMemoryUserProvider(),
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			UserProvider: defaultimpl.NewMemoryUserProvider(),
+		},
 	}, samlmod.Config{SPs: []sp.SPConfig{{Name: "x"}}})
 	if err == nil || !strings.Contains(err.Error(), "SessionManager required") {
 		t.Errorf("Build without SessionManager err = %v, want SessionManager required", err)
 	}
 
 	_, err = samlmod.Build(samlmod.Deps{
-		SessionManager: defaultimpl.NewMemorySessionManager(),
-		UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: defaultimpl.NewMemorySessionManager(),
+			UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		},
 	}, samlmod.Config{})
 	if err == nil || !strings.Contains(err.Error(), "at least one SP") {
 		t.Errorf("Build with no SPs err = %v, want at-least-one-SP", err)
@@ -300,8 +352,10 @@ func TestBuild_RejectsDuplicateSPNames(t *testing.T) {
 		IDPCert: idp.certPEM(), IDPEntityID: idpEntity,
 	}
 	_, err := samlmod.Build(samlmod.Deps{
-		SessionManager: defaultimpl.NewMemorySessionManager(),
-		UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: defaultimpl.NewMemorySessionManager(),
+			UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		},
 	}, samlmod.Config{SPs: []sp.SPConfig{spc, spc}})
 	if err == nil || !strings.Contains(err.Error(), "duplicate SP name") {
 		t.Errorf("Build with duplicate SP names err = %v, want duplicate-name", err)

@@ -32,6 +32,7 @@ func TestSQLiteClients_AddGetRoundTrip(t *testing.T) {
 		RedirectURIs:          []string{"https://app/cb", "https://app/cb2"},
 		AllowedScopes:         []string{"read", "write"},
 		AllowedAuthenticators: []string{"password", "phone"},
+		LoginPageURI:          "https://login.example/authorize",
 		TokenStrategy:         "jwt",
 		Active:                true,
 		TenantID:              "acme",
@@ -46,7 +47,7 @@ func TestSQLiteClients_AddGetRoundTrip(t *testing.T) {
 	}
 	// Secret is now stored as a bcrypt hash — verify via ValidateSecret, not
 	// direct string comparison.
-	if out.Name != "Web App" || out.TenantID != "acme" {
+	if out.Name != "Web App" || out.TenantID != "acme" || out.LoginPageURI != in.LoginPageURI {
 		t.Errorf("scalar mismatch: %+v", out)
 	}
 	if !strings.HasPrefix(out.Secret, "$2") {
@@ -77,11 +78,17 @@ func TestSQLiteClients_SecurityFieldsSurviveRestart(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	in := &sso.Client{
-		ID:                      "secure",
-		Secret:                  "shh",
-		Name:                    "Secure App",
-		Active:                  true,
-		RegistrationAccessToken: "rat-secret-7592",
+		ID:                                  "secure",
+		Secret:                              "shh",
+		Name:                                "Secure App",
+		Active:                              true,
+		RegistrationAccessToken:             "rat-secret-7592",
+		PreviousRegistrationAccessToken:     "previous-rat",
+		RegistrationAccessTokenOverlapUntil: time.Now().UTC().Add(time.Minute),
+		GrantTypes:                          []string{"authorization_code", "refresh_token"},
+		TokenEndpointAuthMethod:             "tls_client_auth",
+		TLSClientAuthSubjectDN:              "CN=client-one",
+		TLSClientAuthSANDNS:                 "client.example",
 		JWKS: []core.JWK{{
 			Kty: "OKP", Use: "sig", Alg: "EdDSA", Kid: "k1",
 			Crv: "Ed25519", X: "abc123",
@@ -116,6 +123,14 @@ func TestSQLiteClients_SecurityFieldsSurviveRestart(t *testing.T) {
 	// RegistrationAccessToken is stored as a bcrypt hash — verify via validation
 	if !strings.HasPrefix(out.RegistrationAccessToken, "$2") {
 		t.Errorf("RegistrationAccessToken not hashed after Add: %q", out.RegistrationAccessToken)
+	}
+	if !strings.HasPrefix(out.PreviousRegistrationAccessToken, "$2") ||
+		out.RegistrationAccessTokenOverlapUntil.IsZero() {
+		t.Errorf("RAT overlap metadata did not persist safely: %+v", out)
+	}
+	if len(out.GrantTypes) != 2 || out.TokenEndpointAuthMethod != "tls_client_auth" ||
+		out.TLSClientAuthSubjectDN != "CN=client-one" || out.TLSClientAuthSANDNS != "client.example" {
+		t.Errorf("DCR runtime metadata round-trip failed: %+v", out)
 	}
 	if len(out.JWKS) != 1 || out.JWKS[0].Kid != "k1" || out.JWKS[0].Kty != "OKP" ||
 		out.JWKS[0].Crv != "Ed25519" || out.JWKS[0].X != "abc123" {

@@ -6,11 +6,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/caep"
+	"github.com/yangwb1123/snaplink/shared/security/clientrotation"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -20,8 +22,11 @@ import (
 // anti-exfil rule shared with the YAML + DCR paths. No-op when the
 // attribute is unset.
 func validateClientCAEP(c *sso.Client) error {
-	if c == nil || c.Attributes == nil {
+	if c == nil {
 		return nil
+	}
+	if c.LoginPageURI != "" && !sso.IsFederatedLoginPageURIValid(c.LoginPageURI) {
+		return errors.New("login_page_uri must be HTTPS or loopback HTTP")
 	}
 	if ep := c.Attributes[caep.AttrReceiverEndpoint]; ep != "" {
 		if err := caep.ValidateReceiverEndpoint(ep); err != nil {
@@ -273,7 +278,11 @@ func (s *ClientAdminService) RotateSecret(ctx context.Context, in *adminv1.Rotat
 	if in == nil || in.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "id required")
 	}
-	secret, err := s.store.RotateSecret(ctx, in.Id)
+	overlap, lifetime, err := clientRotationPolicy(in)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := rotateClientSecret(ctx, s.store, in.Id, overlap, lifetime)
 	if errors.Is(err, sso.ErrNoSuchClient) {
 		return nil, status.Error(codes.NotFound, "client not found")
 	}
@@ -285,7 +294,21 @@ func (s *ClientAdminService) RotateSecret(ctx context.Context, in *adminv1.Rotat
 	// cache doesn't serve the stale snapshot (ValidateSecret already
 	// bypasses the cache, so this is metadata hygiene, not correctness).
 	s.onClientChange(in.Id)
-	return &adminv1.RotateSecretResponse{Secret: secret}, nil
+	client, getErr := s.store.Get(ctx, in.Id)
+	if getErr != nil {
+		return nil, status.Errorf(codes.Internal, "read rotated client: %v", getErr)
+	}
+	return &adminv1.RotateSecretResponse{Secret: secret, ClientSecretExpiresAt: clientExpiryUnix(client)}, nil
+}
+
+func rotateClientSecret(ctx context.Context, store sso.ClientStore, id string, overlap, lifetime time.Duration) (string, error) {
+	if lifecycleStore, ok := store.(clientrotation.ClientSecretLifecycleRotator); ok {
+		return lifecycleStore.RotateSecretWithLifecycle(ctx, id, overlap, lifetime)
+	}
+	if overlapStore, ok := store.(clientrotation.ClientSecretOverlapRotator); ok {
+		return overlapStore.RotateSecretWithOverlap(ctx, id, clientrotation.DefaultOverlap)
+	}
+	return store.RotateSecret(ctx, id)
 }
 
 // Approve implements the developer-app registration review workflow's
@@ -362,6 +385,8 @@ func clientToProto(c *sso.Client, includeSecret bool) *adminv1.Client {
 		AllowedAuthenticators: append([]string(nil), c.AllowedAuthenticators...),
 		TokenStrategy:         c.TokenStrategy,
 		Active:                c.Active,
+		ClientSecretExpiresAt: clientExpiryUnix(c),
+		LoginPageUri:          c.LoginPageURI,
 	}
 	if includeSecret {
 		out.Secret = c.Secret
@@ -382,6 +407,8 @@ func protoToClient(in *adminv1.Client) *sso.Client {
 		AllowedAuthenticators: append([]string(nil), in.AllowedAuthenticators...),
 		TokenStrategy:         in.TokenStrategy,
 		Active:                in.Active,
+		SecretExpiresAt:       timeFromUnix(in.ClientSecretExpiresAt),
+		LoginPageURI:          in.LoginPageUri,
 	}
 }
 
@@ -407,5 +434,23 @@ func applyProtoToExistingClient(existing *sso.Client, in *adminv1.Client) *sso.C
 	c.AllowedAuthenticators = append([]string(nil), in.AllowedAuthenticators...)
 	c.TokenStrategy = in.TokenStrategy
 	c.Active = in.Active
+	c.LoginPageURI = in.LoginPageUri
+	if in.ClientSecretExpiresAt != 0 {
+		c.SecretExpiresAt = timeFromUnix(in.ClientSecretExpiresAt)
+	}
 	return &c
+}
+
+func clientExpiryUnix(c *sso.Client) int64 {
+	if c == nil || c.SecretExpiresAt.IsZero() {
+		return 0
+	}
+	return c.SecretExpiresAt.Unix()
+}
+
+func timeFromUnix(value int64) time.Time {
+	if value <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(value, 0).UTC()
 }

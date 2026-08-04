@@ -12,7 +12,7 @@ MODULE_ARGS ?=
 
 CLI = python cli.py
 
-.PHONY: help test race bench vet fmt build configure build-profile build-prototype build-minimal build-full build-production build-small modules-list modules-plan modules-check modules-smoke docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
+.PHONY: help test ai-dev-test race bench vet fmt build configure build-profile build-prototype build-minimal build-full build-production build-small modules-list modules-plan modules-check modules-smoke capabilities-check capabilities-generate docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve route-contract release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -112,6 +112,18 @@ modules-check: ## Validate module schemas, catalog, manifests, and profiles.
 modules-smoke: ## Build supported profiles plus every currently buildable preview.
 	$(CLI) modules smoke
 
+capabilities-check: ## Validate capability metadata and generated feature matrix.
+	$(CLI) capabilities check
+
+sdk-surface-check: ## Validate the generated-SDK surface registry against OpenAPI + capabilities.
+	$(CLI) sdk-surface check
+
+profiles-evidence: ## Build + prove per-profile physical isolation (packages/modules/symbols/size).
+	$(CLI) profiles evidence
+
+capabilities-generate: ## Regenerate feature-matrix capability availability.
+	$(CLI) capabilities generate
+
 build-prototype: ## Build the OAuth SSO prototype tier.
 	$(CLI) configure --profile prototype --version $(VERSION) --build $(MODULE_ARGS)
 
@@ -163,8 +175,11 @@ proto-breaking: ## Check proto wire-breaking vs main.
 	cd proto && $(GO) run github.com/bufbuild/buf/cmd/buf@latest breaking \
 		--against "../.git#branch=main,subdir=proto"
 
-docs-validate: ## Validate openapi.yaml.
+docs-validate: route-contract capabilities-check ## Validate OpenAPI and generated capability docs.
 	@$(GO) run github.com/getkin/kin-openapi/cmd/validate@latest docs/openapi.yaml
+
+route-contract: ## Fail when a runtime route is absent from OpenAPI.
+	$(CLI) check-routes
 
 docs-check: ## Validate documentation quality (cross-references, required files).
 	@echo "=== Documentation Quality Check ==="
@@ -226,7 +241,7 @@ ci-modules: ## Build + test all nested modules.
 	cd cmd/sso-mcp && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd cmd/sso-operator && $(GO) build ./... && $(GO) test -race -count=1 ./...
 
-ci: fmt vet race build examples proto-lint ci-modules config-validate-all modules-check modules-smoke ## Run CI checks.
+ci: fmt vet race build examples proto-lint ci-modules config-validate-all modules-check modules-smoke route-contract capabilities-check sdk-surface-check profiles-evidence ## Run CI checks.
 
 ci-full: ci terraform-validate k8s-render ## Run all CI checks including IaC validation (requires kustomize + terraform).
 
@@ -312,6 +327,8 @@ trend: ## Record trend snapshot.
 health-report: ## Health report.
 	$(CLI) health-report
 
+ai-dev-test: ## Run ai-dev/ unit tests (validate review and pipeline runners).
+	python -m pytest ai-dev/tests/ -v
 check-test: ## Run checks/ unit tests (validate engineering gates themselves).
 	python -m pytest checks/ -v
 
@@ -469,4 +486,4 @@ licenses-notice: ## Generate NOTICE.txt for distribution (Apache 2.0 §4).
 	@echo "Full dependency list: see licenses.csv (make licenses)" >> NOTICE.txt
 	@echo "NOTICE.txt written ($$(wc -l < NOTICE.txt) lines)"
 
-.PHONY: licenses licenses-check licenses-notice release-snapshot release docker-push docker-multiarch lint-all security-scan-all config-validate-all smoke-test k8s-render k8s-diff terraform-validate terraform-plan-dev terraform-plan-prod check-test skill-test adr-compliance
+.PHONY: ai-dev-test licenses licenses-check licenses-notice release-snapshot release docker-push docker-multiarch lint-all security-scan-all config-validate-all smoke-test k8s-render k8s-diff terraform-validate terraform-plan-dev terraform-plan-prod check-test skill-test adr-compliance

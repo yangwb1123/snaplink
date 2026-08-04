@@ -34,6 +34,11 @@ func (m *MemoryClientStore) AddSeed(client *core.Client) {
 			client.Secret = h
 		}
 	}
+	if client.PreviousSecret != "" && !isBcryptHash(client.PreviousSecret) {
+		if h, err := hashClientSecret(client.PreviousSecret); err == nil {
+			client.PreviousSecret = h
+		}
+	}
 	if client.RegistrationAccessToken != "" && !isBcryptHash(client.RegistrationAccessToken) {
 		if h, err := hashClientSecret(client.RegistrationAccessToken); err == nil {
 			client.RegistrationAccessToken = h
@@ -65,8 +70,13 @@ func (m *MemoryClientStore) ValidateSecret(_ context.Context, clientID, clientSe
 	// value starts with "$2" (a bcrypt hash), falling back to constant-time
 	// string compare for plaintext secrets in pre-migration / hand-authored
 	// stores. See client_secret.go.
-	if !compareClientSecret(c.Secret, clientSecret) {
+	current := compareClientSecret(c.Secret, clientSecret)
+	previous := time.Now().Before(c.SecretOverlapUntil) && compareClientSecret(c.PreviousSecret, clientSecret)
+	if !current && !previous {
 		return fmt.Errorf("invalid client secret")
+	}
+	if !c.SecretExpiresAt.IsZero() && !time.Now().Before(c.SecretExpiresAt) {
+		return fmt.Errorf("client secret expired")
 	}
 	if !c.Active {
 		return fmt.Errorf("client is inactive")
@@ -136,13 +146,24 @@ func (m *MemoryClientStore) Add(_ context.Context, c *core.Client) error {
 		}
 		c.RegistrationAccessToken = h
 	}
+	if c.PreviousSecret != "" && !isBcryptHash(c.PreviousSecret) {
+		h, err := hashClientSecret(c.PreviousSecret)
+		if err != nil {
+			return fmt.Errorf("defaultimpl: hash previous secret: %w", err)
+		}
+		c.PreviousSecret = h
+	}
 	// SecretRotatedAt baselines at creation time so a freshly-added
 	// confidential client is immediately eligible for scheduled rotation
 	// once it ages past the configured interval — see ListDueForRotation.
 	// A secretless client (federation-derived / public) has nothing to
 	// rotate, so its timestamp stays zero (never due).
 	if c.Secret != "" {
-		c.SecretRotatedAt = time.Now()
+		now := time.Now()
+		c.SecretRotatedAt = now
+		if c.SecretExpiresAt.IsZero() {
+			c.SecretExpiresAt = now.Add(clientrotation.DefaultLifetime)
+		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -187,7 +208,15 @@ func (m *MemoryClientStore) Delete(_ context.Context, clientID string) error {
 	return nil
 }
 
-func (m *MemoryClientStore) RotateSecret(_ context.Context, clientID string) (string, error) {
+func (m *MemoryClientStore) RotateSecret(ctx context.Context, clientID string) (string, error) {
+	return m.RotateSecretWithLifecycle(ctx, clientID, 0, clientrotation.DefaultLifetime)
+}
+
+func (m *MemoryClientStore) RotateSecretWithOverlap(_ context.Context, clientID string, overlap time.Duration) (string, error) {
+	return m.RotateSecretWithLifecycle(context.Background(), clientID, overlap, clientrotation.DefaultLifetime)
+}
+
+func (m *MemoryClientStore) RotateSecretWithLifecycle(_ context.Context, clientID string, overlap, lifetime time.Duration) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.clients[clientID]
@@ -202,9 +231,16 @@ func (m *MemoryClientStore) RotateSecret(_ context.Context, clientID string) (st
 	if err != nil {
 		return "", fmt.Errorf("defaultimpl: hash rotated secret: %w", err)
 	}
-	// Store the hash; return the plaintext (one-time reveal).
+	now := time.Now()
+	c.PreviousSecret = ""
+	c.SecretOverlapUntil = time.Time{}
+	if overlap > 0 && c.Secret != "" {
+		c.PreviousSecret = c.Secret
+		c.SecretOverlapUntil = now.Add(overlap)
+	}
 	c.Secret = hashed
-	c.SecretRotatedAt = time.Now()
+	c.SecretRotatedAt = now
+	c.SecretExpiresAt = clientrotation.ExpiresAt(now, lifetime)
 	return plaintext, nil
 }
 
@@ -225,10 +261,12 @@ func (m *MemoryClientStore) ListDueForRotation(_ context.Context, olderThan time
 
 // Compile-time interface checks.
 var (
-	_ core.ClientStore                    = (*MemoryClientStore)(nil)
-	_ core.TenantScopedClientStore        = (*MemoryClientStore)(nil)
-	_ core.ClientStoreStats               = (*MemoryClientStore)(nil)
-	_ clientrotation.ClientRotationLister = (*MemoryClientStore)(nil)
+	_ core.ClientStore                            = (*MemoryClientStore)(nil)
+	_ core.TenantScopedClientStore                = (*MemoryClientStore)(nil)
+	_ core.ClientStoreStats                       = (*MemoryClientStore)(nil)
+	_ clientrotation.ClientRotationLister         = (*MemoryClientStore)(nil)
+	_ clientrotation.ClientSecretOverlapRotator   = (*MemoryClientStore)(nil)
+	_ clientrotation.ClientSecretLifecycleRotator = (*MemoryClientStore)(nil)
 )
 
 // generateSecret returns a base64url-encoded random string. 32 bytes ≈ 256

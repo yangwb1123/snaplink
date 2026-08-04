@@ -1,13 +1,16 @@
 package ssotest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
@@ -37,17 +40,53 @@ func (c *callbackAuth) Callback(_ context.Context, s *sso.CallbackState) (*sso.A
 	}
 	return c.out, nil
 }
-func (c *callbackAuth) LoginURL(string) string { return "" }
+func (c *callbackAuth) LoginURL(state string) string {
+	return "https://upstream.example/authorize?" + url.Values{"state": {state}}.Encode()
+}
+
+const (
+	callbackClient    = "callback-client"
+	callbackRedirect  = "https://rp.example/callback"
+	callbackLoginPage = "https://login.example/authorize"
+)
 
 func newCallbackHarness(t *testing.T, auths ...sso.Authenticator) (*httptest.Server, *audit.MemorySink) {
 	t.Helper()
+	users := defaultimpl.NewMemoryUserProvider()
+	for _, auth := range auths {
+		stub, ok := auth.(*callbackAuth)
+		if ok && stub.out != nil && stub.out.UserID != "" {
+			_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: stub.out.UserID})
+		}
+	}
+	return newCallbackHarnessWithUsers(t, users, auths...)
+}
+
+func newCallbackHarnessWithUsers(
+	t *testing.T, users *defaultimpl.MemoryUserProvider, auths ...sso.Authenticator,
+) (*httptest.Server, *audit.MemorySink) {
+	t.Helper()
 	sink := audit.NewMemorySink(50)
 	rec := audit.New(sink)
+	clients := defaultimpl.NewMemoryClientStore()
+	allowed := make([]string, 0, len(auths))
+	for _, auth := range auths {
+		allowed = append(allowed, auth.Name())
+	}
+	clients.AddSeed(&sso.Client{
+		ID: callbackClient, RedirectURIs: []string{callbackRedirect},
+		AllowedAuthenticators: allowed, LoginPageURI: callbackLoginPage,
+		TokenStrategy: "jwt", Active: true, SkipConsent: true,
+	})
 
 	opts := []sso.Option{
-		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
+		sso.WithUserProvider(users),
 		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithClientStore(clients),
 		sso.WithAuditRecorder(rec),
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithAuthCodeStore(defaultimpl.NewMemoryAuthCodeStore(), time.Minute),
 	}
 	for _, a := range auths {
 		opts = append(opts, sso.WithAuthenticator(a))
@@ -59,6 +98,75 @@ func newCallbackHarness(t *testing.T, auths ...sso.Authenticator) (*httptest.Ser
 	return httpSrv, sink
 }
 
+func callbackGetNoFollow(t *testing.T, target string) *http.Response {
+	t.Helper()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := client.Get(target)
+	if err != nil {
+		t.Fatalf("GET %s: %v", target, err)
+	}
+	return resp
+}
+
+func startCallbackFlow(t *testing.T, srv *httptest.Server, provider string) string {
+	t.Helper()
+	q := url.Values{
+		"provider": {provider}, "client_id": {callbackClient},
+		"response_type": {"code"}, "redirect_uri": {callbackRedirect},
+		"state": {"rp-state"}, "scope": {"openid"},
+	}
+	resp := callbackGetNoFollow(t, srv.URL+"/auth/login?"+q.Encode())
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusFound {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("start callback flow = %d body=%s", resp.StatusCode, body)
+	}
+	location, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil || location.Query().Get("state") == "" {
+		t.Fatalf("invalid upstream redirect: %q err=%v", resp.Header.Get("Location"), err)
+	}
+	return location.Query().Get("state")
+}
+
+func finishCallbackFlow(
+	t *testing.T, srv *httptest.Server, state string, values url.Values,
+) string {
+	t.Helper()
+	values.Set("state", state)
+	resp := callbackGetNoFollow(t, srv.URL+"/auth/callback?"+values.Encode())
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusFound {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("finish callback flow = %d body=%s", resp.StatusCode, body)
+	}
+	location, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil || location.Scheme != "https" || location.Host != "login.example" {
+		t.Fatalf("invalid hosted-login continuation: %q err=%v", resp.Header.Get("Location"), err)
+	}
+	fragment, err := url.ParseQuery(location.Fragment)
+	if err != nil || fragment.Get("login_transaction_id") == "" {
+		t.Fatalf("invalid continuation fragment: %q err=%v", location.Fragment, err)
+	}
+	return fragment.Get("login_transaction_id")
+}
+
+func resumeCallbackFlow(t *testing.T, srv *httptest.Server, transaction string) (int, map[string]any) {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]string{
+		"client_id": callbackClient, "login_transaction_id": transaction,
+	})
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("resume callback flow: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body := map[string]any{}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	return resp.StatusCode, body
+}
+
 func TestCallback_HappyPath_WithProviderQuery(t *testing.T) {
 	auth := &callbackAuth{
 		name: "oidc",
@@ -67,27 +175,17 @@ func TestCallback_HappyPath_WithProviderQuery(t *testing.T) {
 	}
 	srv, _ := newCallbackHarness(t, auth)
 
-	resp, err := http.Get(srv.URL + "/auth/callback?provider=oidc&code=good-code&state=xyz")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status = %d body=%s", resp.StatusCode, body)
-	}
-
-	var body map[string]any
-	_ = json.NewDecoder(resp.Body).Decode(&body)
-	if body["status"] != "authenticated" {
-		t.Errorf("status = %v", body["status"])
-	}
-	if sid, _ := body["session_id"].(string); sid == "" {
-		t.Errorf("missing session_id in %v", body)
+	state := startCallbackFlow(t, srv, "oidc")
+	transaction := finishCallbackFlow(t, srv, state, url.Values{
+		"provider": {"oidc"}, "code": {"good-code"},
+	})
+	status, body := resumeCallbackFlow(t, srv, transaction)
+	if status != http.StatusOK || body["code"] == nil || body["state"] != "rp-state" {
+		t.Fatalf("resume = %d body=%v, want authorization code", status, body)
 	}
 }
 
-func TestCallback_MissingCodeOrState_400(t *testing.T) {
+func TestCallback_UnboundOrMissingState_400(t *testing.T) {
 	auth := &callbackAuth{name: "oidc", out: &sso.AuthResult{UserID: "u"}}
 	srv, _ := newCallbackHarness(t, auth)
 
@@ -112,22 +210,17 @@ func TestCallback_MissingCodeOrState_400(t *testing.T) {
 	}
 }
 
-func TestCallback_UnknownProviderQuery(t *testing.T) {
+func TestCallback_ProviderQueryTamperFailsClosed(t *testing.T) {
 	auth := &callbackAuth{name: "oidc", out: &sso.AuthResult{UserID: "u"}}
 	srv, _ := newCallbackHarness(t, auth)
 
-	resp, err := http.Get(srv.URL + "/auth/callback?provider=saml&code=x&state=y")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-	var body map[string]any
-	_ = json.NewDecoder(resp.Body).Decode(&body)
-	if body["error"] != "unknown_provider" {
-		t.Errorf("error = %v", body["error"])
+	state := startCallbackFlow(t, srv, "oidc")
+	transaction := finishCallbackFlow(t, srv, state, url.Values{
+		"provider": {"saml"}, "code": {"x"},
+	})
+	status, body := resumeCallbackFlow(t, srv, transaction)
+	if status != http.StatusUnauthorized || body["error"] != "callback_failed" {
+		t.Fatalf("resume = %d body=%v, want callback_failed", status, body)
 	}
 }
 
@@ -138,18 +231,13 @@ func TestCallback_AuthenticatorReturnsError(t *testing.T) {
 	}
 	srv, sink := newCallbackHarness(t, auth)
 
-	resp, err := http.Get(srv.URL + "/auth/callback?provider=oidc&code=x&state=y")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", resp.StatusCode)
-	}
-	var body map[string]any
-	_ = json.NewDecoder(resp.Body).Decode(&body)
-	if body["error"] != "callback_failed" {
-		t.Errorf("error = %v", body["error"])
+	state := startCallbackFlow(t, srv, "oidc")
+	transaction := finishCallbackFlow(t, srv, state, url.Values{
+		"provider": {"oidc"}, "code": {"x"},
+	})
+	status, body := resumeCallbackFlow(t, srv, transaction)
+	if status != http.StatusUnauthorized || body["error"] != "callback_failed" {
+		t.Fatalf("resume = %d body=%v, want callback_failed", status, body)
 	}
 	// Failure should emit a callback_failure audit event.
 	events, _ := sink.Query(context.Background(), audit.Query{Type: audit.EventCallbackFailure})
@@ -158,25 +246,22 @@ func TestCallback_AuthenticatorReturnsError(t *testing.T) {
 	}
 }
 
-func TestCallback_AutoDiscoverProvider(t *testing.T) {
-	// No ?provider query — handler iterates authenticators and picks the
-	// first one whose Callback succeeds.
+func TestCallback_UsesStateBoundProviderWithoutQuery(t *testing.T) {
+	// The provider query is optional because the server-issued state already
+	// binds the callback to exactly one authenticator.
 	good := &callbackAuth{name: "oidc", out: &sso.AuthResult{UserID: "u-discover"}}
 	srv, _ := newCallbackHarness(t, good)
 
-	resp, err := http.Get(srv.URL + "/auth/callback?code=x&state=y")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Errorf("status = %d body=%s", resp.StatusCode, body)
+	state := startCallbackFlow(t, srv, "oidc")
+	transaction := finishCallbackFlow(t, srv, state, url.Values{"code": {"x"}})
+	status, body := resumeCallbackFlow(t, srv, transaction)
+	if status != http.StatusOK || body["code"] == nil {
+		t.Fatalf("resume = %d body=%v, want authorization code", status, body)
 	}
 }
 
 // TestCallback_DeprovisionedUserBlocked proves that a federated callback for a
-// user who has been SCIM-deprovisioned (active=false) returns 401 callback_failed
+// user who has been SCIM-deprovisioned (active=false) returns 403 account_locked
 // and does NOT create a session, even though the authenticator succeeded.
 func TestCallback_DeprovisionedUserBlocked(t *testing.T) {
 	users := defaultimpl.NewMemoryUserProvider()
@@ -187,43 +272,27 @@ func TestCallback_DeprovisionedUserBlocked(t *testing.T) {
 		},
 	})
 
-	sink := audit.NewMemorySink(50)
-	rec := audit.New(sink)
 	auth := &callbackAuth{
 		name: "oidc",
 		out:  &sso.AuthResult{UserID: "deprovisioned-alice", Provider: "oidc"},
 	}
-	srv := sso.NewServer(
-		sso.WithUserProvider(users),
-		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
-		sso.WithAuditRecorder(rec),
-		sso.WithAuthenticator(auth),
-	)
-	hs := httptest.NewServer(srv.Handler())
-	t.Cleanup(hs.Close)
+	hs, _ := newCallbackHarnessWithUsers(t, users, auth)
 
-	resp, err := http.Get(hs.URL + "/auth/callback?provider=oidc&code=x&state=y")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusUnauthorized {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status = %d want 401: deprovisioned user must be blocked; body=%s", resp.StatusCode, body)
-	}
-	var body map[string]any
-	_ = json.NewDecoder(resp.Body).Decode(&body)
-	if body["error"] != "callback_failed" {
-		t.Errorf("error = %v, want callback_failed", body["error"])
+	state := startCallbackFlow(t, hs, "oidc")
+	transaction := finishCallbackFlow(t, hs, state, url.Values{
+		"provider": {"oidc"}, "code": {"x"},
+	})
+	status, body := resumeCallbackFlow(t, hs, transaction)
+	if status != http.StatusForbidden || body["error"] != "account_locked" {
+		t.Fatalf("resume = %d body=%v, want account_locked", status, body)
 	}
 }
 
-func TestCallback_AutoDiscover_NoCandidateMatches(t *testing.T) {
-	// All authenticators reject — handler reports unknown_provider.
+func TestCallback_UnissuedStateDoesNotProbeAuthenticators(t *testing.T) {
 	bad := &callbackAuth{name: "oidc", err: errors.New("nope")}
 	srv, _ := newCallbackHarness(t, bad)
 
-	resp, err := http.Get(srv.URL + "/auth/callback?code=x&state=y")
+	resp, err := http.Get(srv.URL + "/auth/callback?code=x&state=oidc:slf.not-issued")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -233,7 +302,7 @@ func TestCallback_AutoDiscover_NoCandidateMatches(t *testing.T) {
 	}
 	var body map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&body)
-	if body["error"] != "unknown_provider" {
+	if body["error"] != "invalid_callback" {
 		t.Errorf("error = %v", body["error"])
 	}
 }

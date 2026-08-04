@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
+
+const defaultSyncReactionTimeout = 30 * time.Second
 
 // ReactionFunc is an in-process handler invoked when a user transitions INTO
 // a lifecycle State the caller registered interest in via
@@ -170,18 +173,37 @@ func (b *LifecycleEventBus) Record(ctx context.Context, ev *audit.Event) error {
 	if userID == "" || !to.Valid() {
 		return nil
 	}
+	b.Dispatch(ctx, userID, to)
+	return nil
+}
+
+// Dispatch invokes reactions for a committed transition without coupling the
+// security side effect to the audit pipeline. Synchronous reactions receive a
+// detached, bounded context: a disconnected admin client cannot cancel access
+// revocation after the state commit, while a broken backend cannot hang the
+// transition indefinitely. Reaction failures remain best-effort and are routed
+// through the bus logger/error handler.
+func (b *LifecycleEventBus) Dispatch(ctx context.Context, userID string, to State) {
+	if b == nil || userID == "" || !to.Valid() {
+		return
+	}
 	b.mu.RLock()
 	matched := append([]reaction(nil), b.handlers[to]...)
 	b.mu.RUnlock()
+	base := context.Background()
+	if ctx != nil {
+		base = context.WithoutCancel(ctx)
+	}
+	syncCtx, cancel := context.WithTimeout(base, defaultSyncReactionTimeout)
+	defer cancel()
 	for _, r := range matched {
 		if r.mode == dispatchAsync {
 			b.wg.Add(1)
 			go b.invokeAsync(to, userID, r.fn)
 			continue
 		}
-		b.invoke(ctx, to, userID, r.fn)
+		b.invoke(syncCtx, to, userID, r.fn)
 	}
-	return nil
 }
 
 func (b *LifecycleEventBus) invokeAsync(state State, userID string, fn ReactionFunc) {

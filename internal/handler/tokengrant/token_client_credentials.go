@@ -39,13 +39,15 @@ func HandleClientCredentialsGrant(d ClientCredentialsDeps, ctx core.HandlerConte
 	// client_credentials: subject IS the client, so ClientID = Sub.
 	token, err := ti.Issue(ctx.Request().Context(), &core.Subject{
 		ID: client.ID, Resources: resources, ClientID: client.ID,
+		TenantID:            client.TenantID,
 		TTL:                 client.AccessTokenTTL,
 		ConfirmationJKT:     dpopJKT,
 		ConfirmationX5TS256: mtlsX5T,
+		ServingRegion:       servingRegionFrom(ctx),
 	}, grantCCScopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		writeTokenIssueError(ctx, err)
 		return
 	}
 	d.RecordTokenIssued(ctx, client.ID, strategy, client.ID)
@@ -56,4 +58,12 @@ func HandleClientCredentialsGrant(d ClientCredentialsDeps, ctx core.HandlerConte
 		core.KeyScope:         token.Scope,
 		core.KeyTokenStrategy: strategy,
 	})
+}
+
+func writeTokenIssueError(ctx core.HandlerContext, err error) {
+	if status, code, ok := core.AuthHookHTTPError(err); ok {
+		ctx.JSON(status, core.ErrorBody(code))
+		return
+	}
+	ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 }

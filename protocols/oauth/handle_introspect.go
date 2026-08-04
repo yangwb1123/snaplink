@@ -9,9 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/domains/tenant"
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/platform/geo"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
@@ -42,7 +44,7 @@ type IntrospectDeps interface {
 	// TokenUsageRecorder returns the optional token-usage telemetry
 	// recorder. A nil recorder (telemetry disabled) makes every Offer a
 	// no-op — introspection behavior is unaffected either way.
-	TokenUsageRecorder() *tokenusage.Recorder
+	TokenUsageRecorder() *metering.Recorder
 	// SessionManager returns the optional session manager for session-aware
 	// introspection. When nil, the introspection layer cannot verify session
 	// liveness and returns only token-level information (existing behavior).
@@ -93,8 +95,9 @@ type introspectRequest struct {
 //
 // When an IntrospectionCache is wired, the handler checks the cache
 // (keyed by SHA-256(token)) BEFORE performing full JWT signature
-// verification. On a hit the cached response is returned immediately.
-// On a miss the normal verification runs and the result is stored for
+// verification. On a hit the cached response is returned after the lightweight
+// live user-lifecycle check (when wired), without signature verification. On a
+// miss the normal verification runs and the result is stored for
 // the configured TTL (default 60s). This trades immediate revocation
 // propagation for dramatic CPU savings in high-traffic microservice
 // meshes — see the security considerations on the option doc for the
@@ -237,35 +240,37 @@ func authenticateIntrospectClient(d IntrospectDeps, clientStore core.ClientStore
 // first populated body. Resolution order is hint-driven: when the hint is
 // "refresh_token" try the refresh store first to avoid an unnecessary
 // access-token signature check, but ALWAYS fall back to the other tier so a
-// wrong hint doesn't mark a valid token inactive.
-func resolveIntrospection(d IntrospectDeps, ctx core.HandlerContext, token, hint string) (map[string]any, bool) {
+// wrong hint doesn't mark a valid token inactive. The returned subject chain
+// lets the cache preserve lifecycle checks without validating the token twice.
+func resolveIntrospection(d IntrospectDeps, ctx core.HandlerContext, token, hint string) (map[string]any, []string, bool) {
 	if hint == "refresh_token" {
-		if body, ok := introspectRefresh(d, ctx, token); ok {
-			return body, true
+		if body, subjects, ok := introspectRefresh(d, ctx, token); ok {
+			return body, subjects, true
 		}
-		if body, ok := introspectAccess(d, ctx, token); ok {
-			return body, true
+		if body, subjects, ok := introspectAccess(d, ctx, token); ok {
+			return body, subjects, true
 		}
-		return nil, false
+		return nil, nil, false
 	}
-	if body, ok := introspectAccess(d, ctx, token); ok {
-		return body, true
+	if body, subjects, ok := introspectAccess(d, ctx, token); ok {
+		return body, subjects, true
 	}
-	if body, ok := introspectRefresh(d, ctx, token); ok {
-		return body, true
+	if body, subjects, ok := introspectRefresh(d, ctx, token); ok {
+		return body, subjects, true
 	}
-	return nil, false
+	return nil, nil, false
 }
 
 // introspectAccess validates the token as an access token via every
-// registered issuer. Returns a populated metadata body on success.
-func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (map[string]any, bool) {
+// registered issuer. Returns a populated metadata body and lifecycle subjects
+// on success.
+func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (map[string]any, []string, bool) {
 	if len(d.TokenIssuers()) == 0 {
-		return nil, false
+		return nil, nil, false
 	}
 	claims, issuerName, err := d.ValidateAnyToken(ctx.Request().Context(), token)
-	if err != nil || claims == nil {
-		return nil, false
+	if err != nil || !core.IsAccessTokenClaims(claims) {
+		return nil, nil, false
 	}
 	// Token-policy require_renew (opt-in, default-off): a token used past its
 	// require_renew fraction of TTL is reported INACTIVE so the resource server
@@ -278,7 +283,7 @@ func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (
 	renewExceeded, renewAt := d.IntrospectionRenewExceeded(ctx.Request().Context(), introspectClientID(claims),
 		claims.Scopes, claims.IssuedAt, claims.ExpiresAt)
 	if renewExceeded {
-		return nil, false
+		return nil, nil, false
 	}
 
 	// Session-aware introspection (opt-in): when the token carries an sid claim
@@ -287,7 +292,7 @@ func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (
 	// {active:false}. Fail-open on store errors (logged, treated as active).
 	if claims.SID != "" && d.SessionManager() != nil {
 		if !introspectSessionActive(d, ctx, claims) {
-			return nil, false
+			return nil, nil, false
 		}
 	}
 
@@ -303,8 +308,8 @@ func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (
 		body[core.KeyRenewAfter] = renewAt.Unix()
 	}
 	populateAccessIntrospectionBody(body, claims)
-	recordIntrospectionUsage(d, claims)
-	return body, true
+	recordIntrospectionUsage(d, ctx, claims)
+	return body, lifecycleSubjectsFromClaims(claims), true
 }
 
 // introspectClientID resolves the client that "owns" the token for token-policy
@@ -321,107 +326,25 @@ func introspectClientID(claims *core.TokenClaims) string {
 	return ""
 }
 
-// recordIntrospectionUsage Offers a token-usage telemetry event for an
-// ACTIVE access-token introspection. Off the request hot path: Offer never
-// blocks, and a nil recorder (telemetry disabled) is a safe no-op. The
-// client-id fallback mirrors populateAccessIntrospectionBody's so the
-// aggregated bucket and the response body agree on which client "owns" the
-// token.
-func recordIntrospectionUsage(d IntrospectDeps, claims *core.TokenClaims) {
-	clientID := claims.ClientID
-	if clientID == "" && len(claims.Audience) > 0 {
-		clientID = claims.Audience[0]
-	}
-	d.TokenUsageRecorder().Offer(tokenusage.Event{
-		Thumbprint: tokenusage.Thumbprint(claims.JTI),
-		Kind:       tokenusage.KindAccess,
-		Endpoint:   tokenusage.EndpointIntrospect,
-		ClientID:   clientID,
-		SubjectID:  claims.Subject,
-	})
-}
-
-// populateIntrospectionSID stamps the sid (session id) claim onto the
-// introspection body when the token carries a session binding.
-func populateIntrospectionSID(body map[string]any, claims *core.TokenClaims) {
-	if claims.SID != "" {
-		body[core.KeySID] = claims.SID
-	}
-}
-
-// populateIntrospectionConfirmation stamps the RFC 7662 §2.2 sender-constraint
-// confirmation onto the introspection body (mTLS X.509 SHA-256 or DPoP JKT).
-func populateIntrospectionConfirmation(body map[string]any, claims *core.TokenClaims) {
-	if claims.ConfirmationX5TS256 != "" {
-		body[core.KeyCnf] = map[string]any{core.KeyCnfX5TS256: claims.ConfirmationX5TS256}
-	} else if claims.ConfirmationJKT != "" {
-		body[core.KeyCnf] = map[string]any{core.KeyCnfJKT: claims.ConfirmationJKT}
-	}
-}
-
-// populateAccessIntrospectionBody copies the optional RFC 7662 / RFC 9068
-// claims onto an already-active access-token body. Purely additive: it
-// carries NO early-return / auth-gate semantics — the ValidateAnyToken auth
-// gate stays in introspectAccess.
-func populateAccessIntrospectionBody(body map[string]any, claims *core.TokenClaims) {
-	if !claims.ExpiresAt.IsZero() {
-		body[core.KeyExp] = claims.ExpiresAt.Unix()
-	}
-	if !claims.IssuedAt.IsZero() {
-		body[core.KeyIat] = claims.IssuedAt.Unix()
-	}
-	if !claims.NotBefore.IsZero() {
-		body[core.KeyNbf] = claims.NotBefore.Unix()
-	}
-	if len(claims.Audience) > 0 {
-		body[core.KeyAud] = claims.Audience
-	}
-	// RFC 9068 §2.2 supplies a first-class `client_id` claim. Prefer
-	// it; fall back to the first audience entry for older tokens or
-	// non-RFC-9068 issuers (per RFC 7662 §2.2 the field is optional).
-	switch {
-	case claims.ClientID != "":
-		body[core.KeyClientID] = claims.ClientID
-	case len(claims.Audience) > 0:
-		body[core.KeyClientID] = claims.Audience[0]
-	}
-	if len(claims.Scopes) > 0 {
-		body[core.KeyScope] = strings.Join(claims.Scopes, " ")
-	}
-	// RFC 9068 §2.2 jti — useful for replay tracking on the
-	// introspecting resource server. Same goes for auth_time / acr
-	// / amr / sid which let downstream policy reason about how the
-	// user authenticated and which session they hold.
-	if claims.JTI != "" {
-		body[core.KeyJTI] = claims.JTI
-	}
-	if !claims.AuthTime.IsZero() {
-		body[core.KeyAuthTime] = claims.AuthTime.Unix()
-	}
-	if claims.ACR != "" {
-		body[core.KeyACR] = claims.ACR
-	}
-	if len(claims.AMR) > 0 {
-		body[core.KeyAMR] = claims.AMR
-	}
-	// SID (session id) lets the introspection consumer correlate this
-	// token with the SSO session that authenticated it.
-	populateIntrospectionSID(body, claims)
-	// RFC 7662 §2.2: echo the sender-constraint confirmation.
-	populateIntrospectionConfirmation(body, claims)
-}
+// recordIntrospectionUsage, populateIntrospectionSID,
+// populateIntrospectionConfirmation, populateAccessIntrospectionBody, and
+// introspectSessionActive live in introspect_body.go (this file sits at
+// the per-file line budget).
 
 // introspectRefresh queries the optional RefreshTokenInspector.
-// Returns (nil, false) when the store doesn't implement the
-// inspector extension OR the token is unknown / expired.
-func introspectRefresh(d IntrospectDeps, ctx core.HandlerContext, token string) (map[string]any, bool) {
+// Returns (nil, nil, false) when the store doesn't implement the inspector
+// extension OR the token is unknown / expired.
+func introspectRefresh(d IntrospectDeps, ctx core.HandlerContext, token string) (map[string]any, []string, bool) {
 	insp, ok := d.RefreshTokenStore().(RefreshTokenInspector)
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 	info, err := insp.Inspect(ctx.Request().Context(), token)
 	if err != nil || info == nil {
-		return nil, false
+		return nil, nil, false
+	}
+	if !introspectionLifecycleActive(d, ctx.Request().Context(), info.UserID) {
+		return nil, nil, false
 	}
 	body := map[string]any{
 		core.KeyActive:    true,
@@ -439,13 +362,26 @@ func introspectRefresh(d IntrospectDeps, ctx core.HandlerContext, token string) 
 	if len(info.Scopes) > 0 {
 		body[core.KeyScope] = strings.Join(info.Scopes, " ")
 	}
-	d.TokenUsageRecorder().Offer(tokenusage.Event{
-		Kind:      tokenusage.KindRefresh,
-		Endpoint:  tokenusage.EndpointIntrospect,
-		ClientID:  info.ClientID,
-		SubjectID: info.UserID,
+	d.TokenUsageRecorder().Offer(metering.Event{
+		Kind:       metering.KindRefresh,
+		Endpoint:   metering.EndpointIntrospect,
+		ClientID:   info.ClientID,
+		SubjectID:  info.UserID,
+		Thumbprint: metering.Thumbprint(info.JTI),
+		GeoCountry: geo.CountryCodeFromContext(ctx),
 	})
-	return body, true
+	return body, []string{info.UserID}, true
+}
+
+func introspectionLifecycleActive(deps any, ctx context.Context, subject string) bool {
+	reader, ok := deps.(interface {
+		LifecycleState(context.Context, string) (userlifecycle.State, error)
+	})
+	if !ok {
+		return true
+	}
+	state, err := reader.LifecycleState(ctx, subject)
+	return err == nil && userlifecycle.AllowsAuthentication(state)
 }
 
 // authenticateIntrospectionClient verifies the introspecting client's

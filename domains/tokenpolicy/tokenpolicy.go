@@ -1,7 +1,7 @@
 // Package tokenpolicy is the token-policy engine (Phase 2 of token
 // governance) — the policy LAYER between a token request and issuance that
 // the raw Client.AccessTokenTTL / issuer-default TTL cannot express. It
-// complements the wave-1 telemetry package [domains/tokenusage]: telemetry
+// complements the wave-1 telemetry package [domains/metering]: telemetry
 // answers "which tokens are used"; this answers "which tokens may be
 // issued, for how long, and in what combination".
 //
@@ -74,8 +74,21 @@ type Policy struct {
 	// --- selector ---
 
 	// ClientID restricts the rule to one client. Empty = every client (a
-	// fleet-wide default rule).
+	// fleet-wide default rule). A trailing "*" is a prefix wildcard (same
+	// semantics as the scope selector); a bare "*" is rejected by [Validate].
 	ClientID string `yaml:"client_id,omitempty" json:"client_id,omitempty"`
+	// TenantID restricts the rule to one tenant. Empty = a GLOBAL default rule
+	// (applies to every tenant — the backward-compatible fleet-wide form).
+	TenantID string `yaml:"tenant_id,omitempty" json:"tenant_id,omitempty"`
+	// Subject restricts the rule to one resource-owner subject (the LOCAL
+	// subject ID at the seam, never a pairwise-projected token sub). Trailing
+	// "*" is a prefix wildcard. Empty = any subject.
+	Subject string `yaml:"subject,omitempty" json:"subject,omitempty"`
+	// SubjectRoles restricts the rule to subjects holding at least one of
+	// these tenant roles (closed set: member/admin/guest). Empty = any role.
+	// Roles are resolved by the CALLER seam (interfaces/sso) — the domain
+	// never does I/O.
+	SubjectRoles []string `yaml:"subject_roles,omitempty" json:"subject_roles,omitempty"`
 	// Scopes restricts the rule to requests whose granted scopes are a
 	// SUPERSET of these (ALL must be present; a trailing "*" is a prefix
 	// wildcard). Empty = every request.
@@ -114,8 +127,15 @@ type Policy struct {
 type PolicyInput struct {
 	// ClientID is the OAuth client the token is being issued to.
 	ClientID string
+	// TenantID is the OAuth client's tenant binding (client.TenantID) at the
+	// seam. Empty = no tenant context — tenant-scoped rules never match, so
+	// single-tenant deployments stay byte-identical.
+	TenantID string
 	// Subject is the resource owner (may be empty for client_credentials).
 	Subject string
+	// SubjectRoles is the subject's resolved tenant roles at the seam. Empty
+	// = roles unknown — role-scoped rules never match (fail-open).
+	SubjectRoles []string
 	// Scopes is the FINAL granted scope set for the token.
 	Scopes []string
 	// Kind is the token category (max_refresh_depth applies to KindRefresh).

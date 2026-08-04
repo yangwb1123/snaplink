@@ -5,8 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorecredential"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreoauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -101,6 +104,17 @@ func TestHandleResetPassword_HappyPath(t *testing.T) {
 	t.Parallel()
 	d := newTestDeps()
 	seedResetToken(t, d, "reset-tok", "alice")
+	d.refreshTokens = memorystoreoauth.NewMemoryRefreshTokenStore()
+	d.trustedDevices = memorystorecredential.NewMemoryTrustedDeviceStore()
+	if err := d.refreshTokens.Issue(t.Context(), "refresh-before-reset", &oauth.RefreshToken{
+		UserID: "alice", ClientID: "web", ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seed refresh token: %v", err)
+	}
+	trustedToken, _, err := d.trustedDevices.Trust(t.Context(), "alice", "web", "laptop", time.Hour)
+	if err != nil {
+		t.Fatalf("seed trusted device: %v", err)
+	}
 	sess, err := d.sessions.Create(t.Context(), "alice")
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
@@ -117,6 +131,12 @@ func TestHandleResetPassword_HappyPath(t *testing.T) {
 	}
 	if _, err := d.sessions.Get(t.Context(), sess.ID); err == nil {
 		t.Error("existing sessions must be revoked after a password reset")
+	}
+	if _, err := d.refreshTokens.Consume(t.Context(), "refresh-before-reset"); err == nil {
+		t.Error("existing refresh tokens must be revoked after a password reset")
+	}
+	if ok, _ := d.trustedDevices.Verify(t.Context(), "alice", "web", trustedToken); ok {
+		t.Error("trusted-device credentials must be revoked after a password reset")
 	}
 }
 

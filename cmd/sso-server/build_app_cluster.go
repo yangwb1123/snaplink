@@ -16,6 +16,7 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/operations"
 	"github.com/yangwb1123/snaplink/platform/registry"
 	"github.com/yangwb1123/snaplink/platform/releases"
 	"github.com/yangwb1123/snaplink/platform/signingkeys"
@@ -26,6 +27,16 @@ import (
 // only implements manual RotateKey/RetireKey will not, and degrades gracefully.
 type rotatableIssuer interface {
 	StartRotation(context.Context, defaultimpl.RotationConfig) <-chan struct{}
+}
+
+// startCAPConvergence owns the enforced conditional-access session sweep.
+func (b *appBuilder) startCAPConvergence(srv *sso.Server) {
+	if !b.cfg.AccessPolicies.Enforce {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	b.capConvergenceCancel = cancel
+	b.capConvergenceDone = srv.StartConditionalAccessConvergence(ctx)
 }
 
 // defaultRuntimeRotateGrace is the fallback overlap window for an on-demand
@@ -95,6 +106,7 @@ type snapshotReleaseWiring struct {
 	restorer        *snapshot.Restorer
 	releaseRegistry *releases.Registry
 	releaseStore    releases.ReleaseStore
+	operationStore  operations.Store
 	retentionCancel context.CancelFunc
 	retentionDone   <-chan struct{}
 }
@@ -121,8 +133,14 @@ func (b *appBuilder) wireCluster(srv **sso.Server) (*clusterWiring, error) {
 	}
 
 	// Cross-replica invalidation bus built before NewServer so the option is in
-	// place; the subscriber is started just after (needs the Server).
-	invalidationBus, _, err := serverbuildplatform.BuildInvalidationBus(&cfg.Cluster.Bus, logger)
+	// place; the subscriber is started just after (needs the Server). The
+	// replica id doubles as the bus's self-skip identity (the SAME derivation
+	// wireSigningKeyRegistryOpts uses), so two replicas never share an id and
+	// the filter can never suppress a peer's events.
+	invalidationBus, _, err := serverbuildplatform.BuildInvalidationBus(
+		&cfg.Cluster.Bus, b.redis,
+		serverbuildplatform.ResolveReplicaID(cfg.Keys.SigningKeyRegistry.ReplicaID, cfg.Registry.ServiceID, cfg.Server.Issuer),
+		logger)
 	if err != nil {
 		return nil, fmt.Errorf("invalidation bus: %w", err)
 	}
@@ -181,10 +199,10 @@ func (b *appBuilder) wireInvalidationBusOpts(invalidationBus cluster.Bus) error 
 	cfg, logger := b.cfg, b.logger
 	if invalidationBus == nil {
 		if cfg.Keys.Rotation.CoordinatedCutover {
-			return errors.New("keys.rotation.coordinated_cutover requires a live cluster.bus (set cluster.bus.backend=etcd) — refusing to boot with it INERT")
+			return errors.New("keys.rotation.coordinated_cutover requires a live cluster.bus (set cluster.bus.backend=etcd or redis) — refusing to boot with it INERT")
 		}
 		if cfg.Cluster.CrossReplicaRevocation {
-			return errors.New("cluster.cross_replica_revocation requires a live cluster.bus (set cluster.bus.backend=etcd) — refusing to boot with revocation propagation INERT")
+			return errors.New("cluster.cross_replica_revocation requires a live cluster.bus (set cluster.bus.backend=etcd or redis) — refusing to boot with revocation propagation INERT")
 		}
 		return nil
 	}
@@ -211,10 +229,9 @@ func (b *appBuilder) wireSigningKeyRegistryOpts(signingKeyRegistry signingkeys.R
 	}
 	// Default the replica id to the same hostname-derived id the service
 	// registry uses, so two replicas of one issuer announce distinct ids.
-	replicaID := strings.TrimSpace(cfg.Keys.SigningKeyRegistry.ReplicaID)
-	if replicaID == "" {
-		replicaID = serverbuildplatform.ResolveServiceID(cfg.Registry.ServiceID, cfg.Server.Issuer)
-	}
+	// Shared derivation with the invalidation-bus self-skip filter (wireCluster):
+	// a divergence would silently suppress a peer's events.
+	replicaID := serverbuildplatform.ResolveReplicaID(cfg.Keys.SigningKeyRegistry.ReplicaID, cfg.Registry.ServiceID, cfg.Server.Issuer)
 	b.opts = append(b.opts,
 		sso.WithSharedSigningKeyRegistry(signingKeyRegistry),
 		sso.WithSigningKeyReplicaID(replicaID),
@@ -373,7 +390,7 @@ func (b *appBuilder) makeRotateHook(srv *sso.Server, grace time.Duration) func(s
 
 // wireSnapshotReleases builds the snapshot + release subsystems, the snapshot
 // retention loop, and wires snapshot-aware release rollback.
-func (b *appBuilder) wireSnapshotReleases() (*snapshotReleaseWiring, error) {
+func (b *appBuilder) wireSnapshotReleases(srv *sso.Server) (*snapshotReleaseWiring, error) {
 	cfg, logger := b.cfg, b.logger
 	srw := &snapshotReleaseWiring{}
 
@@ -384,7 +401,7 @@ func (b *appBuilder) wireSnapshotReleases() (*snapshotReleaseWiring, error) {
 	srw.pipeline = pipeline
 	srw.storage = snapStorage
 	if pipeline != nil {
-		b.buildSnapshotterRestorer(srw)
+		b.buildSnapshotterRestorer(srw, srv)
 	}
 
 	releaseRegistry, releaseStore, err := serverbuildplatform.BuildReleaseSubsystem(cfg, logger)
@@ -393,6 +410,10 @@ func (b *appBuilder) wireSnapshotReleases() (*snapshotReleaseWiring, error) {
 	}
 	srw.releaseRegistry = releaseRegistry
 	srw.releaseStore = releaseStore
+	srw.operationStore, err = serverbuildplatform.BuildOperationStore(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("operation store: %w", err)
+	}
 	if err := b.startSnapshotRetention(srw); err != nil {
 		return nil, err
 	}
@@ -410,31 +431,6 @@ func (b *appBuilder) wireSnapshotReleases() (*snapshotReleaseWiring, error) {
 		logger.Info("release rollback wired with snapshot restore")
 	}
 	return srw, nil
-}
-
-// buildSnapshotterRestorer constructs the Snapshotter + Restorer over the live
-// stores (called only when the snapshot pipeline is enabled).
-func (b *appBuilder) buildSnapshotterRestorer(srw *snapshotReleaseWiring) {
-	srw.snapshotter = &snapshot.Snapshotter{
-		Clients:     b.clientStore,
-		Users:       b.userProvider,
-		Permissions: b.provider,
-		NetPolicy:   b.netStore,
-		Namespace:   bootstrapNamespace,
-	}
-	// Opt-in defense-in-depth: when set, EVERY export strips client credentials
-	// so a plaintext export is safe to share/inspect. NOT a restore path —
-	// encryption stays the route for restorable backups.
-	if b.cfg.Snapshot.RedactSecrets {
-		srw.snapshotter.DefaultExportRedactor = snapshot.SnapshotRedactSecrets()
-	}
-	srw.restorer = &snapshot.Restorer{
-		Clients:     b.clientStore,
-		Users:       b.userProvider,
-		Permissions: b.provider,
-		NetPolicy:   b.netStore,
-		Namespace:   bootstrapNamespace,
-	}
 }
 
 // startSnapshotRetention boots the snapshot-retention prune loop when enabled,

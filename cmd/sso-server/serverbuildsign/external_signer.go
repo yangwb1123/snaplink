@@ -3,14 +3,13 @@ package serverbuildsign
 import (
 	"context"
 	"crypto"
-	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/registrar"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
@@ -31,28 +30,14 @@ type ExternalSignerFactory func(ctx context.Context) (crypto.Signer, string, err
 // RegisterExternalSigner from their main before running the server, then
 // selects the factory by name via keys.signing.external. This mirrors how
 // the repo keeps etcd and push-transport SDKs out of the SPI.
-var ExternalSignerRegistry = struct {
-	mu        sync.RWMutex
-	factories map[string]ExternalSignerFactory
-}{factories: map[string]ExternalSignerFactory{}}
+var ExternalSignerRegistry = registrar.New[ExternalSignerFactory]()
 
 // RegisterExternalSigner registers a KMS/HSM signer factory under name,
 // reachable via keys.signing.external. Intended to be called from an
 // operator's forked main during init/startup. Panics on an empty name, a
 // nil factory, or a duplicate name (all unrecoverable wiring mistakes).
 func RegisterExternalSigner(name string, f ExternalSignerFactory) {
-	if name == "" {
-		panic("RegisterExternalSigner: empty name")
-	}
-	if f == nil {
-		panic(fmt.Sprintf("RegisterExternalSigner: nil factory for %q", name))
-	}
-	ExternalSignerRegistry.mu.Lock()
-	defer ExternalSignerRegistry.mu.Unlock()
-	if _, dup := ExternalSignerRegistry.factories[name]; dup {
-		panic(fmt.Sprintf("RegisterExternalSigner: %q already registered", name))
-	}
-	ExternalSignerRegistry.factories[name] = f
+	ExternalSignerRegistry.Register(name, f)
 }
 
 // ExternalSignerHealthWindow bounds how long a failed external-signing
@@ -211,21 +196,11 @@ func normalizeAlgLabel(alg string) string {
 
 // lookupExternalSigner returns the factory registered under name.
 func lookupExternalSigner(name string) (ExternalSignerFactory, bool) {
-	ExternalSignerRegistry.mu.RLock()
-	defer ExternalSignerRegistry.mu.RUnlock()
-	f, ok := ExternalSignerRegistry.factories[name]
-	return f, ok
+	return ExternalSignerRegistry.Lookup(name)
 }
 
 // registeredExternalSigners returns the sorted names of all registered
 // factories, for diagnostics.
 func registeredExternalSigners() []string {
-	ExternalSignerRegistry.mu.RLock()
-	defer ExternalSignerRegistry.mu.RUnlock()
-	names := make([]string, 0, len(ExternalSignerRegistry.factories))
-	for n := range ExternalSignerRegistry.factories {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
+	return ExternalSignerRegistry.Names()
 }

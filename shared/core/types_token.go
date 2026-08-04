@@ -15,6 +15,18 @@ type Token struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+// TokenUse records the authenticated JWT's intended protocol use. Unknown is
+// retained for opaque/custom issuers and pre-discriminator tokens so existing
+// integrations remain compatible; default JWT issuers always set a concrete
+// value after validating the JOSE typ and signature.
+type TokenUse string
+
+const (
+	TokenUseUnknown     TokenUse = ""
+	TokenUseAccessToken TokenUse = "access_token"
+	TokenUseIDToken     TokenUse = "id_token"
+)
+
 // TokenClaims holds the validated claims from a token.
 //
 // ClientID / JTI / AuthTime / ACR / AMR are RFC 9068 (JWT Profile
@@ -25,10 +37,17 @@ type Token struct {
 // tokens minted before this profile was wired or by issuers that
 // don't speak RFC 9068.
 type TokenClaims struct {
-	Subject   string            `json:"sub"`
-	Issuer    string            `json:"iss"`
-	Audience  []string          `json:"aud"`
-	Scopes    []string          `json:"scopes"`
+	// TokenUse is validation metadata derived from the signed JOSE header, not
+	// a payload claim. Resource endpoints use it to reject a valid-but-misrouted
+	// ID token; ID-token-hint endpoints reject access tokens symmetrically.
+	TokenUse TokenUse `json:"-"`
+	Subject  string   `json:"sub"`
+	Issuer   string   `json:"iss"`
+	Audience []string `json:"aud"`
+	Scopes   []string `json:"scopes"`
+	// Resources is the original RFC 8707 grant bound into an ID-token hint.
+	// Access-token audiences remain available separately through Audience.
+	Resources []string          `json:"_resources,omitempty"`
 	ExpiresAt time.Time         `json:"exp"`
 	NotBefore time.Time         `json:"nbf"`
 	IssuedAt  time.Time         `json:"iat"`
@@ -49,6 +68,15 @@ type TokenClaims struct {
 	// service-to-service token-exchange where no end-user is in
 	// the loop).
 	SID string `json:"sid,omitempty"`
+
+	// ServingRegion is the mint-region evidence claim (`serving_region`,
+	// SnapLink extension): the regional deployment that issued this
+	// token, stamped from the region middleware's per-request stash at
+	// mint time. Mint-time semantics — a refresh rotation re-stamps the
+	// region that SERVED the rotation. Empty = no region middleware wired
+	// / it resolved none -> the issuer omits the claim (byte-identical to
+	// pre-region builds).
+	ServingRegion string `json:"serving_region,omitempty"`
 
 	// ConfirmationJKT is the RFC 9449 DPoP JWK thumbprint when
 	// the token was issued bound to a DPoP key. Empty for
@@ -88,6 +116,32 @@ type TokenClaims struct {
 	// claims. Preserved as raw JSON. Empty = no extra projection beyond
 	// scope-driven defaults (byte-identical behavior).
 	RequestedClaims json.RawMessage `json:"_claims_,omitempty"`
+}
+
+// IsAccessTokenClaims rejects only claims explicitly authenticated as an ID
+// token. Unknown remains accepted for custom/opaque and legacy issuers.
+func IsAccessTokenClaims(claims *TokenClaims) bool {
+	return claims != nil && claims.TokenUse != TokenUseIDToken
+}
+
+// IsIDTokenClaims rejects only claims explicitly authenticated as an access
+// token. Unknown remains accepted for custom/opaque and legacy issuers.
+func IsIDTokenClaims(claims *TokenClaims) bool {
+	return claims != nil && claims.TokenUse != TokenUseAccessToken
+}
+
+// TokenClaimsMatchDeclaredType binds RFC 8693-style token_type parameters to
+// the authenticated token representation. Generic JWT declarations remain
+// representation-neutral; concrete access/id declarations cannot be swapped.
+func TokenClaimsMatchDeclaredType(claims *TokenClaims, declaredType string) bool {
+	switch declaredType {
+	case TokenTypeAccessToken:
+		return IsAccessTokenClaims(claims)
+	case TokenTypeIDToken:
+		return IsIDTokenClaims(claims)
+	default:
+		return claims != nil
+	}
 }
 
 // Subject holds the minimal identity info for token issuance.
@@ -158,6 +212,23 @@ type Subject struct {
 	// Empty = no session anchor (client_credentials, service
 	// flows, etc.).
 	SID string
+
+	// ServingRegion names the regional deployment that minted this
+	// token, read from the region middleware's per-request stash at
+	// mint time and stamped as `serving_region` on access + ID tokens
+	// (SnapLink extension claim; RFC 9068 has no region claim).
+	// Empty = no region middleware wired / it resolved none -> the
+	// issuer omits the claim. Mint-time semantics: the value is the
+	// region that SERVED the issuance (a refresh rotation re-stamps
+	// the rotating request's region, not the original login's).
+	ServingRegion string
+
+	// TenantID is the OAuth client's tenant binding at mint time, read from
+	// the client being served. Policy-input ONLY: the ClampingIssuer scopes
+	// max_ttl rules with it. NOT a token claim — issuers emit only fields
+	// they enumerate in buildAccessPayload. Empty = no tenant affinity
+	// (single-tenant deployments stay byte-identical).
+	TenantID string
 
 	// ConfirmationJKT is the RFC 9449 DPoP JWK thumbprint that
 	// binds this access token to a specific public key. When non-

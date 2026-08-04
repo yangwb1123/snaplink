@@ -82,24 +82,25 @@ func (RejectPolicy) Resolve(_ context.Context, _ Conflict) (Decision, error) {
 // the full list of what is deliberately left unmerged and why a fuller merge
 // is out of scope for this package.
 type LinkOnlyMergePolicy struct {
-	store Store
+	merger AtomicMerger
 }
 
 // NewLinkOnlyMergePolicy returns a LinkOnlyMergePolicy backed by store. store
 // must be the SAME Store the caller's Resolve/login flow uses — the policy
 // both reads and writes it.
 func NewLinkOnlyMergePolicy(store Store) *LinkOnlyMergePolicy {
-	return &LinkOnlyMergePolicy{store: store}
+	merger, _ := store.(AtomicMerger)
+	return &LinkOnlyMergePolicy{merger: merger}
 }
 
 // Resolve implements MergePolicy: it merges conflict.IncomingUserID's
 // identity links onto conflict.ExistingUserID and, on success, allows the
 // login to proceed as the (now-merged) ExistingUserID.
 func (p *LinkOnlyMergePolicy) Resolve(ctx context.Context, conflict Conflict) (Decision, error) {
-	if p.store == nil {
-		return Decision{Allow: false, Reason: "identitylink: LinkOnlyMergePolicy has no store"}, ErrAccountConflict
+	if p.merger == nil {
+		return Decision{Allow: false, Reason: "identitylink: store lacks atomic merge capability"}, ErrAccountConflict
 	}
-	if err := p.mergeLinks(ctx, conflict); err != nil {
+	if err := p.merger.MergeUserLinks(ctx, conflict); err != nil {
 		return Decision{Allow: false, Reason: "identitylink: link merge failed"}, err
 	}
 	return Decision{
@@ -107,26 +108,6 @@ func (p *LinkOnlyMergePolicy) Resolve(ctx context.Context, conflict Conflict) (D
 		FinalUserID: conflict.ExistingUserID,
 		Reason:      "identity links merged onto existing account (sessions/consents/tokens NOT merged — see package doc)",
 	}, nil
-}
-
-// mergeLinks re-links every ACTIVE identity currently owned by
-// conflict.IncomingUserID onto conflict.ExistingUserID, then revokes the
-// losing account's copy. Best-effort per link: a link that fails to
-// re-attach (e.g. already active on the winner) is skipped rather than
-// aborting the whole merge, so one stale entry can never block consolidating
-// the rest.
-func (p *LinkOnlyMergePolicy) mergeLinks(ctx context.Context, conflict Conflict) error {
-	losing, err := p.store.ListByUser(ctx, conflict.IncomingUserID)
-	if err != nil {
-		return err
-	}
-	for _, l := range losing {
-		if _, err := p.store.Link(ctx, conflict.ExistingUserID, l.Provider, l.Subject); err != nil {
-			continue
-		}
-		_ = p.store.Unlink(ctx, conflict.IncomingUserID, l.ID)
-	}
-	return nil
 }
 
 var _ MergePolicy = RejectPolicy{}
@@ -163,6 +144,9 @@ func Resolve(ctx context.Context, store Store, policy MergePolicy, provider, sub
 func resolveWithDecision(ctx context.Context, store Store, policy MergePolicy, provider, subject, incomingUserID string) (userID string, conflict *Conflict, decision Decision, err error) {
 	if store == nil {
 		return incomingUserID, nil, Decision{}, nil
+	}
+	if ValidateLinkInput(incomingUserID, provider, subject) != nil {
+		return "", nil, Decision{}, ErrAccountConflict
 	}
 	existing, found, err := store.FindByProviderSubject(ctx, provider, subject)
 	if err != nil {

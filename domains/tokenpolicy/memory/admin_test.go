@@ -16,7 +16,7 @@ import (
 // Store (no mocks, per AGENTS.md §0.5). It lives beside the memory impl rather
 // than in domains/tokenpolicy itself because tokenpolicy/memory already depends
 // on tokenpolicy one-way; the reverse import from a domains/tokenpolicy test
-// would be a cycle (mirrors tokenusage/memory/admin_test.go).
+// would be a cycle (mirrors metering/memory/token_admin_test.go).
 
 func newAdminCtx(t *testing.T) (*core.Context, *httptest.ResponseRecorder) {
 	t.Helper()

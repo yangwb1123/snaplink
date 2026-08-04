@@ -9,6 +9,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/geo"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 func TestSetMeta_LazyAllocAndSkipEmpty(t *testing.T) {
@@ -73,6 +74,20 @@ func TestClientIP_Precedence(t *testing.T) {
 				t.Fatalf("ClientIP = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestClientIP_TrustedProxyVerdictOverridesForgedXFF(t *testing.T) {
+	t.Parallel()
+	r := httptest.NewRequest("GET", "/", nil)
+	r.RemoteAddr = "203.0.113.9:443"
+	r.Header.Set("X-Forwarded-For", "10.0.0.7")
+	r = r.WithContext(peertrust.WithRequestInfo(r.Context(), peertrust.RequestInfo{
+		ClientIP:                "203.0.113.9",
+		ForwardedHeadersTrusted: false,
+	}))
+	if got := audit.ClientIP(r); got != "203.0.113.9" {
+		t.Fatalf("ClientIP = %q, want canonical direct-peer IP", got)
 	}
 }
 

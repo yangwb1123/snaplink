@@ -60,6 +60,30 @@ func TestStore_LinkIdempotent(t *testing.T) {
 	}
 }
 
+func TestStore_LinkRejectsSecondOwner(t *testing.T) {
+	ctx := context.Background()
+	s := New()
+	if _, err := s.Link(ctx, "user-1", "google", "sub-1"); err != nil {
+		t.Fatalf("first Link: %v", err)
+	}
+	if _, err := s.Link(ctx, "user-2", "google", "sub-1"); !errors.Is(err, identitylink.ErrAccountConflict) {
+		t.Fatalf("second-owner Link = %v, want ErrAccountConflict", err)
+	}
+}
+
+func TestStore_LinkRejectsEmptyKeyParts(t *testing.T) {
+	s := New()
+	for _, parts := range [][3]string{
+		{"", "google", "sub-1"},
+		{"user-1", "", "sub-1"},
+		{"user-1", "google", ""},
+	} {
+		if _, err := s.Link(context.Background(), parts[0], parts[1], parts[2]); !errors.Is(err, identitylink.ErrInvalidIdentity) {
+			t.Fatalf("Link%v = %v, want ErrInvalidIdentity", parts, err)
+		}
+	}
+}
+
 func TestStore_UnlinkWrongOwner(t *testing.T) {
 	ctx := context.Background()
 	s := New()

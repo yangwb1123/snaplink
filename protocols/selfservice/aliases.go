@@ -10,6 +10,15 @@ package selfservice
 import (
 	"github.com/yangwb1123/snaplink/protocols/selfservice/selfserviceaccount"
 	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
+	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicenotification"
+)
+
+var (
+	HandleMyNotifications            = selfservicenotification.HandleList
+	HandleMarkMyNotificationRead     = selfservicenotification.HandleMarkRead
+	HandleMyNotificationPreferences  = selfservicenotification.HandleGetPreferences
+	HandlePutNotificationPreferences = selfservicenotification.HandlePutPreferences
+	HandleMyNotificationStream       = selfservicenotification.HandleStream
 )
 
 // Deps is the self-service capability surface (defined in selfservicecore).
@@ -48,7 +57,7 @@ var (
 	HandleGenerateRecoveryCodes    = selfserviceaccount.HandleGenerateRecoveryCodes
 	HandleGetRecoveryCodesCount    = selfserviceaccount.HandleGetRecoveryCodesCount
 
-	// Trusted-device MFA-skip self-service (w2.15): /me/devices*.
+	// Trusted-device MFA-skip self-service: /me/trusted-devices*.
 	HandleMyTrustedDevices      = selfserviceaccount.HandleMyTrustedDevices
 	HandleTrustMyDevice         = selfserviceaccount.HandleTrustMyDevice
 	HandleRevokeMyTrustedDevice = selfserviceaccount.HandleRevokeMyTrustedDevice

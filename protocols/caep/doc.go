@@ -59,3 +59,34 @@
 // fan-out via the BCL subject-client index. v1 deliberately does NOT
 // broadcast-to-all as a substitute for that fan-out.
 package caep
+
+import "github.com/yangwb1123/snaplink/shared/core"
+
+// RoutesDeps is the union of the SSF configuration and stream-management
+// handler deps. *sso.Server satisfies it via accessors.
+type RoutesDeps interface {
+	SSFConfigDeps
+	StreamAPIDeps
+}
+
+// MountRoutes registers the SSF/CAEP transmitter surface (configuration +
+// stream management) on r, wrapped in a core.GatedRouter so the routes
+// hot-toggle with the CAEP feature gate exactly as they did when registered
+// from interfaces/sso (mountClusterEndpoints). The push-delivery RECEIVER
+// route stays registered by interfaces/sso beside its body-bearing handler.
+// gate must be non-nil — the Server's live caepGateOn method value; nil is a
+// programmer error.
+func MountRoutes(r core.Router, d RoutesDeps, gate func() bool) {
+	if gate == nil {
+		panic("caep: MountRoutes requires a non-nil gate")
+	}
+	ssf := core.NewGatedRouter(r, gate)
+	ssf.GET(core.PathSSFConfig, func(ctx core.HandlerContext) { HandleSSFConfiguration(d, ctx) })
+	if d.StreamStore() != nil {
+		ssf.POST(core.PathSSFStreams, func(ctx core.HandlerContext) { HandleCreateStream(d, ctx) })
+		ssf.GET(core.PathSSFStreams, func(ctx core.HandlerContext) { HandleListStreams(d, ctx) })
+		ssf.GET(core.PathSSFStreamByID, func(ctx core.HandlerContext) { HandleGetStream(d, ctx) })
+		ssf.PUT(core.PathSSFStreamByID, func(ctx core.HandlerContext) { HandleUpdateStream(d, ctx) })
+		ssf.DELETE(core.PathSSFStreamByID, func(ctx core.HandlerContext) { HandleDeleteStream(d, ctx) })
+	}
+}

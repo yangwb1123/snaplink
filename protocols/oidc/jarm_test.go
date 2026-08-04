@@ -78,10 +78,52 @@ func TestSignJARMResponse_OmitsEmptyState(t *testing.T) {
 	}
 }
 
+func TestSignJARMErrorResponse_Claims(t *testing.T) {
+	t.Parallel()
+	jwt, err := oidc.SignJARMErrorResponse(
+		context.Background(), &fakeSigner{}, "https://as.example", "client-1",
+		"access_denied", "The user denied access.", "state-1",
+	)
+	if err != nil {
+		t.Fatalf("SignJARMErrorResponse: %v", err)
+	}
+	claims := decodeJARMClaims(t, jwt)
+	if claims["error"] != "access_denied" ||
+		claims["error_description"] != "The user denied access." {
+		t.Fatalf("error claims = %v", claims)
+	}
+	if claims["state"] != "state-1" || claims["aud"] != "client-1" {
+		t.Fatalf("binding claims = %v", claims)
+	}
+	if _, exists := claims["code"]; exists {
+		t.Fatalf("error response must not contain code: %v", claims)
+	}
+}
+
 func newCtx(method, target string) (*core.Context, *httptest.ResponseRecorder) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(method, target, nil)
 	return core.NewContext(rec, req), rec
+}
+
+func TestRenderJARMErrorResponse_QueryDelivery(t *testing.T) {
+	t.Parallel()
+	ctx, rec := newCtx(http.MethodGet, "/auth/login")
+	ok := oidc.RenderJARMErrorResponse(
+		ctx, &fakeSigner{}, oidc.ResponseModeQueryJWT,
+		"https://rp.example/cb", "iss", "client", "access_denied", "", "state",
+	)
+	if !ok || rec.Code != http.StatusFound {
+		t.Fatalf("render error = %v status=%d", ok, rec.Code)
+	}
+	location, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := decodeJARMClaims(t, location.Query().Get("response"))
+	if claims["error"] != "access_denied" || claims["state"] != "state" {
+		t.Fatalf("rendered error claims = %v", claims)
+	}
 }
 
 func TestRenderJARMResponse_QueryDelivery(t *testing.T) {

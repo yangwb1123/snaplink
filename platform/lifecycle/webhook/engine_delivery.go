@@ -39,6 +39,10 @@ func (e *Engine) deliver(sub EventSubscription, ev audit.Event) {
 // duplicating HTTP + signing logic (AGENTS.md: study CAEP, stay consistent;
 // wire via the same seam without duplicating audit plumbing).
 func (e *Engine) newWebhookSink(sub EventSubscription) *audit.WebhookSink {
+	return e.newWebhookSinkWithOptions(sub)
+}
+
+func (e *Engine) newWebhookSinkWithOptions(sub EventSubscription, extra ...audit.WebhookOption) *audit.WebhookSink {
 	opts := []audit.WebhookOption{audit.WithWebhookHTTPClient(e.client)}
 	if e.timeout > 0 {
 		opts = append(opts, audit.WithWebhookTimeout(e.timeout))
@@ -46,6 +50,7 @@ func (e *Engine) newWebhookSink(sub EventSubscription) *audit.WebhookSink {
 	if sub.Secret != "" {
 		opts = append(opts, audit.WithWebhookSigningSecret(sub.Secret))
 	}
+	opts = append(opts, extra...)
 	return audit.NewWebhookSink(sub.URL, opts...)
 }
 
@@ -107,6 +112,12 @@ func (e *Engine) Replay(ctx context.Context, id string) (DeadLetterEntry, error)
 	if err != nil {
 		return DeadLetterEntry{}, err
 	}
+	if entry.ReplayState == ReplayStateCleanupPending {
+		return e.finishReplayCleanup(ctx, entry)
+	}
+	if entry.ReplayState == ReplayStateInProgress {
+		return entry, ErrReplayInProgress
+	}
 	if e.subs == nil {
 		return DeadLetterEntry{}, ErrSubscriptionNotFound
 	}
@@ -115,14 +126,41 @@ func (e *Engine) Replay(ctx context.Context, id string) (DeadLetterEntry, error)
 		return DeadLetterEntry{}, fmt.Errorf("webhook: replay %s: resolve subscription %s: %w", id, entry.SubscriptionID, err)
 	}
 
+	entry.ReplayState = ReplayStateInProgress
+	entry.ReplayIdempotencyKey = replayIdempotencyKeyPrefix + entry.ID
+	entry.ReplayStartedAt = time.Now().UTC()
+	entry.CleanupError = ""
+	if _, err := e.dlq.Add(ctx, entry); err != nil {
+		return entry, fmt.Errorf("webhook: persist replay claim: %w", err)
+	}
 	evCopy := entry.Event
-	if sendErr := e.newWebhookSink(sub).Record(ctx, &evCopy); sendErr != nil {
+	sink := e.newWebhookSinkWithOptions(sub,
+		audit.WithWebhookHeader("Idempotency-Key", entry.ReplayIdempotencyKey))
+	if sendErr := sink.Record(ctx, &evCopy); sendErr != nil {
 		entry.Attempts++
 		entry.LastError = sendErr.Error()
 		entry.LastFailedAt = time.Now().UTC()
-		_, _ = e.dlq.Add(ctx, entry)
+		entry.ReplayState = ReplayStateDeliveryFailed
+		if _, persistErr := e.dlq.Add(ctx, entry); persistErr != nil {
+			return entry, fmt.Errorf("%w (persist replay failure: %v)", sendErr, persistErr)
+		}
 		return entry, sendErr
 	}
-	_ = e.dlq.Delete(ctx, id)
+	entry.ReplayState = ReplayStateCleanupPending
+	entry.DeliveredAt = time.Now().UTC()
+	entry.LastError = ""
+	if _, err := e.dlq.Add(ctx, entry); err != nil {
+		return entry, fmt.Errorf("webhook: delivery succeeded but delivered marker could not be persisted: %w", err)
+	}
+	return e.finishReplayCleanup(ctx, entry)
+}
+
+func (e *Engine) finishReplayCleanup(ctx context.Context, entry DeadLetterEntry) (DeadLetterEntry, error) {
+	if err := e.dlq.Delete(ctx, entry.ID); err != nil {
+		entry.CleanupError = err.Error()
+		_, _ = e.dlq.Add(ctx, entry)
+		return entry, fmt.Errorf("%w: %v", ErrReplayCleanup, err)
+	}
+	entry.CleanupError = ""
 	return entry, nil
 }

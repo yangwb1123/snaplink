@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 // memStore is a minimal in-process tenant.Store used only to drive the
@@ -380,6 +381,20 @@ func TestDefaultHostExtractor_NilRequest(t *testing.T) {
 	t.Parallel()
 	if got := DefaultHostExtractor(nil); got != "" {
 		t.Errorf("nil request: got %q", got)
+	}
+}
+
+func TestDefaultHostExtractor_UntrustedPeerIgnoresForwardedHost(t *testing.T) {
+	t.Parallel()
+	req := httptest.NewRequest(http.MethodGet, "http://internal.example/", nil)
+	req.Host = "tenant.example"
+	req.Header.Set("X-Forwarded-Host", "victim.example")
+	req = req.WithContext(peertrust.WithRequestInfo(req.Context(), peertrust.RequestInfo{
+		ClientIP:                "203.0.113.8",
+		ForwardedHeadersTrusted: false,
+	}))
+	if got := DefaultHostExtractor(req); got != "tenant.example" {
+		t.Fatalf("DefaultHostExtractor = %q, want direct host", got)
 	}
 }
 

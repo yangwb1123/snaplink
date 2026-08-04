@@ -29,6 +29,7 @@ const (
 	tmplEmailChange       = "email_change"
 	tmplInvitation        = "invitation"
 	tmplOTP               = "otp"
+	tmplNotification      = "notification"
 )
 
 const (

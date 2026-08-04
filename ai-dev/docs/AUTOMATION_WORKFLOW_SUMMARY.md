@@ -17,30 +17,100 @@ repository's executable tests and does not replace them.
   worktree change; see the safety warning in
   [`GIT_AUTO_COMMIT_GUIDE.md`](GIT_AUTO_COMMIT_GUIDE.md).
 
-## Current runner limits
+## Runner status
 
-Use pipelines for dry-run inspection only until these defects are fixed:
+- `run-review.py` live runs persist each stage to `stage-NN.out.md` (only
+  after validation: rejected or failed stages leave no file), and `--all`
+  injects completed stage outputs into downstream paste-style variables;
+  explicit context/CLI values win. `--all --resume` skips stages with a
+  saved output and chains from those files, so an interrupted session
+  continues from its last completed stage.
+- Post-stage pipeline `commands` failures now fail the run with a non-zero
+  exit, so configured build, vet, test, or `make ci` hooks act as failure
+  gates when a pipeline defines them. Commands still only run when a stage
+  declares them.
+- `from_outputs` stages accept `aggregate: true`, which merges every upstream
+  artifact into one combined prompt per role template (`{input_stem}` becomes
+  `combined`) instead of fanning each artifact into an independent task.
+  `--reuse` now also skips `from_outputs` tasks (aggregate and fan-out) whose
+  output file already exists and keeps the reused paths visible to
+  downstream stages, so a pipeline resumes without re-running completed work.
+- Pipeline `mode`, `workers`, and `timeout` are overridden by the matching
+  top-level CLI flags when those flags are passed explicitly (`--mode`,
+  `-w`/`--workers`, `--timeout`).
+- `pi-batch.py` resolves `pi-batch.yaml` next to the script first, then the
+  process working directory, so repository-root invocations pick up
+  `ai-dev/pi-batch.yaml`. `--agent-bin` still overrides it explicitly.
+- `--validate-cmd` runs an engineering gate against every agent result
+  BEFORE its output is committed: the result is written to a temp file
+  (`{output}` placeholder), the command must exit 0, then the file is
+  atomically renamed into place; a failing gate deletes the temp file and
+  marks the task/stage failed, so generated artifacts that do not pass
+  project checks (e.g. `go build ./... && go vet ./...`, `gofmt -l`,
+  `python cli.py check`) never land on disk. Works in serial, parallel,
+  pipeline, and `run-review.py` modes, and integrates with retries/rounds.
+- Validators are declared like the project's engineering gates: the
+  `validators` registry in `pi-batch.yaml` maps short names to commands
+  (`quick: python cli.py check`, `gofmt`, `build`, `config`, `root`), and
+  `--validate NAME[,NAME...]` (or a task/stage `validate` field) references
+  them with AND semantics, so gates stay declarative instead of repeated
+  shell strings. Unknown names are executed as raw commands; `--validate-cmd`
+  remains for one-off raw gates.
+- Validation is optional per stage, not a global must: a task-level
+  `validate` field (YAML tasks) and a stage-level `validate_cmd` (pipeline
+  stages) override the CLI default; an empty value explicitly disables
+  validation for that task/stage, so analysis-only tasks (e.g. "propose
+  three new feature points") that produce no code skip the gate while code
+  generation tasks keep it. Precedence: task > stage > CLI > none.
+- Dynamic role orchestration (self-optimization): a pipeline stage with
+  `meta: true` asks the agent which review roles the current deliverables
+  still need, executes each chosen role against the aggregated inputs, folds
+  the role deliverables back into the evidence, and iterates until the
+  orchestrator reports no more roles or `max_iterations` is reached. Roles
+  are discovered at run time: the orchestrator may pick a name from
+  `role_dir` (predefined template) or define an ad-hoc role
+  `{"role": ..., "task": ...}` whose task description plus the current
+  context becomes the reviewer prompt — no template required. Chosen roles
+  run concurrently, each in its own agent session; role names are sanitized
+  for output paths and template lookups are confined to `role_dir` (path
+  traversal rejected). See `ai-dev/examples/meta-review-pipeline.yaml` for a
+  project-agnostic case.
+- 24x7 operation: `--retries` (serial mode) retries failed tasks with
+  exponential backoff (`--retry-delay`/`--retry-backoff`; rate-limit and
+  network failures wait at least 30s), `--min-interval` throttles successful
+  tasks, and `--max-rounds` (0 = forever) reruns the batch until every task
+  passes with `--round-delay` rest between rounds; combined with `--reuse`
+  each round runs only the failures. `--log-file` appends a timestamped log
+  for supervision. See `RUNNING_247.md` for nohup/systemd deployment.
+- Session reuse: `--session-mode shared` runs every task of a batch/pipeline
+  in one agent session (the first call starts it with `--session-id` and
+  `--name`, later calls continue it), `--session-mode per-stage` gives each
+  pipeline stage its own session, and the default `new` starts a fresh
+  session per call. Session ids are derived from `--session-name` (default:
+  task source stem), so resumed runs continue the same session. Shared
+  sessions require serial execution; the flags come from
+  `pi-batch.yaml` `agent.session_flags` (pi-style by default) so other agent
+  CLIs can be adapted. `run-review.py --all` supports the same with
+  `--session-mode shared`.
+- Task results are validated before saving: non-zero exit, empty output, or
+  a provider/CLI failure signature (quota, rate limit, billing, auth error
+  codes such as `insufficient_quota` or `rate_limit_error`, `429 Too Many
+  Requests`, offline/DNS/TLS/proxy failures such as `network is unreachable`,
+  `connection refused`, `curl: (7)`, leading `ERROR:`/`fatal:` banners)
+  marks the task failed and no output file is written; generic words like
+  "error" or "timeout" are not treated as failures, so review prose is not
+  misclassified. `run-review.py` also enforces a per-stage deadline
+  (`--timeout`, default 600s) so a hung agent cannot block the run.
 
-- post-stage `commands` currently raise an internal `subprocess` binding error;
-  the runner logs only a warning and still exits successfully, so configured
-  build, vet, test, or `make ci` commands are **not** release gates;
-- `from_outputs` fans every upstream artifact into an independent downstream
-  task instead of aggregating role results, so implementation pipelines can
-  repeat or conflict rather than apply one combined design.
-- pipeline `mode`, `workers`, and `timeout` come from each stage; the matching
-  top-level CLI flags do not override them;
-- `pi-batch.py` looks for optional `pi-batch.yaml` in the process working
-  directory. Repository-root commands therefore ignore `ai-dev/pi-batch.yaml`;
-  pass `--agent-bin` explicitly when its built-in `pi` default is unsuitable.
-
-`ai-dev/pipelines/pipeline-full-sdlc.yaml` is a retained design experiment, not
-a supported runner path: the current executor expands each upstream output
-against every downstream task instead of aggregating stage results.
+`ai-dev/pipelines/pipeline-full-sdlc.yaml` is a long-running experimental
+graph; its stages use `aggregate: true` so downstream roles see all upstream
+evidence. Inspect it with `--dry-run` before executing.
 
 ## Recommended use
 
-YAML task and pipeline loading requires PyYAML, which is not managed as a
-repository Python dependency: `python -m pip install PyYAML`.
+YAML task and pipeline loading requires PyYAML, which is managed in
+`pyproject.toml`; install the project with `uv sync` (or
+`pip install -e .`) before running the runners.
 
 1. Put a bounded proposal in `docs/feature-spec-<name>.md` using
    `docs/templates/feature-spec.md`.

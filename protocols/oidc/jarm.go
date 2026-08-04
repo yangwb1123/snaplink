@@ -101,6 +101,27 @@ func SignJARMResponse(ctx context.Context, signer JARMSigner, issuer, clientID, 
 	return signer.SignMetadata(ctx, claims)
 }
 
+// SignJARMErrorResponse signs an authorization error into the same protected
+// response shape as a successful JARM result. The redirect URI is validated by
+// the SSO layer before this function is called.
+func SignJARMErrorResponse(ctx context.Context, signer JARMSigner, issuer, clientID, code, description, state string) (string, error) {
+	now := time.Now()
+	claims := map[string]any{
+		core.KeyIss:   issuer,
+		"aud":         clientID,
+		"exp":         now.Add(JARMDefaultTTL).Unix(),
+		"iat":         now.Unix(),
+		core.KeyError: code,
+	}
+	if description != "" {
+		claims[core.KeyErrorDescription] = description
+	}
+	if state != "" {
+		claims[core.KeyState] = state
+	}
+	return signer.SignMetadata(ctx, claims)
+}
+
 // RenderJARMResponse signs the authorization response into a JWT and
 // delivers it as the single `response` parameter, per the requested
 // delivery channel (query / fragment / form_post; the bare `jwt`
@@ -112,7 +133,21 @@ func RenderJARMResponse(ctx core.HandlerContext, signer JARMSigner, responseMode
 	if err != nil {
 		return false
 	}
+	renderJARMJWT(ctx, responseMode, redirectURI, jwt)
+	return true
+}
 
+// RenderJARMErrorResponse signs and delivers a protected authorization error.
+func RenderJARMErrorResponse(ctx core.HandlerContext, signer JARMSigner, responseMode, redirectURI, issuer, clientID, code, description, state string) bool {
+	jwt, err := SignJARMErrorResponse(ctx.Request().Context(), signer, issuer, clientID, code, description, state)
+	if err != nil {
+		return false
+	}
+	renderJARMJWT(ctx, responseMode, redirectURI, jwt)
+	return true
+}
+
+func renderJARMJWT(ctx core.HandlerContext, responseMode, redirectURI, jwt string) {
 	switch responseMode {
 	case ResponseModeFormPostJWT:
 		renderJARMFormPost(ctx, redirectURI, jwt)
@@ -123,7 +158,6 @@ func RenderJARMResponse(ctx core.HandlerContext, signer JARMSigner, responseMode
 		// default for response_type=code.
 		renderJARMRedirect(ctx, redirectURI, jwt, false)
 	}
-	return true
 }
 
 // renderJARMRedirect issues a 302 to redirect_uri carrying the signed

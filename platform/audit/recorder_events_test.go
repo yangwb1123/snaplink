@@ -179,10 +179,13 @@ func TestRecordCIBAPingFailed_EmptyAuthReqOmitsMeta(t *testing.T) {
 func TestRecordRefreshTokenReuse(t *testing.T) {
 	t.Parallel()
 	rec, ctx, sink := recCtx(t)
-	audit.RecordRefreshTokenReuse(rec, ctx, "c", "fam-1", 3)
+	audit.RecordRefreshTokenReuse(rec, ctx, "c", "user-1", "fam-1", 3)
 	e := only(t, sink)
 	if e.Type != audit.EventRefreshTokenReuse || e.Outcome != audit.OutcomeFailure {
 		t.Fatalf("type/outcome: %+v", e)
+	}
+	if e.ActorID != "user-1" {
+		t.Fatalf("actor: %+v", e)
 	}
 	if e.Reason != "family=fam-1" || e.Metadata["killed"] != "3" {
 		t.Fatalf("reason/killed: %+v", e)
@@ -192,7 +195,7 @@ func TestRecordRefreshTokenReuse(t *testing.T) {
 func TestRecordRefreshTokenReuse_ZeroKilledOmitsMeta(t *testing.T) {
 	t.Parallel()
 	rec, ctx, sink := recCtx(t)
-	audit.RecordRefreshTokenReuse(rec, ctx, "c", "fam-1", 0)
+	audit.RecordRefreshTokenReuse(rec, ctx, "c", "user-1", "fam-1", 0)
 	e := only(t, sink)
 	if _, ok := e.Metadata["killed"]; ok {
 		t.Fatalf("killed=0 should omit meta, got %v", e.Metadata)
@@ -541,7 +544,7 @@ func TestRecordHelpers_NilRecorderNoPanic(t *testing.T) {
 	audit.RecordCIBAAuthRequest(nil, ctx, "", "", "")
 	audit.RecordCIBADecision(nil, ctx, "", "", false)
 	audit.RecordCIBAPingFailed(nil, bg, "", "", "")
-	audit.RecordRefreshTokenReuse(nil, ctx, "", "", 0)
+	audit.RecordRefreshTokenReuse(nil, ctx, "", "", "", 0)
 	audit.RecordRefreshRotationVelocityExceeded(nil, ctx, "", "", 0, 0)
 	audit.RecordCredentialHealth(nil, ctx, "", "", &core.CredentialHealth{})
 	audit.RecordLogout(nil, ctx, "", nil)

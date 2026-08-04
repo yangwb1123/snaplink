@@ -432,13 +432,11 @@ func WithAgentDelegationGrant(provider agentidentity.AgentProvider, sessions age
 }
 
 // agentDelegationHandler is an oauth.GrantHandler that delegates to
-// agentidentity.HandleGrant, satisfying agentidentity.Deps itself: the
-// Mint-side capabilities (IssuerForClient, DPoPTokenTypeOr,
-// RecordTokenIssued, Auditor, SrvLogger) forward to the server — every one
+// agentidentity.HandleGrant, satisfying agentidentity.Deps itself. The mint-side
+// capabilities forward to the server — every one
 // of those methods already exists for the OTHER grant handlers — while
 // Agents/Sessions/HumanScopes serve the three pieces WithAgentDelegationGrant
-// captured, keeping *Server itself free of any new agent-identity-specific
-// field or accessor.
+// captured, keeping *Server free of agent-identity-specific fields.
 type agentDelegationHandler struct {
 	server       *Server
 	provider     agentidentity.AgentProvider
@@ -460,6 +458,9 @@ func (h *agentDelegationHandler) Agents() agentidentity.AgentProvider       { re
 func (h *agentDelegationHandler) Sessions() agentidentity.AgentSessionStore { return h.sessions }
 
 func (h *agentDelegationHandler) HumanScopes(ctx context.Context, humanSubject string) ([]string, error) {
+	if err := h.server.lifecycleAuthenticationError(ctx, humanSubject); err != nil {
+		return nil, err
+	}
 	return h.entitlements(ctx, humanSubject)
 }
 

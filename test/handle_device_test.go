@@ -33,7 +33,7 @@ func newDeviceServer(t *testing.T, ttl, interval time.Duration) *httptest.Server
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: devUser})
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
-		ID: devClient, Secret: devSecret,
+		ID: devClient, Name: "Device Console", Secret: devSecret,
 		AllowedAuthenticators: []string{"password"}, TokenStrategy: "jwt", Active: true,
 	})
 	clients.AddSeed(&sso.Client{
@@ -155,6 +155,29 @@ func TestDevice_CodeEndpointShape(t *testing.T) {
 	uri, _ := body["verification_uri_complete"].(string)
 	if !strings.Contains(uri, "user_code="+uc) {
 		t.Errorf("verification_uri_complete missing user_code: %q", uri)
+	}
+}
+
+func TestDevice_VerificationPreviewIncludesAuthoritativeContext(t *testing.T) {
+	srv := newDeviceServer(t, 10*time.Minute, time.Millisecond)
+	_, userCode, _ := requestDeviceCode(t, srv)
+	resp, err := http.Get(srv.URL + "/device/verify?check=" + userCode)
+	if err != nil {
+		t.Fatalf("GET verification preview: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode preview: %v", err)
+	}
+	if body["status"] != "pending" || body["client_id"] != devClient || body["client_name"] != "Device Console" {
+		t.Fatalf("preview identity = %v", body)
+	}
+	if _, ok := body["scopes"].([]any); !ok {
+		t.Fatalf("preview scopes missing: %v", body)
+	}
+	if expires, _ := body["expires_in"].(float64); expires <= 0 {
+		t.Fatalf("preview expiry missing: %v", body)
 	}
 }
 

@@ -3,9 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,101 +13,108 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const (
 	opSessionProvider = "op-session"
 	opSessionCookie   = "snaplink_op_session"
 	opSessionTTL      = 8 * time.Hour
-	opSessionBytes    = 32
 )
 
 var errInvalidOPSession = errors.New("op session invalid")
 
-type opSessionStore struct {
-	mu       sync.Mutex
-	sessions map[[sha256.Size]byte]opSession
-	user     userSeed
+// opSessionGate is the edition's browser-side handle on the CANONICAL
+// session lifecycle: the OP-session cookie IS the canonical session ID,
+// and every create/resolve/destroy goes through the server's
+// SessionManager (wired via WithSessionManager). There is no parallel
+// session state here — the session record, its sid in the auth code and
+// the id_token sid claim all come from the canonical store. The gate only
+// exists because the manager is constructed inside sso.NewServer, so the
+// middleware/authenticator capture it via setMgr right after.
+type opSessionGate struct {
+	mu  sync.RWMutex
+	mgr core.SessionManager
 }
 
-type opSession struct {
-	authenticatedAt time.Time
-	expiresAt       time.Time
+func newOPSessionGate() *opSessionGate {
+	return &opSessionGate{}
 }
 
-func newOPSessionStore(user userSeed) *opSessionStore {
-	return &opSessionStore{
-		sessions: make(map[[sha256.Size]byte]opSession),
-		user:     user,
-	}
+func (g *opSessionGate) setMgr(mgr core.SessionManager) {
+	g.mu.Lock()
+	g.mgr = mgr
+	g.mu.Unlock()
 }
 
-func (s *opSessionStore) create() (string, error) {
-	raw := make([]byte, opSessionBytes)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	token := base64.RawURLEncoding.EncodeToString(raw)
-	now := time.Now()
-	s.mu.Lock()
-	s.sessions[sha256.Sum256([]byte(token))] = opSession{
-		authenticatedAt: now,
-		expiresAt:       now.Add(opSessionTTL),
-	}
-	s.mu.Unlock()
-	return token, nil
+func (g *opSessionGate) manager() core.SessionManager {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.mgr
 }
 
-func (s *opSessionStore) resolve(token string) (opSession, bool) {
+// resolve returns the live (unrevoked, unexpired) session for the cookie
+// token, or nil. A dead session is dropped from the manager's view and
+// reports nil so a stale cookie behaves exactly like no cookie (the login
+// falls back to visible authentication — never an oracle about why).
+func (g *opSessionGate) resolve(ctx context.Context, token string) *core.Session {
 	if token == "" {
-		return opSession{}, false
+		return nil
 	}
-	key := sha256.Sum256([]byte(token))
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	session, ok := s.sessions[key]
-	if ok && time.Now().Before(session.expiresAt) {
-		return session, true
+	mgr := g.manager()
+	if mgr == nil {
+		return nil
 	}
-	delete(s.sessions, key)
-	return opSession{}, false
+	sess, err := mgr.Get(ctx, token)
+	if err != nil || sess == nil || sess.Revoked || sess.IsExpired() {
+		return nil
+	}
+	return sess
 }
 
-func (s *opSessionStore) delete(token string) {
+// destroy terminates the canonical session behind the cookie. Logout must
+// end the session at the OP, not just drop the browser cookie — the sid
+// bound into outstanding refresh tokens dies with it (refresh rotation
+// refuses dead sessions).
+func (g *opSessionGate) destroy(ctx context.Context, token string) {
 	if token == "" {
 		return
 	}
-	s.mu.Lock()
-	delete(s.sessions, sha256.Sum256([]byte(token)))
-	s.mu.Unlock()
+	if mgr := g.manager(); mgr != nil {
+		_ = mgr.Destroy(ctx, token)
+	}
 }
 
 type opSessionAuthenticator struct {
-	sessions *opSessionStore
+	gate *opSessionGate
+	user userSeed
 }
 
-func newOPSessionAuthenticator(sessions *opSessionStore) sso.Authenticator {
-	return &opSessionAuthenticator{sessions: sessions}
+func newOPSessionAuthenticator(gate *opSessionGate, user userSeed) sso.Authenticator {
+	return &opSessionAuthenticator{gate: gate, user: user}
 }
 
 func (a *opSessionAuthenticator) Name() string { return opSessionProvider }
 
 func (a *opSessionAuthenticator) Authenticate(
-	_ context.Context,
+	ctx context.Context,
 	req *sso.AuthRequest,
 ) (*sso.AuthResult, error) {
-	session, ok := a.sessions.resolve(req.Credential["token"])
-	if !ok {
+	session := a.gate.resolve(ctx, req.Credential["session"])
+	if session == nil {
 		return nil, errInvalidOPSession
 	}
-	user := a.sessions.user
+	if session.UserID != a.user.ID {
+		return nil, errInvalidOPSession
+	}
 	return &sso.AuthResult{
-		UserID:      user.ID,
-		ExternalID:  user.Username,
+		UserID:      a.user.ID,
+		ExternalID:  a.user.Username,
 		Provider:    opSessionProvider,
 		AuthMethods: []string{"sso"},
-		AuthTime:    session.authenticatedAt,
-		Attributes:  userClaims(user),
+		AuthTime:    session.CreatedAt,
+		Attributes:  userClaims(a.user),
+		SessionID:   session.ID,
 	}, nil
 }
 
@@ -124,17 +128,17 @@ func (a *opSessionAuthenticator) Callback(
 func (a *opSessionAuthenticator) LoginURL(string) string { return "" }
 
 type opSessionHandler struct {
-	next     http.Handler
-	sessions *opSessionStore
-	secure   bool
+	next   http.Handler
+	gate   *opSessionGate
+	secure bool
 }
 
-func newOPSessionHandler(next http.Handler, sessions *opSessionStore, issuer string) http.Handler {
+func newOPSessionHandler(next http.Handler, gate *opSessionGate, issuer string) http.Handler {
 	parsed, _ := url.Parse(issuer)
 	return &opSessionHandler{
-		next:     next,
-		sessions: sessions,
-		secure:   parsed != nil && parsed.Scheme == "https",
+		next:   next,
+		gate:   gate,
+		secure: parsed != nil && parsed.Scheme == "https",
 	}
 }
 
@@ -158,10 +162,10 @@ func (h *opSessionHandler) serveLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cookieToken := sessionCookieToken(r)
-	session, active := h.sessions.resolve(cookieToken)
-	if shouldResume(payload, session, active) {
+	session := h.gate.resolve(r.Context(), cookieToken)
+	if shouldResume(payload, session, cookieToken) {
 		payload["provider"] = opSessionProvider
-		payload["credential"] = map[string]string{"token": cookieToken}
+		payload["credential"] = map[string]string{"session": cookieToken}
 		normalizeSessionPrompt(payload)
 		raw, _ = json.Marshal(payload)
 	}
@@ -169,7 +173,7 @@ func (h *opSessionHandler) serveLogin(w http.ResponseWriter, r *http.Request) {
 	response := newBufferedResponse()
 	h.next.ServeHTTP(response, r)
 	if successfulPasswordCode(payload, response.body.Bytes()) {
-		h.setFreshSession(response)
+		h.setFreshSession(response, response.body.Bytes())
 	}
 	response.flushTo(w)
 }
@@ -190,8 +194,8 @@ func readLoginPayload(r *http.Request) (map[string]any, []byte, bool) {
 	return payload, raw, true
 }
 
-func shouldResume(payload map[string]any, session opSession, active bool) bool {
-	if !active {
+func shouldResume(payload map[string]any, session *core.Session, cookieToken string) bool {
+	if session == nil || cookieToken == "" {
 		return false
 	}
 	if _, hasCredential := payload["credential"]; hasCredential {
@@ -211,7 +215,7 @@ func shouldResume(payload map[string]any, session opSession, active bool) bool {
 	return responseType == "code" && sessionWithinMaxAge(payload, session)
 }
 
-func sessionWithinMaxAge(payload map[string]any, session opSession) bool {
+func sessionWithinMaxAge(payload map[string]any, session *core.Session) bool {
 	raw, set := payload["max_age"]
 	if !set {
 		return true
@@ -220,7 +224,7 @@ func sessionWithinMaxAge(payload map[string]any, session opSession) bool {
 	if !ok || seconds <= 0 {
 		return false
 	}
-	return time.Since(session.authenticatedAt) <= time.Duration(seconds)*time.Second
+	return time.Since(session.CreatedAt) <= time.Duration(seconds)*time.Second
 }
 
 func normalizeSessionPrompt(payload map[string]any) {
@@ -242,16 +246,27 @@ func successfulPasswordCode(payload map[string]any, response []byte) bool {
 	return code != ""
 }
 
-func (h *opSessionHandler) setFreshSession(w http.ResponseWriter) {
-	token, err := h.sessions.create()
-	if err != nil {
+// setFreshSession binds the browser cookie to the canonical session the
+// login just created: the code-flow response carries session_id (the same
+// canonical ID that rides the auth code into the id_token sid claim). If
+// the server returned no session_id (no SessionManager, or creation
+// failed), no cookie is set and the next login re-authenticates — the
+// wire login itself already succeeded, so this is strictly best-effort.
+func (h *opSessionHandler) setFreshSession(w http.ResponseWriter, response []byte) {
+	body := map[string]any{}
+	if json.Unmarshal(response, &body) != nil {
 		return
 	}
-	http.SetCookie(w, h.cookie(token, int(opSessionTTL.Seconds())))
+	sessionID, _ := body["session_id"].(string)
+	if sessionID == "" {
+		return
+	}
+	http.SetCookie(w, h.cookie(sessionID, int(opSessionTTL.Seconds())))
 }
 
 func (h *opSessionHandler) clearSession(w http.ResponseWriter, r *http.Request) {
-	h.sessions.delete(sessionCookieToken(r))
+	token := sessionCookieToken(r)
+	h.gate.destroy(r.Context(), token)
 	http.SetCookie(w, h.cookie("", -1))
 }
 

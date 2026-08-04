@@ -9,8 +9,27 @@ agent:
   #   <bin> -p PROMPT [--model M] [--provider P] [--thinking T] [--tools T] [--exclude-tools T]
   bin: pi
   default_model: ""     # empty = the agent's own default
-  default_timeout: 300  # seconds, per task
+  default_timeout: 900  # seconds, per task (aligned with pi httpIdleTimeoutMs)
   default_workers: 4    # parallel mode default worker count
+  # Session reuse flags used by --session-mode shared/per-stage.
+  # {session} is the session id, {name} the display name. Other agent CLIs
+  # can point these at their own continue-session flags; omit the key to
+  # fall back to these pi-style flags.
+  session_flags:
+    start: ["--session-id", "{session}", "--name", "{name}"]
+    continue: ["--session-id", "{session}"]
+
+# Named engineering gates, referenced via --validate NAME[,NAME...] or a
+# task/stage validate field. Commands run against each generated artifact
+# before it is committed; {output} and {cwd} placeholders are substituted at
+# run time. Add project gates here instead of repeating shell strings.
+validators:
+  quick: "python cli.py check"
+  gofmt: 'test -z "$(gofmt -l {output})"'
+  build: "go build ./... && go vet ./..."
+  config: "python cli.py config-validate"
+  root: "python cli.py check-root"
+  pyquality: "python {cwd}/ai-dev/quality.py {cwd}/ai-dev"
 
 commit:
   prefix: "[pi-batch]"

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
 
@@ -43,7 +44,7 @@ func ClaimsFromContext(ctx context.Context) (*Claims, bool) {
 // On success the claims ride the request context — read them downstream with
 // ClaimsFromContext.
 func HTTPMiddleware(cfg Config, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	validator := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, viaDPoP := extractToken(r)
 		if token == "" {
 			writeChallenge(w, nil, viaDPoP, cfg)
@@ -56,6 +57,10 @@ func HTTPMiddleware(cfg Config, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(NewContext(r.Context(), claims)))
 	})
+	if cfg.TrustedProxies != nil {
+		return cfg.TrustedProxies.Middleware(validator)
+	}
+	return validator
 }
 
 // validateRequest routes a request to the DPoP or plain path.
@@ -87,23 +92,10 @@ func extractToken(r *http.Request) (token string, viaDPoP bool) {
 	return "", false
 }
 
-// requestHTU rebuilds the absolute request URL for DPoP htu comparison,
-// honoring first-hop X-Forwarded-Proto/Host — ONLY safe behind a trusted
-// edge that strips and re-sets them (the same trust model as the AS; see
-// AGENTS.md "X-Forwarded-* Trust").
+// requestHTU rebuilds the absolute request URL for DPoP htu comparison using
+// the same direct-peer gate as the authorization server.
 func requestHTU(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if h := r.Header.Get("X-Forwarded-Proto"); h != "" {
-		scheme = h
-	}
-	host := r.Host
-	if h := r.Header.Get("X-Forwarded-Host"); h != "" {
-		host = h
-	}
-	return scheme + "://" + host + r.URL.Path
+	return middleware.BaseURL(r) + r.URL.Path
 }
 
 // writeChallenge emits the 401. err == nil means no credentials were
@@ -114,6 +106,18 @@ func writeChallenge(w http.ResponseWriter, err error, usedDPoP bool, cfg Config)
 	// the AS's token endpoints, including on errors.
 	h.Set(headerCacheControl, "no-store")
 	h.Set(headerPragma, "no-cache")
+	if errors.Is(err, ErrServingRegionMismatch) {
+		// Governance denial, not a token-validity failure: 403, no bearer
+		// challenge — mirrors the AS's region_not_allowed discipline
+		// (interfaces/sso/server_tenant_residency.go: the token is valid,
+		// so NOT a 401 invalid_token challenge). no-store headers stay set.
+		// Only reachable after full validation (signature/typ/iss/aud/exp),
+		// so a garbage token can never probe the gate.
+		h.Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"region_not_allowed"}`))
+		return
+	}
 	scheme := schemeBearer
 	if usedDPoP {
 		scheme = schemeDPoP

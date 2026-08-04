@@ -2,6 +2,8 @@ package metering
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -58,6 +60,25 @@ func TestTenantUsageFields(t *testing.T) {
 	}
 	if u.PeriodStart != now {
 		t.Errorf("expected period start %v, got %v", now, u.PeriodStart)
+	}
+}
+
+func TestTenantUsageJSONUsesStableSnakeCase(t *testing.T) {
+	body, err := json.Marshal(TenantUsage{TenantID: "tenant-1", Period: PeriodDay})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	text := string(body)
+	for _, key := range []string{
+		`"tenant_id"`, `"period_start"`, `"tokens_issued"`,
+		`"active_users"`, `"mfa_challenges"`, `"active_clients"`,
+	} {
+		if !strings.Contains(text, key) {
+			t.Errorf("JSON %s does not contain %s", text, key)
+		}
+	}
+	if strings.Contains(text, `"TenantID"`) {
+		t.Fatalf("JSON exposes Go field names: %s", text)
 	}
 }
 

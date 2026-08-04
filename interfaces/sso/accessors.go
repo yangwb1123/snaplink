@@ -10,12 +10,12 @@ import (
 	"github.com/yangwb1123/snaplink/domains/connections"
 	"github.com/yangwb1123/snaplink/domains/connections/provider"
 	"github.com/yangwb1123/snaplink/domains/federation"
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/domains/tokenanomaly"
 	"github.com/yangwb1123/snaplink/domains/tokenexchange"
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	"github.com/yangwb1123/snaplink/platform/geo"
@@ -51,16 +51,25 @@ func (s *Server) SetAdminAPIGateEnabled(enabled bool) bool {
 	return true
 }
 
-// SetWebSPAGateEnabled flips the LIVE feature_gates.web_spa value read by
-// webSPAGateOn. sso-server no longer serves any static frontend itself (see
-// buildProbeMux) — the only remaining consumer of this gate is
-// mountBrandingEndpoint (server_me.go), which the per-host branding lookup
-// still uses. Returns false (report the change as Ignored, mirroring
+// SetBrandingGateEnabled flips the LIVE feature_gates.branding value read
+// by brandingGateOn (server_routes.go) — the config/reload SIGHUP hook
+// (SetBrandingGateHook) calls this. sso-server no longer serves any static
+// frontend itself (see buildProbeMux) — the only remaining consumer of this
+// gate is mountBrandingEndpoint (server_me.go), which the per-host branding
+// lookup still uses. Returns false (report the change as Ignored, mirroring
 // SetRateLimitPolicy's "nothing to swap into" contract) when no tenant store
 // is wired, since branding has nothing to key off without one.
-func (s *Server) SetWebSPAGateEnabled(enabled bool) bool {
-	s.webSPALive.Store(enabled)
+func (s *Server) SetBrandingGateEnabled(enabled bool) bool {
+	s.brandingLive.Store(enabled)
 	return s.tenantStore != nil
+}
+
+// SetWebSPAGateEnabled is the deprecated alias of SetBrandingGateEnabled,
+// retained for source compatibility. New callers should use
+// SetBrandingGateEnabled; the legacy feature_gates.web_spa name is accepted
+// by the config layer as a deprecated alias of feature_gates.branding.
+func (s *Server) SetWebSPAGateEnabled(enabled bool) bool {
+	return s.SetBrandingGateEnabled(enabled)
 }
 func (s *Server) AuthCodeStore() oauth.AuthCodeStore         { return s.authCodeStore }
 func (s *Server) AuthCodeTTL() time.Duration                 { return s.authCodeTTL }
@@ -84,26 +93,27 @@ func (s *Server) TokenExchangePolicy() tokenexchange.Policy { return s.tokenExch
 // IntrospectionSigner returns the wired RFC 9701-style signed-introspection
 // signer (WithIntrospectionSigner), or nil when unwired (every response
 // stays plain JSON).
-func (s *Server) IntrospectionSigner() oauth.IntrospectionSigner  { return s.introspectionSigner }
-func (s *Server) DeviceCodeStore() oauth.DeviceCodeStore          { return s.deviceCodeStore }
-func (s *Server) DeviceCodeTTL() time.Duration                    { return s.deviceCodeTTL }
-func (s *Server) DeviceCodeInterval() time.Duration               { return s.deviceCodeInterval }
-func (s *Server) DeviceVerifyBaseURL() string                     { return s.deviceVerifyBaseURL }
-func (s *Server) PARStore() oauth.PARStore                        { return s.parStore }
-func (s *Server) PARTTL() time.Duration                           { return s.parTTL }
-func (s *Server) CIBAStore() oauth.CIBAStore                      { return s.cibaStore }
-func (s *Server) CIBARequestTTL() time.Duration                   { return s.cibaRequestTTL }
-func (s *Server) CIBAPollInterval() time.Duration                 { return s.cibaPollInterval }
-func (s *Server) DCRPolicy() *oauth.DCRPolicy                     { return s.dcrPolicy }
-func (s *Server) JTIReplayStore() security.JTIReplayStore         { return s.jtiReplayStore }
-func (s *Server) SubjectClientIndex() security.SubjectClientIndex { return s.subjectClientIndex }
-func (s *Server) JARFetcher() security.JARFetcher                 { return s.jarFetcher }
-func (s *Server) JARDecrypter() security.JWEDecrypter             { return s.jarDecrypter }
-func (s *Server) JWEResponseEncrypter() security.JWEEncrypter     { return s.jweResponseEncrypter }
-func (s *Server) AccountLockout() security.AccountLockout         { return s.accountLockout }
-func (s *Server) PairwiseStore() security.PairwiseSubjectStore    { return s.pairwiseStore }
-func (s *Server) ClientCertExtractor() ClientCertExtractor        { return s.clientCertExtractor }
-func (s *Server) DPoPNonceProvider() DPoPNonceProvider            { return s.dpopNonceProvider }
+func (s *Server) IntrospectionSigner() oauth.IntrospectionSigner   { return s.introspectionSigner }
+func (s *Server) DeviceCodeStore() oauth.DeviceCodeStore           { return s.deviceCodeStore }
+func (s *Server) DeviceCodeTTL() time.Duration                     { return s.deviceCodeTTL }
+func (s *Server) DeviceCodeInterval() time.Duration                { return s.deviceCodeInterval }
+func (s *Server) DeviceVerifyBaseURL() string                      { return s.deviceVerifyBaseURL }
+func (s *Server) PARStore() oauth.PARStore                         { return s.parStore }
+func (s *Server) PARTTL() time.Duration                            { return s.parTTL }
+func (s *Server) CIBAStore() oauth.CIBAStore                       { return s.cibaStore }
+func (s *Server) CIBAUserCodeVerifier() oauth.CIBAUserCodeVerifier { return s.cibaUserCodeVerifier }
+func (s *Server) CIBARequestTTL() time.Duration                    { return s.cibaRequestTTL }
+func (s *Server) CIBAPollInterval() time.Duration                  { return s.cibaPollInterval }
+func (s *Server) DCRPolicy() *oauth.DCRPolicy                      { return s.dcrPolicy }
+func (s *Server) JTIReplayStore() security.JTIReplayStore          { return s.jtiReplayStore }
+func (s *Server) SubjectClientIndex() security.SubjectClientIndex  { return s.subjectClientIndex }
+func (s *Server) JARFetcher() security.JARFetcher                  { return s.jarFetcher }
+func (s *Server) JARDecrypter() security.JWEDecrypter              { return s.jarDecrypter }
+func (s *Server) JWEResponseEncrypter() security.JWEEncrypter      { return s.jweResponseEncrypter }
+func (s *Server) AccountLockout() security.AccountLockout          { return s.accountLockout }
+func (s *Server) PairwiseStore() security.PairwiseSubjectStore     { return s.pairwiseStore }
+func (s *Server) ClientCertExtractor() ClientCertExtractor         { return s.clientCertExtractor }
+func (s *Server) DPoPNonceProvider() DPoPNonceProvider             { return s.dpopNonceProvider }
 
 // EncryptIDTokenForClient encrypts an id_token for a specific client when
 // the client has id_token_encrypted_response_alg configured.
@@ -173,9 +183,9 @@ func (s *Server) AnomalyRunner() *anomaly.Runner           { return s.anomalyRun
 // TokenUsageRecorder returns the opt-in token-usage telemetry recorder, or
 // nil when [WithTokenUsageRecorder] was never wired. Satisfies
 // oauth.IntrospectDeps for the /token/introspect usage-recording seam; every
-// method on a nil *tokenusage.Recorder is a safe no-op, so callers never
+// method on a nil *metering.Recorder is a safe no-op, so callers never
 // need a nil check.
-func (s *Server) TokenUsageRecorder() *tokenusage.Recorder { return s.tokenUsageRecorder }
+func (s *Server) TokenUsageRecorder() *metering.Recorder { return s.tokenUsageRecorder }
 
 // TokenAnomalyDetector returns the opt-in token-behavior anomaly detector, or
 // nil when [WithTokenAnomalyDetector] was never wired. Every method on a nil

@@ -7,13 +7,16 @@ import (
 )
 
 func TestInventoryNormalizesModuleList(t *testing.T) {
-	oldProfile, oldDigest, oldModules := BuildProfile, ModuleLockDigest, CompiledModules
+	oldProfile, oldDigest := BuildProfile, ModuleLockDigest
+	oldModules, oldCapabilities := CompiledModules, CompiledCapabilities
 	t.Cleanup(func() {
-		BuildProfile, ModuleLockDigest, CompiledModules = oldProfile, oldDigest, oldModules
+		BuildProfile, ModuleLockDigest = oldProfile, oldDigest
+		CompiledModules, CompiledCapabilities = oldModules, oldCapabilities
 	})
 	BuildProfile = "minimal"
 	ModuleLockDigest = "sha256:abc"
 	CompiledModules = "core-runtime, oauth-client-credentials, "
+	CompiledCapabilities = "z.v1, a.v1, z.v1"
 
 	got := Inventory("demo")
 	if got.Program != "snaplink" || got.Profile != "minimal" || got.LockDigest != "sha256:abc" {
@@ -21,6 +24,25 @@ func TestInventoryNormalizesModuleList(t *testing.T) {
 	}
 	if strings.Join(got.Modules, ",") != "core-runtime,oauth-client-credentials" {
 		t.Fatalf("Inventory modules = %v", got.Modules)
+	}
+	if strings.Join(got.Capabilities, ",") != "a.v1,z.v1" {
+		t.Fatalf("Inventory capabilities = %v", got.Capabilities)
+	}
+}
+
+func TestValidateRequiredCapabilities(t *testing.T) {
+	oldProfile, oldCapabilities := BuildProfile, CompiledCapabilities
+	t.Cleanup(func() {
+		BuildProfile, CompiledCapabilities = oldProfile, oldCapabilities
+	})
+	BuildProfile = "minimal"
+	CompiledCapabilities = "core.runtime.v1, oidc.common.v1"
+	if err := ValidateRequiredCapabilities([]string{" oidc.common.v1 "}); err != nil {
+		t.Fatalf("compiled requirement rejected: %v", err)
+	}
+	err := ValidateRequiredCapabilities([]string{"admin.control-plane.v1"})
+	if err == nil || !strings.Contains(err.Error(), "admin.control-plane.v1") {
+		t.Fatalf("missing requirement error = %v", err)
 	}
 }
 
@@ -43,7 +65,7 @@ func TestWriteModulesText(t *testing.T) {
 	if err := WriteModules(&out, "demo", false); err != nil {
 		t.Fatalf("WriteModules: %v", err)
 	}
-	for _, want := range []string{"demo modules", "profile:", "lock:", "core-runtime"} {
+	for _, want := range []string{"demo modules", "profile:", "lock:", "core-runtime", "capabilities:"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("text output %q missing %q", out.String(), want)
 		}

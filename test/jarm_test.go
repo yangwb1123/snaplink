@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -93,25 +92,26 @@ func TestJARM_QueryDeliverySignedResponse(t *testing.T) {
 	srv := newJARMHarness(t, true)
 	for _, mode := range []string{"jwt", "query.jwt"} {
 		resp := jarmLogin(t, srv, mode)
-		if resp.StatusCode != http.StatusFound {
+		if resp.StatusCode != http.StatusOK {
 			raw, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
 			t.Fatalf("mode=%s status=%d body=%s", mode, resp.StatusCode, raw)
 		}
-		loc, err := url.Parse(resp.Header.Get("Location"))
+		var envelope map[string]any
+		err := json.NewDecoder(resp.Body).Decode(&envelope)
 		_ = resp.Body.Close()
 		if err != nil {
-			t.Fatalf("mode=%s parse Location: %v", mode, err)
+			t.Fatalf("mode=%s decode envelope: %v", mode, err)
 		}
-		jwt := loc.Query().Get("response")
+		jwt, _ := envelope["response"].(string)
 		if jwt == "" {
-			t.Fatalf("mode=%s missing response param: %q", mode, resp.Header.Get("Location"))
+			t.Fatalf("mode=%s missing response param: %v", mode, envelope)
 		}
 		if len(strings.Split(jwt, ".")) != 3 {
 			t.Errorf("mode=%s response is not a JWS: %q", mode, jwt)
 		}
 		// No bare code/state leaked alongside the signed response.
-		if loc.Query().Get("code") != "" {
+		if envelope["code"] != nil || envelope["state"] != nil {
 			t.Errorf("mode=%s bare code leaked alongside JARM response", mode)
 		}
 	}
@@ -121,11 +121,15 @@ func TestJARM_FragmentDelivery(t *testing.T) {
 	srv := newJARMHarness(t, true)
 	resp := jarmLogin(t, srv, "fragment.jwt")
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusFound {
-		t.Fatalf("status=%d want 302", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d want 200", resp.StatusCode)
 	}
-	if !strings.Contains(resp.Header.Get("Location"), "#response=") {
-		t.Errorf("fragment delivery must carry #response=, got %q", resp.Header.Get("Location"))
+	var envelope map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if jwt, _ := envelope["response"].(string); len(strings.Split(jwt, ".")) != 3 {
+		t.Errorf("fragment XHR delivery must carry signed response, got %v", envelope)
 	}
 }
 

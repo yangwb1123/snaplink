@@ -145,15 +145,15 @@ func TestFormEncoded_TokenRefreshGrant(t *testing.T) {
 
 func TestFormEncoded_BasicAuthOverridesBodyCreds(t *testing.T) {
 	srv := newFormHarness(t)
-	// Body carries WRONG creds, Basic header carries RIGHT creds.
-	// Per RFC 6749 §2.3.1, Basic must win — the call must succeed.
+	// Body carries wrong credentials while Basic carries the valid credential.
+	// The endpoint contract gives the Authorization header precedence.
 	status, body := postForm(t, srv, "/token", url.Values{
 		"grant_type":    {"client_credentials"},
 		"client_id":     {"wrong"},
 		"client_secret": {"also-wrong"},
 	}, [2]string{formClientID, formSecret})
 	if status != http.StatusOK {
-		t.Fatalf("Basic should override bad body creds: status=%d body=%v", status, body)
+		t.Fatalf("Basic should override body credentials: status=%d body=%v", status, body)
 	}
 	if body["access_token"] == nil {
 		t.Errorf("missing access_token: %v", body)

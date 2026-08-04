@@ -10,11 +10,11 @@ import (
 	"github.com/yangwb1123/snaplink/domains/anomaly"
 	"github.com/yangwb1123/snaplink/domains/authenticators/passkeypolicy"
 	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/domains/tokenanomaly"
 	"github.com/yangwb1123/snaplink/domains/tokenexchange"
 	"github.com/yangwb1123/snaplink/domains/tokenpolicy"
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
 	"github.com/yangwb1123/snaplink/interfaces/cors"
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
@@ -36,12 +36,14 @@ import (
 
 // protocolState holds risk/MFA/anomaly/metrics/transport wiring and the OAuth/OIDC grant + discovery static configuration fields.
 type protocolState struct {
-	riskScorer         spi.RiskScorer
-	mfaProvider        spi.MFAProvider
-	mfaChallengeStore  spi.MFAChallengeStore
-	mfaChallengeTTL    time.Duration
-	anomalyRunner      *anomaly.Runner
-	tokenUsageRecorder *tokenusage.Recorder
+	riskScorer            spi.RiskScorer
+	mfaProvider           spi.MFAProvider
+	mfaChallengeStore     spi.MFAChallengeStore
+	mfaChallengeTTL       time.Duration
+	loginTransactionStore spi.MFAChallengeStore
+	loginTransactionTTL   time.Duration
+	anomalyRunner         *anomaly.Runner
+	tokenUsageRecorder    *metering.Recorder
 	// tokenPolicyStore holds the opt-in token-policy engine (WithTokenPolicy).
 	// Nil = no policy layer: issuerForClient returns the raw issuer and
 	// enforceTokenPolicy is a no-op, so issuance is byte-identical to today.
@@ -164,6 +166,7 @@ type protocolState struct {
 	protectedResourceMetadata  *ProtectedResourceMetadata
 	cibaStore                  oauth.CIBAStore
 	cibaTransport              oauth.CIBATransport
+	cibaUserCodeVerifier       oauth.CIBAUserCodeVerifier
 	cibaPingNotifier           oauth.CIBAPingNotifier
 	cibaPushNotifier           oauthspi.CIBAPushNotifier
 	cibaRequestTTL             time.Duration

@@ -84,6 +84,7 @@ func (b *appBuilder) wireConsentStore() error {
 	// approve re-POST consuming on a different replica doesn't loop forever.
 	if b.redis != nil {
 		b.opts = append(b.opts, sso.WithConsentChallengeStore(redisbackend.NewConsentChallengeStore(b.redis)))
+		b.opts = append(b.opts, sso.WithLoginTransactionStore(redisbackend.NewMFAChallengeStore(b.redis), 0))
 		logger.Info("consent challenge store: redis (cluster-shared)")
 	}
 	return nil

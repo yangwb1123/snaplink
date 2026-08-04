@@ -175,7 +175,8 @@ func (s *TokenAdminService) IssueTempToken(ctx context.Context, in *adminv1.Issu
 	if err := s.tempStore.Issue(ctx, token, sub, s.tempTokenTTL); err != nil {
 		return nil, status.Errorf(codes.Internal, "issue temp: %v", err)
 	}
-	recordAdmin(ctx, s.recorder, audit.EventAdminTempTokenIssued, in.UserId)
+	recordAdminMeta(ctx, s.recorder, audit.EventAdminTempTokenIssued, in.UserId,
+		map[string]string{"target_user_id": in.UserId})
 	return &adminv1.IssueTempTokenResponse{
 		Token:         token,
 		ExpiresAtUnix: time.Now().Add(s.tempTokenTTL).Unix(),

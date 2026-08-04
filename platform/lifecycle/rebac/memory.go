@@ -57,27 +57,60 @@ func (m *MemoryStore) Write(_ context.Context, t Tuple) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.writeLocked(t)
+	return nil
+}
+
+func (m *MemoryStore) writeLocked(t Tuple) {
 	k := keyOf(t)
 	if _, exists := m.tuples[k]; exists {
-		return nil
+		return
 	}
 	m.tuples[k] = t
 	orKey := objectRelationKeyOf(t.Object, t.Relation)
 	m.byObjectRelation[orKey] = append(m.byObjectRelation[orKey], k)
-	return nil
 }
 
 // Delete removes t. Idempotent: deleting an absent tuple is a no-op.
 func (m *MemoryStore) Delete(_ context.Context, t Tuple) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.deleteLocked(t)
+	return nil
+}
+
+func (m *MemoryStore) deleteLocked(t Tuple) {
 	k := keyOf(t)
 	if _, exists := m.tuples[k]; !exists {
-		return nil
+		return
 	}
 	delete(m.tuples, k)
 	orKey := objectRelationKeyOf(t.Object, t.Relation)
 	m.byObjectRelation[orKey] = deleteKey(m.byObjectRelation[orKey], k)
+}
+
+// ApplyBatch validates the whole request before taking the mutation lock, then
+// applies it as one critical section. Since the in-memory writes cannot fail
+// after validation, readers observe either the old or the complete new set.
+func (m *MemoryStore) ApplyBatch(_ context.Context, writes, deletes []Tuple) error {
+	for _, t := range writes {
+		if err := t.Validate(); err != nil {
+			return err
+		}
+	}
+	for _, t := range deletes {
+		if err := t.Validate(); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, t := range writes {
+		m.writeLocked(t)
+	}
+	for _, t := range deletes {
+		m.deleteLocked(t)
+	}
 	return nil
 }
 

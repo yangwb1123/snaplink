@@ -113,6 +113,7 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidc.Pr
 	s.applyGrantEndpoints(&cfg, base, clientSnap)
 	s.applyLogoutMetadata(&cfg, clientSnap)
 	s.applyStaticClaimsAndSecurity(&cfg, clientSnap)
+	s.applyServingRegionMetadata(&cfg)
 	s.applyEndpointAuthSigningAlgs(&cfg)
 	s.applyResponseModesAndProfiles(&cfg, ctx)
 	s.applyIntrospectionSigningMetadata(&cfg, ctx.Request().Context())
@@ -135,21 +136,8 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidc.Pr
 // capability fields. The conditional + derived fields are layered on by the
 // apply* helpers in buildOIDCConfiguration, in the same order as the original
 // inline assembly so the output stays byte-identical.
-// baseAdvertisedGrants is the set of grant types ALWAYS advertised in
-// discovery, independent of optional store wiring. device_code and CIBA are
-// conditionally appended in applyGrantEndpoints only when their store is wired
-// (RFC 8414 §2: advertise only what is actually supported — /device/* and the
-// device token grant return 501 when WithDeviceCodeStore is omitted). This is
-// deliberately NARROWER than core.SupportedGrants, which stays the full
-// recognized set for unsupported_grant_type errors.
-func baseAdvertisedGrants() []string {
-	return []string{
-		GrantAuthorizationCode,
-		GrantRefreshToken,
-		GrantClientCredentials,
-		GrantTokenExchange,
-	}
-}
+// baseAdvertisedGrants (the grant set always advertised, independent of
+// optional store wiring) lives in server_discovery_cache.go.
 
 func buildBaseMetadata(s *Server, base string) oidc.ProviderMetadata {
 	cfg := oidc.ProviderMetadata{
@@ -299,16 +287,15 @@ func (s *Server) applyMFAIssuerSigning(cfg *oidc.ProviderMetadata, ctx HandlerCo
 // available; ping/push are added when their respective notifier is wired
 // (WithCIBAPingNotifier / WithCIBAPushNotifier — modes built by
 // cibaDeliveryModes, accessors_feature_gates.go, to stay under this file's
-// maintainability line budget). Poll mode resolves the user from
-// login_hint/id_token_hint rather than a user_code, so the user_code
-// parameter is unsupported.
+// maintainability line budget). User-code support is advertised only when a
+// dedicated verifier is wired.
 func (s *Server) applyCIBABackchannel(cfg *oidc.ProviderMetadata, base string) {
 	if s.cibaStore == nil || !s.cibaGateOn() {
 		return
 	}
 	cfg.BackchannelAuthenticationEndpoint = base + PathBackchannelAuth
 	cfg.BackchannelTokenDeliveryModesSupported = s.cibaDeliveryModes()
-	cfg.BackchannelUserCodeParameterSupported = false
+	cfg.BackchannelUserCodeParameterSupported = s.cibaUserCodeVerifier != nil
 	cfg.GrantTypesSupported = append(cfg.GrantTypesSupported, GrantCIBA)
 }
 

@@ -80,6 +80,7 @@ func (s *Server) issueRefreshToken(
 		Scopes:               scopes,
 		Attributes:           attributes,
 		FamilyID:             familyID,
+		JTI:                  authCtx.JTI,
 		Resources:            resources,
 		AuthorizationDetails: authDetails,
 		SID:                  sid,
@@ -99,45 +100,70 @@ func isScopeSubset(want, have []string) bool {
 // handleCallback handles the OAuth callback. This remains in root as it's a Server HTTP handler.
 func (s *Server) handleCallback(ctx HandlerContext) {
 	tokenNoStoreHeaders(ctx)
-	code := ctx.Query("code")
 	state := ctx.Query("state")
-	provider := ctx.Query("provider")
-	if code == "" || state == "" {
+	if _, ok := federatedProviderFromState(state); !ok {
 		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidCallback))
 		return
 	}
-	auth, ok := s.resolveCallbackAuthenticator(ctx, provider, code, state)
+	s.handleFederatedOAuthCallback(ctx, state)
+}
+
+func (s *Server) handleFederatedOAuthCallback(ctx HandlerContext, state string) {
+	resume, client, ok := s.consumeFederatedAuthorization(ctx, state)
 	if !ok {
-		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrUnknownProvider))
 		return
 	}
-	result, err := auth.Callback(context.Background(), &CallbackState{Code: code, State: state})
+	provider := ctx.Query("provider")
+	if provider != "" && provider != resume.Provider {
+		s.queueFederatedContinuation(ctx, resume, client, nil, ErrCallbackFailed)
+		return
+	}
+	if upstreamError := ctx.Query("error"); upstreamError != "" {
+		code := ErrCallbackFailed
+		if upstreamError == ErrAccessDenied {
+			code = ErrAccessDenied
+		}
+		s.queueFederatedContinuation(ctx, resume, client, nil, code)
+		return
+	}
+	code := ctx.Query("code")
+	auth, ok := s.resolveCallbackAuthenticator(ctx, resume.Provider)
+	if !ok {
+		s.queueFederatedContinuation(ctx, resume, client, nil, ErrCallbackFailed)
+		return
+	}
+	result, err := auth.Callback(ctx.Request().Context(), &CallbackState{
+		Code: code, State: state, ClientID: client.ID, Scope: resume.Request.Scope,
+	})
 	if err != nil {
 		s.logger.Error("callback failed", "provider", auth.Name(), "error", err)
 		s.recordCallbackFailure(ctx, auth.Name(), ErrCallbackFailed)
-		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrCallbackFailed))
+		s.queueFederatedContinuation(ctx, resume, client, nil, ErrCallbackFailed)
 		return
 	}
-	s.finalizeCallbackSession(ctx, result)
+	s.queueFederatedContinuation(ctx, resume, client, result, "")
 }
 
-// resolveCallbackAuthenticator picks the authenticator that owns this callback.
-func (s *Server) resolveCallbackAuthenticator(ctx HandlerContext, provider, code, state string) (Authenticator, bool) {
-	if provider != "" {
-		auth, _ := s.getAuthenticator(provider)
-		if auth == nil {
-			// collapses to the identical unknown_provider response — no 400-vs-401
-			// or outbound-fetch timing oracle over cross-tenant connection ids.
-			auth, _ = s.connectionLoginAuthenticator(ctx, provider)
-		}
-		return auth, auth != nil
+func (s *Server) resolveCallbackAuthenticator(ctx HandlerContext, provider string) (Authenticator, bool) {
+	auth, _ := s.getAuthenticator(provider)
+	if auth == nil {
+		auth, _ = s.connectionLoginAuthenticator(ctx, provider)
 	}
-	for _, a := range s.authenticators {
-		if _, err := a.Callback(context.Background(), &CallbackState{Code: code, State: state}); err == nil {
-			return a, true
-		}
-	}
-	return nil, false
+	return auth, auth != nil
+}
+
+func validFederatedResume(resume *federatedAuthorizationState, provider, subject, clientID string) bool {
+	return resume != nil && resume.Provider == provider && resume.Request.Provider == provider &&
+		resume.Request.ClientID == clientID && subject == provider
+}
+
+func validFederatedCallbackClient(
+	ctx HandlerContext, client *Client, resume *federatedAuthorizationState, provider string,
+) bool {
+	return client != nil && client.Active && clientTenantOK(ctx, client) &&
+		client.IsAuthenticatorAllowed(provider) &&
+		client.IsRedirectURIValid(resume.Request.RedirectURI) &&
+		validFederatedLoginPage(client.LoginPageURI)
 }
 
 // errMaxActiveSessions is the sentinel createSession returns when a wired
@@ -158,7 +184,7 @@ var errMaxActiveSessions = errors.New("sso: max active sessions reached")
 // ListByUser — the same enumerator the WithMaxSessionsPerUser eviction cap uses
 // — to count the subject's live sessions, and enforces the cap BEFORE the mint
 // so an over-cap login is refused rather than evicting a peer session.
-func (s *Server) sessionPolicyCapExceeded(ctx HandlerContext, userID, clientID string) bool {
+func (s *Server) sessionPolicyCapExceeded(ctx HandlerContext, userID, clientID, tenantID string) bool {
 	if s.tokenPolicyStore == nil || s.sessionMgr == nil {
 		return false
 	}
@@ -173,13 +199,27 @@ func (s *Server) sessionPolicyCapExceeded(ctx HandlerContext, userID, clientID s
 			"error", err, "user", userID)
 		return false
 	}
-	dec := tokenpolicy.Evaluate(tokenpolicy.PolicyInput{
+	in := tokenpolicy.PolicyInput{
 		ClientID:       clientID,
 		Subject:        userID,
+		TenantID:       tenantID,
 		ActiveSessions: len(sessions),
-	}, policies)
-	// Only the active-sessions dimension can fire on this seam (no scopes / no
-	// refresh depth supplied); guard on the reason so an unrelated deny can never
+	}
+	// Role resolution (fail-open): only when the seam has a tenant AND the
+	// roster store is wired. An error is logged + counted, roles stay empty,
+	// and role selectors simply don't match — a roster outage must never
+	// block login. ensureJITMembership runs before createSession, so a
+	// JIT-provisioned role is visible on the first login.
+	if tenantID != "" && s.tenantUserStore != nil {
+		if m, err := s.tenantUserStore.Get(ctx.Request().Context(), tenantID, userID); err == nil && m != nil {
+			in.SubjectRoles = []string{string(m.Role)}
+		} else if err != nil {
+			s.logger.Error("token policy: role resolution failed — role selectors inert (fail-open)",
+				"tenant", tenantID, "user", userID, "error", err)
+			s.metrics.ObserveTokenPolicyRoleResolutionError()
+		}
+	}
+	dec := tokenpolicy.Evaluate(in, policies)
 	if !dec.Deny || dec.Reason != tokenpolicy.DenyActiveSessions {
 		return false
 	}
@@ -190,51 +230,6 @@ func (s *Server) sessionPolicyCapExceeded(ctx HandlerContext, userID, clientID s
 	return true
 }
 
-// IntrospectionRenewExceeded moved to sso_protocol.go (which had room) to
-// keep this file within the per-file line budget.
-// finalizeCallbackSession upserts the user (when a UserProvider is configured)
-// and creates a session, writing the success or 500 error response.
-func (s *Server) finalizeCallbackSession(ctx HandlerContext, result *AuthResult) {
-	user := &User{
-		ID:         result.UserID,
-		ExternalID: result.ExternalID,
-		Provider:   result.Provider,
-		Attributes: result.Attributes,
-	}
-	if s.userProvider != nil {
-		// Gate: reject deprovisioned users (SCIM active=false) before creating a
-		// session — mirrors rejectDeactivatedUser on the password/LDAP path. A
-		// not-found user (first federated login) is treated active (no SCIM state).
-		if u, err := s.userProvider.GetByID(ctx.Request().Context(), result.UserID); err == nil && u != nil && !u.IsActive() {
-			s.logger.Info("federated callback blocked: account deprovisioned", "user_id", result.UserID, "provider", result.Provider)
-			ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrCallbackFailed))
-			return
-		}
-		if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
-			s.logger.Error("failed to upsert user", "error", err)
-			ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
-			return
-		}
-	}
-	// Federated callback has no OAuth client in play — pass an empty clientID
-	// (and tenant), so only a fleet-wide (empty-selector) max_active_sessions
-	// policy applies to this login.
-	session, err := s.createSession(ctx, result.UserID, "", "")
-	if err != nil {
-		if errors.Is(err, errMaxActiveSessions) {
-			ctx.JSON(http.StatusForbidden, errorBody(ctx, ErrAccessDenied))
-			return
-		}
-		s.logger.Error("failed to create session", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
-		return
-	}
-	s.linkGlobalSession(ctx.Request().Context(), session, result.UserID)
-	ctx.JSON(http.StatusOK, map[string]string{
-		KeySessionID: session.ID,
-		KeyStatus:    StatusAuthenticated,
-	})
-}
 func (s *Server) requireDeps(deps ...string) error {
 	for _, d := range deps {
 		switch d {
@@ -455,10 +450,10 @@ func (s *Server) respondLoginProviders(ctx HandlerContext, req *login.Request) b
 		return false
 	}
 	if conn, ok := s.resolveHomeRealm(ctx, req.LoginHint); ok {
-		ctx.JSON(http.StatusOK, map[string]any{keyHRConnectionRequired: true, keyHRConnectionID: conn.ID, keyHRType: string(conn.Type), keyHRTenantID: conn.TenantID, keyHRDisplayName: conn.DisplayName, KeyIss: s.resolveIssuer(ctx)})
+		ctx.JSON(http.StatusOK, map[string]any{keyHRConnectionRequired: true, keyHRConnectionID: conn.ID, keyHRType: string(conn.Type), keyHRTenantID: conn.TenantID, keyHRDisplayName: conn.DisplayName, keyAuthzRequestPassthrough: s.federatedContinuationSupported(ctx, req.ClientID), KeyIss: s.resolveIssuer(ctx)})
 		return true
 	}
-	resp := map[string]any{KeyProviders: s.providersForClient(ctx, req.ClientID), KeyClientContext: buildClientContext(ctx), KeyIss: s.resolveIssuer(ctx)}
+	resp := map[string]any{KeyProviders: s.providersForClient(ctx, req.ClientID), KeyClientContext: buildClientContext(ctx), keyAuthzRequestPassthrough: s.federatedContinuationSupported(ctx, req.ClientID), KeyIss: s.resolveIssuer(ctx)}
 	if lp := s.loginPageURIForClient(ctx, req.ClientID); lp != "" {
 		resp[KeyLoginPageURI] = lp
 	}

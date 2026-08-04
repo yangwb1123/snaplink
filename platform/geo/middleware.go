@@ -108,6 +108,21 @@ func FromHandlerContext(hctx core.HandlerContext) (*GeoInfo, bool) {
 	return g, ok
 }
 
+// CountryCodeFromContext returns the coarse ISO-3166-1 alpha-2 country
+// code GeoMiddleware stashed for this request, or "" when no provider is
+// wired, the lookup failed, or the IP was unknown. It is the single
+// canonical geo→Event read: both interfaces/sso and protocols/oauth route
+// their token-usage Offer seams through it so a missing geo source degrades
+// to the zero value everywhere — the per-token observation table must never
+// see a token's sightings split by which seam reported them.
+func CountryCodeFromContext(hctx core.HandlerContext) string {
+	info, ok := FromHandlerContext(hctx)
+	if !ok {
+		return ""
+	}
+	return info.CountryCode
+}
+
 // DefaultIPExtractor pulls the apparent client IP using the same
 // precedence the audit middleware uses: X-Forwarded-For (first
 // hop) → X-Real-IP → RemoteAddr. Only trust forwarded headers

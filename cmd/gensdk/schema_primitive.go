@@ -1,6 +1,10 @@
 package main
 
-import "sort"
+import (
+	"sort"
+	"strings"
+	"unicode"
+)
 
 // resolvePrimitive handles every schema shape without a $ref/allOf/oneOf
 // wrapper: arrays, objects (named-field or additionalProperties-only map,
@@ -131,4 +135,71 @@ func lastPathSegment(ref string) string {
 		i--
 	}
 	return ref[i+1:]
+}
+
+// isTSIdentifier reports whether name can be used unquoted as a TypeScript
+// property name (ASCII identifier; TS allows keywords like `class` as
+// property names, so only non-identifier characters force quoting).
+func isTSIdentifier(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r == '_' || r == '$':
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// nameIsIdentifier reports whether name is a valid (ASCII) identifier —
+// the Python-emitter half of the quoted-key decision.
+func nameIsIdentifier(name string) bool {
+	return isTSIdentifier(name) && name[0] != '_' && name[0] != '$'
+}
+
+// pyKeywords is the set of Python reserved words a TypedDict key must not
+// collide with unquoted.
+var pyKeywords = map[string]bool{
+	"False": true, "None": true, "True": true, "and": true, "as": true,
+	"assert": true, "async": true, "await": true, "break": true, "class": true,
+	"continue": true, "def": true, "del": true, "elif": true, "else": true,
+	"except": true, "finally": true, "for": true, "from": true, "global": true,
+	"if": true, "import": true, "in": true, "is": true, "lambda": true,
+	"nonlocal": true, "not": true, "or": true, "pass": true, "raise": true,
+	"return": true, "try": true, "while": true, "with": true, "yield": true,
+}
+
+func pyKeyword(name string) bool { return pyKeywords[name] }
+
+// pyFieldName mangles a wire key into a valid Python identifier for use as
+// a TypedDict key: keywords get a trailing underscore (`from` -> `from_`,
+// `class` -> `class_`), and non-identifier characters (SCIM's `$ref`, a
+// `urn:...` extension key) are replaced with `_`. The wire key is
+// unchanged — only the Python attribute name differs, documented at the
+// field's comment when mangled.
+func pyFieldName(name string) string {
+	if nameIsIdentifier(name) && !pyKeyword(name) {
+		return name
+	}
+	var b strings.Builder
+	for _, r := range name {
+		if r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	out := b.String()
+	if out == "" || (out[0] >= '0' && out[0] <= '9') {
+		out = "_" + out
+	}
+	if pyKeyword(out) {
+		out += "_"
+	}
+	return out
 }

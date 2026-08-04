@@ -27,6 +27,7 @@ func TestBuildApp_ClientYAMLPropagatesAllFields(t *testing.T) {
 			RedirectURIs:                     []string{"https://rp.example/cb"},
 			AllowedScopes:                    []string{"openid", "profile"},
 			AllowedAuthenticators:            []string{"password", "webauthn"},
+			LoginPageURI:                     "https://login.example/authorize",
 			TokenStrategy:                    "jwt",
 			Active:                           true,
 			TenantID:                         "acme",
@@ -71,6 +72,7 @@ func TestBuildApp_ClientYAMLPropagatesAllFields(t *testing.T) {
 		ok   bool
 	}{
 		{"RequirePKCE", got.RequirePKCE == true},
+		{"LoginPageURI", got.LoginPageURI == "https://login.example/authorize"},
 		{"AllowedResources len", len(got.AllowedResources) == 1 && got.AllowedResources[0] == "https://api.example/v1"},
 		{"PostLogoutRedirectURIs", len(got.PostLogoutRedirectURIs) == 1},
 		{"AllowedAuthorizationDetailsTypes", len(got.AllowedAuthorizationDetailsTypes) == 1},

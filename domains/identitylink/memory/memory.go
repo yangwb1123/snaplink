@@ -46,11 +46,17 @@ func (s *Store) ListByUser(_ context.Context, userID string) ([]identitylink.Ide
 // Link implements [identitylink.Store]. Idempotent for an already-active
 // (userID, provider, subject) triple — see the interface doc.
 func (s *Store) Link(_ context.Context, userID, provider, subject string) (identitylink.Identity, error) {
+	if err := identitylink.ValidateLinkInput(userID, provider, subject); err != nil {
+		return identitylink.Identity{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, id := range s.byID {
-		if id.UserID == userID && id.Provider == provider && id.Subject == subject && id.Status == identitylink.StatusActive {
-			return id, nil
+		if id.Provider == provider && id.Subject == subject && id.Status == identitylink.StatusActive {
+			if id.UserID == userID {
+				return id, nil
+			}
+			return identitylink.Identity{}, identitylink.ErrAccountConflict
 		}
 	}
 	rec := identitylink.Identity{
@@ -93,6 +99,38 @@ func (s *Store) FindByProviderSubject(_ context.Context, provider, subject strin
 	return identitylink.Identity{}, false, nil
 }
 
+// MergeUserLinks implements [identitylink.AtomicMerger]. The conflict is
+// revalidated while holding the same lock used by Link and Unlink, making the
+// winner selection and all losing-link reassignments one atomic operation.
+func (s *Store) MergeUserLinks(_ context.Context, conflict identitylink.Conflict) error {
+	if err := identitylink.ValidateConflict(conflict); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.conflictStillOwned(conflict) {
+		return identitylink.ErrAccountConflict
+	}
+	for id, rec := range s.byID {
+		if rec.UserID == conflict.IncomingUserID && rec.Status == identitylink.StatusActive {
+			rec.UserID = conflict.ExistingUserID
+			s.byID[id] = rec
+		}
+	}
+	return nil
+}
+
+func (s *Store) conflictStillOwned(conflict identitylink.Conflict) bool {
+	for _, rec := range s.byID {
+		if rec.Provider == conflict.Provider &&
+			rec.Subject == conflict.Subject &&
+			rec.Status == identitylink.StatusActive {
+			return rec.UserID == conflict.ExistingUserID
+		}
+	}
+	return false
+}
+
 // newLinkID mints an opaque per-link handle. Not a security token (it is
 // never used as a bearer credential) — random purely to avoid collisions and
 // sequential enumeration of the admin-visible id.
@@ -103,3 +141,4 @@ func newLinkID() string {
 }
 
 var _ identitylink.Store = (*Store)(nil)
+var _ identitylink.AtomicMerger = (*Store)(nil)

@@ -34,16 +34,16 @@ func TestLocalAuth_WithSessionManager_OptionWired(t *testing.T) {
 	}
 }
 
-func TestLocalAuth_Logout_SessionIDWithoutManagerIsNoop(t *testing.T) {
+func TestLocalAuth_Logout_SessionIDWithoutManagerFailsClosed(t *testing.T) {
 	t.Parallel()
 	// Without WithSessionManager wired, a session-only Logout request
-	// should silently skip the session step (no error, no panic).
+	// must fail closed instead of pretending the session was revoked.
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	client := local.NewAuthClient(iss)
 	if err := client.Logout(context.Background(), &ssoclient.LogoutRequest{
 		SessionID: "some-id",
-	}); err != nil {
-		t.Errorf("Logout with no SessionManager wired: %v", err)
+	}); !errors.Is(err, ssoclient.ErrLogoutNotConfigured) {
+		t.Errorf("Logout with no SessionManager wired = %v, want ErrLogoutNotConfigured", err)
 	}
 }
 

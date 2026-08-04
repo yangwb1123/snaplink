@@ -66,6 +66,69 @@ func TestValidateTokenWithIntrospect_Active(t *testing.T) {
 	}
 }
 
+// TestValidateTokenWithIntrospect_ServingRegion pins the remote-mode gate:
+// the echoed serving_region must be PROJECTED onto Claims (the
+// wireIntrospection embed alone is not enough — the projection literal is
+// field-by-field), and the fail-closed gate applies to missing claims — a
+// deliberate asymmetry with the optional iss/aud/exp neighbors, which are
+// enforced only when present.
+func TestValidateTokenWithIntrospect_ServingRegion(t *testing.T) {
+	t.Parallel()
+	mk := func(region string) rs.Config {
+		srv := introspectServer(t, "rs-client", "rs-secret", map[string]any{
+			"active":         true,
+			"iss":            "https://as.test",
+			"sub":            "user-1",
+			"aud":            "api://orders",
+			"exp":            9999999999,
+			"serving_region": region,
+		})
+		return rs.Config{
+			Issuer:          "https://as.test",
+			ExpectedAud:     "api://orders",
+			IntrospectURL:   srv.URL,
+			IntrospectCreds: &rs.ClientCreds{ID: "rs-client", Secret: "rs-secret"},
+		}
+	}
+
+	// In-set region -> valid, typed claim populated from the echo.
+	inSet := mk("eu-west-1")
+	inSet.AllowedServingRegions = []string{"eu-west-1"}
+	claims, err := rs.ValidateTokenWithIntrospect(context.Background(), "opaque", inSet)
+	if err != nil {
+		t.Fatalf("ValidateTokenWithIntrospect(in-set): %v", err)
+	}
+	if claims.ServingRegion != "eu-west-1" {
+		t.Errorf("ServingRegion = %q, want eu-west-1 (projected from echo)", claims.ServingRegion)
+	}
+
+	// Out-of-set region -> governance sentinel.
+	outOfSet := mk("us-east-1")
+	outOfSet.AllowedServingRegions = []string{"eu-west-1"}
+	_, err = rs.ValidateTokenWithIntrospect(context.Background(), "opaque", outOfSet)
+	if !errors.Is(err, rs.ErrServingRegionMismatch) {
+		t.Fatalf("err = %v, want ErrServingRegionMismatch (out-of-set)", err)
+	}
+
+	// Missing echo + configured allowlist -> FAIL CLOSED: an AS that does
+	// not echo the claim cannot serve a region-pinned deployment.
+	noEcho := mk("")
+	noEcho.AllowedServingRegions = []string{"eu-west-1"}
+	_, err = rs.ValidateTokenWithIntrospect(context.Background(), "opaque", noEcho)
+	if !errors.Is(err, rs.ErrServingRegionMismatch) {
+		t.Fatalf("err = %v, want ErrServingRegionMismatch (no echo, configured)", err)
+	}
+
+	// Empty config -> gate skipped; the claim still projects.
+	claims, err = rs.ValidateTokenWithIntrospect(context.Background(), "opaque", mk("eu-west-1"))
+	if err != nil {
+		t.Fatalf("ValidateTokenWithIntrospect(unconfigured): %v", err)
+	}
+	if claims.ServingRegion != "eu-west-1" || !claims.HasServingRegion() {
+		t.Errorf("ServingRegion = %q, HasServingRegion = %v", claims.ServingRegion, claims.HasServingRegion())
+	}
+}
+
 // TestValidateTokenWithIntrospect_RenewAfter proves the opt-in token-policy
 // early-warning field is projected onto Claims.RenewAfter, not left
 // reachable only via Claims.Raw.

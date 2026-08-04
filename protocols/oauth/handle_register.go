@@ -3,6 +3,7 @@ package oauth
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/platform/audit"
@@ -71,12 +72,21 @@ type DCRRequest struct {
 	PostLogoutRedirectURIs  []string `json:"post_logout_redirect_uris"`
 	TenantID                string   `json:"tenant_id"`
 	RequirePKCE             bool     `json:"require_pkce"`
+	JWKS                    *DCRJWKS `json:"jwks,omitempty"`
+	TLSClientAuthSubjectDN  string   `json:"tls_client_auth_subject_dn,omitempty"`
+	TLSClientAuthSANDNS     string   `json:"tls_client_auth_san_dns,omitempty"`
+	TLSClientAuthSANEmail   string   `json:"tls_client_auth_san_email,omitempty"`
+	TLSClientAuthSANURI     string   `json:"tls_client_auth_san_uri,omitempty"`
 
 	// OIDC Core JWE response-encryption metadata (§2 / §5.3.2).
 	IDTokenEncryptedResponseAlg  string `json:"id_token_encrypted_response_alg"`
 	IDTokenEncryptedResponseEnc  string `json:"id_token_encrypted_response_enc"`
 	UserinfoEncryptedResponseAlg string `json:"userinfo_encrypted_response_alg"`
 	UserinfoEncryptedResponseEnc string `json:"userinfo_encrypted_response_enc"`
+}
+
+type DCRJWKS struct {
+	Keys []core.JWK `json:"keys"`
 }
 
 // DCRResponse is the RFC 7591 §3.2.1 successful-registration body.
@@ -92,16 +102,22 @@ type DCRResponse struct {
 	RegistrationClientURI   string   `json:"registration_client_uri,omitempty"`
 	RedirectURIs            []string `json:"redirect_uris,omitempty"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
-	GrantTypes              []string `json:"grant_types,omitempty"`
-	ResponseTypes           []string `json:"response_types,omitempty"`
+	GrantTypes              []string `json:"grant_types"`
+	ResponseTypes           []string `json:"response_types"`
 	ClientName              string   `json:"client_name,omitempty"`
 	Scope                   string   `json:"scope,omitempty"`
-	Contacts                []string `json:"contacts,omitempty"`
+	Contacts                []string `json:"contacts"`
 	TokenStrategy           string   `json:"token_strategy,omitempty"`
 	AllowedAuthenticators   []string `json:"allowed_authenticators,omitempty"`
 	AllowedResources        []string `json:"allowed_resources,omitempty"`
 	PostLogoutRedirectURIs  []string `json:"post_logout_redirect_uris,omitempty"`
 	RequirePKCE             bool     `json:"require_pkce,omitempty"`
+	TenantID                string   `json:"tenant_id"`
+	JWKS                    *DCRJWKS `json:"jwks,omitempty"`
+	TLSClientAuthSubjectDN  string   `json:"tls_client_auth_subject_dn,omitempty"`
+	TLSClientAuthSANDNS     string   `json:"tls_client_auth_san_dns,omitempty"`
+	TLSClientAuthSANEmail   string   `json:"tls_client_auth_san_email,omitempty"`
+	TLSClientAuthSANURI     string   `json:"tls_client_auth_san_uri,omitempty"`
 
 	IDTokenEncryptedResponseAlg  string `json:"id_token_encrypted_response_alg,omitempty"`
 	IDTokenEncryptedResponseEnc  string `json:"id_token_encrypted_response_enc,omitempty"`
@@ -112,12 +128,18 @@ type DCRResponse struct {
 // validateDCRRequest adapts the wire DTO to DCRMetadata and runs the
 // shared policy validation against the canonical grant set.
 func validateDCRRequest(req *DCRRequest, policy *DCRPolicy) error {
+	normalizeDCRDefaults(req)
 	meta := &DCRMetadata{
 		RedirectURIs:                 req.RedirectURIs,
 		TokenEndpointAuthMethod:      req.TokenEndpointAuthMethod,
 		GrantTypes:                   req.GrantTypes,
 		ResponseTypes:                req.ResponseTypes,
 		AllowedAuthenticators:        req.AllowedAuthenticators,
+		HasJWKS:                      req.JWKS != nil && len(req.JWKS.Keys) > 0,
+		TLSClientAuthSubjectDN:       req.TLSClientAuthSubjectDN,
+		TLSClientAuthSANDNS:          req.TLSClientAuthSANDNS,
+		TLSClientAuthSANEmail:        req.TLSClientAuthSANEmail,
+		TLSClientAuthSANURI:          req.TLSClientAuthSANURI,
 		IDTokenEncryptedResponseAlg:  req.IDTokenEncryptedResponseAlg,
 		IDTokenEncryptedResponseEnc:  req.IDTokenEncryptedResponseEnc,
 		UserinfoEncryptedResponseAlg: req.UserinfoEncryptedResponseAlg,
@@ -133,6 +155,18 @@ func validateDCRRequest(req *DCRRequest, policy *DCRPolicy) error {
 	req.UserinfoEncryptedResponseAlg = meta.UserinfoEncryptedResponseAlg
 	req.UserinfoEncryptedResponseEnc = meta.UserinfoEncryptedResponseEnc
 	return nil
+}
+
+func normalizeDCRDefaults(req *DCRRequest) {
+	if req.TokenEndpointAuthMethod == "" {
+		req.TokenEndpointAuthMethod = "client_secret_basic"
+	}
+	if len(req.GrantTypes) == 0 {
+		req.GrantTypes = []string{core.GrantAuthorizationCode}
+	}
+	if len(req.ResponseTypes) == 0 && containsString(req.GrantTypes, core.GrantAuthorizationCode) {
+		req.ResponseTypes = []string{"code"}
+	}
 }
 
 // HandleRegister implements RFC 7591 Dynamic Client Registration.
@@ -251,13 +285,13 @@ func HandleRegistrationPut(d RegisterDeps, ctx core.HandlerContext) {
 	// token, persist it (hashed at rest by the store), and reveal the plaintext
 	// once in the response. newRAT empty => keep the existing (already-hashed)
 	// token unchanged.
-	ratToStore, newRAT, err := rotateRAT(d, client)
+	rotation, err := rotateRAT(d, client, BearerToken(ctx.Request()))
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
 
-	updated := buildUpdatedClient(&req, client, ratToStore)
+	updated := buildUpdatedClient(&req, client, rotation)
 
 	if err := d.ClientStoreAccessor().Update(ctx.Request().Context(), updated); err != nil {
 		d.SrvLogger().Error("dcr update failed", "error", err)
@@ -273,8 +307,8 @@ func HandleRegistrationPut(d RegisterDeps, ctx core.HandlerContext) {
 	resp := projectClientToDCRResponse(updated, ctx)
 	// One-time reveal of the rotated token (the stored value is now hashed).
 	// Without rotation the field stays omitted — GET/PUT never echo the RAT.
-	if newRAT != "" {
-		resp.RegistrationAccessToken = newRAT
+	if rotation.plaintext != "" {
+		resp.RegistrationAccessToken = rotation.plaintext
 	}
 	ctx.JSON(http.StatusOK, resp)
 }
@@ -344,12 +378,21 @@ func authorizeRegistrationMgmt(d RegisterDeps, ctx core.HandlerContext) (*core.C
 	// The stored RegistrationAccessToken may be a bcrypt hash (written by
 	// the store's Add path).  CompareClientSecret handles both cases while
 	// keeping the same constant-time guarantee for the plaintext fallback.
-	if !security.CompareClientSecret(client.RegistrationAccessToken, bearer) {
+	if !validRegistrationToken(client, bearer, time.Now()) {
 		d.SetBearerChallenge(ctx, d.ResolveIssuer(ctx), core.ErrInvalidToken, "Registration access token missing or invalid")
 		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidToken))
 		return nil, false
 	}
 	return client, true
+}
+
+func validRegistrationToken(client *core.Client, bearer string, now time.Time) bool {
+	if security.CompareClientSecret(client.RegistrationAccessToken, bearer) {
+		return true
+	}
+	return !client.RegistrationAccessTokenOverlapUntil.IsZero() &&
+		now.Before(client.RegistrationAccessTokenOverlapUntil) &&
+		security.CompareClientSecret(client.PreviousRegistrationAccessToken, bearer)
 }
 
 // recordDCRLifecycle writes one self-service DCR lifecycle audit event
@@ -391,9 +434,12 @@ func projectClientToDCRResponse(c *core.Client, ctx core.HandlerContext) DCRResp
 	// also permits ("SHOULD" is not "MUST").
 	return DCRResponse{
 		ClientID:                c.ID,
-		ClientSecretExpiresAt:   0,
+		ClientSecretExpiresAt:   dcrClientSecretExpiry(c),
 		RegistrationClientURI:   middleware.BaseURL(ctx.Request()) + PathRegister + "/" + c.ID,
 		RedirectURIs:            c.RedirectURIs,
+		GrantTypes:              append([]string(nil), c.GrantTypes...),
+		ResponseTypes:           dcrAttributeList(c.Attributes, dcrResponseTypesAttribute),
+		Contacts:                dcrAttributeList(c.Attributes, dcrContactsAttribute),
 		ClientName:              c.Name,
 		Scope:                   JoinScope(c.AllowedScopes),
 		TokenStrategy:           c.TokenStrategy,
@@ -402,6 +448,12 @@ func projectClientToDCRResponse(c *core.Client, ctx core.HandlerContext) DCRResp
 		AllowedResources:        c.AllowedResources,
 		PostLogoutRedirectURIs:  c.PostLogoutRedirectURIs,
 		RequirePKCE:             c.RequirePKCE,
+		TenantID:                c.TenantID,
+		JWKS:                    dcrJWKS(c.JWKS),
+		TLSClientAuthSubjectDN:  c.TLSClientAuthSubjectDN,
+		TLSClientAuthSANDNS:     c.TLSClientAuthSANDNS,
+		TLSClientAuthSANEmail:   c.TLSClientAuthSANEmail,
+		TLSClientAuthSANURI:     c.TLSClientAuthSANURI,
 
 		IDTokenEncryptedResponseAlg:  c.IDTokenEncryptedResponseAlg,
 		IDTokenEncryptedResponseEnc:  c.IDTokenEncryptedResponseEnc,

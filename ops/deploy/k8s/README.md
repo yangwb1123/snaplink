@@ -4,10 +4,9 @@
 > [`ops/deploy/kustomize/`](../kustomize/); that tree wins on conflict.
 
 This directory contains an API-only `sso-server` base: namespace, Deployment,
-Service, and a generated ConfigMap. It currently declares two replicas with
-memory-backed OAuth state, which is unsafe for authorization codes, sessions,
-refresh families, PAR, device/CIBA state, replay protection, and MFA
-challenges.
+Service, and a generated ConfigMap. It declares one replica with
+`server.topology.mode: single`; memory-backed OAuth state is not safe to scale
+horizontally.
 
 Use it for render inspection only:
 

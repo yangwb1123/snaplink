@@ -39,7 +39,7 @@ func (j *RSAJWTIssuer) Validate(_ context.Context, token string) (*sso.TokenClai
 	if err != nil {
 		return nil, err
 	}
-	return claimsFromPayload(p), nil
+	return claimsFromPayload(p, h.Typ), nil
 }
 
 // parseAndGuardHeader base64-decodes + JSON-parses the JWS header and enforces

@@ -45,7 +45,7 @@ func (s *Server) meClaimsOrChallenge(ctx HandlerContext) (*core.TokenClaims, boo
 		return nil, false
 	}
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), tokenString)
-	if err != nil {
+	if err != nil || !core.IsAccessTokenClaims(claims) {
 		s.setResourceBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidToken))
 		return nil, false
@@ -172,8 +172,24 @@ func (s *Server) handleRevokeMyTrustedDevice(ctx HandlerContext) {
 	selfservice.HandleRevokeMyTrustedDevice(s, ctx)
 }
 
+func (s *Server) handleMyNotifications(ctx HandlerContext) {
+	selfservice.HandleMyNotifications(s, ctx)
+}
+func (s *Server) handleMarkMyNotificationRead(ctx HandlerContext) {
+	selfservice.HandleMarkMyNotificationRead(s, ctx)
+}
+func (s *Server) handleMyNotificationPreferences(ctx HandlerContext) {
+	selfservice.HandleMyNotificationPreferences(s, ctx)
+}
+func (s *Server) handlePutNotificationPreferences(ctx HandlerContext) {
+	selfservice.HandlePutNotificationPreferences(s, ctx)
+}
+func (s *Server) handleMyNotificationStream(ctx HandlerContext) {
+	selfservice.HandleMyNotificationStream(s, ctx)
+}
+
 // mountTrustedDeviceRoutes registers the self-service "remember this device"
-// MFA-skip surface (GET/POST/DELETE /me/devices*) on gr, the SAME
+// MFA-skip surface (GET/POST/DELETE /me/trusted-devices*) on gr, the SAME
 // SelfService-gated core.GatedRouter mountSelfServiceCredentials builds — so
 // this group hot-toggles with the rest of the self-service surface instead
 // of needing its own gate. Byte-identical without a store wired.
@@ -181,9 +197,9 @@ func (s *Server) mountTrustedDeviceRoutes(gr Router) {
 	if s.trustedDeviceStore == nil {
 		return
 	}
-	gr.GET(PathMyDevices, s.handleMyTrustedDevices)
-	gr.POST(PathMyDevicesTrust, s.handleTrustMyDevice)
-	gr.DELETE(PathMyDeviceByID, s.handleRevokeMyTrustedDevice)
+	gr.GET(PathMyTrustedDevices, s.handleMyTrustedDevices)
+	gr.POST(PathMyTrustedDevicesTrust, s.handleTrustMyDevice)
+	gr.DELETE(PathMyTrustedDeviceByID, s.handleRevokeMyTrustedDevice)
 }
 
 // handleMyWebAuthnRegisterBegin delegates to selfservice.HandleWebAuthnRegisterBegin.
@@ -335,10 +351,11 @@ func (s *Server) mountUnauthenticatedSelfServiceRoutes() {
 // group via core.GatedRouter (SetSelfServiceGateEnabled) instead of the
 // previous single boot-time early-return. The public per-host branding
 // lookup used to live here too; it moved to mountBrandingEndpoint (gated by
-// WebSPA instead — it serves the hosted login SPA, not an authenticated
+// branding — it serves the hosted login SPA, not an authenticated
 // self-service action).
 func (s *Server) mountSelfServiceCredentials() {
 	gr := core.NewGatedRouter(s.router, s.selfServiceGateOn)
+	s.mountNotificationRoutes(gr)
 	// Self-service MFA factor management. Mounted only with an enrollment
 	// store; byte-identical without one.
 	if s.mfaEnrollmentStore != nil {
@@ -358,6 +375,24 @@ func (s *Server) mountSelfServiceCredentials() {
 		gr.GET(PathMyMFARecoveryCodes, s.handleGetRecoveryCodesCount)
 	}
 	s.mountTrustedDeviceRoutes(gr)
+	s.mountSelfServicePrivacyRoutes(gr)
+}
+
+func (s *Server) mountNotificationRoutes(gr Router) {
+	if s.notificationStore != nil {
+		gr.GET(PathMyNotifications, s.handleMyNotifications)
+		gr.POST(PathMyNotificationRead, s.handleMarkMyNotificationRead)
+		if s.NotificationBroker() != nil {
+			gr.GET(core.PathMyNotificationStream, s.handleMyNotificationStream)
+		}
+	}
+	if s.notificationPreferenceStore != nil {
+		gr.GET(PathMyNotificationPreferences, s.handleMyNotificationPreferences)
+		gr.PUT(PathMyNotificationPreferences, s.handlePutNotificationPreferences)
+	}
+}
+
+func (s *Server) mountSelfServicePrivacyRoutes(gr Router) {
 	// Self-service passkey registration (authenticated, bearer-bound). Mounts
 	// independently of the enrollment store: the registered credential lands in
 	// the WebAuthn store the Registrar wraps and surfaces in /me/mfa via the
@@ -385,26 +420,26 @@ func (s *Server) mountSelfServiceCredentials() {
 // mountBrandingEndpoint registers the public per-host branding lookup the
 // hosted login SPA consumes. Mounted whenever a tenant store is wired
 // (Domain.Branding is its source) — byte-identical to a build without one.
-// Reachability is gated LIVE by the WebSPA flag via core.GatedRouter (NOT
+// Reachability is gated LIVE by the branding flag via core.GatedRouter (NOT
 // a bare core.GateHandler wrap around the handler): this route is
 // registered on s.router, which also carries global middleware added via
 // Use() (Tracing) BEFORE Mount() reaches this call — only GatedRouter's
 // route-matching-level gate (StdRoute.live) prevents that middleware
 // from running on a gated-off request; a handler-only wrap would still
 // let it stamp response headers before the wrapped handler's own check
-// ever ran. Hot-toggles with the rest of the WebSPA surface
+// ever ran. Hot-toggles with the rest of the branding surface
 // (server_routes.go's buildProbeMux) instead of needing a re-Mount.
 func (s *Server) mountBrandingEndpoint() {
 	if s.tenantStore != nil {
-		core.NewGatedRouter(s.router, s.webSPAGateOn).GET(PathBranding, s.handleBranding)
+		core.NewGatedRouter(s.router, s.brandingGateOn).GET(PathBranding, s.handleBranding)
 	}
 }
 
 // WithTrustedDeviceStore wires the "remember this device" MFA-skip store. It
-// mounts the self-service surface GET /me/devices (list), POST
-// /me/devices/trust (mark the CURRENT device trusted — gated on the
+// mounts the self-service surface GET /me/trusted-devices (list), POST
+// /me/trusted-devices/trust (mark the CURRENT device trusted — gated on the
 // caller's bearer token having completed MFA THIS session, i.e. its amr
-// contains "mfa"), and DELETE /me/devices/:id (revoke one) — and it arms the
+// contains "mfa"), and DELETE /me/trusted-devices/:id (revoke one) — and it arms the
 // /auth/login step-up-skip check: when the configured RiskScorer demands
 // DecisionRequireMFA, a request presenting a live grant
 // (login.Request.DeviceToken) for the SAME (user, client) pair skips the

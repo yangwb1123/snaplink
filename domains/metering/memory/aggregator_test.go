@@ -16,7 +16,7 @@ func dayOf(year int, month time.Month, day int) time.Time {
 
 func TestUsage_hit(t *testing.T) {
 	t.Parallel()
-	a := New()
+	a := NewAggregator()
 	start := dayOf(2026, time.January, 15)
 	a.Record(&metering.TenantUsage{
 		TenantID:      "t1",
@@ -48,7 +48,7 @@ func TestUsage_hit(t *testing.T) {
 
 func TestUsage_miss_returns_zeros(t *testing.T) {
 	t.Parallel()
-	a := New()
+	a := NewAggregator()
 	u, err := a.Usage(ctx, "unknown-tenant", metering.PeriodDay, dayOf(2026, time.January, 1))
 	if err != nil {
 		t.Fatalf("Usage: %v", err)
@@ -63,7 +63,7 @@ func TestUsage_miss_returns_zeros(t *testing.T) {
 
 func TestUsage_midday_timestamp_truncated(t *testing.T) {
 	t.Parallel()
-	a := New()
+	a := NewAggregator()
 	// Record is stored with midnight; query uses a midday timestamp — should match.
 	start := dayOf(2026, time.March, 10)
 	a.Record(&metering.TenantUsage{
@@ -85,7 +85,7 @@ func TestUsage_midday_timestamp_truncated(t *testing.T) {
 
 func TestUsage_month_period(t *testing.T) {
 	t.Parallel()
-	a := New()
+	a := NewAggregator()
 	a.Record(&metering.TenantUsage{
 		TenantID:    "t3",
 		Period:      metering.PeriodMonth,
@@ -110,7 +110,7 @@ func TestUsage_month_period(t *testing.T) {
 // audit-log-backed aggregator).
 func TestUsage_activeClients(t *testing.T) {
 	t.Parallel()
-	a := New()
+	a := NewAggregator()
 	start := dayOf(2026, time.August, 15)
 	a.Record(&metering.TenantUsage{
 		TenantID:      "tenant-a",
@@ -143,7 +143,7 @@ func TestUsage_activeClients(t *testing.T) {
 
 func TestTopTenants_ordering(t *testing.T) {
 	t.Parallel()
-	a := New()
+	a := NewAggregator()
 	start := dayOf(2026, time.April, 1)
 	a.Record(&metering.TenantUsage{TenantID: "low", Period: metering.PeriodDay, PeriodStart: start, Logins: 5})
 	a.Record(&metering.TenantUsage{TenantID: "high", Period: metering.PeriodDay, PeriodStart: start, Logins: 500})
@@ -163,7 +163,7 @@ func TestTopTenants_ordering(t *testing.T) {
 
 func TestTopTenants_limit(t *testing.T) {
 	t.Parallel()
-	a := New()
+	a := NewAggregator()
 	start := dayOf(2026, time.May, 1)
 	for i := 0; i < 5; i++ {
 		a.Record(&metering.TenantUsage{
@@ -185,7 +185,7 @@ func TestTopTenants_limit(t *testing.T) {
 
 func TestTopTenants_different_period_excluded(t *testing.T) {
 	t.Parallel()
-	a := New()
+	a := NewAggregator()
 	jan := dayOf(2026, time.January, 1)
 	feb := dayOf(2026, time.February, 1)
 	a.Record(&metering.TenantUsage{TenantID: "t1", Period: metering.PeriodMonth, PeriodStart: jan, Logins: 99})

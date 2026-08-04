@@ -14,10 +14,14 @@ type PprofConfig struct {
 }
 
 type ServerConfig struct {
-	Issuer               string        `yaml:"issuer"`
-	BaseURL              string        `yaml:"base_url"`
-	Listen               string        `yaml:"listen"`
-	Pprof                PprofConfig   `yaml:"pprof"`
+	Issuer   string         `yaml:"issuer"`
+	BaseURL  string         `yaml:"base_url"`
+	Listen   string         `yaml:"listen"`
+	Pprof    PprofConfig    `yaml:"pprof"`
+	Topology TopologyConfig `yaml:"topology"`
+	// RequiredCapabilities is a deployment contract checked against the
+	// immutable capability inventory embedded by the module builder.
+	RequiredCapabilities []string      `yaml:"required_capabilities"`
 	SessionTTL           time.Duration `yaml:"session_ttl"`
 	TokenTTL             time.Duration `yaml:"token_ttl"`
 	DefaultTokenStrategy string        `yaml:"default_token_strategy"`
@@ -97,6 +101,19 @@ type ServerConfig struct {
 	// Note: if the GODEBUG env var is already set explicitly, this field
 	// does not override it (explicit env var takes precedence).
 	HTTP2 *HTTP2Config `yaml:"http2,omitempty"`
+}
+
+const (
+	TopologyModeSingle = "single"
+	TopologyModeMulti  = "multi"
+)
+
+// TopologyConfig declares whether requests can land on more than one server
+// process. Multi-replica mode turns per-process security state into a boot
+// error; AllowPerPodState is an explicit development-only escape hatch.
+type TopologyConfig struct {
+	Mode             string `yaml:"mode"`
+	AllowPerPodState bool   `yaml:"allow_per_pod_state"`
 }
 
 // APIVersioningConfig is the YAML shape of ADR-0008's API versioning

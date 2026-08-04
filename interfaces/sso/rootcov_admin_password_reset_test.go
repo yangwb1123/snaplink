@@ -9,10 +9,12 @@ package sso_test
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorecredential"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // TestRcovAdmin_ResetUserPasswordRejectsHistoryReuse proves the admin
@@ -63,5 +65,41 @@ func TestRcovAdmin_ResetUserPasswordNoHistoryStoreSucceeds(t *testing.T) {
 		map[string]any{"new_password": "any-password-at-all"})
 	if status != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204, body=%v", status, out)
+	}
+}
+
+func TestRcovAdmin_ResetUserPasswordRevokesExistingCredentials(t *testing.T) {
+	t.Parallel()
+	sessions := defaultimpl.NewMemorySessionManager()
+	refresh := defaultimpl.NewMemoryRefreshTokenStore()
+	trusted := memorystorecredential.NewMemoryTrustedDeviceStore()
+	env := rcovNewAdminServer(t,
+		sso.WithSessionManager(sessions),
+		sso.WithRefreshTokenStore(refresh, time.Hour),
+		sso.WithTrustedDeviceStore(trusted, time.Hour),
+	)
+	if err := refresh.Issue(t.Context(), "refresh-before-reset", &oauth.RefreshToken{
+		UserID: rcovUser, ClientID: rcovClient, ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seed refresh token: %v", err)
+	}
+	trustedToken, _, err := trusted.Trust(t.Context(), rcovUser, rcovClient, "laptop", time.Hour)
+	if err != nil {
+		t.Fatalf("seed trusted device: %v", err)
+	}
+
+	status, out := rcovDo(t, http.MethodPost, env.url+"/api/v1/admin/users/"+rcovUser+"/password", env.token,
+		map[string]any{"new_password": "credential-invalidating-password"})
+	if status != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204, body=%v", status, out)
+	}
+	if active, err := sessions.ListByUser(t.Context(), rcovUser); err != nil || len(active) != 0 {
+		t.Errorf("sessions after reset = %v, %v; want none", active, err)
+	}
+	if _, err := refresh.Consume(t.Context(), "refresh-before-reset"); err == nil {
+		t.Error("refresh token survived administrator password reset")
+	}
+	if ok, _ := trusted.Verify(t.Context(), rcovUser, rcovClient, trustedToken); ok {
+		t.Error("trusted-device credential survived administrator password reset")
 	}
 }

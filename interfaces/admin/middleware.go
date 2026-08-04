@@ -226,7 +226,7 @@ func (a *Middleware) authorizeGRPC(ctx context.Context, fullMethod string) (cont
 		return nil, status.Error(codes.Unauthenticated, "missing bearer token")
 	}
 	claims, err := a.validator.ValidateToken(ctx, token)
-	if err != nil {
+	if err != nil || !core.IsAccessTokenClaims(claims) {
 		return nil, status.Errorf(codes.Unauthenticated, "invalid token: %v", err)
 	}
 	clientID := claims.ClientID
@@ -366,7 +366,7 @@ func (a *Middleware) authenticateHTTP(w http.ResponseWriter, r *http.Request) (c
 		return nil, "", false
 	}
 	claims, err := a.validator.ValidateToken(r.Context(), token)
-	if err != nil {
+	if err != nil || !core.IsAccessTokenClaims(claims) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="admin", error="invalid_token"`)
 		http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
 		return nil, "", false

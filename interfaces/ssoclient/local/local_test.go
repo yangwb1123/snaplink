@@ -12,6 +12,7 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
 	"github.com/yangwb1123/snaplink/interfaces/ssoclient/local"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
 )
 
 // Interface satisfaction guards. These don't run; they fail to compile if
@@ -53,6 +54,18 @@ func TestLocalAuth_ValidateEmptyTokenErrors(t *testing.T) {
 	client := local.NewAuthClient(iss)
 	if _, err := client.ValidateToken(context.Background(), ""); err == nil {
 		t.Fatal("empty token should error")
+	}
+}
+
+func TestLocalAuth_RejectsIDToken(t *testing.T) {
+	t.Parallel()
+	iss := defaultimpl.NewEd25519JWTIssuer()
+	idToken, err := iss.IssueIDToken(context.Background(), &oidc.IDTokenRequest{Subject: "user-1", Audience: "rp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := local.NewAuthClient(iss).ValidateToken(context.Background(), idToken); err == nil {
+		t.Fatal("local access-token validator accepted an ID token")
 	}
 }
 

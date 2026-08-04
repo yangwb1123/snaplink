@@ -85,6 +85,25 @@ type PinReport struct {
 	PreviousID string // "" when nothing was pinned before
 }
 
+// AutoRollbackError preserves both the probe failure and the exact outcome of
+// its compensating rollback so operation journals never have to infer state
+// from an error string.
+type AutoRollbackError struct {
+	Target            string
+	ProbeError        error
+	CompensationError error
+}
+
+func (e *AutoRollbackError) Error() string {
+	if e.CompensationError != nil {
+		return fmt.Sprintf("releases: probe failed (auto-rollback to %q failed: %v): %v",
+			e.Target, e.CompensationError, e.ProbeError)
+	}
+	return fmt.Sprintf("releases: probe failed (auto-rollback to %q): %v", e.Target, e.ProbeError)
+}
+
+func (e *AutoRollbackError) Unwrap() error { return e.ProbeError }
+
 // Pin marks id as the current release in forward mode. Schema
 // regression vs the current release returns ErrSchemaRegress —
 // operators must use Rollback for that direction explicitly.
@@ -138,8 +157,10 @@ func (r *Registry) apply(ctx context.Context, id string, mode PinMode) (*PinRepo
 	// auto-rollbacks to the previous release when there is one.
 	if mode == PinForward && r.Probe != nil {
 		if probeErr := r.runProbe(ctx, target); probeErr != nil {
-			rolledBackTo := r.autoRollback(ctx, prev)
-			return nil, fmt.Errorf("releases: probe failed (auto-rollback to %q): %w", rolledBackTo, probeErr)
+			rolledBackTo, compensationErr := r.autoRollback(ctx, prev)
+			return nil, &AutoRollbackError{
+				Target: rolledBackTo, ProbeError: probeErr, CompensationError: compensationErr,
+			}
 		}
 	}
 
@@ -233,13 +254,18 @@ func (r *Registry) runProbe(ctx context.Context, target *Release) error {
 // because there's nowhere safe to flip to). Errors during the
 // rollback are intentionally swallowed — we already have the probe
 // failure to surface, and surfacing a second error here would mask it.
-func (r *Registry) autoRollback(ctx context.Context, prev *Release) string {
+func (r *Registry) autoRollback(ctx context.Context, prev *Release) (string, error) {
 	if prev == nil {
-		return ""
+		return "", errors.New("no previous release")
 	}
+	var errs []error
 	if r.Pinner != nil {
-		_ = r.Pinner.PinRollback(ctx, prev)
+		if err := r.Pinner.PinRollback(ctx, prev); err != nil {
+			errs = append(errs, fmt.Errorf("pinner rollback: %w", err))
+		}
 	}
-	_ = r.Store.SetCurrent(ctx, prev.ID)
-	return prev.ID
+	if err := r.Store.SetCurrent(ctx, prev.ID); err != nil {
+		errs = append(errs, fmt.Errorf("restore current pointer: %w", err))
+	}
+	return prev.ID, errors.Join(errs...)
 }

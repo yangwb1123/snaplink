@@ -12,14 +12,50 @@ package sso_test
 // rootcov_misc_test.go.
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
 )
+
+func TestRcovTrustedAndPhysicalDevicesUseDistinctRoutes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	physical := device.NewMemoryStore()
+	dev := &device.Device{ID: "physical-1", UserID: rcovUser, Fingerprint: "fp-1"}
+	if err := physical.Upsert(ctx, dev); err != nil {
+		t.Fatalf("seed physical device: %v", err)
+	}
+	trusted := defaultimpl.NewMemoryTrustedDeviceStore()
+	if _, _, err := trusted.Trust(ctx, rcovUser, rcovClient, "browser", time.Hour); err != nil {
+		t.Fatalf("seed trusted device: %v", err)
+	}
+	s := rcovNewServer(t, sso.WithDeviceStore(physical), sso.WithTrustedDeviceStore(trusted, time.Hour))
+	access, _ := rcovDirectLogin(t, s)
+
+	status, out := rcovDo(t, http.MethodGet, s.http.URL+"/me/devices", access, nil)
+	devices, _ := out["devices"].([]any)
+	hasPhysical := false
+	for _, raw := range devices {
+		item, _ := raw.(map[string]any)
+		hasPhysical = hasPhysical || item["fingerprint"] == "fp-1"
+	}
+	if status != http.StatusOK || !hasPhysical {
+		t.Fatalf("physical route status=%d body=%v", status, out)
+	}
+
+	status, out = rcovDo(t, http.MethodGet, s.http.URL+"/me/trusted-devices", access, nil)
+	devices, _ = out["devices"].([]any)
+	first, _ := devices[0].(map[string]any)
+	if status != http.StatusOK || first["label"] != "browser" || first["fingerprint"] != nil {
+		t.Fatalf("trusted route status=%d body=%v", status, out)
+	}
+}
 
 // rcovLoginWithMFA drives the full two-leg risk->RequireMFA->totp flow and
 // returns the resulting access token (amr includes "mfa").
@@ -59,7 +95,7 @@ func TestRcovTrustedDevices_TrustRequiresMFAThisSession(t *testing.T) {
 	// all, so its access token's amr never contains "mfa".
 	access, _ := rcovDirectLogin(t, s)
 
-	status, out := rcovPostJSON(t, s.http.URL+"/me/devices/trust", access, map[string]any{"label": "laptop"})
+	status, out := rcovPostJSON(t, s.http.URL+"/me/trusted-devices/trust", access, map[string]any{"label": "laptop"})
 	if status != http.StatusForbidden {
 		t.Fatalf("trust without an MFA leg = %d body=%v, want 403", status, out)
 	}
@@ -75,9 +111,9 @@ func TestRcovTrustedDevices_UnauthenticatedRequiresBearer(t *testing.T) {
 	tds := defaultimpl.NewMemoryTrustedDeviceStore()
 	s := rcovNewServer(t, sso.WithTrustedDeviceStore(tds, 30*24*time.Hour))
 
-	status, _ := rcovDo(t, http.MethodGet, s.http.URL+"/me/devices", "", nil)
+	status, _ := rcovDo(t, http.MethodGet, s.http.URL+"/me/trusted-devices", "", nil)
 	if status != http.StatusUnauthorized {
-		t.Errorf("GET /me/devices no bearer = %d, want 401", status)
+		t.Errorf("GET /me/trusted-devices no bearer = %d, want 401", status)
 	}
 }
 
@@ -99,7 +135,7 @@ func TestRcovTrustedDevices_TrustListSkipRevoke(t *testing.T) {
 	access := rcovLoginWithMFA(t, s)
 
 	// Trust the current device.
-	status, out := rcovPostJSON(t, s.http.URL+"/me/devices/trust", access, map[string]any{"label": "work laptop"})
+	status, out := rcovPostJSON(t, s.http.URL+"/me/trusted-devices/trust", access, map[string]any{"label": "work laptop"})
 	if status != http.StatusCreated {
 		t.Fatalf("trust = %d body=%v, want 201", status, out)
 	}
@@ -137,7 +173,7 @@ func TestRcovTrustedDevices_TrustListSkipRevoke(t *testing.T) {
 	}
 
 	// List surfaces the grant's metadata, never the token or its hash.
-	status, out = rcovDo(t, http.MethodGet, s.http.URL+"/me/devices", access, nil)
+	status, out = rcovDo(t, http.MethodGet, s.http.URL+"/me/trusted-devices", access, nil)
 	if status != http.StatusOK {
 		t.Fatalf("list devices status=%d body=%v", status, out)
 	}
@@ -157,11 +193,11 @@ func TestRcovTrustedDevices_TrustListSkipRevoke(t *testing.T) {
 	}
 
 	// Revoke removes it.
-	status, _ = rcovDo(t, http.MethodDelete, s.http.URL+"/me/devices/"+deviceID, access, nil)
+	status, _ = rcovDo(t, http.MethodDelete, s.http.URL+"/me/trusted-devices/"+deviceID, access, nil)
 	if status != http.StatusNoContent {
 		t.Fatalf("revoke status=%d, want 204", status)
 	}
-	status, out = rcovDo(t, http.MethodGet, s.http.URL+"/me/devices", access, nil)
+	status, out = rcovDo(t, http.MethodGet, s.http.URL+"/me/trusted-devices", access, nil)
 	devices, _ = out["devices"].([]any)
 	if status != http.StatusOK || len(devices) != 0 {
 		t.Fatalf("devices after revoke = %v (status=%d), want empty", devices, status)
@@ -198,7 +234,7 @@ func TestRcovTrustedDevices_EmitsAuditTrail(t *testing.T) {
 	)
 	access := rcovLoginWithMFA(t, s)
 
-	status, out := rcovPostJSON(t, s.http.URL+"/me/devices/trust", access, nil)
+	status, out := rcovPostJSON(t, s.http.URL+"/me/trusted-devices/trust", access, nil)
 	if status != http.StatusCreated {
 		t.Fatalf("trust = %d body=%v, want 201", status, out)
 	}
@@ -221,7 +257,7 @@ func TestRcovTrustedDevices_EmitsAuditTrail(t *testing.T) {
 		t.Errorf("mfa_skipped_trusted_device audit events = %d, want 1", n)
 	}
 
-	status, _ = rcovDo(t, http.MethodDelete, s.http.URL+"/me/devices/"+deviceID, access, nil)
+	status, _ = rcovDo(t, http.MethodDelete, s.http.URL+"/me/trusted-devices/"+deviceID, access, nil)
 	if status != http.StatusNoContent {
 		t.Fatalf("revoke status=%d, want 204", status)
 	}
@@ -230,7 +266,7 @@ func TestRcovTrustedDevices_EmitsAuditTrail(t *testing.T) {
 	}
 }
 
-// TestRcovTrustedDevices_RevokeIsOwnershipScoped proves DELETE /me/devices/:id
+// TestRcovTrustedDevices_RevokeIsOwnershipScoped proves DELETE /me/trusted-devices/:id
 // can never remove another user's grant — the same oracle-safe 404 whether
 // the id belongs to someone else or never existed.
 func TestRcovTrustedDevices_RevokeIsOwnershipScoped(t *testing.T) {
@@ -243,7 +279,7 @@ func TestRcovTrustedDevices_RevokeIsOwnershipScoped(t *testing.T) {
 		sso.WithTrustedDeviceStore(tds, 30*24*time.Hour),
 	)
 	access := rcovLoginWithMFA(t, s)
-	_, out := rcovPostJSON(t, s.http.URL+"/me/devices/trust", access, nil)
+	_, out := rcovPostJSON(t, s.http.URL+"/me/trusted-devices/trust", access, nil)
 	deviceID, _ := out["device_id"].(string)
 	if deviceID == "" {
 		t.Fatalf("no device_id: %v", out)
@@ -254,13 +290,13 @@ func TestRcovTrustedDevices_RevokeIsOwnershipScoped(t *testing.T) {
 	if _, _, err := tds.Trust(t.Context(), "someone-else", rcovClient, "", time.Hour); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	status, _ := rcovDo(t, http.MethodDelete, s.http.URL+"/me/devices/no-such-id", access, nil)
+	status, _ := rcovDo(t, http.MethodDelete, s.http.URL+"/me/trusted-devices/no-such-id", access, nil)
 	if status != http.StatusNotFound {
 		t.Errorf("delete unknown id = %d, want 404", status)
 	}
 
 	// Owner delete still works.
-	status, _ = rcovDo(t, http.MethodDelete, s.http.URL+"/me/devices/"+deviceID, access, nil)
+	status, _ = rcovDo(t, http.MethodDelete, s.http.URL+"/me/trusted-devices/"+deviceID, access, nil)
 	if status != http.StatusNoContent {
 		t.Errorf("owner delete = %d, want 204", status)
 	}
@@ -280,7 +316,7 @@ func TestRcovTrustedDevices_PasswordChangeRevokesGrants(t *testing.T) {
 		sso.WithTrustedDeviceStore(tds, 30*24*time.Hour),
 	)
 	access := rcovLoginWithMFA(t, s)
-	_, out := rcovPostJSON(t, s.http.URL+"/me/devices/trust", access, nil)
+	_, out := rcovPostJSON(t, s.http.URL+"/me/trusted-devices/trust", access, nil)
 	deviceToken, _ := out["device_token"].(string)
 	if deviceToken == "" {
 		t.Fatalf("no device_token: %v", out)
@@ -316,7 +352,7 @@ func TestRcovTrustedDevices_PasswordChangeRevokesGrants(t *testing.T) {
 func rcovTrustAndAssertSkip(t *testing.T, s *rcovServer) (access, deviceToken string) {
 	t.Helper()
 	access = rcovLoginWithMFA(t, s)
-	_, out := rcovPostJSON(t, s.http.URL+"/me/devices/trust", access, nil)
+	_, out := rcovPostJSON(t, s.http.URL+"/me/trusted-devices/trust", access, nil)
 	deviceToken, _ = out["device_token"].(string)
 	if deviceToken == "" {
 		t.Fatalf("no device_token: %v", out)

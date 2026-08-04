@@ -11,6 +11,7 @@ package sso_test
 // rcov* HTTP helpers.
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -56,11 +57,13 @@ func rcov2AssertionServer(t *testing.T, key rcov2DPoPKey, kid string) *rcovServe
 	t.Helper()
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
-		ID:            rcovClient,
-		Name:          "Assertion Client",
-		TokenStrategy: "jwt",
-		Active:        true,
-		SkipConsent:   true,
+		ID:                      rcovClient,
+		Secret:                  "assertion-fallback-secret",
+		Name:                    "Assertion Client",
+		TokenStrategy:           "jwt",
+		TokenEndpointAuthMethod: "private_key_jwt",
+		Active:                  true,
+		SkipConsent:             true,
 		JWKS: []sso.JWK{{
 			Kty: "OKP",
 			Crv: "Ed25519",
@@ -157,7 +160,8 @@ func TestRcov2A_PrivateKeyJWT_InactiveClientRejected(t *testing.T) {
 	s := rcov2AssertionServer(t, key, kid)
 	if err := s.clients.Update(context.Background(), &sso.Client{
 		ID: rcovClient, Name: "Assertion Client", TokenStrategy: "jwt", Active: false, SkipConsent: true,
-		JWKS: []sso.JWK{{Kty: "OKP", Crv: "Ed25519", Kid: kid, X: base64.RawURLEncoding.EncodeToString(key.pub)}},
+		TokenEndpointAuthMethod: "private_key_jwt",
+		JWKS:                    []sso.JWK{{Kty: "OKP", Crv: "Ed25519", Kid: kid, X: base64.RawURLEncoding.EncodeToString(key.pub)}},
 	}); err != nil {
 		t.Fatalf("deactivate client: %v", err)
 	}
@@ -174,6 +178,74 @@ func TestRcov2A_PrivateKeyJWT_InactiveClientRejected(t *testing.T) {
 	}
 	if out["error"] != "invalid_client" {
 		t.Errorf("inactive client assertion error = %v, want invalid_client", out["error"])
+	}
+}
+
+func TestRcov2A_RegisteredAuthMethodCannotFallbackOrMix(t *testing.T) {
+	t.Parallel()
+	key := rcov2NewDPoPKey(t)
+	const kid = "assert-method-key"
+	s := rcov2AssertionServer(t, key, kid)
+
+	var status int
+	var out map[string]any
+	for _, secret := range []string{"assertion-fallback-secret", "wrong-secret"} {
+		status, out = rcovPostJSON(t, s.http.URL+"/token", "", map[string]any{
+			"grant_type": "client_credentials", "client_id": rcovClient,
+			"client_secret": secret,
+		})
+		if status != http.StatusUnauthorized || out["error"] != sso.ErrInvalidClient {
+			t.Fatalf("private_key_jwt secret fallback (%q) = %d body=%v, want 401 invalid_client", secret, status, out)
+		}
+	}
+
+	assertion := rcov2SignAssertion(t, key, kid, rcovClient, rcov2AssertIssuer, time.Minute)
+	raw, _ := json.Marshal(map[string]any{
+		"grant_type": "client_credentials", "client_assertion_type": sso.ClientAssertionTypeJWTBearer,
+		"client_assertion": assertion,
+	})
+	req, _ := http.NewRequest(http.MethodPost, s.http.URL+"/token", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(rcovClient, "assertion-fallback-secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = rcov2ReadJSON(t, resp)
+	if resp.StatusCode != http.StatusUnauthorized || out["error"] != sso.ErrInvalidClient {
+		t.Fatalf("Basic + assertion = %d body=%v, want 401 invalid_client", resp.StatusCode, out)
+	}
+
+	for _, method := range []string{"client_secret_basic", "client_secret_post", "none"} {
+		clientID := "assertion-bypass-" + method
+		s.clients.AddSeed(&sso.Client{
+			ID: clientID, Secret: "secret", Active: true, TokenStrategy: "jwt",
+			TokenEndpointAuthMethod: method,
+			JWKS:                    []sso.JWK{{Kty: "OKP", Crv: "Ed25519", Kid: kid, X: base64.RawURLEncoding.EncodeToString(key.pub)}},
+		})
+		assertion = rcov2SignAssertion(t, key, kid, clientID, rcov2AssertIssuer, time.Minute)
+		status, out = rcovPostJSON(t, s.http.URL+"/token", "", map[string]any{
+			"grant_type": "client_credentials", "client_assertion_type": sso.ClientAssertionTypeJWTBearer,
+			"client_assertion": assertion,
+		})
+		if status != http.StatusUnauthorized || out["error"] != sso.ErrInvalidClient {
+			t.Errorf("%s assertion bypass = %d body=%v, want 401 invalid_client", method, status, out)
+		}
+	}
+
+	for _, method := range []string{"none", sso.ClientAuthTLS, sso.ClientAuthWorkloadIdentity} {
+		clientID := "secret-fallback-" + method
+		s.clients.AddSeed(&sso.Client{
+			ID: clientID, Secret: "registered-secret", Active: true, TokenStrategy: "jwt",
+			TokenEndpointAuthMethod: method,
+		})
+		status, out = rcovPostJSON(t, s.http.URL+"/token", "", map[string]any{
+			"grant_type": "client_credentials", "client_id": clientID,
+			"client_secret": "registered-secret",
+		})
+		if status != http.StatusUnauthorized || out["error"] != sso.ErrInvalidClient {
+			t.Errorf("%s secret fallback = %d body=%v, want 401 invalid_client", method, status, out)
+		}
 	}
 }
 

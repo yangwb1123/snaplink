@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/operations"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -26,10 +28,20 @@ type SnapshotAdminService struct {
 	snapshotter *snapshot.Snapshotter
 	restorer    *snapshot.Restorer
 	recorder    *audit.Recorder
+	operations  operations.Store
 }
 
-func NewSnapshotAdminService(p *snapshot.Pipeline, st snapshot.Storage, sn *snapshot.Snapshotter, r *snapshot.Restorer, recorder *audit.Recorder) *SnapshotAdminService {
-	return &SnapshotAdminService{pipeline: p, storage: st, snapshotter: sn, restorer: r, recorder: recorder}
+func NewSnapshotAdminService(p *snapshot.Pipeline, st snapshot.Storage, sn *snapshot.Snapshotter, r *snapshot.Restorer, recorder *audit.Recorder, operationStores ...operations.Store) *SnapshotAdminService {
+	var operationStore operations.Store
+	if len(operationStores) > 0 {
+		operationStore = operationStores[0]
+	} else {
+		operationStore = operations.NewMemoryStore()
+	}
+	return &SnapshotAdminService{
+		pipeline: p, storage: st, snapshotter: sn, restorer: r,
+		recorder: recorder, operations: operationStore,
+	}
 }
 
 func (s *SnapshotAdminService) ready() error {
@@ -108,13 +120,15 @@ func (s *SnapshotAdminService) List(ctx context.Context, in *adminv1.ListSnapsho
 		// Body-derived fields (taken_at_unix, source_namespace,
 		// bootstrap_applied_version) live inside the (potentially encrypted)
 		// body and are intentionally left zero here. Operators should call
-		// Get to populate them.
+		// Get to populate them. kind comes from the envelope HEADER, so it
+		// is available without decryption.
 		out.Items = append(out.Items, &adminv1.SnapshotMeta{
 			SnapshotId:          env.SnapshotID,
 			SchemaVersion:       snapshot.SchemaVersion,
 			Codec:               env.Codec,
 			EncryptionAlgorithm: env.Algorithm,
 			SizeBytes:           int64(len(raw)),
+			Kind:                env.Kind,
 		})
 	}
 	return out, nil
@@ -135,6 +149,10 @@ func (s *SnapshotAdminService) Get(ctx context.Context, in *adminv1.GetSnapshotR
 	if err != nil {
 		return nil, mapSnapshotError(err, "load "+in.Id)
 	}
+	// Ordinary admin reads are an inspection surface, never a credential
+	// recovery channel. Redact the decoded in-memory copy unconditionally;
+	// the sealed stored artifact remains unchanged and therefore restorable.
+	snapshot.SnapshotRedactSecrets().Redact(snap)
 	resBytes, err := json.Marshal(snap.Resources)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "marshal resources: %v", err)
@@ -175,27 +193,247 @@ func (s *SnapshotAdminService) Restore(ctx context.Context, in *adminv1.RestoreS
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unknown mode %q", in.Mode)
 	}
+	if s.operations == nil {
+		return nil, status.Error(codes.FailedPrecondition, "durable operation store not configured")
+	}
+	return s.restoreTracked(ctx, in, mode)
+}
 
-	snap, err := s.pipeline.Load(ctx, s.storage, in.Id)
+// resolveRestoreSafety validates the D1/D3 tri-state intents BEFORE any
+// write (including the operations ledger) and resolves them:
+//
+//   - auto_safety_snapshot: nil = server default (capture iff mode=replace,
+//     non-dry-run, and the source is not itself a safety artifact);
+//     false = explicit opt-out; true = capture regardless of mode.
+//   - rollback_on_error: nil = false. Requires an explicit
+//     auto_safety_snapshot=true (the server default is deliberately NOT
+//     enough — rollback is the dangerous path and demands an explicit net),
+//     a non-safety source, and a non-dry-run. The failure messages name the
+//     requirement so the tri-state asymmetry between the two BoolValue
+//     fields is self-explanatory.
+//
+// The source kind is read from the envelope HEADER (Get + PeekEnvelope), so
+// the recursion guard and rollback eligibility resolve without a full Load
+// and without creating an operation record. Returns
+// (captureIntended, effectiveCapture, rollbackOnError).
+func (s *SnapshotAdminService) resolveRestoreSafety(
+	ctx context.Context, in *adminv1.RestoreSnapshotRequest, mode snapshot.RestoreMode,
+) (bool, bool, bool, error) {
+	sourceIsSafety, err := s.snapshotIsSafety(ctx, in.Id)
 	if err != nil {
-		return nil, mapSnapshotError(err, "load "+in.Id)
+		return false, false, false, err
+	}
+	rollbackOnError := in.RollbackOnError != nil && in.RollbackOnError.Value
+	explicitAutoSafety := in.AutoSafetySnapshot != nil && in.AutoSafetySnapshot.Value
+	if err := validateRollbackIntent(in, explicitAutoSafety, sourceIsSafety); err != nil {
+		return false, false, false, err
+	}
+	captureIntended := explicitAutoSafety ||
+		(in.AutoSafetySnapshot == nil && mode == snapshot.ModeReplace && !in.DryRun && !sourceIsSafety)
+	if captureIntended && s.snapshotter == nil {
+		return false, false, false, status.Error(codes.FailedPrecondition, "safety snapshot capture requires a configured snapshotter; pass auto_safety_snapshot=false to opt out")
+	}
+	return captureIntended, captureIntended && !sourceIsSafety, rollbackOnError, nil
+}
+
+// restoreTracked runs one restore as a tracked operation. Steps:
+// load_snapshot → [capture_safety_snapshot] → apply_resources →
+// [rollback_safety_snapshot on failure with rollback armed]. A replace
+// non-dry-run restore captures a D1 safety snapshot before any target-store
+// write unless the caller opted out; a failure with rollback armed re-applies
+// the net and reports the rollback (see rollbackRestore).
+func (s *SnapshotAdminService) restoreTracked(
+	ctx context.Context, in *adminv1.RestoreSnapshotRequest, mode snapshot.RestoreMode,
+) (*adminv1.RestoreSnapshotResponse, error) {
+	captureIntended, effectiveCapture, rollbackOnError, err := s.resolveRestoreSafety(ctx, in, mode)
+	if err != nil {
+		return nil, err
+	}
+	operation, snap, err := s.startTrackedRestore(ctx, in)
+	if err != nil {
+		return nil, err
 	}
 	opts := snapshot.RestoreOptions{
-		Mode:             mode,
-		DryRun:           in.DryRun,
-		AdvanceBootstrap: in.AdvanceBootstrap,
-		Confirm:          in.Confirm,
+		Mode:               mode,
+		DryRun:             in.DryRun,
+		AdvanceBootstrap:   in.AdvanceBootstrap,
+		Confirm:            in.Confirm,
+		AutoSafetySnapshot: captureIntended,
+		RollbackOnError:    rollbackOnError,
+		Exclude:            restoreExclude(in),
 	}
-	for _, x := range in.Exclude {
-		opts.Exclude = append(opts.Exclude, snapshot.ResourceCategory(x))
+	if err := s.validateTrackedRestore(ctx, &operation, in, snap, &opts); err != nil {
+		return nil, err
 	}
-	rep, err := s.restorer.Restore(ctx, snap, opts)
+	safetyID, err := s.captureTrackedSafety(ctx, &operation, effectiveCapture)
 	if err != nil {
-		return nil, mapSnapshotError(err, "restore "+in.Id)
+		return nil, err
+	}
+	rep, err := s.applyTrackedRestore(ctx, &operation, in, snap, opts, safetyID, captureIntended)
+	if err != nil {
+		return nil, err
+	}
+	return s.finishTrackedRestore(ctx, &operation, in, mode, rep, safetyID, captureIntended)
+}
+
+// rollbackRestore runs the D3 rollback after a failed restore: it re-applies
+// the D1 safety snapshot in replace mode, records the compensation step,
+// fires the control-plane invalidator a second time (the re-apply's own
+// success path fired once), and terminates the operation as FAILED. The RPC
+// still fails — fail-closed: the caller must know the restore did not take
+// effect — but the destination state is safe and the outcome rides the error
+// (message + status details + operation record + audit meta).
+func (s *SnapshotAdminService) rollbackRestore(
+	ctx context.Context,
+	operation *operations.Operation,
+	in *adminv1.RestoreSnapshotRequest,
+	mode snapshot.RestoreMode,
+	src *snapshot.Snapshot,
+	rep *snapshot.Report,
+	safetyID string,
+	cause error,
+	captureIntended bool,
+) error {
+	_ = operations.FinishStep(ctx, s.operations, operation, cause) // apply_resources failed
+	if err := operations.BeginStep(ctx, s.operations, operation, "rollback_safety_snapshot"); err != nil {
+		return status.Errorf(codes.Internal, "persist restore step: %v", err)
+	}
+	safetySnap, err := s.pipeline.Load(ctx, s.storage, safetyID)
+	if err != nil {
+		return s.terminateRollback(ctx, operation, in, mode, rep, safetyID, captureIntended,
+			fmt.Errorf("rollback failed; target state unknown: %v", err), false)
+	}
+	// Rollback re-applies the net in replace mode, never captures again
+	// (recursion guard), and skips exactly the categories the failed restore
+	// could not have touched: the caller's excludes plus categories the
+	// source snapshot didn't cover — an excluded netpolicy, for instance, is
+	// never rewound by the rollback.
+	_, err = s.restorer.Restore(ctx, safetySnap, snapshot.RestoreOptions{
+		Mode:               snapshot.ModeReplace,
+		Confirm:            safetySnap.SnapshotID,
+		AutoSafetySnapshot: false,
+		RollbackOnError:    false,
+		Exclude:            snapshot.RollbackExcludeFor(src, restoreExclude(in)),
+	})
+	if err != nil {
+		return s.terminateRollback(ctx, operation, in, mode, rep, safetyID, captureIntended,
+			fmt.Errorf("rollback failed; target state unknown: %v", err), false)
+	}
+	return s.terminateRollback(ctx, operation, in, mode, rep, safetyID, captureIntended, cause, true)
+}
+
+// terminateRollback finishes the rollback step + compensation ledger, fires
+// the second invalidation, writes the final report to ResultJSON, and
+// returns the failing RPC error with the rollback report attached as a
+// status detail (grpc-gateway renders it into REST error bodies — neither
+// transport delivers a response message on a non-OK status). On rollback
+// success the error still names the original cause so automation sees the
+// restore did not take effect; on rollback failure it says the target state
+// is unknown and never claims restored.
+func (s *SnapshotAdminService) terminateRollback(
+	ctx context.Context,
+	operation *operations.Operation,
+	in *adminv1.RestoreSnapshotRequest,
+	mode snapshot.RestoreMode,
+	rep *snapshot.Report,
+	safetyID string,
+	captureIntended bool,
+	cause error,
+	rolledBack bool,
+) error {
+	finalRep := *rep
+	finalRep.RolledBack = rolledBack
+	finalRep.Committed = false
+	finalRep.SafetySnapshotID = safetyID
+	result, _ := json.Marshal(&finalRep)
+
+	rollbackErr := ""
+	if rolledBack {
+		_ = operations.FinishStep(ctx, s.operations, operation, nil)
+		_ = operations.AddCompensation(ctx, s.operations, operation, "rollback_safety_snapshot", operations.StepSucceeded, "")
+		if s.restorer.Invalidator != nil {
+			s.restorer.Invalidator.InvalidateRestoredControlPlane()
+		}
+	} else {
+		rollbackErr = cause.Error()
+		_ = operations.FinishStep(ctx, s.operations, operation, cause)
+		_ = operations.AddCompensation(ctx, s.operations, operation, "rollback_safety_snapshot", operations.StepFailed, rollbackErr)
 	}
 	target := fmt.Sprintf("%s mode=%s dry_run=%t", in.Id, mode, in.DryRun)
-	recordAdmin(ctx, s.recorder, audit.EventSnapshotRestored, target)
-	return &adminv1.RestoreSnapshotResponse{Report: reportToProto(rep)}, nil
+	recordAdminMeta(ctx, s.recorder, audit.EventSnapshotRestored, target,
+		restoreAuditMeta(safetyID, captureIntended, false, rolledBack, rollbackErr))
+
+	finalCause := cause
+	prefix := "rollback " + safetyID
+	if rolledBack {
+		finalCause = fmt.Errorf("rolled back to safety snapshot %s: %w", safetyID, cause)
+		prefix = "restore " + in.Id
+	}
+	return withReportDetail(
+		s.failRestoreOperation(ctx, operation, finalCause, prefix, result),
+		reportToProto(&finalRep),
+	)
+}
+
+// failRestoreOperation terminates the operation record on the failure path
+// and returns the RPC error with operation_id attached via status details
+// (the house pattern — REST clients can find the operation even though a
+// failing RPC delivers no response body). result, when non-nil, is persisted
+// as ResultJSON so GetOperation exposes the partial / rolled-back state. The
+// last step is marked failed only if it is still running — the
+// rollback-success path finishes its rollback step before terminating.
+func (s *SnapshotAdminService) failRestoreOperation(
+	ctx context.Context, operation *operations.Operation, cause error, prefix string, result []byte,
+) error {
+	if len(operation.Steps) > 0 && operation.Steps[len(operation.Steps)-1].State == operations.StepRunning {
+		_ = operations.FinishStep(ctx, s.operations, operation, cause)
+	}
+	mapped := mapSnapshotError(cause, prefix)
+	_ = operations.Finish(ctx, s.operations, operation, result, mapped)
+	return operationFailureError(*operation, mapped)
+}
+
+// withReportDetail attaches a proto report to a failing status so the
+// rollback outcome rides the error. gRPC discards the response message on
+// non-OK statuses and grpc-gateway renders status details into REST error
+// bodies, so this is the only wire path that carries the report on failure.
+func withReportDetail(err error, report *adminv1.RestoreReport) error {
+	if err == nil || report == nil {
+		return err
+	}
+	st := status.Convert(err)
+	withDetails, derr := st.WithDetails(report)
+	if derr != nil {
+		return err
+	}
+	return withDetails.Err()
+}
+
+// restoreExclude extracts the request's category excludes.
+func restoreExclude(in *adminv1.RestoreSnapshotRequest) []snapshot.ResourceCategory {
+	var out []snapshot.ResourceCategory
+	for _, x := range in.Exclude {
+		out = append(out, snapshot.ResourceCategory(x))
+	}
+	return out
+}
+
+// restoreAuditMeta builds the bounded metadata set for the snapshot-restore
+// audit event: the safety artifact id, whether capture was intended, the
+// committed / rolled-back outcome, and (only on rollback failure) the
+// rollback error. Keys stay within the documented bounded cardinality; the
+// decision to skip capture is auditable via auto_safety=false.
+func restoreAuditMeta(safetyID string, autoSafety, committed, rolledBack bool, rollbackErr string) map[string]string {
+	meta := map[string]string{
+		"safety_snapshot_id": safetyID,
+		"auto_safety":        strconv.FormatBool(autoSafety),
+		"committed":          strconv.FormatBool(committed),
+		"rolled_back":        strconv.FormatBool(rolledBack),
+	}
+	if rollbackErr != "" {
+		meta["rollback_error"] = rollbackErr
+	}
+	return meta
 }
 
 func (s *SnapshotAdminService) Delete(ctx context.Context, in *adminv1.DeleteSnapshotRequest) (*adminv1.DeleteSnapshotResponse, error) {
@@ -214,7 +452,7 @@ func (s *SnapshotAdminService) Delete(ctx context.Context, in *adminv1.DeleteSna
 
 // snapshotMetaFromSnapshot projects a fully-decoded Snapshot + the on-disk
 // envelope bytes into the wire SnapshotMeta. SizeBytes comes from the raw
-// envelope; codec/algorithm come from the envelope wrapper.
+// envelope; codec/algorithm/kind come from the envelope wrapper.
 func snapshotMetaFromSnapshot(snap *snapshot.Snapshot, raw []byte) *adminv1.SnapshotMeta {
 	env, _ := snapshot.PeekEnvelope(raw)
 	return &adminv1.SnapshotMeta{
@@ -227,35 +465,8 @@ func snapshotMetaFromSnapshot(snap *snapshot.Snapshot, raw []byte) *adminv1.Snap
 		Codec:                   env.Codec,
 		EncryptionAlgorithm:     env.Algorithm,
 		BootstrapAppliedVersion: int32(snap.BootstrapState.AppliedVersion),
+		Kind:                    env.Kind,
 	}
-}
-
-func reportToProto(r *snapshot.Report) *adminv1.RestoreReport {
-	if r == nil {
-		return nil
-	}
-	out := &adminv1.RestoreReport{
-		Mode:   string(r.Mode),
-		DryRun: r.DryRun,
-		Items:  make(map[string]*adminv1.CategoryCounts, len(r.Items)),
-		Bootstrap: &adminv1.BootstrapAdvance{
-			Attempted: r.Bootstrap.Attempted,
-			From:      int32(r.Bootstrap.From),
-			To:        int32(r.Bootstrap.To),
-			NoOp:      r.Bootstrap.NoOp,
-			Reason:    r.Bootstrap.Reason,
-		},
-		Errors: append([]string(nil), r.Errors...),
-	}
-	for cat, c := range r.Items {
-		out.Items[string(cat)] = &adminv1.CategoryCounts{
-			Inserted: int32(c.Inserted),
-			Updated:  int32(c.Updated),
-			Deleted:  int32(c.Deleted),
-			Skipped:  int32(c.Skipped),
-		}
-	}
-	return out
 }
 
 // mapSnapshotError translates snapshot SDK sentinels into gRPC status codes.
@@ -267,7 +478,9 @@ func mapSnapshotError(err error, prefix string) error {
 		return status.Errorf(codes.NotFound, "%s: not found", prefix)
 	case errors.Is(err, snapshot.ErrConfirmationRequired),
 		errors.Is(err, snapshot.ErrConfirmationMismatch),
-		errors.Is(err, snapshot.ErrUnknownSchemaVersion):
+		errors.Is(err, snapshot.ErrUnknownSchemaVersion),
+		errors.Is(err, snapshot.ErrUnsupportedRestore),
+		errors.Is(err, snapshot.ErrRollbackWithoutSafety):
 		return status.Errorf(codes.FailedPrecondition, "%s: %v", prefix, err)
 	case errors.Is(err, snapshot.ErrChecksumMismatch):
 		return status.Errorf(codes.DataLoss, "%s: %v", prefix, err)

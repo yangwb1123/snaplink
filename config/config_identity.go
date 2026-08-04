@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"errors"
+	"strings"
+	"time"
+)
 
 type IdentityConfig struct {
 	Backend string `yaml:"backend"` // memory | sqlite (clients + users; durable)
@@ -61,7 +65,8 @@ type ClientRegistrationConfig struct {
 	// PUT /register/:id (RFC 7592 §3.2), limiting a leaked token's lifetime.
 	// Default false keeps the token stable across updates (byte-identical);
 	// enabling it requires managing clients to capture the new token per PUT.
-	RotateAccessToken bool `yaml:"rotate_access_token"`
+	RotateAccessToken        bool          `yaml:"rotate_access_token"`
+	RotateAccessTokenOverlap time.Duration `yaml:"rotate_access_token_overlap"`
 }
 
 // BackchannelLogoutConfig opts into OIDC Back-Channel Logout 1.0.
@@ -79,9 +84,53 @@ type ClientRegistrationConfig struct {
 //
 // MaxConcurrent caps the fan-out parallelism per logout (default 8).
 type BackchannelLogoutConfig struct {
-	Enabled       bool           `yaml:"enabled"`
-	MaxConcurrent int            `yaml:"max_concurrent"`
-	Index         BCLIndexConfig `yaml:"index"`
+	Enabled       bool                  `yaml:"enabled"`
+	MaxConcurrent int                   `yaml:"max_concurrent"`
+	Index         BCLIndexConfig        `yaml:"index"`
+	FailureQueue  BCLFailureQueueConfig `yaml:"failure_queue"`
+}
+
+// BCLFailureQueueConfig enables exhausted-delivery persistence and replay.
+// Empty Backend keeps the queue disabled; memory is process-local and redis
+// survives restarts while coordinating replay leases across replicas.
+type BCLFailureQueueConfig struct {
+	Backend       string        `yaml:"backend"`
+	RetryInterval time.Duration `yaml:"retry_interval"`
+	BatchSize     int           `yaml:"batch_size"`
+	LeaseDuration time.Duration `yaml:"lease_duration"`
+}
+
+func applyBCLFailureQueueDefaults(cfg *BCLFailureQueueConfig) {
+	if strings.TrimSpace(cfg.Backend) == "" {
+		return
+	}
+	if cfg.RetryInterval == 0 {
+		cfg.RetryInterval = 30 * time.Second
+	}
+	if cfg.BatchSize == 0 {
+		cfg.BatchSize = 50
+	}
+	if cfg.LeaseDuration == 0 {
+		cfg.LeaseDuration = 30 * time.Second
+	}
+}
+
+func (c *Config) validateBCLFailureQueue() error {
+	queue := c.BackchannelLogout.FailureQueue
+	backend := strings.ToLower(strings.TrimSpace(queue.Backend))
+	if backend == "" {
+		return nil
+	}
+	if !c.BackchannelLogout.Enabled {
+		return errors.New("config: backchannel_logout.failure_queue requires backchannel_logout.enabled")
+	}
+	if backend != "memory" && backend != "redis" {
+		return errors.New("config: backchannel_logout.failure_queue.backend must be memory or redis")
+	}
+	if queue.RetryInterval < 0 || queue.BatchSize < 0 || queue.LeaseDuration < 0 {
+		return errors.New("config: backchannel_logout.failure_queue durations and batch_size must be non-negative")
+	}
+	return nil
 }
 
 // BCLIndexConfig configures the SubjectClientIndex backend that

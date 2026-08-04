@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -47,7 +48,8 @@ func BindParams(ctx core.HandlerContext, v any) error {
 
 // formIntoStruct decodes url.Values into the target struct using the
 // destination's `json:"field_name"` tags as keys. Supports the
-// subset of types OAuth request bodies use: string, bool, []string.
+// subset of types OAuth request bodies use: string, bool, integer pointers,
+// and []string.
 func formIntoStruct(form url.Values, v any) error {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
@@ -68,7 +70,9 @@ func formIntoStruct(form url.Values, v any) error {
 		if !f.CanSet() {
 			continue
 		}
-		setFormField(f, raw)
+		if err := setFormField(f, raw); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -88,19 +92,38 @@ func formFieldKey(field reflect.StructField) string {
 	return tag
 }
 
-// setFormField writes raw form values into a settable struct field for
-// the subset of types OAuth request bodies use: string, bool, []string.
-func setFormField(f reflect.Value, raw []string) {
+// setFormField writes raw form values into a supported struct field.
+func setFormField(f reflect.Value, raw []string) error {
 	switch f.Kind() {
 	case reflect.String:
 		f.SetString(raw[0])
 	case reflect.Bool:
 		f.SetBool(raw[0] == "true" || raw[0] == "1")
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return setFormInt(f, raw[0])
+	case reflect.Pointer:
+		if f.Type().Elem().Kind() == reflect.Int {
+			value := reflect.New(f.Type().Elem())
+			if err := setFormInt(value.Elem(), raw[0]); err != nil {
+				return err
+			}
+			f.Set(value)
+		}
 	case reflect.Slice:
 		if f.Type().Elem().Kind() == reflect.String {
 			f.Set(reflect.ValueOf(formStringSlice(raw)))
 		}
 	}
+	return nil
+}
+
+func setFormInt(f reflect.Value, raw string) error {
+	n, err := strconv.ParseInt(raw, 10, f.Type().Bits())
+	if err != nil {
+		return err
+	}
+	f.SetInt(n)
+	return nil
 }
 
 // formStringSlice flattens raw form values into a []string, honoring both

@@ -8,7 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	clustermemory "github.com/yangwb1123/snaplink/platform/cluster/memory"
@@ -32,6 +36,14 @@ func newRevocationIssuer(priv ed25519.PrivateKey) *defaultimpl.Ed25519JWTIssuer 
 	return defaultimpl.NewEd25519JWTIssuer(
 		defaultimpl.WithEd25519Key(priv),
 		defaultimpl.WithEd25519TokenTTL(time.Hour), // long TTL: only revocation, not expiry, can reject
+	)
+}
+
+func newStoredRevocationIssuer(priv ed25519.PrivateKey, store defaultimpl.RevocationStore) *defaultimpl.Ed25519JWTIssuer {
+	return defaultimpl.NewEd25519JWTIssuer(
+		defaultimpl.WithEd25519Key(priv),
+		defaultimpl.WithEd25519TokenTTL(time.Hour),
+		defaultimpl.WithEd25519RevocationStore(store),
 	)
 }
 
@@ -147,6 +159,45 @@ func TestCrossReplicaRevocation_PropagatesAndRejectsOnPeer(t *testing.T) {
 	// /userinfo + introspection suites.
 	if _, err := srvB.ValidateToken(ctx, tok.AccessToken); err == nil {
 		t.Fatal("B must keep rejecting the revoked token")
+	}
+}
+
+func TestCrossReplicaRevocation_RedisSeedRecoversMissedEvent(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	issuerA := newStoredRevocationIssuer(priv, redisbackend.NewRevocationStore(rdb))
+	issuerB := newStoredRevocationIssuer(priv, redisbackend.NewRevocationStore(rdb))
+	bus := clustermemory.New()
+	t.Cleanup(func() { _ = bus.Close() })
+	srvA := newRevocationReplica(t, bus, issuerA, true)
+	srvB := newRevocationReplica(t, bus, issuerB, true)
+
+	ctx := context.Background()
+	tok, err := issuerA.Issue(ctx, &sso.Subject{ID: crrUserID, ClientID: crrClientID}, []string{"read"})
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if _, err := srvB.ValidateToken(ctx, tok.AccessToken); err != nil {
+		t.Fatalf("B should accept before revocation: %v", err)
+	}
+
+	// B has no live subscription, so it deliberately misses A's bus event.
+	if revoked, failed := srvA.RevokeAcrossIssuers(ctx, tok.AccessToken); len(revoked) == 0 || len(failed) != 0 {
+		t.Fatalf("A revoke: revoked=%v failed=%v", revoked, failed)
+	}
+	if _, err := srvB.ValidateToken(ctx, tok.AccessToken); err != nil {
+		t.Fatalf("B should still accept before recovery seed: %v", err)
+	}
+
+	if err := issuerB.SeedRevocations(ctx); err != nil {
+		t.Fatalf("B recovery seed: %v", err)
+	}
+	if _, err := srvB.ValidateToken(ctx, tok.AccessToken); err == nil {
+		t.Fatal("B must reject after replaying the missed revocation from Redis")
 	}
 }
 

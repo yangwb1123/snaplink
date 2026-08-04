@@ -58,6 +58,16 @@ const (
 	EventFeatureGatesDisabled EventType = "feature_gates_disabled"
 )
 
+// Idempotency capture-loss events. Fail-open degradation canary: emitted
+// when a request carried an Idempotency-Key but reached commit without a
+// capture wrapper installed (a regression that silently disabled replay
+// protection before). The response is unchanged; the event makes the
+// degradation observable. Metadata carries a sha-256 prefix of the key,
+// never the raw key.
+const (
+	EventIdempotencyCaptureMissing EventType = "idempotency_capture_missing"
+)
+
 // Cluster invalidation bus events.
 const (
 	EventInvalidationBusDegraded    EventType = "invalidation_bus_degraded"

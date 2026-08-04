@@ -1,8 +1,12 @@
 package oauth
 
 import (
+	"context"
+	"net/http"
 	"testing"
 	"time"
+
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // fakeInvalidatingCache is a minimal IntrospectionCache that ALSO implements
@@ -57,6 +61,35 @@ func (f *fakeNonInvalidatingCache) Set(key string, result *CachedResult, _ time.
 }
 
 var _ IntrospectionCache = (*fakeNonInvalidatingCache)(nil)
+
+func TestIntrospectionCacheMissValidatesAccessTokenOnce(t *testing.T) {
+	t.Parallel()
+	d := newIntrospectDeps(newMemClientStore(), newMemRefreshStore())
+	cache := newFakeInvalidatingCache()
+	d.introspectionCache, d.cacheTTL = cache, time.Minute
+	validations := 0
+	d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
+		validations++
+		return &core.TokenClaims{
+			TokenUse: core.TokenUseAccessToken,
+			Subject:  "service",
+			Actor:    &core.ActorClaim{Subject: "human"},
+		}, "jwt", nil
+	}
+	ctx, _ := newCtx(http.MethodPost, core.ContentTypeJSON, "")
+	for range 2 {
+		if body := introspectOne(d, ctx, "access-token", ""); body[core.KeyActive] != true {
+			t.Fatalf("introspection body = %v, want active", body)
+		}
+	}
+	if validations != 1 {
+		t.Fatalf("ValidateAnyToken calls = %d, want one cache-miss validation", validations)
+	}
+	cached, ok := cache.Get(tokenHash("access-token"))
+	if !ok || len(cached.LifecycleSubjects) != 2 || cached.LifecycleSubjects[1] != "human" {
+		t.Fatalf("cached lifecycle subjects = %#v, want sub plus actor", cached)
+	}
+}
 
 func TestInvalidateIntrospectionCache(t *testing.T) {
 	t.Parallel()

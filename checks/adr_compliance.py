@@ -45,7 +45,7 @@ RECOGNIZED_LAYER_DIRS = {
     "shared", "domains", "protocols", "platform",
     "interfaces", "infrastructure", "cmd", "deploy",
     "proto", "gen", "checks", "scripts", "docs",
-    "test", "examples", "config", "migrate", "internal",
+    "test", "examples", "config", "migrate", "internal", "dist",
     "admin", "kms", "cluster", "permissions",
 }
 

@@ -63,6 +63,9 @@ func HandleDeviceGrant(d DeviceGrantDeps, ctx core.HandlerContext, client *core.
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 		return
 	}
+	if lifecycleGrantBlocked(d, ctx, dc.UserID) {
+		return
+	}
 
 	// Won the claim (already consumed atomically above) → mint + respond.
 	deviceMintAndRespond(d, ctx, client, dc, dpopJKT, mtlsX5T)
@@ -83,15 +86,17 @@ func deviceMintAndRespond(d DeviceGrantDeps, ctx core.HandlerContext, client *co
 		ID: issuedSub, Provider: dc.Provider, Claims: dc.Attributes,
 		Resources:           dc.Resources,
 		ClientID:            client.ID,
+		TenantID:            client.TenantID,
 		AuthTime:            time.Now(),
 		AMR:                 []string{dc.Provider},
+		ServingRegion:       servingRegionFrom(ctx),
 		TTL:                 client.AccessTokenTTL,
 		ConfirmationJKT:     dpopJKT,
 		ConfirmationX5TS256: mtlsX5T,
 	}, dc.Scopes)
 	if err != nil {
 		d.SrvLogger().Error("device token issuance failed", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		writeTokenIssueError(ctx, err)
 		return
 	}
 	resp := map[string]any{
@@ -183,13 +188,16 @@ func deviceIssueIDToken(d DeviceGrantDeps, ctx core.HandlerContext, client *core
 		return
 	}
 	idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-		Subject:     issuedSub,
-		Audience:    client.ID,
-		Nonce:       dc.Nonce,
-		AuthTime:    time.Now(),
-		AMR:         []string{dc.Provider},
-		Claims:      dc.Attributes,
-		AccessToken: accessToken,
+		Subject:          issuedSub,
+		Audience:         client.ID,
+		Nonce:            dc.Nonce,
+		AuthTime:         time.Now(),
+		AMR:              []string{dc.Provider},
+		Claims:           dc.Attributes,
+		ServingRegion:    servingRegionFrom(ctx),
+		AccessToken:      accessToken,
+		GrantedScopes:    dc.Scopes,
+		GrantedResources: dc.Resources,
 	})
 	if err != nil {
 		d.SrvLogger().Error("id token issue failed", "error", err)

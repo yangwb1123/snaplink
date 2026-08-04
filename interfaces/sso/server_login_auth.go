@@ -21,6 +21,7 @@ func (s *Server) issueAuthCode(
 	req *login.Request,
 	client *Client,
 	confirmationJKT string,
+	sessionID string,
 ) (string, error) {
 	return oauth.IssueAuthCode(ctx, oauth.IssueAuthCodeParams{
 		AuthCodeTTL:          s.authCodeTTL,
@@ -41,6 +42,7 @@ func (s *Server) issueAuthCode(
 		AuthorizationDetails: req.AuthorizationDetails,
 		ConfirmationJKT:      confirmationJKT,
 		RequestedClaims:      req.Claims,
+		SID:                  sessionID,
 	})
 }
 
@@ -66,8 +68,7 @@ func (s *Server) authenticateUser(ctx HandlerContext, req *login.Request, client
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, core.ErrUnsupportedProvider, req.State))
 		return nil, true
 	}
-	if loginURL := auth.LoginURL(req.State); loginURL != "" {
-		ctx.Redirect(http.StatusFound, loginURL)
+	if s.beginFederatedLogin(ctx, req, client, auth) {
 		return nil, true
 	}
 	lockKey := s.lockoutKey(auth, req.ClientID, req.Credential)
@@ -113,6 +114,7 @@ func (s *Server) authenticateUser(ctx HandlerContext, req *login.Request, client
 // "unknown session" from "unknown user" by response shape, nor tell it
 // reached that state via /auth/login vs. the ceremony's own endpoint.
 func (s *Server) handleAuthFailure(ctx HandlerContext, req *login.Request, lockKey string, err error) {
+	defer s.notifyLoginFailedHook(ctx, req, core.ErrInvalidCredentials)
 	s.logErrorCtx(ctx, "authentication failed", "provider", req.Provider, "error", err)
 	if s.accountLockout != nil && lockKey != "" {
 		if locked, until, _ := s.accountLockout.RegisterFailure(ctx.Request().Context(), lockKey); locked {
@@ -130,25 +132,25 @@ func (s *Server) handleAuthFailure(ctx HandlerContext, req *login.Request, lockK
 	ctx.JSON(http.StatusUnauthorized, s.authzErrorBodyWithState(ctx, core.ErrInvalidCredentials, req.State))
 }
 
-// rejectDeactivatedUser enforces SCIM deprovisioning (RFC 7643 active=false):
-// even with a correct credential, a deactivated account MUST NOT obtain tokens.
+// rejectDeactivatedUser enforces SCIM deprovisioning (RFC 7643 active=false)
+// and the optional user-lifecycle authentication gate: even with a correct
+// credential, an unavailable account MUST NOT obtain tokens.
 // Called AFTER credential verification, BEFORE any token/session side effect, so
 // an IdP connector that PATCHed active=false actually revokes access. Collapses
 // to account_locked (an unavailable account, not a credential oracle: the
-// credential already verified). No UserProvider = no SCIM state = no-op; a
-// not-found user (federated/first login) is treated active. Returns true (with a
-// response written) when the login must be rejected.
+// credential already verified). No UserProvider skips only the SCIM leg; no
+// lifecycle store skips only the lifecycle leg. Returns true (with a response
+// written) when the login must be rejected.
 func (s *Server) rejectDeactivatedUser(ctx HandlerContext, req *login.Request, userID string) bool {
-	if s.userProvider == nil {
-		return false
+	if s.userProvider != nil {
+		u, uerr := s.userProvider.GetByID(ctx.Request().Context(), userID)
+		if uerr == nil && u != nil && !u.IsActive() {
+			s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrAccountLocked)
+			ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, core.ErrAccountLocked, req.State))
+			return true
+		}
 	}
-	u, uerr := s.userProvider.GetByID(ctx.Request().Context(), userID)
-	if uerr != nil || u.IsActive() {
-		return false
-	}
-	s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrAccountLocked)
-	ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, core.ErrAccountLocked, req.State))
-	return true
+	return s.rejectLifecycleBlockedUser(ctx, req, userID)
 }
 
 // lockoutKey derives the per-account brute-force lockout key. An authenticator
@@ -249,7 +251,12 @@ func (s *Server) rejectExpiredPassword(ctx HandlerContext, req *login.Request, r
 		return false
 	}
 	changedAt, err := reader.PasswordChangedAt(ctx.Request().Context(), result.UserID)
-	if err != nil || time.Since(changedAt) < time.Duration(maxAgeDays)*24*time.Hour {
+	if err != nil {
+		return false
+	}
+	age, maxAge := time.Since(changedAt), time.Duration(maxAgeDays)*24*time.Hour
+	if age < maxAge {
+		s.recordPasswordExpiring(ctx, req, result, maxAge-age)
 		return false
 	}
 	s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrPasswordExpired)
@@ -451,4 +458,35 @@ func (s *Server) registerLoginDevice(ctx HandlerContext, userID string) *deviceC
 		BrowserName: dp.BrowserName, DeviceName: dp.DeviceName,
 		IsNew: secCtx != nil && secCtx.DeviceIsNew, Fingerprint: fp,
 		SecurityCtx: secCtx, TrustScore: trustScore}
+}
+
+// codeFlowSession resolves the canonical OP session for an authorization-code
+// login. Precedence: an authenticator-resumed session (AuthResult.SessionID)
+// is validated against the live session store; a fresh login that asked for
+// one (AuthResult.CreateSession) mints it through the same createSession path
+// the direct-mint branch uses (quotas, per-device caps, trust meta). Returns
+// "" when no session manager is wired, the login carried no session semantics,
+// or the session could not be created/validated (fail-open with an audit/log
+// trail — the login itself never fails on a session-layer outage).
+func (s *Server) codeFlowSession(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) string {
+	if s.sessionMgr == nil {
+		return ""
+	}
+	if result.SessionID != "" {
+		sess, err := s.sessionMgr.Get(ctx.Request().Context(), result.SessionID)
+		if err == nil && sess != nil && !sess.Revoked && !sess.IsExpired() && sess.UserID == result.UserID {
+			return sess.ID
+		}
+		s.logger.Error("code flow: resumed session invalid, dropping sid", "session", result.SessionID, "error", err)
+		return ""
+	}
+	if !result.CreateSession {
+		return ""
+	}
+	sess, err := s.createSession(ctx, result.UserID, client.ID, client.TenantID, req.Scope, result.AuthTime)
+	if err != nil {
+		s.logger.Error("code flow: session creation failed, login continues without sid", "error", err, "user", result.UserID)
+		return ""
+	}
+	return sess.ID
 }

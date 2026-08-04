@@ -3,6 +3,7 @@ package connections
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -54,6 +55,17 @@ func (m *MemoryStore) ByTenant(_ context.Context, tenantID string) ([]*Connectio
 			out = append(out, cloneConnection(c))
 		}
 	}
+	return out, nil
+}
+
+func (m *MemoryStore) List(_ context.Context) ([]*Connection, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*Connection, 0, len(m.byID))
+	for _, c := range m.byID {
+		out = append(out, cloneConnection(c))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 

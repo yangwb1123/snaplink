@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/yangwb1123/snaplink/domains/connections"
 	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/bootstrap"
 	"github.com/yangwb1123/snaplink/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // Snapshotter assembles a Snapshot by polling each configured backend's
@@ -18,12 +21,15 @@ import (
 // includes categories whose backend was wired (and not Excluded). A
 // nil Snapshotter field means "skip this category", NOT "fail".
 type Snapshotter struct {
-	Clients     sso.ClientStore      // optional
-	Users       sso.UserProvider     // optional
-	Permissions permissions.Provider // optional; needs MenuLister for menus
-	NetPolicy   netpolicy.Store      // optional
-	Tracker     bootstrap.Tracker    // optional, for BootstrapState
-	Namespace   string               // bootstrap namespace; defaults to "sso-server"
+	Clients     sso.ClientStore               // optional
+	Users       sso.UserProvider              // optional
+	Permissions permissions.Provider          // optional; needs MenuLister for menus
+	NetPolicy   netpolicy.Store               // optional
+	Tenants     tenant.Store                  // optional
+	Connections connections.Store             // optional
+	Pairwise    security.PairwiseSubjectStore // optional
+	Tracker     bootstrap.Tracker             // optional, for BootstrapState
+	Namespace   string                        // bootstrap namespace; defaults to "sso-server"
 
 	// DefaultExportRedactor is applied to every Export that doesn't
 	// supply ExportOptions.Redactor. Nil (the default) means NO
@@ -101,12 +107,20 @@ func (s *Snapshotter) newSnapshot(ns string, opts ExportOptions) (*Snapshot, err
 		TakenAtUnix:     timeNow().Unix(),
 		SourceNamespace: ns,
 		SourceNodeID:    opts.SourceNodeID,
+		Categories:      make([]ResourceCategory, 0),
 	}, nil
 }
 
 // exportResources polls each wired backend in the order downstream
 // enumeration depends on.
 func (s *Snapshotter) exportResources(ctx context.Context, snap *Snapshot, opts ExportOptions) error {
+	tenantIDs, err := s.exportTenants(ctx, snap, opts)
+	if err != nil {
+		return err
+	}
+	if err := s.exportConnections(ctx, snap, opts, tenantIDs); err != nil {
+		return err
+	}
 	// Clients first — also gives us the clientID list permissions /
 	// menus / assignments need to enumerate. When the Clients store is nil
 	// (or excluded), clientIDs stays empty and permissions/menus
@@ -119,10 +133,82 @@ func (s *Snapshotter) exportResources(ctx context.Context, snap *Snapshot, opts 
 	if err := s.exportUsers(ctx, snap, opts); err != nil {
 		return err
 	}
+	if err := s.exportPairwise(ctx, snap, opts); err != nil {
+		return err
+	}
 	if err := s.exportPermissions(ctx, snap, opts, clientIDs); err != nil {
 		return err
 	}
 	return s.exportNetPolicy(ctx, snap, opts)
+}
+
+func (s *Snapshotter) exportPairwise(ctx context.Context, snap *Snapshot, opts ExportOptions) error {
+	if s.Pairwise == nil || excluded(CategoryPairwise, opts.Exclude) {
+		return nil
+	}
+	lister, ok := s.Pairwise.(security.PairwiseSubjectLister)
+	if !ok {
+		return errors.Join(ErrUnsupportedRestore, errors.New("pairwise backend cannot list all records"))
+	}
+	items, err := lister.ListPairwiseSubjects(ctx)
+	if err != nil {
+		return fmt.Errorf("snapshot: pairwise.ListPairwiseSubjects: %w", err)
+	}
+	snap.Resources.Pairwise = items
+	snap.markCategory(CategoryPairwise)
+	return nil
+}
+
+func (s *Snapshotter) exportTenants(ctx context.Context, snap *Snapshot, opts ExportOptions) ([]string, error) {
+	if s.Tenants == nil {
+		return nil, nil
+	}
+	tenants, err := s.Tenants.ListTenants(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot: tenants.ListTenants: %w", err)
+	}
+	ids := make([]string, 0, len(tenants))
+	for _, item := range tenants {
+		ids = append(ids, item.ID)
+	}
+	if !excluded(CategoryTenants, opts.Exclude) {
+		snap.Resources.Tenants = tenants
+		snap.markCategory(CategoryTenants)
+	}
+	if excluded(CategoryTenantDomains, opts.Exclude) {
+		return ids, nil
+	}
+	domains, err := s.Tenants.ListDomains(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot: tenants.ListDomains: %w", err)
+	}
+	snap.Resources.TenantDomains = domains
+	snap.markCategory(CategoryTenantDomains)
+	return ids, nil
+}
+
+func (s *Snapshotter) exportConnections(ctx context.Context, snap *Snapshot, opts ExportOptions, tenantIDs []string) error {
+	if s.Connections == nil || excluded(CategoryConnections, opts.Exclude) {
+		return nil
+	}
+	if lister, ok := s.Connections.(connections.Lister); ok {
+		items, err := lister.List(ctx)
+		if err != nil {
+			return fmt.Errorf("snapshot: connections.List: %w", err)
+		}
+		snap.Resources.Connections = items
+		snap.markCategory(CategoryConnections)
+		return nil
+	}
+	for _, tenantID := range tenantIDs {
+		items, err := s.Connections.ByTenant(ctx, tenantID)
+		if err != nil {
+			return fmt.Errorf("snapshot: connections.ByTenant[%s]: %w", tenantID, err)
+		}
+		snap.Resources.Connections = append(snap.Resources.Connections, items...)
+	}
+	snap.markCategory(CategoryConnections)
+	return nil
 }
 
 // applyRedaction runs the LAST export step. The effective redactor is the
@@ -136,6 +222,7 @@ func (s *Snapshotter) applyRedaction(snap *Snapshot, opts ExportOptions) {
 	if r := effectiveRedactor(opts.Redactor, s.DefaultExportRedactor); r != nil {
 		copyClientsForRedaction(snap)
 		copyUsersForRedaction(snap)
+		copyConnectionsForRedaction(snap)
 		r.Redact(snap)
 	}
 }
@@ -165,6 +252,7 @@ func (s *Snapshotter) exportClients(ctx context.Context, snap *Snapshot, opts Ex
 		return nil, fmt.Errorf("snapshot: clients.List: %w", err)
 	}
 	snap.Resources.Clients = cs
+	snap.markCategory(CategoryClients)
 	clientIDs := make([]string, 0, len(cs))
 	for _, c := range cs {
 		clientIDs = append(clientIDs, c.ID)
@@ -182,6 +270,7 @@ func (s *Snapshotter) exportUsers(ctx context.Context, snap *Snapshot, opts Expo
 		return fmt.Errorf("snapshot: users.List: %w", err)
 	}
 	snap.Resources.Users = us
+	snap.markCategory(CategoryUsers)
 	return nil
 }
 
@@ -194,16 +283,19 @@ func (s *Snapshotter) exportPermissions(ctx context.Context, snap *Snapshot, opt
 		if err := s.exportRoles(ctx, snap, clientIDs); err != nil {
 			return err
 		}
+		snap.markCategory(CategoryRoles)
 	}
 	if !excluded(CategoryAssignments, opts.Exclude) {
 		if err := s.exportAssignments(ctx, snap, clientIDs); err != nil {
 			return err
 		}
+		snap.markCategory(CategoryAssignments)
 	}
 	if !excluded(CategoryMenus, opts.Exclude) {
 		if err := s.exportMenus(ctx, snap, clientIDs); err != nil {
 			return err
 		}
+		snap.markCategory(CategoryMenus)
 	}
 	return nil
 }
@@ -267,7 +359,14 @@ func (s *Snapshotter) exportNetPolicy(ctx context.Context, snap *Snapshot, opts 
 		return fmt.Errorf("snapshot: netpolicy.List: %w", err)
 	}
 	snap.Resources.NetPolicy = ps
+	snap.markCategory(CategoryNetPolicy)
 	return nil
+}
+
+func (s *Snapshot) markCategory(category ResourceCategory) {
+	if !excluded(category, s.Categories) {
+		s.Categories = append(s.Categories, category)
+	}
 }
 
 // effectiveRedactor resolves the redactor for one Export: the per-call
@@ -320,6 +419,27 @@ func copyUsersForRedaction(snap *Snapshot) {
 		out[i] = &cp
 	}
 	snap.Resources.Users = out
+}
+
+func copyConnectionsForRedaction(snap *Snapshot) {
+	src := snap.Resources.Connections
+	if len(src) == 0 {
+		return
+	}
+	out := make([]*connections.Connection, len(src))
+	for i, item := range src {
+		if item == nil {
+			continue
+		}
+		cp := *item
+		cp.Domains = append([]string(nil), item.Domains...)
+		cp.Config = make(map[string]string, len(item.Config))
+		for key, value := range item.Config {
+			cp.Config[key] = value
+		}
+		out[i] = &cp
+	}
+	snap.Resources.Connections = out
 }
 
 // newSnapshotID returns a sortable, time-prefixed ID:

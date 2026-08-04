@@ -1,6 +1,6 @@
 # Roadmap
 
-> Current planning baseline, verified against the repository on 2026-07-27.
+> Current planning baseline, verified against the repository on 2026-07-28.
 > Older roadmap revisions remain available in Git history; they are not kept
 > inline because many of their gaps have since been implemented.
 
@@ -16,162 +16,157 @@ work stays out of it.
 
 ## P0 — trustworthy contracts and release evidence
 
-### 1. Synchronize routes, OpenAPI and capability metadata
+### 1. Derive generated SDK inputs from committed contracts — DONE
 
-The runtime has moved faster than the static documentation. Recent SSF,
-Federation, FGA, branding, provider and device/security administration routes
-must be represented consistently in OpenAPI and generated SDK inputs.
+Runtime/OpenAPI drift is blocked by `python cli.py check-routes`;
+capability availability is declared in `ops/build/capabilities.json`.
+Generated SDK inputs are now derived from committed contracts:
 
-Deliverables:
+Delivered:
 
-- Generate or verify OpenAPI coverage from the runtime endpoint inventory.
-- Add a CI failure for a new public route without an OpenAPI operation or an
-  explicit internal-only exemption.
-- Maintain one machine-readable capability registry with availability
-  (`sdk`, `stock-binary`, `module-only`, `external-frontend`), default state,
-  feature gate and required store.
-- Generate the human feature matrix from that registry once the schema is
-  stable.
+- `ops/build/sdk-surface.json` declares the generated-SDK operation surface
+  as validated data (grouped, capability-linked, with per-language
+  compatibility policy); the generators (`cmd/gensdk`) carry no allowlist
+  of their own.
+- `python cli.py sdk-surface check` validates the registry against
+  `docs/openapi.yaml` (every operationId must exist) and
+  `ops/build/capabilities.json` (every capability reference must exist),
+  and `sdk-surface generate` re-emits every language from the registry.
+- The compatibility policy (additive, semver-tracked, operationId
+  verbatim naming) is committed in the registry itself.
 
-### 2. Produce auditable OIDC/FAPI conformance evidence
+### 2. Produce auditable OIDC/FAPI conformance evidence — PARTIAL (headless run + archive landed; HTTPS topology run + OIDF listing remain)
 
-The implementation has extensive local protocol tests, but this project has
-not recorded an official OpenID Foundation conformance run and is not
-certified. The current Docker Compose harness is browser-driven and outside
-default CI.
+The harness in `test/oidc-conformance/` is repaired and **headless-runnable
+as checked in**: the official suite image is pinned to a release tag
+(`registry.gitlab.com/openid/conformance-suite:release-v5.2.1`), the server
+under test uses a committed, `--validate-only`-checked config, and the
+supported-profile allowlist excludes implicit/hybrid (the runtime rejects
+those response types). `./run-headless.sh` drives the whole run — build,
+DCR-register the suite's OIDC login client, signup admin user, create the
+Basic-certification discovery plan, run a module through headless Chrome
+(auto-fulfilling the JSON logins), and archive plan/log/info under
+`results/<commit>/`.
 
-Deliverables:
+Smoke evidence (HTTP-only local topology): `oidcc-server` completes with
+59 SUCCESS steps; the single failure is the expected
+`VerifyClientManagementCredentials` https-URI requirement.
 
-- Pin the official conformance-suite image instead of using `latest`.
-- Define supported test profiles from actual response types and configured
-  features; do not claim implicit or hybrid OP profiles while the runtime only
-  accepts `code` and direct-mint `token`.
-- Run the suite in a repeatable environment, archive plan/result artifacts and
-  publish the tested commit/configuration.
-- Only use “OpenID Certified” or FAPI certification language after an issued
-  listing exists.
+Remaining: an official run against an externally reachable HTTPS issuer
+with archived artifacts, and an OpenID Foundation listing before any
+certification language is used.
 
-### 3. Make production topology failures loud
+### 4. Remove obsolete frontend configuration semantics — DONE
 
-Memory and per-pod SQLite stores are valid for a single replica but cannot
-provide cross-replica OAuth single-use semantics. A production deployment
-should not silently combine multiple replicas with local auth-code, refresh,
-session, PAR, device, CIBA, JTI or MFA-challenge state.
+The parsed `hosted_login` block has no runtime frontend to enable:
+`feature_gates.branding` (renamed from `web_spa`) now controls only the
+public `/branding` lookup.
 
-Deliverables:
+Delivered:
 
-- Validate replica/topology intent at startup or admission time.
-- Require an explicit unsafe acknowledgement for multi-replica local state.
-- Keep the production overlay on Redis hot stores, Postgres durable stores and
-  an etcd event bus; test loss/recovery semantics against real backends.
-- Reconcile engineering-gate documentation, generated thresholds and committed
-  tests so a green release signal has one meaning.
+- `hosted_login` is a parsed no-op with a loud startup deprecation warning;
+  removal lands with the next schema-version bump.
+- `feature_gates.web_spa` is a deprecated alias of the canonical
+  `feature_gates.branding`; both set fails loud at boot, only `web_spa`
+  warns and folds into `branding`. SDK `FeatureGates.Branding` is the
+  canonical field; `WebSPA` remains a source-compatible alias. Runtime gate
+  name, metric label, audit reason and reload paths use `branding`;
+  `/feature_gates/web_spa` reload paths stay accepted.
+- The external-frontend API contract (login, consent, self-service, admin,
+  first-run setup, CSP/cookie/proxy requirements) is published in
+  [frontend-contract.md](frontend-contract.md).
 
-### 4. Remove obsolete frontend configuration semantics
-
-The parsed `hosted_login` block has no runtime frontend to enable.
-`feature_gates.web_spa` now controls only the public `/branding` lookup.
-
-Deliverables:
-
-- Deprecate or remove `hosted_login` in a versioned configuration migration.
-- Rename or clearly alias `web_spa` to a branding/API-oriented name without a
-  silent compatibility break.
-- Publish the API contract an external frontend must use for login, consent,
-  self-service, admin and first-run setup.
-
-### 5. Isolate the SSO edition hierarchy
+### 5. Isolate the SSO edition hierarchy — PARTIAL (core isolation landed; nested-module migration + release signing remain)
 
 The resolver, inherited profiles, module lock, compatibility builds and
 profile-specific entry points are implemented. The public hierarchy is
 `prototype → minimal → full`: the prototype is SSO/OAuth with JSON logs
 and a stable default-tenant seam; minimal adds OIDC and tracing; full
-selects the complete current stock `sso-server` composition plus the registered
-Kafka audit cold module. Version output carries the edition suffix.
+selects the complete current stock `sso-server` composition plus the
+registered Kafka audit cold module. Version output carries the edition
+suffix.
 
-The two smaller editions are usable for evaluation, but are not yet physically
-isolated. Both target `cmd/sso-minimal`, which still reaches the broad
-dependency graph through `interfaces/sso`; their OP-session adapter does not
-yet place the canonical session SID into the authorization code and resulting
-tokens.
+Delivered:
 
-Deliverables:
+- **Canonical OP-session/SID lifecycle**: OP-session creation,
+  `prompt`/`max_age` resume, logout and SID propagation now live in the
+  canonical session/authorization-code lifecycle. `AuthResult` carries
+  SessionID/CreateSession; the code flow creates/validates sessions through
+  the SessionManager, stamps SID into the code, and the exchange-minted
+  id_token emits the sid claim. The minimal edition's parallel
+  `opSessionStore` is gone — its cookie IS the canonical session ID
+  (see `cmd/sso-minimal/op_session.go` and the SID propagation test).
+- **Standard typed registrars outside cmd/**: `platform/registrar` is the
+  single generic typed registry; the SAML route registrar moved to the new
+  `interfaces/ssoext` host API; `serverbuildsign`'s external-signer
+  registry now builds on the same machinery.
+- **Physical isolation + evidence**: `python cli.py profiles evidence`
+  builds every profile binary, asserts the declared
+  `ops/build/profile-isolation.json` boundaries (the small editions must
+  not link the durable/admin/observability graph; the full edition must
+  link it) and archives per-binary package lists, `go version -m` SBOMs,
+  symbol counts and size deltas under `dist/profiles/`. Wired into
+  `make ci`. Full-profile evidence (durable state, security controls,
+  observability, topology) is documented in
+  `docs/architecture/profile-isolation.md`.
+- **Module discipline**: `oauth-client-credentials` is verified as an
+  independent optional machine-to-machine cold module (conflicts with the
+  stock server; not a profile foundation). Nested modules remain separate
+  Go modules; the standard host API (`interfaces/ssoext` +
+  `platform/registrar`) is the migration target.
 
-- Move OP-session creation, `prompt`/`max_age`, logout and SID propagation into
-  the canonical session/authorization-code lifecycle.
-- Extract standard typed route and capability registrars outside `cmd/`.
-- Isolate core HTTP, identity/OAuth stores, password authentication, Ed25519
-  signing and OIDC packages without changing either smaller edition's wire
-  behavior.
-- Prove physical removal with `go list`, `go version -m`, symbols, binary-size
-  deltas and per-profile SBOMs.
-- Prove the `full` profile against durable state, security controls,
-  observability and supported topology evidence.
-- Keep `oauth-client-credentials` as an independent optional machine-to-machine
-  module rather than an SSO profile foundation.
-- Migrate SAML, LDAP/Kerberos/RADIUS, KMS/HSM and other nested modules to the
-  standard host API after that boundary is stable.
-- Add generation leases, static route slots and drain before classifying any
-  in-process capability as hot; keep installable third-party code out of
-  process.
-- Publish profile locks, binary SBOMs, signatures and provenance.
+Remaining:
+
+- Migrate LDAP/Kerberos/RADIUS/KMS nested modules to the standard host API
+  now that the boundary is stable (SAML — the registrar-bound module — is
+  already on it via `saml.Deps` embedding `ssoext.SAMLServerDeps`; the
+  others are config-wired infrastructure modules with no cmd registrar
+  dependency).
+- Add generation leases, static route slots and drain before classifying
+  any in-process capability as hot; installable third-party code stays out
+  of process.
+- Publish profile locks, binary SBOMs, signatures and provenance for
+  release artifacts (evidence bundles exist; release signing is the
+  release pipeline's job — see docs/RELEASE.md).
 
 ## P1 — production completeness
 
-### 6. Expand snapshot/DR control-plane coverage
+### 7. Reach API-client parity — DONE
 
-Snapshot schema v1 includes clients, users, roles, assignments, menus, network
-policy and bootstrap state. It intentionally excludes hot sessions/tokens, but
-it also does not currently cover tenants, enterprise connections, pairwise
-subject mappings, MFA enrollments or signing private keys.
+The generated TypeScript and Python clients cover the complete documented
+operation set.
 
-Deliverables:
+Delivered:
 
-- Design snapshot schema v2 with per-category capability negotiation.
-- Prioritize tenants, connections and pairwise subject mappings because their
-  loss changes routing or external subject identity.
-- Keep session/token state excluded and document re-authentication as the
-  recovery behavior.
-- Emit the required cache/invalidation events after restore.
+- Clients are derived from the reconciled OpenAPI contract via the
+  `ops/build/sdk-surface.json` registry (validated by
+  `python cli.py sdk-surface check`); no route or edition metadata is
+  duplicated in the generators.
+- Admin, self-service, SCIM, SSF and Federation operations intended for
+  public consumption are all covered (312 operations).
+- The compatibility policy (additive, semver-tracked, operationId
+  verbatim naming) is committed in the registry.
 
-### 7. Reach API-client parity
+Remaining (non-blocking): SemVer/API-diff checks and versioned package
+publication once the contract is declared stable by the maintainers.
 
-The generated TypeScript and Python clients cover a curated subset.
-
-Deliverables:
-
-- Derive clients from the reconciled OpenAPI contract.
-- Cover admin, self-service, SCIM, SSF and Federation operations intended for
-  public consumption.
-- Add SemVer/API-diff checks and publish versioned packages only after the
-  contract is stable.
-
-### 8. Define the external frontend release contract
+### 8. Define the external frontend release contract — DONE
 
 Frontend implementation is outside this repository. Backend work is limited to
 stable APIs and integration metadata.
 
-Deliverables:
+Delivered:
 
-- Version login UI metadata, branding, consent, setup and error contracts.
-- Document CSP/cookie/reverse-proxy requirements for separately deployed UIs.
-- Add cross-project compatibility tests; do not re-introduce static SPA bundles
-  into `sso-server`.
-
-### 9. Strengthen secrets at rest
-
-Password/client credentials are hashed by their stores, but active OAuth bearer
-artifacts such as SQLite refresh tokens and authorization/device codes are
-stored as lookup keys in plaintext. Encrypted snapshots do not protect a live
-database or Redis export.
-
-Deliverables:
-
-- Design deployment-keyed HMAC lookup keys and a backwards-compatible
-  migration for active opaque artifacts.
-- Preserve atomic consume, family replay detection and oracle-safe errors.
-- Document key rotation and disaster-recovery implications before enabling the
-  feature by default.
+- [docs/frontend-contract.md](../frontend-contract.md) versions the login,
+  consent, setup, self-service, admin and error contracts (JSON shapes,
+  oracle-safe error vocabulary, session_id/sid semantics).
+- CSP/cookie/reverse-proxy requirements for separately deployed UIs are
+  documented (deployment shape + proxy section of that file).
+- Cross-project compatibility tests: `test/frontend_contract_test.go` walks
+  the documented contract end-to-end from outside the server (discovery,
+  PKCE login, token exchange, `/me`, endpoint inventory, error vocabulary,
+  logout), so drift fails CI. No static SPA bundle is re-introduced into
+  `sso-server`.
 
 Non-prioritized product directions remain in
 [deferred-backlog.md](deferred-backlog.md); they do not enter release ordering
@@ -181,8 +176,7 @@ until promoted here.
 
 1. Contract/capability synchronization.
 2. Conformance evidence and release-gate integrity.
-3. HA topology validation.
-4. Obsolete frontend-config migration.
-5. Canonical OP-session/SID integration and physical profile isolation.
-6. Snapshot schema v2 and API-client parity.
-7. New protocol families only after the production-completeness work above.
+3. Obsolete frontend-config migration.
+4. Canonical OP-session/SID integration and physical profile isolation.
+5. API-client parity and the external frontend contract.
+6. New protocol families only after the production-completeness work above.

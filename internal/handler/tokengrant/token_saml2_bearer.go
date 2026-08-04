@@ -39,6 +39,9 @@ func HandleSAML2BearerGrant(d SAML2BearerGrantDeps, ctx core.HandlerContext, cli
 	if !ok {
 		return
 	}
+	if lifecycleGrantBlocked(d, ctx, subject) {
+		return
+	}
 	strategy, ti, ok := resolveIssuerForSAML2(d, ctx, client)
 	if !ok {
 		return
@@ -104,13 +107,15 @@ func issueSAML2Token(d SAML2BearerGrantDeps, ctx core.HandlerContext, client *co
 		ID:                  subject,
 		Resources:           resources,
 		ClientID:            client.ID,
+		TenantID:            client.TenantID,
 		TTL:                 client.AccessTokenTTL,
 		ConfirmationJKT:     dpopJKT,
 		ConfirmationX5TS256: mtlsX5T,
+		ServingRegion:       servingRegionFrom(ctx),
 	}, scopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "saml2-bearer: token issuance failed", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		writeTokenIssueError(ctx, err)
 		return
 	}
 	d.RecordTokenIssued(ctx, client.ID, strategy, subject)

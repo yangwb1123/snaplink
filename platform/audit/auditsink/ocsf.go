@@ -103,6 +103,7 @@ var ocsfEventActivities = map[auditspi.EventType]ocsfActivity{
 	auditspi.EventPasswordResetRequested:   {ocsfClassAccountChange, ocsfCategoryIAM, 4, "Password Reset"},
 	auditspi.EventPasswordResetCompleted:   {ocsfClassAccountChange, ocsfCategoryIAM, 4, "Password Reset"},
 	auditspi.EventPasswordResetFailed:      {ocsfClassAccountChange, ocsfCategoryIAM, 4, "Password Reset"},
+	auditspi.EventPasswordChanged:          {ocsfClassAccountChange, ocsfCategoryIAM, 2, "Password Change"},
 	auditspi.EventTOTPEnrolled:             {ocsfClassAccountChange, ocsfCategoryIAM, 1, "Create"},
 	auditspi.EventTOTPEnrollFailed:         {ocsfClassAccountChange, ocsfCategoryIAM, 99, "TOTP Enrollment Failed"},
 	auditspi.EventRecoveryCodesRegenerated: {ocsfClassAccountChange, ocsfCategoryIAM, 99, "MFA Recovery Codes Regenerated"},

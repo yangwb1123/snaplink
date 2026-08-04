@@ -299,10 +299,10 @@ func WithClientStoreCache(ttl time.Duration) Option {
 // is significant.
 //
 // The cache wraps the existing handler — it does NOT replace it. On a
-// CACHE HIT the result is returned immediately without any JWT signature
-// verification. On a CACHE MISS the full verification runs and the result
-// is stored (including negative results — {active: false} — so a flood of
-// expired-token polls also skips verification).
+// CACHE HIT the result skips JWT signature verification but still rechecks the
+// live user-lifecycle state of sub and every act-chain subject when that gate is
+// wired. On a CACHE MISS the full verification runs and the result is stored
+// (including negative results — {active: false}).
 //
 // SECURITY CONSIDERATIONS:
 //   - The cache key is SHA-256(token), not the raw token — an attacker who
@@ -314,6 +314,8 @@ func WithClientStoreCache(ttl time.Duration) Option {
 //     This is an INTENTIONAL tradeoff: revocation is not instant (eventual
 //     consistency). The alternative (no cache) means every introspection
 //     pays full signature verification cost.
+//   - Lifecycle denial is never TTL-stale: cache hits re-read lifecycle state
+//     and overwrite a denied entry with active:false (fail closed on errors).
 //   - The cache is BEST-EFFORT: on store error (including a full cache),
 //     verification proceeds normally (fail-open).
 //
@@ -437,26 +439,10 @@ func WithPARStore(store oauth.PARStore, ttl time.Duration) Option {
 	}
 }
 
-// WithCIBA enables OpenID Connect CIBA Core 1.0 backchannel
-// authentication in POLL delivery mode on POST
-// /backchannel-authentication + grant_type=ciba on /token. Without it,
-// /backchannel-authentication returns 501 and the CIBA grant is
-// rejected as unsupported_grant_type.
-//
-// The flow mirrors Push MFA: the AS resolves the request's hint to a
-// known user, persists a pending CIBARequest in store, and delivers
-// the auth_req_id out of band via transport (typically an adapter over
-// a defaultimpl.PushTransport — wrap one with
-// oauth.CIBATransportFunc(pt.Send)). An operator-supplied device
-// callback resolves the request via store.SetStatus(approved/denied);
-// the client polls /token until it resolves.
-//
-// reqTTL is the auth_req_id lifetime (<=0 → oauth.DefaultCIBARequestTTL,
-// 120s). interval is the minimum poll cadence enforced for slow_down
-// (<=0 → oauth.DefaultCIBAPollInterval, 5s).
-//
-// store + transport are required; passing either nil leaves CIBA
-// disabled (the handler's nil-store guard returns 501).
+// WithCIBA enables CIBA Core 1.0 poll delivery. The AS resolves one user hint,
+// persists the pending request, and sends it through transport. reqTTL and
+// interval use protocol defaults when non-positive. Both collaborators are
+// required; a nil value leaves CIBA disabled.
 func WithCIBA(store oauth.CIBAStore, transport oauth.CIBATransport, reqTTL, interval time.Duration) Option {
 	return func(s *Server) {
 		s.cibaStore = store
@@ -468,6 +454,14 @@ func WithCIBA(store oauth.CIBAStore, transport oauth.CIBATransport, reqTTL, inte
 			s.cibaPollInterval = interval
 		}
 	}
+}
+
+// WithCIBAUserCodeVerifier enables the optional CIBA user_code parameter. The
+// verifier owns enrollment and attempt limiting; Snaplink never persists the
+// submitted code or reuses the user's OP password. A nil verifier keeps the
+// discovery capability false and rejects a supplied user_code.
+func WithCIBAUserCodeVerifier(verifier oauth.CIBAUserCodeVerifier) Option {
+	return func(s *Server) { s.cibaUserCodeVerifier = verifier }
 }
 
 // WithCIBAPingNotifier upgrades CIBA from poll-only to ping delivery

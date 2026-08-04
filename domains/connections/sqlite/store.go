@@ -123,6 +123,19 @@ func (s *Store) ByTenant(ctx context.Context, tenantID string) ([]*connections.C
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: by tenant: %w", err)
 	}
+	return scanConnections(rows)
+}
+
+func (s *Store) List(ctx context.Context) ([]*connections.Connection, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, type, display_name, enabled, domains, config FROM connections ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: list connections: %w", err)
+	}
+	return scanConnections(rows)
+}
+
+func scanConnections(rows *sql.Rows) ([]*connections.Connection, error) {
 	defer func() { _ = rows.Close() }()
 	var out []*connections.Connection
 	for rows.Next() {

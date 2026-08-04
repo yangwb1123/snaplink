@@ -9,6 +9,7 @@ namespace: snaplink-sso
 
 resources:
   - ../k8s # the base (namespace + deployment + service); sibling dir, not nested
+  - ha-admission-approval.yaml
   - hpa.yaml
   - pdb.yaml
 
@@ -40,6 +41,7 @@ secretGenerator:
     literals:
       - redis-password=CHANGE_ME
       - postgres-dsn=postgres://sso@pgbouncer:6432/sso?sslmode=verify-full&default_query_exec_mode=simple_protocol
+      - oauth-lookup-key=CHANGE_ME_32_BYTE_MINIMUM_LOOKUP_KEY
 
 patches:
   - path: patch-deployment.yaml

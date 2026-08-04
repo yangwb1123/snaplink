@@ -45,7 +45,7 @@ func BuildTenantUsageAggregator(cfg config.TenantUsageMeteringConfig) (metering.
 	case "":
 		return nil, nil
 	case "memory":
-		return meteringmemory.New(), nil
+		return meteringmemory.NewAggregator(), nil
 	case "sqlite":
 		if cfg.DSN == "" {
 			return nil, errors.New("tenant.usage_metering.dsn required when backend=sqlite (point it at the audit DB)")

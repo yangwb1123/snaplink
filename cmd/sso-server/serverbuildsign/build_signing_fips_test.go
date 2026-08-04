@@ -20,6 +20,7 @@ func TestBuildSigningIssuer_FIPSModeDefaultOff(t *testing.T) {
 			config.SigningConfig{Alg: alg},
 			config.ServerConfig{Issuer: "https://sso.test"},
 			nil,
+			nil,
 			spi.NopLogger{},
 		)
 		if err != nil {
@@ -43,6 +44,7 @@ func TestBuildSigningIssuer_FIPSModeRequiresRuntimeEnabled(t *testing.T) {
 		iss, _, _, err := BuildSigningIssuer(
 			config.SigningConfig{Alg: alg, FIPSMode: true},
 			config.ServerConfig{Issuer: "https://sso.test"},
+			nil,
 			nil,
 			spi.NopLogger{},
 		)
@@ -70,6 +72,7 @@ func TestBuildSigningIssuer_FIPSModeApprovedAlgsConstruct(t *testing.T) {
 			config.SigningConfig{Alg: alg, FIPSMode: true},
 			config.ServerConfig{Issuer: "https://sso.test"},
 			nil,
+			nil,
 			spi.NopLogger{},
 		); err != nil {
 			t.Errorf("alg=%q under a real FIPS build: got %v, want nil (all default algs are FIPS 186-5 approved)", alg, err)
@@ -78,7 +81,7 @@ func TestBuildSigningIssuer_FIPSModeApprovedAlgsConstruct(t *testing.T) {
 
 	// A stricter operator-chosen allowlist can still exclude eddsa.
 	restricted := config.SigningConfig{Alg: "eddsa", FIPSMode: true, FIPSAllowedAlgs: []string{"es256", "rs256", "ps256"}}
-	if _, _, _, err := BuildSigningIssuer(restricted, config.ServerConfig{Issuer: "https://sso.test"}, nil, spi.NopLogger{}); err == nil {
+	if _, _, _, err := BuildSigningIssuer(restricted, config.ServerConfig{Issuer: "https://sso.test"}, nil, nil, spi.NopLogger{}); err == nil {
 		t.Error("eddsa with an ECDSA/RSA-only fips_allowed_algs: expected an error, got nil")
 	}
 }

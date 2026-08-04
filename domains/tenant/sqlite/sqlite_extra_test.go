@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -117,6 +118,32 @@ func TestStore_PingNilStoreErrors(t *testing.T) {
 	}
 }
 
+func TestStore_BrandingCompareAndSwapPreservesTenantSettings(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	base := mkTenant("t1", "acme")
+	base.Settings = map[string]string{"locale": "en-US", "feature": "enabled"}
+	if err := s.PutTenant(ctx, base); err != nil {
+		t.Fatalf("PutTenant: %v", err)
+	}
+	first, err := s.PutBranding(ctx, "t1", map[string]string{"brand_name": "Acme"}, "0")
+	if err != nil || first.Version != "1" {
+		t.Fatalf("first branding write = (%+v, %v)", first, err)
+	}
+	if _, err := s.PutBranding(ctx, "t1", map[string]string{"brand_name": "Stale"}, "0"); !errors.Is(err, tenant.ErrBrandingPrecondition) {
+		t.Fatalf("stale branding write = %v, want precondition failure", err)
+	}
+	got, err := s.GetTenant(ctx, "t1")
+	if err != nil {
+		t.Fatalf("GetTenant: %v", err)
+	}
+	if got.Settings["locale"] != "en-US" || got.Settings["feature"] != "enabled" {
+		t.Fatalf("branding write changed tenant settings: %v", got.Settings)
+	}
+}
+
 // Compile-time guard kept alongside the extra coverage so a Store
 // signature drift trips here too.
 var _ tenant.Store = (*Store)(nil)
+var _ tenant.BrandingStore = (*Store)(nil)

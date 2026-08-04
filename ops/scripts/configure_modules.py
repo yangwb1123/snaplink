@@ -665,10 +665,20 @@ def _build_ldflags(
     dirty: bool,
 ) -> str:
     modules = ",".join(module.id for module in plan.modules)
+    capabilities = ",".join(
+        sorted(
+            {
+                capability
+                for module in plan.modules
+                for capability in module.provides
+            }
+        )
+    )
     values = {
         f"{BUILDINFO_IMPORT}.BuildProfile": plan.profile.id,
         f"{BUILDINFO_IMPORT}.ModuleLockDigest": lock_digest,
         f"{BUILDINFO_IMPORT}.CompiledModules": modules,
+        f"{BUILDINFO_IMPORT}.CompiledCapabilities": capabilities,
         f"{BUILDINFO_IMPORT}.Version": build_version,
         f"{CORE_BUILDINFO_IMPORT}.BuildVersion": build_version,
         f"{CORE_BUILDINFO_IMPORT}.BuildTime": build_time,
@@ -784,6 +794,13 @@ def _verify_binary_inventory(
         "profile": plan.profile.id,
         "lock_digest": lock_digest,
         "modules": [module.id for module in plan.modules],
+        "capabilities": sorted(
+            {
+                capability
+                for module in plan.modules
+                for capability in module.provides
+            }
+        ),
     }
     if inventory != expected:
         raise BuildModulesError(

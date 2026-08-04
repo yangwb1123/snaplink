@@ -1,0 +1,75 @@
+# 小型 SDLC 角色流水线 — OIDC Front-Channel Logout
+#
+# 结合实际软件开发流程（需求 → 设计 → 安全审查 → 质量）和开发角色
+# （BA → Architect + Tech Lead → Security + Protocol Expert → QA），
+# 用 ai-dev/prompts/ 的角色提示词驱动，上游输出聚合后交给下游阶段。
+#
+# 运行（从仓库根）：
+#   python ai-dev/pi-batch.py ai-dev/examples/sdlc-mini-pipeline.yaml \
+#     --session-mode per-stage --session-name fc-logout \
+#     --log-file logs/sdlc.log
+#
+# 说明：
+#   - aggregate: true 让每个角色一次看到上游全部产出（见 RUNNING_247.md）
+#   - --session-mode per-stage：同一阶段内并行角色共享一个会话
+#   - 阶段间用 from_outputs 串联，产物落盘后可用 --reuse 断点续跑
+#   - 纯文档产出（方案/审查/计划），不生成代码，无需工程质量门禁
+
+git_commit: false
+
+stages:
+  # ── 阶段 1：需求分析（Business Analyst）──
+  # 输入：docs/requirements 下的需求文档
+  # 输出：需求理解 + MVP 范围
+  - name: requirements
+    from_dir: ai-dev/examples/sdlc-inputs
+    mode: serial
+
+  # ── 阶段 2：架构设计（Architect + Tech Lead，并行）──
+  # 输入：阶段 1 全部产出（聚合）
+  # 输出：架构方案 + 实现任务拆解
+  - name: architecture
+    from_outputs: requirements
+    aggregate: true
+    tasks:
+      - role: architect
+        prompt_template: ai-dev/prompts/architect.md
+        output: docs/proposals/{input_stem}.arch.md
+
+      - role: tech-lead
+        prompt_template: ai-dev/prompts/tech_lead.md
+        output: docs/proposals/{input_stem}.impl-plan.md
+
+    mode: parallel
+    workers: 2
+
+  # ── 阶段 3：安全与协议审查（Security Engineer + Protocol Expert，并行）──
+  # 输入：架构方案 + 实现计划（聚合）
+  # 输出：威胁模型 + 协议合规检查
+  - name: security
+    from_outputs: architecture
+    aggregate: true
+    tasks:
+      - role: security
+        prompt_template: ai-dev/prompts/security_engineer.md
+        output: docs/proposals/{input_stem}.security.md
+
+      - role: protocol
+        prompt_template: ai-dev/prompts/protocol_expert.md
+        output: docs/proposals/{input_stem}.protocol.md
+
+    mode: parallel
+    workers: 2
+
+  # ── 阶段 4：质量验收（QA Lead）──
+  # 输入：设计 + 审查结论（聚合）
+  # 输出：测试策略 + 验收清单
+  - name: quality
+    from_outputs: security
+    aggregate: true
+    tasks:
+      - role: qa
+        prompt_template: ai-dev/prompts/qa_lead.md
+        output: docs/proposals/{input_stem}.qa.md
+
+    mode: serial

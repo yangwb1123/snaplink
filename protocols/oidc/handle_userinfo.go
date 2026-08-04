@@ -94,7 +94,7 @@ func authenticateUserInfoBearer(d UserInfoDeps, ctx core.HandlerContext) (*core.
 	}
 
 	claims, _, err := d.ValidateAnyToken(ctx.Request().Context(), tokenString)
-	if err != nil {
+	if err != nil || !core.IsAccessTokenClaims(claims) {
 		// RFC 6750 §3.1: validation failures carry error="invalid_token".
 		d.SetResourceBearerChallenge(ctx, d.ResolveIssuer(ctx), core.ErrInvalidToken, "The access token is invalid or expired")
 		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidToken))

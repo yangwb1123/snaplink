@@ -118,8 +118,9 @@ type Deps interface {
 	// RevokeToken denies a bearer across every registered issuer (publishing on
 	// the cluster bus like /token/revoke). The break-glass cascade uses it to
 	// kill impersonation credentials the instant a grant is revoked/expired, and
-	// to clean up a token whose atomic attach lost a race. Best-effort.
-	RevokeToken(ctx context.Context, token string)
+	// to clean up a token whose atomic attach lost a race. An error identifies
+	// a bearer that could not be denied by every responsible issuer.
+	RevokeToken(ctx context.Context, token string) error
 	// InvalidateConnectionCache publishes a KindConnectionChange event to the
 	// cluster bus so peer replicas evict any cached connection config for connID.
 	// Called after every connection upsert and delete. Fire-and-forget: a bus
@@ -138,4 +139,39 @@ type Deps interface {
 	// checks a proposal's action_type against (AdminChangeApprovalConfig.
 	// ActionTypes). Empty ⇒ unrestricted — every action_type accepted.
 	ApprovalActionTypes() admingovernance.RequiredActionTypes
+}
+
+type trustedDeviceStoreProvider interface {
+	TrustedDeviceStore() core.TrustedDeviceStore
+}
+
+// revokeAdminPasswordResetCredentials best-effort invalidates credentials
+// minted under the old password. The password change has already committed,
+// so cleanup errors are observable but never turn the request into a false 500.
+func revokeAdminPasswordResetCredentials(d Deps, ctx core.HandlerContext, userID string) {
+	rctx := ctx.Request().Context()
+	if sessions := d.SessionManager(); sessions != nil {
+		items, err := sessions.ListByUser(rctx, userID)
+		if err != nil {
+			d.Logger().Error("admin password reset: list sessions failed", "user_id", userID, "error", err)
+		} else {
+			for _, session := range items {
+				if err := sessions.Destroy(rctx, session.ID); err != nil {
+					d.Logger().Error("admin password reset: revoke session failed", "session_id", session.ID, "error", err)
+				}
+			}
+		}
+	}
+	if index, ok := d.RefreshTokenStore().(oauth.RefreshTokenSubjectIndex); ok {
+		if _, err := index.DeleteAllForSubject(rctx, userID, ""); err != nil {
+			d.Logger().Error("admin password reset: revoke refresh tokens failed", "user_id", userID, "error", err)
+		}
+	}
+	provider, ok := any(d).(trustedDeviceStoreProvider)
+	if !ok || provider.TrustedDeviceStore() == nil {
+		return
+	}
+	if _, err := provider.TrustedDeviceStore().RevokeAll(rctx, userID); err != nil {
+		d.Logger().Error("admin password reset: revoke trusted devices failed", "user_id", userID, "error", err)
+	}
 }

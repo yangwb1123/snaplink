@@ -18,6 +18,7 @@ import (
 func main() {
 	listen := flag.String("listen", ":7070", "HTTP listen address")
 	jwksURL := flag.String("jwks", "http://localhost:8080/.well-known/jwks.json", "SSO server JWKS endpoint")
+	issuer := flag.String("issuer", "http://localhost:8080", "SSO server issuer — must equal the token `iss` claim")
 	grpcAddr := flag.String("grpc", "localhost:8081", "SSO server gRPC address")
 	flag.Parse()
 
@@ -35,8 +36,15 @@ func main() {
 	// 3. Wire the ssoclient layer — all REMOTE implementations.
 	// IMPORTANT: appcore.Handler is identical to embedded-app's; only this
 	// wiring differs.
+	// WithIssuer is REQUIRED (fail-closed): it pins the `iss` claim every
+	// validated token must carry. WithExpectedAud is deliberately unwired:
+	// this demo requests no RFC 8707 resource and registers no OAuth
+	// client, so its tokens carry no `aud` claim — pinning one would
+	// reject every valid token. A real App pins whatever its mint path
+	// stamps (a resource URI for token-path tokens, sso.Subject.Resources
+	// for direct mints).
 	handler := &appcore.Handler{
-		Auth:  remote.NewAuthClient(jwks),
+		Auth:  remote.NewAuthClient(jwks, remote.WithIssuer(*issuer)),
 		Authz: remote.NewAuthzClient(conn),
 		Audit: remote.NewAuditClient(conn),
 	}
@@ -45,6 +53,7 @@ func main() {
 	fmt.Println("remote-app (remote mode) — depends on running cmd/sso-server")
 	fmt.Printf("listen:        %s\n", *listen)
 	fmt.Printf("jwks:          %s\n", *jwksURL)
+	fmt.Printf("issuer:        %s\n", *issuer)
 	fmt.Printf("grpc:          %s\n", *grpcAddr)
 	fmt.Printf("login first via SSO server's POST /auth/login, then:\n")
 	fmt.Printf("  curl -H 'Authorization: Bearer <token>' http://localhost%s/items\n", *listen)

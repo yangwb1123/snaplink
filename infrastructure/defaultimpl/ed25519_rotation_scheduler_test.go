@@ -23,7 +23,12 @@ func TestStartRotation_RotatesAndRetires(t *testing.T) {
 	done := iss.StartRotation(ctx, defaultimpl.RotationConfig{
 		Interval:    15 * time.Millisecond,
 		GracePeriod: 20 * time.Millisecond,
-		OnRotate:    func(o, n string) { rotated <- [2]string{o, n} },
+		OnRotate: func(o, n string) {
+			select {
+			case rotated <- [2]string{o, n}:
+			default:
+			}
+		},
 	})
 
 	var first [2]string

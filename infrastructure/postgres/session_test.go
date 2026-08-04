@@ -58,10 +58,12 @@ func TestSessionManager_CreateWithMeta(t *testing.T) {
 	t.Cleanup(func() { _ = sm.Close() })
 
 	ctx := context.Background()
+	authTime := time.Now().UTC().Add(-time.Minute).Truncate(time.Nanosecond)
 	s, err := sm.CreateWithMeta(ctx, "user2", sso.SessionMeta{
 		IP:        "10.0.0.1",
 		UserAgent: "test-agent",
 		TenantID:  "tenant-abc",
+		DeviceID:  "device-1", ClientID: "client-1", AuthorizedScopes: []string{"openid", "admin"}, AuthTime: authTime,
 	})
 	if err != nil {
 		t.Fatalf("CreateWithMeta: %v", err)
@@ -74,6 +76,22 @@ func TestSessionManager_CreateWithMeta(t *testing.T) {
 	}
 	if s.TenantID != "tenant-abc" {
 		t.Fatalf("expected TenantID tenant-abc, got %s", s.TenantID)
+	}
+	if err := sm.SetAuthorizedScopes(ctx, s.ID, []string{"openid"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sm.MarkStepUp(ctx, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := sm.Get(ctx, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClientID != "client-1" || got.DeviceID != "device-1" || !got.AuthTime.Equal(authTime) || !got.StepUpRequired {
+		t.Fatalf("authorization metadata did not round-trip: %+v", got)
+	}
+	if len(got.AuthorizedScopes) != 1 || got.AuthorizedScopes[0] != "openid" {
+		t.Fatalf("scopes=%v", got.AuthorizedScopes)
 	}
 }
 

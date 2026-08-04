@@ -9,6 +9,7 @@ import (
 	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func generateDeviceCodeBytes() (string, error) { return oauth.GenerateDeviceCode() }
@@ -275,7 +276,7 @@ func (s *Server) authenticateDeviceVerifyBearer(ctx HandlerContext) (*TokenClaim
 		return nil, false
 	}
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer)
-	if err != nil || claims == nil {
+	if err != nil || !core.IsAccessTokenClaims(claims) {
 		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidToken))
 		return nil, false
 	}
@@ -432,5 +433,25 @@ func (s *Server) handleDeviceVerifyCheck(ctx HandlerContext, userCode string) {
 		ctx.JSON(http.StatusOK, map[string]string{"status": "denied"})
 		return
 	}
-	ctx.JSON(http.StatusOK, map[string]string{"status": "pending"})
+	ctx.JSON(http.StatusOK, s.pendingDeviceVerification(ctx, dc))
+}
+
+func (s *Server) pendingDeviceVerification(ctx HandlerContext, dc *oauth.DeviceCode) map[string]any {
+	expiresIn := int(time.Until(dc.ExpiresAt).Seconds())
+	if expiresIn < 0 {
+		expiresIn = 0
+	}
+	response := map[string]any{
+		"status":     "pending",
+		"client_id":  dc.ClientID,
+		"scopes":     append([]string{}, dc.Scopes...),
+		"expires_in": expiresIn,
+		"expires_at": dc.ExpiresAt.UTC().Format(time.RFC3339),
+	}
+	if s.clientStore != nil {
+		if client, err := s.clientStore.Get(ctx.Request().Context(), dc.ClientID); err == nil && client != nil && client.Name != "" {
+			response["client_name"] = client.Name
+		}
+	}
+	return response
 }

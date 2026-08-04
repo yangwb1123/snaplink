@@ -10,7 +10,7 @@ import (
 )
 
 // RevokeAccessOnArchive returns a userlifecycle.ReactionFunc that revokes
-// every refresh token (across every registered client) and destroys every
+// every refresh token (across every client) and destroys every
 // active session for a user the moment they transition into ARCHIVED — the
 // reference "user ARCHIVED -> revoke all sessions and refresh tokens"
 // reaction, wired via bus.OnUserArchived(RevokeAccessOnArchive(...)).
@@ -30,13 +30,28 @@ import (
 // registers it; domains/userlifecycle's transition table and stores are
 // completely unaware this function exists.
 func RevokeAccessOnArchive(sessions core.SessionManager, refresh oauth.RefreshTokenSubjectIndex, clients core.ClientStore) userlifecycle.ReactionFunc {
+	_ = clients // retained for source compatibility; the index supports all-client deletion.
+	return RevokeAccess(sessions, refresh)
+}
+
+// RevokeAccessOnSuspend is the SUSPENDED-state counterpart of
+// RevokeAccessOnArchive. It is separate for readable composition wiring while
+// sharing the same idempotent, best-effort implementation.
+func RevokeAccessOnSuspend(sessions core.SessionManager, refresh oauth.RefreshTokenSubjectIndex) userlifecycle.ReactionFunc {
+	return RevokeAccess(sessions, refresh)
+}
+
+// RevokeAccess revokes every renewable credential and canonical session for a
+// subject. It is suitable for any lifecycle state that disallows
+// authentication, including SUSPENDED, INACTIVE, ARCHIVED, and PURGED.
+func RevokeAccess(sessions core.SessionManager, refresh oauth.RefreshTokenSubjectIndex) userlifecycle.ReactionFunc {
 	return func(ctx context.Context, userID string) error {
 		if userID == "" {
 			return nil
 		}
 		var errs []error
-		if refresh != nil && clients != nil {
-			if err := revokeRefreshTokens(ctx, refresh, clients, userID); err != nil {
+		if refresh != nil {
+			if err := revokeRefreshTokens(ctx, refresh, userID); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -52,21 +67,9 @@ func RevokeAccessOnArchive(sessions core.SessionManager, refresh oauth.RefreshTo
 // revokeRefreshTokens deletes userID's refresh tokens for every registered
 // client (the SPI is per-client — see oauth.RefreshTokenSubjectIndex).
 // Best-effort across clients: one client's failure doesn't stop the rest.
-func revokeRefreshTokens(ctx context.Context, refresh oauth.RefreshTokenSubjectIndex, clients core.ClientStore, userID string) error {
-	all, err := clients.List(ctx)
-	if err != nil {
-		return err
-	}
-	var errs []error
-	for _, c := range all {
-		if c == nil || c.ID == "" {
-			continue
-		}
-		if _, err := refresh.DeleteAllForSubject(ctx, userID, c.ID); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
+func revokeRefreshTokens(ctx context.Context, refresh oauth.RefreshTokenSubjectIndex, userID string) error {
+	_, err := refresh.DeleteAllForSubject(ctx, userID, "")
+	return err
 }
 
 // destroySessions destroys every active session userID holds. Best-effort

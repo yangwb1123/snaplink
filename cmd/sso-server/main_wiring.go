@@ -179,13 +179,13 @@ func closePolicyLimiters(p ratelimit.Policy) {
 // (see interfaces/sso's mount* docs), so each Set*GateEnabled method just
 // flips an already-installed atomic flag. See those methods' docs
 // (interfaces/sso/accessors.go, accessors_feature_gates.go) for the
-// asymmetries that still surface as Result.Ignored: SetWebSPAGateEnabled,
+// asymmetries that still surface as Result.Ignored: SetBrandingGateEnabled,
 // SetCAEPGateEnabled, and SetFederationGateEnabled each report no effect
-// when nothing was ever wired for them to affect (no SPA filesystem, no
+// when nothing was ever wired for them to affect (no tenant store, no
 // CAEP receiver, none of the federation sub-features, respectively).
 func wireFeatureGateReload(reloader *configreload.Reloader, srv *sso.Server) {
 	reloader.SetAdminAPIGateHook(srv.SetAdminAPIGateEnabled)
-	reloader.SetWebSPAGateHook(srv.SetWebSPAGateEnabled)
+	reloader.SetBrandingGateHook(srv.SetBrandingGateEnabled)
 	reloader.SetOIDCGateHook(srv.SetOIDCGateEnabled)
 	reloader.SetCIBAGateHook(srv.SetCIBAGateEnabled)
 	reloader.SetCAEPGateHook(srv.SetCAEPGateEnabled)

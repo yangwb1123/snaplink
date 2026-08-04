@@ -2,6 +2,9 @@ package redis
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,17 +15,61 @@ import (
 )
 
 const authCodeKeyPrefix = "sso:authcode:" // sso:authcode:<code> -> JSON
+const opaqueLookupPrefix = "h1:"
+
+func opaqueLookupKey(key []byte, kind, raw string) string {
+	if len(key) == 0 {
+		return raw
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte(kind))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write([]byte(raw))
+	return opaqueLookupPrefix + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func opaqueLookupCandidates(keys [][]byte, kind, raw string) []string {
+	out := make([]string, 0, len(keys)+1)
+	for _, key := range keys {
+		out = append(out, opaqueLookupKey(key, kind, raw))
+	}
+	return append(out, raw)
+}
+
+func cloneLookupKeys(keys ...[]byte) [][]byte {
+	out := make([][]byte, 0, len(keys))
+	for _, key := range keys {
+		if len(key) > 0 {
+			out = append(out, append([]byte(nil), key...))
+		}
+	}
+	return out
+}
+
+func firstLookupKey(keys [][]byte) []byte {
+	if len(keys) == 0 {
+		return nil
+	}
+	return keys[0]
+}
 
 // AuthCodeStore is the Redis-backed implementation of
 // [oauth.AuthCodeStore]. Suitable for multi-replica deployments: every
 // replica issues + consumes against the same Redis.
 type AuthCodeStore struct {
-	rdb goredis.Cmdable
+	rdb            goredis.Cmdable
+	lookupHMACKeys [][]byte
 }
 
 // NewAuthCodeStore builds the store over an existing go-redis client.
 func NewAuthCodeStore(rdb goredis.Cmdable) *AuthCodeStore {
 	return &AuthCodeStore{rdb: rdb}
+}
+
+// SetLookupHMACKeys enables current-key writes plus previous-key and legacy
+// plaintext reads for no-logout rotation.
+func (s *AuthCodeStore) SetLookupHMACKeys(keys ...[]byte) {
+	s.lookupHMACKeys = cloneLookupKeys(keys...)
 }
 
 // Ping reports Redis health for [sso.WithReadyCheck].
@@ -52,7 +99,8 @@ func (s *AuthCodeStore) Issue(ctx context.Context, code string, info *oauth.Auth
 		// would reject it as expired anyway.
 		return nil
 	}
-	if err := s.rdb.Set(ctx, authCodeKey(code), blob, ttl).Err(); err != nil {
+	lookup := opaqueLookupKey(firstLookupKey(s.lookupHMACKeys), "auth_code", code)
+	if err := s.rdb.Set(ctx, authCodeKey(lookup), blob, ttl).Err(); err != nil {
 		return fmt.Errorf("redis: insert auth_code: %w", err)
 	}
 	return nil
@@ -64,12 +112,19 @@ func (s *AuthCodeStore) Issue(ctx context.Context, code string, info *oauth.Auth
 // nothing, so single-use is race-free. Unknown / TTL-expired / already-
 // consumed all collapse to ErrAuthCodeNotFound (oracle-resistance §2).
 func (s *AuthCodeStore) Consume(ctx context.Context, code string) (*oauth.AuthCode, error) {
-	blob, err := s.rdb.GetDel(ctx, authCodeKey(code)).Bytes()
-	if errors.Is(err, goredis.Nil) {
-		return nil, oauth.ErrAuthCodeNotFound
+	var blob []byte
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "auth_code", code) {
+		var err error
+		blob, err = s.rdb.GetDel(ctx, authCodeKey(candidate)).Bytes()
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, goredis.Nil) {
+			return nil, fmt.Errorf("redis: consume auth_code: %w", err)
+		}
 	}
-	if err != nil {
-		return nil, fmt.Errorf("redis: consume auth_code: %w", err)
+	if blob == nil {
+		return nil, oauth.ErrAuthCodeNotFound
 	}
 	var out oauth.AuthCode
 	if err := json.Unmarshal(blob, &out); err != nil {

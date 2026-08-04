@@ -19,10 +19,11 @@ func (h *Handler) dispatchMeta(w http.ResponseWriter, r *http.Request, rel strin
 		h.writeJSON(w, http.StatusOK, serviceProviderConfig())
 	case rel == pathSchemas && r.Method == http.MethodGet:
 		// GET /Schemas returns the implemented schemas as a ListResponse
-		// (RFC 7643 §7 / RFC 7644 §4): connectors enumerate here. Group is
-		// advertised only when WithGroups wired it, so a connector doesn't
-		// push groups to a deployment that drops them.
-		schemas := []SchemaResource{userSchema()}
+		// (RFC 7643 §7 / RFC 7644 §4): connectors enumerate here. Core User
+		// and its implemented Enterprise extension are always available.
+		// Group is advertised only when WithGroups wired it, so a connector
+		// doesn't push groups to a deployment that drops them.
+		schemas := []SchemaResource{userSchema(), enterpriseUserSchema()}
 		if h.groups != nil {
 			schemas = append(schemas, groupSchema())
 		}

@@ -62,6 +62,25 @@ func (s *MemoryBreakGlassStore) List(_ context.Context) ([]core.AdminSession, er
 	return out, nil
 }
 
+func (s *MemoryBreakGlassStore) Activate(
+	_ context.Context, id, adminID string, sessionIDs []string,
+) (core.AdminSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.sessions[id]
+	if !ok {
+		return core.AdminSession{}, core.ErrAdminSessionNotFound
+	}
+	if lazyExpireAdminSession(a).Status != core.AdminSessionPending || a.AdminUserID != adminID {
+		return core.AdminSession{}, core.ErrAdminSessionNotPending
+	}
+	a.Status = core.AdminSessionActive
+	a.ApprovedBy = adminID
+	a.SessionIDs = append(a.SessionIDs, sessionIDs...)
+	s.sessions[id] = a
+	return a, nil
+}
+
 func (s *MemoryBreakGlassStore) Approve(_ context.Context, id, approverID string, sessionIDs []string) (core.AdminSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
 	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/geo"
@@ -447,6 +448,27 @@ func (a *Middleware) methodScopeForPath(path string) (string, bool) {
 		bestPrefix, bestScope = prefix, scope
 	}
 	return bestScope, bestPrefix != ""
+}
+
+// HandleAdminConvergeAccessPolicies runs the same bounded convergence pass as
+// the periodic worker. POST is gated by admin:write before this handler.
+type conditionalAccessConverger interface {
+	RunConditionalAccessConvergence(context.Context) (conditionalaccess.ConvergenceSummary, error)
+}
+
+func HandleAdminConvergeAccessPolicies(d Deps, ctx core.HandlerContext) {
+	converger, ok := d.(conditionalAccessConverger)
+	if !ok {
+		ctx.JSON(http.StatusNotImplemented, core.ErrorBody(core.ErrNotSupported))
+		return
+	}
+	summary, err := converger.RunConditionalAccessConvergence(ctx.Request().Context())
+	if err != nil {
+		d.Logger().Error("conditional access convergence failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, summary)
 }
 
 // tenantHintFromClaims extracts a best-effort tenant identifier from the

@@ -85,6 +85,7 @@ func (b *appBuilder) seedClients(clientStore sso.ClientStore) error {
 			RedirectURIs:                     c.RedirectURIs,
 			AllowedScopes:                    c.AllowedScopes,
 			AllowedAuthenticators:            c.AllowedAuthenticators,
+			LoginPageURI:                     c.LoginPageURI,
 			TokenStrategy:                    c.TokenStrategy,
 			Active:                           c.Active,
 			TenantID:                         c.TenantID,
@@ -111,9 +112,8 @@ func (b *appBuilder) seedClients(clientStore sso.ClientStore) error {
 			SkipConsent:                      c.SkipConsent,
 			ConsentRefreshInterval:           c.ConsentRefreshInterval,
 		}
-		// Validate the CAEP receiver endpoint (https) at boot — a
-		// non-https receiver would mean a SET (carrying a revocation
-		// signal) is exfiltrated over plaintext. Same anti-exfil rule the
+		// Validate the CAEP receiver endpoint (https) at boot; plaintext would
+		// exfiltrate revocation SETs. Same anti-exfil rule the
 		// admin gRPC path enforces.
 		if ep := c.Attributes[caep.AttrReceiverEndpoint]; ep != "" {
 			if err := caep.ValidateReceiverEndpoint(ep); err != nil {
@@ -136,7 +136,7 @@ func (b *appBuilder) wireSigningIssuer() error {
 	// backed by an external KMS/HSM signer. Both concrete types satisfy
 	// the same interface set; only the scheduled rotation loop below is
 	// EdDSA-specific (type-asserted there).
-	jwtIssuer, signingAlg, externalSigner, err := serverbuildsign.BuildSigningIssuer(cfg.Keys.Signing, cfg.Server, b.metricsRegistry, logger)
+	jwtIssuer, signingAlg, externalSigner, err := serverbuildsign.BuildSigningIssuer(cfg.Keys.Signing, cfg.Server, b.redis, b.metricsRegistry, logger)
 	if err != nil {
 		return err
 	}
@@ -487,6 +487,7 @@ func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.configDriftCancel, a.configDriftDone = b.configDriftCancel, b.configDriftDone
 	a.breakGlassCancel, a.breakGlassDone = b.breakGlassCancel, b.breakGlassDone
 	a.continuousVerifyCancel, a.continuousVerifyDone = b.continuousVerifyCancel, b.continuousVerifyDone
+	a.capConvergenceCancel, a.capConvergenceDone = b.capConvergenceCancel, b.capConvergenceDone
 	a.tokenUsageRecorder = b.tokenUsageRecorder
 	a.tokenAnomalySweepCancel, a.tokenAnomalySweepDone = b.tokenAnomalySweepCancel, b.tokenAnomalySweepDone
 	a.degradationMgr = b.degradationMgr

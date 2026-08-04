@@ -97,14 +97,31 @@ func TestClientSecretRotator_SecondSweepIncrementsVersion(t *testing.T) {
 	}
 }
 
-// TestClientSecretRotator_OverlapWindowIsZero documents (and locks in) the
-// deliberate v1 scope cut: no grace period, immediate cutover. See the
-// type's OverlapWindow doc for the full rationale.
+// TestClientSecretRotator_OverlapWindowIsZero proves callers can still opt
+// into immediate cutover by omitting the overlap argument.
 func TestClientSecretRotator_OverlapWindowIsZero(t *testing.T) {
 	t.Parallel()
 	rotator := clientrotation.NewClientSecretRotator(defaultimpl.NewMemoryClientStore(), time.Hour, nil)
 	if got := rotator.OverlapWindow(); got != 0 {
-		t.Errorf("OverlapWindow() = %v; want 0 (no overlap support in this version)", got)
+		t.Errorf("OverlapWindow() = %v; want 0 (explicit immediate cutover)", got)
+	}
+}
+
+func TestClientSecretRotator_ConfiguredOverlapKeepsOldSecretValid(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	ctx := context.Background()
+	mustAdd(t, store, &sso.Client{ID: "stale-overlap", Secret: "old", Active: true})
+	backdate(t, store, "stale-overlap", -2*time.Hour)
+	rotator := clientrotation.NewClientSecretRotator(store, time.Hour, nil, 2*time.Hour)
+	if rotator.OverlapWindow() != 2*time.Hour {
+		t.Fatalf("OverlapWindow = %v, want 2h", rotator.OverlapWindow())
+	}
+	if _, err := rotator.Rotate(ctx); err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	if err := store.ValidateSecret(ctx, "stale-overlap", "old"); err != nil {
+		t.Fatalf("scheduled rotation discarded old secret before overlap elapsed: %v", err)
 	}
 }
 

@@ -26,6 +26,8 @@ var clientColumns = []string{
 	"backchannel_logout_uri", "subject_type", "sector_identifier_uri",
 	"frontchannel_logout_uri", "federation", "attributes",
 	"secret_rotated_at", "client_trust_score", "client_trust_set_at",
+	"previous_secret", "secret_overlap_until",
+	"secret_expires_at",
 }
 
 // clientWriteArgs is the ordered argument bundle shared by INSERT, upsert, and
@@ -41,7 +43,7 @@ func clientWriteArgs(c *sso.Client, secret, rat string) []any {
 	postLogout, _ := json.Marshal(c.PostLogoutRedirectURIs)
 	authzDetails, _ := json.Marshal(c.AllowedAuthorizationDetailsTypes)
 	pkceM, _ := json.Marshal(c.AllowedPKCEMethods)
-	attrs, _ := json.Marshal(c.Attributes)
+	attrs, _ := json.Marshal(clientAttributesForStorage(c))
 
 	return []any{
 		c.ID, secret, c.Name,
@@ -59,6 +61,8 @@ func clientWriteArgs(c *sso.Client, secret, rat string) []any {
 		c.FrontchannelLogoutURI, boolToInt(c.Federation), string(attrs),
 		unixNanoOrZero(c.SecretRotatedAt),
 		c.ClientTrustScore, unixNanoOrZero(c.ClientTrustSetAt),
+		c.PreviousSecret, unixNanoOrZero(c.SecretOverlapUntil),
+		unixNanoOrZero(c.SecretExpiresAt),
 	}
 }
 
@@ -84,7 +88,31 @@ func clientWritePrep(c *sso.Client) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return clientWriteArgs(c, secret, rat), nil
+	previousRAT, err := hashClientSecretField(c.PreviousRegistrationAccessToken, "previous rat")
+	if err != nil {
+		return nil, err
+	}
+	prepared := *c
+	prepared.PreviousRegistrationAccessToken = previousRAT
+	return clientWriteArgs(&prepared, secret, rat), nil
+}
+
+func clientAttributesForStorage(c *sso.Client) map[string]string {
+	out := make(map[string]string, len(c.Attributes)+8)
+	for key, value := range c.Attributes {
+		out[key] = value
+	}
+	data, _ := json.Marshal(c.GrantTypes)
+	out["_snaplink_client_grant_types"] = string(data)
+	out["_snaplink_client_token_auth_method"] = c.TokenEndpointAuthMethod
+	out["_snaplink_client_tls_subject_dn"] = c.TLSClientAuthSubjectDN
+	out["_snaplink_client_tls_san_dns"] = c.TLSClientAuthSANDNS
+	out["_snaplink_client_tls_san_email"] = c.TLSClientAuthSANEmail
+	out["_snaplink_client_tls_san_uri"] = c.TLSClientAuthSANURI
+	out["_snaplink_client_previous_rat"] = c.PreviousRegistrationAccessToken
+	out["_snaplink_client_rat_overlap_until"] = c.RegistrationAccessTokenOverlapUntil.UTC().Format(time.RFC3339Nano)
+	out["_snaplink_client_login_page_uri"] = c.LoginPageURI
+	return out
 }
 
 // clientScanRow holds the raw column values scanned from a client row before
@@ -105,6 +133,9 @@ type clientScanRow struct {
 	bclURI, subjectType, sectorURI, fclURI                 string
 	secretRotatedAtUnixNs                                  int64
 	clientTrustSetAtUnixNs                                 int64
+	previousSecret                                         string
+	secretOverlapUntilUnixNs                               int64
+	secretExpiresAtUnixNs                                  int64
 }
 
 // scanInto reads every column of clientColumns into the raw row holder in
@@ -124,6 +155,8 @@ func (r *clientScanRow) scanInto(s scanner) error {
 		&r.bclURI, &r.subjectType, &r.sectorURI, &r.fclURI,
 		&r.federationInt, &r.attrsBlob, &r.secretRotatedAtUnixNs,
 		&r.c.ClientTrustScore, &r.clientTrustSetAtUnixNs,
+		&r.previousSecret, &r.secretOverlapUntilUnixNs,
+		&r.secretExpiresAtUnixNs,
 	)
 }
 
@@ -166,6 +199,13 @@ func (r *clientScanRow) scalars() {
 	if r.clientTrustSetAtUnixNs != 0 {
 		c.ClientTrustSetAt = time.Unix(0, r.clientTrustSetAtUnixNs).UTC()
 	}
+	c.PreviousSecret = r.previousSecret
+	if r.secretOverlapUntilUnixNs != 0 {
+		c.SecretOverlapUntil = time.Unix(0, r.secretOverlapUntilUnixNs).UTC()
+	}
+	if r.secretExpiresAtUnixNs != 0 {
+		c.SecretExpiresAt = time.Unix(0, r.secretExpiresAtUnixNs).UTC()
+	}
 }
 
 // unmarshalClientJSON treats empty / "[]" / "{}" / "null" blobs as the zero
@@ -203,7 +243,32 @@ func (r *clientScanRow) jsonFields() error {
 			return err
 		}
 	}
+	hydrateClientAttributes(c)
 	return nil
+}
+
+func hydrateClientAttributes(c *sso.Client) {
+	if c.Attributes == nil {
+		return
+	}
+	_ = json.Unmarshal([]byte(c.Attributes["_snaplink_client_grant_types"]), &c.GrantTypes)
+	c.TokenEndpointAuthMethod = c.Attributes["_snaplink_client_token_auth_method"]
+	c.TLSClientAuthSubjectDN = c.Attributes["_snaplink_client_tls_subject_dn"]
+	c.TLSClientAuthSANDNS = c.Attributes["_snaplink_client_tls_san_dns"]
+	c.TLSClientAuthSANEmail = c.Attributes["_snaplink_client_tls_san_email"]
+	c.TLSClientAuthSANURI = c.Attributes["_snaplink_client_tls_san_uri"]
+	c.PreviousRegistrationAccessToken = c.Attributes["_snaplink_client_previous_rat"]
+	c.LoginPageURI = c.Attributes["_snaplink_client_login_page_uri"]
+	c.RegistrationAccessTokenOverlapUntil, _ = time.Parse(time.RFC3339Nano, c.Attributes["_snaplink_client_rat_overlap_until"])
+	for _, key := range []string{
+		"_snaplink_client_grant_types", "_snaplink_client_token_auth_method",
+		"_snaplink_client_tls_subject_dn", "_snaplink_client_tls_san_dns",
+		"_snaplink_client_tls_san_email", "_snaplink_client_tls_san_uri",
+		"_snaplink_client_previous_rat", "_snaplink_client_rat_overlap_until",
+		"_snaplink_client_login_page_uri",
+	} {
+		delete(c.Attributes, key)
+	}
 }
 
 func scanClient(s scanner) (*sso.Client, error) {

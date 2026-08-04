@@ -1,7 +1,10 @@
 package oauthvalidate
 
 import (
+	"net"
+	"net/url"
 	"slices"
+	"strings"
 )
 
 // DCRMetadata is the subset of RFC 7591 §2 client metadata the
@@ -13,6 +16,11 @@ type DCRMetadata struct {
 	GrantTypes              []string
 	ResponseTypes           []string
 	AllowedAuthenticators   []string
+	HasJWKS                 bool
+	TLSClientAuthSubjectDN  string
+	TLSClientAuthSANDNS     string
+	TLSClientAuthSANEmail   string
+	TLSClientAuthSANURI     string
 
 	// OIDC Core JWE response-encryption metadata. Validated +
 	// defaulted in place (see normalizeAndValidateEncryption) — the
@@ -67,13 +75,21 @@ func ValidateDCRMetadata(req *DCRMetadata, policy *DCRPolicy, supportedGrants []
 	if slices.Contains(req.RedirectURIs, "") {
 		return ErrDCR("empty redirect_uri")
 	}
+	for _, redirectURI := range req.RedirectURIs {
+		if !safeRedirectURI(redirectURI) {
+			return ErrDCR("unsafe redirect_uri: " + redirectURI)
+		}
+	}
 
 	switch req.TokenEndpointAuthMethod {
 	case "", "client_secret_basic", "client_secret_post", "none",
-		"tls_client_auth", "self_signed_tls":
+		"private_key_jwt", "tls_client_auth", "self_signed_tls":
 		// supported
 	default:
 		return ErrDCR("unsupported token_endpoint_auth_method: " + req.TokenEndpointAuthMethod)
+	}
+	if err := validateClientAuthenticationMetadata(req); err != nil {
+		return err
 	}
 
 	if err := validateGrantTypes(req, supportedGrants); err != nil {
@@ -92,6 +108,43 @@ func ValidateDCRMetadata(req *DCRMetadata, policy *DCRPolicy, supportedGrants []
 		return err
 	}
 
+	return nil
+}
+
+func safeRedirectURI(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() || parsed.Fragment != "" || parsed.User != nil {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme == "https" {
+		return parsed.Hostname() != ""
+	}
+	if scheme == "http" {
+		host := strings.ToLower(parsed.Hostname())
+		ip := net.ParseIP(host)
+		return host == "localhost" || (ip != nil && ip.IsLoopback())
+	}
+	switch scheme {
+	case "about", "blob", "data", "file", "javascript", "vbscript":
+		return false
+	default:
+		return scheme != ""
+	}
+}
+
+func validateClientAuthenticationMetadata(req *DCRMetadata) error {
+	switch req.TokenEndpointAuthMethod {
+	case "private_key_jwt", "self_signed_tls":
+		if !req.HasJWKS {
+			return ErrDCR(req.TokenEndpointAuthMethod + " requires jwks")
+		}
+	case "tls_client_auth":
+		if req.TLSClientAuthSubjectDN == "" && req.TLSClientAuthSANDNS == "" &&
+			req.TLSClientAuthSANEmail == "" && req.TLSClientAuthSANURI == "" {
+			return ErrDCR("tls_client_auth requires certificate binding metadata")
+		}
+	}
 	return nil
 }
 

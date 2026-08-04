@@ -75,7 +75,7 @@ func TestKeyAdmin_Rotate_OverlapAndAudit(t *testing.T) {
 	rec := audit.New(sink)
 	c := startKeyAdminGRPC(t, grpcserver.KeyAdminConfig{
 		Rotate:       rotateSeam(iss),
-		DefaultGrace: 40 * time.Millisecond, // short so the retire fires within the test
+		DefaultGrace: 500 * time.Millisecond, // leaves room for RPC overhead under -race
 		Issuers:      map[string]sso.TokenIssuer{"jwt": iss},
 		Recorder:     rec,
 	})
@@ -93,6 +93,9 @@ func TestKeyAdmin_Rotate_OverlapAndAudit(t *testing.T) {
 	}
 	if resp.OldKid == "" || resp.NewKid == "" || resp.OldKid == resp.NewKid {
 		t.Fatalf("rotate returned bad kids: %+v", resp)
+	}
+	if resp.KeyClass != "token_signing" || resp.RolloutState != "new_active_old_verify_only" {
+		t.Fatalf("rotation scope/state omitted: %+v", resp)
 	}
 	if iss.KeyID() != resp.NewKid {
 		t.Errorf("active kid = %q, want new %q", iss.KeyID(), resp.NewKid)

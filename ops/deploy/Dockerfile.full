@@ -1,0 +1,9 @@
+FROM gcr.io/distroless/static:nonroot
+
+# Build first with:
+#   python cli.py configure --profile full --version <semver> --build
+COPY dist/modules/full/snaplink /sso-server
+
+EXPOSE 8080 8081
+USER nonroot:nonroot
+ENTRYPOINT ["/sso-server"]

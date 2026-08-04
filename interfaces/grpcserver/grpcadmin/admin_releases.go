@@ -2,17 +2,156 @@ package grpcadmin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"time"
 
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/operations"
 	"github.com/yangwb1123/snaplink/platform/releases"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func (s *SnapshotAdminService) snapshotIsSafety(ctx context.Context, id string) (bool, error) {
+	raw, err := s.storage.Get(ctx, id)
+	if err != nil {
+		return false, mapSnapshotError(err, "get "+id)
+	}
+	envelope, err := snapshot.PeekEnvelope(raw)
+	if err != nil {
+		return false, status.Errorf(codes.Internal, "peek %s: %v", id, err)
+	}
+	return envelope.Kind == snapshot.KindSafetySnapshot, nil
+}
+
+func validateRollbackIntent(in *adminv1.RestoreSnapshotRequest, explicitSafety, sourceIsSafety bool) error {
+	rollback := in.RollbackOnError != nil && in.RollbackOnError.Value
+	if rollback && in.DryRun {
+		return status.Error(codes.FailedPrecondition, "rollback_on_error cannot be combined with dry_run")
+	}
+	if rollback && !explicitSafety {
+		return status.Error(codes.FailedPrecondition, "rollback_on_error requires auto_safety_snapshot=true")
+	}
+	if rollback && sourceIsSafety {
+		return status.Error(codes.FailedPrecondition, "restoring a safety snapshot cannot roll back: it is itself the safety net")
+	}
+	return nil
+}
+
+func (s *SnapshotAdminService) startTrackedRestore(
+	ctx context.Context, in *adminv1.RestoreSnapshotRequest,
+) (operations.Operation, *snapshot.Snapshot, error) {
+	operation, err := operations.Start(ctx, s.operations, "snapshot_restore", in.Id)
+	if err != nil {
+		return operation, nil, status.Errorf(codes.Internal, "start restore operation: %v", err)
+	}
+	if err := operations.BeginStep(ctx, s.operations, &operation, "load_snapshot"); err != nil {
+		return operation, nil, status.Errorf(codes.Internal, "persist restore step: %v", err)
+	}
+	snap, err := s.pipeline.Load(ctx, s.storage, in.Id)
+	if err != nil {
+		return operation, nil, s.failRestoreOperation(ctx, &operation, err, "load "+in.Id, nil)
+	}
+	return operation, snap, nil
+}
+
+func (s *SnapshotAdminService) validateTrackedRestore(
+	ctx context.Context, operation *operations.Operation, in *adminv1.RestoreSnapshotRequest,
+	snap *snapshot.Snapshot, opts *snapshot.RestoreOptions,
+) error {
+	if err := s.restorer.ValidateRestore(snap, opts); err != nil {
+		return s.failRestoreOperation(ctx, operation, err, "restore "+in.Id, nil)
+	}
+	if err := operations.FinishStep(ctx, s.operations, operation, nil); err != nil {
+		return status.Errorf(codes.Internal, "persist restore step: %v", err)
+	}
+	return nil
+}
+
+func (s *SnapshotAdminService) captureTrackedSafety(
+	ctx context.Context, operation *operations.Operation, enabled bool,
+) (string, error) {
+	if !enabled {
+		return "", nil
+	}
+	if err := operations.BeginStep(ctx, s.operations, operation, "capture_safety_snapshot"); err != nil {
+		return "", status.Errorf(codes.Internal, "persist restore step: %v", err)
+	}
+	safetySnap, err := snapshot.CaptureSafetySnapshot(ctx, s.snapshotter, s.pipeline, s.storage)
+	if err != nil {
+		return "", s.failRestoreOperation(ctx, operation, err, "capture safety snapshot", nil)
+	}
+	if err := operations.FinishStep(ctx, s.operations, operation, nil); err != nil {
+		return "", status.Errorf(codes.Internal, "persist restore step: %v", err)
+	}
+	return safetySnap.SnapshotID, nil
+}
+
+func (s *SnapshotAdminService) applyTrackedRestore(
+	ctx context.Context, operation *operations.Operation, in *adminv1.RestoreSnapshotRequest,
+	snap *snapshot.Snapshot, opts snapshot.RestoreOptions, safetyID string, captureIntended bool,
+) (*snapshot.Report, error) {
+	if err := operations.BeginStep(ctx, s.operations, operation, "apply_resources"); err != nil {
+		return nil, status.Errorf(codes.Internal, "persist restore step: %v", err)
+	}
+	report, err := s.restorer.Restore(ctx, snap, opts)
+	if err != nil && !opts.RollbackOnError {
+		partial, _ := json.Marshal(report)
+		return nil, s.failRestoreOperation(ctx, operation, err, "restore "+in.Id, partial)
+	}
+	if err != nil {
+		return nil, s.rollbackRestore(ctx, operation, in, opts.Mode, snap, report, safetyID, err, captureIntended)
+	}
+	if err := operations.FinishStep(ctx, s.operations, operation, nil); err != nil {
+		return nil, status.Errorf(codes.Internal, "persist restore step: %v", err)
+	}
+	return report, nil
+}
+
+func (s *SnapshotAdminService) finishTrackedRestore(
+	ctx context.Context, operation *operations.Operation, in *adminv1.RestoreSnapshotRequest,
+	mode snapshot.RestoreMode, report *snapshot.Report, safetyID string, captureIntended bool,
+) (*adminv1.RestoreSnapshotResponse, error) {
+	target := fmt.Sprintf("%s mode=%s dry_run=%t", in.Id, mode, in.DryRun)
+	recordAdminMeta(ctx, s.recorder, audit.EventSnapshotRestored, target,
+		restoreAuditMeta(safetyID, captureIntended, report.Committed, false, ""))
+	result, _ := json.Marshal(report)
+	if err := operations.Finish(ctx, s.operations, operation, result, nil); err != nil {
+		return nil, status.Errorf(codes.Internal, "finish restore operation: %v", err)
+	}
+	return &adminv1.RestoreSnapshotResponse{
+		Report: reportToProto(report), OperationId: operation.ID,
+		Operation: operationToProto(*operation), SafetySnapshotId: safetyID,
+	}, nil
+}
+
+func reportToProto(r *snapshot.Report) *adminv1.RestoreReport {
+	if r == nil {
+		return nil
+	}
+	out := &adminv1.RestoreReport{
+		Mode: string(r.Mode), DryRun: r.DryRun,
+		Items: make(map[string]*adminv1.CategoryCounts, len(r.Items)),
+		Bootstrap: &adminv1.BootstrapAdvance{
+			Attempted: r.Bootstrap.Attempted, From: int32(r.Bootstrap.From),
+			To: int32(r.Bootstrap.To), NoOp: r.Bootstrap.NoOp, Reason: r.Bootstrap.Reason,
+		},
+		Errors: append([]string(nil), r.Errors...), Committed: r.Committed,
+		RolledBack: r.RolledBack, SafetySnapshotId: r.SafetySnapshotID,
+	}
+	for category, counts := range r.Items {
+		out.Items[string(category)] = &adminv1.CategoryCounts{
+			Inserted: int32(counts.Inserted), Updated: int32(counts.Updated),
+			Deleted: int32(counts.Deleted), Skipped: int32(counts.Skipped),
+		}
+	}
+	return out
+}
 
 // ReleaseAdminService exposes the releases.Registry over gRPC.
 // Mutating RPCs (Register / Pin / Rollback / Delete) write one audit
@@ -20,16 +159,25 @@ import (
 // the right backend at cmd time; this service is unaware.
 type ReleaseAdminService struct {
 	adminv1.UnimplementedReleaseAdminServiceServer
-	registry *releases.Registry
-	store    releases.ReleaseStore
-	recorder *audit.Recorder
+	registry   *releases.Registry
+	store      releases.ReleaseStore
+	recorder   *audit.Recorder
+	operations operations.Store
 }
 
 // NewReleaseAdminService takes the Registry (for Pin/Rollback/Current)
 // plus the underlying Store (for Register/List/Get/Delete which don't
 // need the Pinner). Both must point at the same backing store.
-func NewReleaseAdminService(reg *releases.Registry, store releases.ReleaseStore, recorder *audit.Recorder) *ReleaseAdminService {
-	return &ReleaseAdminService{registry: reg, store: store, recorder: recorder}
+func NewReleaseAdminService(reg *releases.Registry, store releases.ReleaseStore, recorder *audit.Recorder, operationStores ...operations.Store) *ReleaseAdminService {
+	var operationStore operations.Store
+	if len(operationStores) > 0 {
+		operationStore = operationStores[0]
+	} else {
+		operationStore = operations.NewMemoryStore()
+	}
+	return &ReleaseAdminService{
+		registry: reg, store: store, recorder: recorder, operations: operationStore,
+	}
 }
 
 func (s *ReleaseAdminService) ready() error {
@@ -129,13 +277,16 @@ func (s *ReleaseAdminService) Pin(ctx context.Context, in *adminv1.PinReleaseReq
 	if in == nil || in.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "id required")
 	}
-	rep, err := s.registry.Pin(ctx, in.Id)
+	rep, operation, err := s.applyReleaseTracked(ctx, in.Id, "release_pin", s.registry.Pin)
 	if err != nil {
-		return nil, mapReleaseError(err, "pin "+in.Id)
+		return nil, err
 	}
 	target := fmt.Sprintf("%s previous=%s", rep.ReleaseID, rep.PreviousID)
 	recordAdmin(ctx, s.recorder, audit.EventReleasePinned, target)
-	return &adminv1.PinReleaseResponse{Report: pinReportToProto(rep)}, nil
+	return &adminv1.PinReleaseResponse{
+		Report: pinReportToProto(rep), OperationId: operation.ID,
+		Operation: operationToProto(operation),
+	}, nil
 }
 
 func (s *ReleaseAdminService) Rollback(ctx context.Context, in *adminv1.RollbackReleaseRequest) (*adminv1.RollbackReleaseResponse, error) {
@@ -148,13 +299,61 @@ func (s *ReleaseAdminService) Rollback(ctx context.Context, in *adminv1.Rollback
 	if in == nil || in.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "id required")
 	}
-	rep, err := s.registry.Rollback(ctx, in.Id)
+	rep, operation, err := s.applyReleaseTracked(ctx, in.Id, "release_rollback", s.registry.Rollback)
 	if err != nil {
-		return nil, mapReleaseError(err, "rollback "+in.Id)
+		return nil, err
 	}
 	target := fmt.Sprintf("%s previous=%s", rep.ReleaseID, rep.PreviousID)
 	recordAdmin(ctx, s.recorder, audit.EventReleaseRolledBack, target)
-	return &adminv1.RollbackReleaseResponse{Report: pinReportToProto(rep)}, nil
+	return &adminv1.RollbackReleaseResponse{
+		Report: pinReportToProto(rep), OperationId: operation.ID,
+		Operation: operationToProto(operation),
+	}, nil
+}
+
+func (s *ReleaseAdminService) applyReleaseTracked(
+	ctx context.Context, id, kind string,
+	apply func(context.Context, string) (*releases.PinReport, error),
+) (*releases.PinReport, operations.Operation, error) {
+	if s.operations == nil {
+		return nil, operations.Operation{}, status.Error(
+			codes.FailedPrecondition, "durable operation store not configured")
+	}
+	operation, err := operations.Start(ctx, s.operations, kind, id)
+	if err != nil {
+		return nil, operation, status.Errorf(codes.Internal, "start release operation: %v", err)
+	}
+	if err := operations.BeginStep(ctx, s.operations, &operation, "apply_release"); err != nil {
+		return nil, operation, status.Errorf(codes.Internal, "persist release step: %v", err)
+	}
+	report, applyErr := apply(ctx, id)
+	_ = operations.FinishStep(ctx, s.operations, &operation, applyErr)
+	if applyErr != nil {
+		return nil, operation, s.failReleaseOperation(ctx, &operation, applyErr, kind+" "+id)
+	}
+	result, _ := json.Marshal(report)
+	if err := operations.Finish(ctx, s.operations, &operation, result, nil); err != nil {
+		return nil, operation, status.Errorf(codes.Internal, "finish release operation: %v", err)
+	}
+	return report, operation, nil
+}
+
+func (s *ReleaseAdminService) failReleaseOperation(
+	ctx context.Context, operation *operations.Operation, cause error, prefix string,
+) error {
+	var rollback *releases.AutoRollbackError
+	if errors.As(cause, &rollback) {
+		compensationState, compensationError := operations.StepSucceeded, ""
+		if rollback.CompensationError != nil {
+			compensationState, compensationError = operations.StepFailed, rollback.CompensationError.Error()
+		}
+		_ = operations.AddCompensation(
+			ctx, s.operations, operation, "automatic_rollback",
+			compensationState, compensationError)
+	}
+	mapped := mapReleaseError(cause, prefix)
+	_ = operations.Finish(ctx, s.operations, operation, nil, mapped)
+	return operationFailureError(*operation, mapped)
 }
 
 func (s *ReleaseAdminService) Delete(ctx context.Context, in *adminv1.DeleteReleaseRequest) (*adminv1.DeleteReleaseResponse, error) {

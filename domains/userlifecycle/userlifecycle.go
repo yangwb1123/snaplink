@@ -3,10 +3,9 @@
 // existing core.User records.
 //
 // A user with no lifecycle record is implicitly ACTIVE — the state every
-// account already predating this package is in — so wiring the store changes
-// nothing about how existing users authenticate (core.User.IsActive still
-// governs the login gate; this package is governance/administration metadata,
-// not an auth decision on the request path).
+// account already predating this package is in. Authentication enforcement is
+// opt-in with the Store: unwired callers retain their previous behavior, while
+// wired callers use AllowsAuthentication as the shared state predicate.
 //
 // The state set (INVITED -> ACTIVE -> {SUSPENDED, INACTIVE} -> ARCHIVED ->
 // PURGED) and the legal transitions between them live in transitions.go; the
@@ -82,6 +81,12 @@ const (
 // records a transition behaves identically to one without it.
 const DefaultState = StateActive
 
+// AllowsAuthentication reports whether a persisted lifecycle state may obtain
+// or continue using end-user credentials. A missing record is mapped to
+// DefaultState by Store.Get; StateNone is therefore invalid input here and is
+// denied rather than becoming a latent fail-open for future store backends.
+func AllowsAuthentication(state State) bool { return state == StateActive }
+
 // ActorSystem is the Transition.Actor value the auto-deprovisioning sweep
 // stamps on transitions it applies (as opposed to an admin's user id on
 // operator-driven transitions).
@@ -119,10 +124,11 @@ type Record struct {
 	UpdatedAt time.Time    `json:"updated_at,omitzero"`
 }
 
-// Store persists per-user lifecycle state + history. Implementations live in
-// userlifecycle/<backend>/ (memory today; a SQL peer can follow the same
-// contract). When no Store is wired the lifecycle surface is simply absent —
-// byte-identical to a build without the feature.
+// Store persists per-user lifecycle state + history. The in-process reference
+// implementation lives in userlifecycle/memory; the stock shared durable
+// adapter lives in infrastructure/userlifecyclepostgres. When no Store is
+// wired the lifecycle surface is simply absent — byte-identical to a build
+// without the feature.
 type Store interface {
 	// Get returns the lifecycle record for userID. A user with no stored record
 	// is returned as {State: DefaultState} with empty history — NEVER an error —
@@ -147,11 +153,64 @@ type Store interface {
 	ListByState(ctx context.Context, state State) ([]string, error)
 }
 
+// StateReader is the optional hot-path projection implemented by stores that
+// can read current state without materializing append-only history.
+type StateReader interface {
+	GetState(ctx context.Context, userID string) (State, error)
+}
+
+// ReadState uses the state-only projection when available and otherwise
+// preserves compatibility with Store implementations that only expose Get.
+func ReadState(ctx context.Context, store Store, userID string) (State, error) {
+	if reader, ok := store.(StateReader); ok {
+		return reader.GetState(ctx, userID)
+	}
+	record, err := store.Get(ctx, userID)
+	return record.State, err
+}
+
+// TransitionObserver receives a successfully committed lifecycle transition.
+// It cannot roll the state change back; observers therefore own their own error
+// handling and should be safe to invoke more than once.
+type TransitionObserver func(ctx context.Context, userID string, transition Transition)
+
+type observedStore struct {
+	Store
+	observe TransitionObserver
+}
+
+// ObserveTransitions decorates store so every successful Append synchronously
+// invokes observe before Append returns. Reads are forwarded unchanged. Nil
+// inputs preserve the original store, keeping observation entirely opt-in.
+func ObserveTransitions(store Store, observe TransitionObserver) Store {
+	if store == nil || observe == nil {
+		return store
+	}
+	return &observedStore{Store: store, observe: observe}
+}
+
+func (s *observedStore) Append(ctx context.Context, userID string, transition Transition) error {
+	if err := s.Store.Append(ctx, userID, transition); err != nil {
+		return err
+	}
+	s.observe(ctx, userID, transition)
+	return nil
+}
+
+func (s *observedStore) GetState(ctx context.Context, userID string) (State, error) {
+	return ReadState(ctx, s.Store, userID)
+}
+
 // Sentinel errors. The admin transition handler maps these to stable wire
 // codes (see docs/error-codes.md): ErrIllegalTransition -> 400
 // illegal_lifecycle_transition, ErrUnknownState -> 400 unknown_lifecycle_state,
 // ErrStateConflict -> 409 lifecycle_state_conflict.
 var (
+	// ErrAuthenticationBlocked is returned by enforcement adapters when the
+	// current lifecycle state is not permitted to authenticate, or when that
+	// state cannot be read safely. Wire handlers collapse it to their existing
+	// oracle-safe denial shape.
+	ErrAuthenticationBlocked = errors.New("userlifecycle: authentication blocked")
 	// ErrIllegalTransition is returned by ValidateTransition when To is not
 	// reachable from From per the legal-transition table.
 	ErrIllegalTransition = errors.New("userlifecycle: illegal state transition")

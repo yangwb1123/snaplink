@@ -76,15 +76,17 @@ func (d *endSessionDeps) RecordLogout(core.HandlerContext, string, []string) { d
 func (d *endSessionDeps) DestroySession(_ context.Context, _ string) error   { return nil }
 func (d *endSessionDeps) ClearSessionManagementCookie(core.HandlerContext)   {}
 
-// mintAccessToken issues a genuine signed JWT carrying the given subject and
+// mintIDToken issues a genuine signed JWT carrying the given subject and
 // client binding, so the id_token_hint path exercises real verification.
-func mintAccessToken(t *testing.T, iss *defaultimpl.Ed25519JWTIssuer, sub, clientID string) string {
+func mintIDToken(t *testing.T, iss *defaultimpl.Ed25519JWTIssuer, sub, clientID string) string {
 	t.Helper()
-	tok, err := iss.Issue(context.Background(), &core.Subject{ID: sub, ClientID: clientID}, []string{"openid"})
+	tok, err := iss.IssueIDToken(context.Background(), &oidc.IDTokenRequest{
+		Subject: sub, Audience: clientID, GrantedScopes: []string{"openid"},
+	})
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
-	return tok.AccessToken
+	return tok
 }
 
 func newEndSessionDeps(t *testing.T) *endSessionDeps {
@@ -117,7 +119,7 @@ func TestHandleEndSession_ValidHintRedirectsWhenAllowlisted(t *testing.T) {
 		ID:                     "rp-1",
 		PostLogoutRedirectURIs: []string{"https://rp.example/bye"},
 	})
-	hint := mintAccessToken(t, d.issuer, "user-1", "rp-1")
+	hint := mintIDToken(t, d.issuer, "user-1", "rp-1")
 
 	q := url.Values{}
 	q.Set("id_token_hint", hint)
@@ -148,7 +150,7 @@ func TestHandleEndSession_RejectedRedirect204(t *testing.T) {
 		ID:                     "rp-1",
 		PostLogoutRedirectURIs: []string{"https://rp.example/allowed"},
 	})
-	hint := mintAccessToken(t, d.issuer, "user-1", "rp-1")
+	hint := mintIDToken(t, d.issuer, "user-1", "rp-1")
 
 	q := url.Values{}
 	q.Set("id_token_hint", hint)
@@ -169,7 +171,7 @@ func TestHandleEndSession_NoRedirectURI204(t *testing.T) {
 	t.Parallel()
 	d := newEndSessionDeps(t)
 	_ = d.clients.Add(context.Background(), &core.Client{ID: "rp-1"})
-	hint := mintAccessToken(t, d.issuer, "user-1", "rp-1")
+	hint := mintIDToken(t, d.issuer, "user-1", "rp-1")
 	ctx, rec := newCtx(http.MethodGet, "/end_session?id_token_hint="+url.QueryEscape(hint))
 	oidc.HandleEndSession(d, ctx)
 
@@ -186,7 +188,7 @@ func TestHandleEndSession_FrontchannelLogoutRendered(t *testing.T) {
 		ID:                     "rp-1",
 		PostLogoutRedirectURIs: []string{"https://rp.example/bye"},
 	})
-	hint := mintAccessToken(t, d.issuer, "user-1", "rp-1")
+	hint := mintIDToken(t, d.issuer, "user-1", "rp-1")
 	q := url.Values{}
 	q.Set("id_token_hint", hint)
 	q.Set("post_logout_redirect_uri", "https://rp.example/bye")
@@ -248,11 +250,25 @@ func TestHandleEndSession_RefreshTokensPurged(t *testing.T) {
 	_ = d.refresh.Issue(context.Background(), "rt-1", &oauth.RefreshToken{
 		UserID: "user-1", ClientID: "rp-1",
 	})
-	hint := mintAccessToken(t, d.issuer, "user-1", "rp-1")
+	hint := mintIDToken(t, d.issuer, "user-1", "rp-1")
 	ctx, _ := newCtx(http.MethodGet, "/end_session?id_token_hint="+url.QueryEscape(hint))
 	oidc.HandleEndSession(d, ctx)
 
 	if _, err := d.refresh.Consume(context.Background(), "rt-1"); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
 		t.Errorf("refresh token should have been purged on logout, Consume err = %v", err)
+	}
+}
+
+func TestHandleEndSession_RejectsAccessTokenHint(t *testing.T) {
+	t.Parallel()
+	d := newEndSessionDeps(t)
+	tok, err := d.issuer.Issue(context.Background(), &core.Subject{ID: "user-1", ClientID: "rp-1"}, []string{"openid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, rec := newCtx(http.MethodGet, "/end_session?id_token_hint="+url.QueryEscape(tok.AccessToken))
+	oidc.HandleEndSession(d, ctx)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), core.ErrInvalidToken) {
+		t.Fatalf("access-token hint status/body = %d/%q, want 400 invalid_token", rec.Code, rec.Body.String())
 	}
 }

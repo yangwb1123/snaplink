@@ -233,9 +233,9 @@ func WithRequestLogging(logBodies bool) Option {
 
 // WithIdempotentStore wires an idempotency cache for the /token endpoint.
 // When set, the server checks for an Idempotency-Key header on token
-// requests and caches the first successful response, returning it for
-// repeat requests with the same key — safe retry semantics without
-// duplicate token issuance.
+// requests and, after authenticating the client and sender constraint, caches
+// the first successful response under a client + request fingerprint. Only an
+// authenticated retry of the same operation can receive that response.
 //
 // The cache TTL is typically aligned with the token lifetime or a
 // maximum of 1 hour. Pass nil to disable idempotency (default).
@@ -292,11 +292,22 @@ type FeatureGates struct {
 	// admin-scoped). Off ⇒ operators who run admin tooling out-of-band
 	// (or not at all) don't expose the admin bearer-auth challenge surface.
 	AdminAPI *bool
-	// WebSPA gates the per-host branding lookup (GET /branding) — the only
-	// route left under this flag now that sso-server serves no static
-	// frontend of its own (every hosted UI is a separate project, reverse
-	// proxied alongside this server).
+	// Branding gates the public per-host branding lookup (GET /branding) —
+	// the only route left under this flag now that sso-server serves no
+	// static frontend of its own. Canonical name; WebSPA is its deprecated
+	// alias (both set = Branding wins; YAML rejects both set).
+	Branding *bool
+	// WebSPA is the deprecated alias of Branding, retained for source
+	// compatibility.
 	WebSPA *bool
+}
+
+// brandingGate resolves the canonical gate: Branding, else WebSPA, else nil.
+func (f FeatureGates) brandingGate() *bool {
+	if f.Branding != nil {
+		return f.Branding
+	}
+	return f.WebSPA
 }
 
 // WithFeatureGates installs deployment-shape attack-surface gating: any
@@ -308,8 +319,8 @@ type FeatureGates struct {
 //
 //	srv := sso.NewServer(
 //	    sso.WithFeatureGates(sso.FeatureGates{
-//	        OIDC:   sso.Bool(false), // OAuth-2.0-only deployment
-//	        WebSPA: sso.Bool(false), // API-only, no hosted UI
+//	        OIDC:     sso.Bool(false), // OAuth-2.0-only deployment
+//	        Branding: sso.Bool(false), // API-only, no hosted UI
 //	    }),
 //	)
 func WithFeatureGates(g FeatureGates) Option {

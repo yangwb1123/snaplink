@@ -127,4 +127,37 @@ func (s *PairwiseSubjectStore) LocalSubject(ctx context.Context, pairwiseSub str
 	return local, nil
 }
 
+// ListPairwiseSubjects implements security.PairwiseSubjectLister.
+func (s *PairwiseSubjectStore) ListPairwiseSubjects(ctx context.Context) ([]security.PairwiseSubjectMapping, error) {
+	rows, err := s.db.QueryContext(ctx, `
+        SELECT pairwise_sub, local_sub FROM pairwise_subjects ORDER BY pairwise_sub`)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list pairwise: %w", err)
+	}
+	defer rows.Close()
+	var out []security.PairwiseSubjectMapping
+	for rows.Next() {
+		var item security.PairwiseSubjectMapping
+		if err := rows.Scan(&item.PairwiseSub, &item.LocalSub); err != nil {
+			return nil, fmt.Errorf("postgres: scan pairwise: %w", err)
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: list pairwise rows: %w", err)
+	}
+	return out, nil
+}
+
+// DeletePairwiseSubject implements security.PairwiseSubjectDeleter.
+func (s *PairwiseSubjectStore) DeletePairwiseSubject(ctx context.Context, pairwiseSub string) error {
+	if _, err := s.db.ExecContext(ctx, `
+        DELETE FROM pairwise_subjects WHERE pairwise_sub = $1`, pairwiseSub); err != nil {
+		return fmt.Errorf("postgres: delete pairwise: %w", err)
+	}
+	return nil
+}
+
 var _ security.PairwiseSubjectStore = (*PairwiseSubjectStore)(nil)
+var _ security.PairwiseSubjectLister = (*PairwiseSubjectStore)(nil)
+var _ security.PairwiseSubjectDeleter = (*PairwiseSubjectStore)(nil)

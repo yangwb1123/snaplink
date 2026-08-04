@@ -12,7 +12,6 @@ import (
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
-	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/trust"
 )
@@ -41,29 +40,29 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	if s.checkLoginDeadline(ctx, req.State) {
 		return
 	}
-
-	// OIDC Core §3.1.2.1 prompt=none silent-renewal contract; parsed before the
-	// providers/credential paths so this branch can override them (see handlePromptNone).
-	prompts := oidc.ParsePromptValues(req.Prompt)
-	if oidc.PromptHasNone(prompts) {
-		s.handlePromptNone(ctx, prompts, &req)
+	if s.runPreAuthenticateHook(ctx, &req, nil) {
+		return
+	}
+	if s.handleLoginContinuationOrPromptNone(ctx, req) {
 		return
 	}
 	if s.checkLoginDeadline(ctx, req.State) {
 		return
 	}
 
-	client, handled := s.preAuthLoginGates(ctx, &req)
+	authzCtx, client, handled := s.preAuthLoginGates(ctx, &req)
 	if handled {
 		return
 	}
+	ctx = authzCtx
 
 	result, handled := s.credentialLoginStage(ctx, &req, client)
 	if handled {
 		return
 	}
 
-	s.finishLogin(ctx, result, req, client)
+	nextCtx := s.wrapForLoginContinuation(ctx, result, req, client, false)
+	s.finishLogin(nextCtx, result, req, client)
 }
 
 func (s *Server) directMintClaims(ctx HandlerContext, result *AuthResult, score trust.TrustScore, known bool) map[string]string {
@@ -116,16 +115,22 @@ func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *lo
 		Claims:               s.directMintClaims(ctx, result, trustScore, trustKnown),
 		Resources:            append([]string(nil), req.Resource...),
 		ClientID:             client.ID,
+		TenantID:             client.TenantID,
 		AuthTime:             time.Now(),
 		AMR:                  handler.AmrForResult(result),
 		ACR:                  result.AchievedACR,
 		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),
 		SID:                  session.ID,
+		ServingRegion:        servingRegionFrom(ctx),
 		TTL:                  ttl,
 		RequestedClaims:      oauth.CloneRawJSON(req.Claims),
 	}, req.Scope)
 	if err != nil {
 		s.logger.Error("failed to issue token", "strategy", strategy, "error", err)
+		if status, code, ok := core.AuthHookHTTPError(err); ok {
+			ctx.JSON(status, s.authzErrorBodyWithState(ctx, code, state))
+			return "", nil, "", err
+		}
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
 		return "", nil, "", err
 	}
@@ -200,32 +205,33 @@ func (s *Server) armAuthzRequestTimeout(ctx HandlerContext) context.CancelFunc {
 // authz-request validation (order JAR -> FAPI -> param shapes) — with the
 // login deadline re-checked between stages. handled=true means a response was
 // ALREADY written and the caller MUST return.
-func (s *Server) preAuthLoginGates(ctx HandlerContext, req *login.Request) (*Client, bool) {
+func (s *Server) preAuthLoginGates(ctx HandlerContext, req *login.Request) (HandlerContext, *Client, bool) {
 	// No provider selected yet: home-realm discovery (B2B) or generic provider list.
 	if s.respondLoginProviders(ctx, req) {
-		return nil, true
+		return ctx, nil, true
 	}
 	if s.checkLoginDeadline(ctx, req.State) {
-		return nil, true
+		return ctx, nil, true
 	}
 
 	// Pre-authentication client gates (existence/active/tenant/residency/PAR-JAR-required/allowlist).
 	client, handled := s.resolveAndValidateLoginClient(ctx, req)
 	if handled {
-		return nil, true
+		return ctx, nil, true
 	}
+	ctx = s.wrapAuthorizationResponse(ctx, req, client)
 	if s.checkLoginDeadline(ctx, req.State) {
-		return nil, true
+		return ctx, nil, true
 	}
 
 	// Post PAR+JAR-merge authz-request validation (order JAR -> FAPI -> param shapes).
 	if s.runPostMergeAuthzValidation(ctx, req, client) {
-		return nil, true
+		return ctx, nil, true
 	}
 	if s.checkLoginDeadline(ctx, req.State) {
-		return nil, true
+		return ctx, nil, true
 	}
-	return client, false
+	return ctx, client, false
 }
 
 // credentialLoginStage resolves the authenticator, validates credentials
@@ -240,6 +246,9 @@ func (s *Server) credentialLoginStage(ctx HandlerContext, req *login.Request, cl
 		return nil, true
 	}
 	if s.checkLoginDeadline(ctx, req.State) {
+		return nil, true
+	}
+	if s.runPostAuthenticateHook(ctx, req, client, result) {
 		return nil, true
 	}
 
@@ -277,9 +286,13 @@ func (s *Server) bootstrapLoginRequest(ctx HandlerContext) (login.Request, bool)
 	ctx.Set(ctxKeyLoginStart, time.Now())
 	tokenNoStoreHeaders(ctx)
 	var req login.Request
+	var err error
 	if ctx.Request().Method == http.MethodGet {
-		req = bindLoginRequestFromQuery(ctx.Request())
-	} else if err := ctx.Bind(&req); err != nil {
+		req, err = bindLoginRequestFromQuery(ctx.Request())
+	} else {
+		err = ctx.Bind(&req)
+	}
+	if err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return req, false
 	}
@@ -287,41 +300,6 @@ func (s *Server) bootstrapLoginRequest(ctx HandlerContext) (login.Request, bool)
 		return req, false
 	}
 	return req, true
-}
-
-// bindLoginRequestFromQuery populates the authorization-request-shaped subset
-// of login.Request from URL query parameters, for the ONLY case a bodyless
-// GET reaches /auth/login: a "Sign in with <federated provider>" button
-// doing a real page navigation. Credential/consent/PAR/JAR fields are
-// deliberately NOT bound here — a GET can't carry a credential (it would
-// leak into browser history / server access logs), so credentialLoginStage
-// either dispatches to auth.LoginURL's redirect (the intended path) or, for
-// a non-federated provider, fails closed the same way an empty credential
-// always has.
-func bindLoginRequestFromQuery(r *http.Request) login.Request {
-	q := r.URL.Query()
-	req := login.Request{
-		Provider:            q.Get("provider"),
-		ClientID:            q.Get("client_id"),
-		State:               q.Get("state"),
-		ResponseType:        q.Get("response_type"),
-		RedirectURI:         q.Get("redirect_uri"),
-		Nonce:               q.Get("nonce"),
-		CodeChallenge:       q.Get("code_challenge"),
-		CodeChallengeMethod: q.Get("code_challenge_method"),
-		Prompt:              q.Get("prompt"),
-		LoginHint:           q.Get("login_hint"),
-		ResponseMode:        q.Get("response_mode"),
-		ACRValues:           q.Get("acr_values"),
-		UILocales:           q.Get("ui_locales"),
-	}
-	if scope := q.Get("scope"); scope != "" {
-		req.Scope = strings.Fields(scope)
-	}
-	if resource := q.Get("resource"); resource != "" {
-		req.Resource = strings.Fields(resource)
-	}
-	return req
 }
 
 // --- Tenant suspension cache -----------------------------------------------
@@ -458,4 +436,34 @@ func (s *Server) InvalidateTenantSuspensionCache(tenantID string) {
 			s.logger.Error("invalidation bus publish failed", "kind", string(evt.Kind), "key", tenantID, "error", err)
 		}
 	}
+}
+
+// upsertLoginUser provisions/refreshes the local user record from the
+// authentication result when a UserProvider is wired. On a store failure it has
+// ALREADY written the exact 500 internal body and returns halted=true; the
+// caller must return immediately. No provider = no-op (halted=false).
+func (s *Server) upsertLoginUser(ctx HandlerContext, result *AuthResult, state string) bool {
+	if s.userProvider == nil {
+		return false
+	}
+	// Preserve profile attributes when the authenticator returned none: a
+	// login must not wipe claims another flow (signup, self-service, SCIM)
+	// stored on the user record — the login is a refresh, not a reset.
+	if result.Attributes == nil {
+		if existing, err := s.userProvider.GetByID(ctx.Request().Context(), result.UserID); err == nil && existing != nil {
+			result.Attributes = existing.Attributes
+		}
+	}
+	user := &User{
+		ID:         result.UserID,
+		ExternalID: result.ExternalID,
+		Provider:   result.Provider,
+		Attributes: result.Attributes,
+	}
+	if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
+		s.logger.Error("failed to upsert user", "error", err)
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
+		return true
+	}
+	return false
 }

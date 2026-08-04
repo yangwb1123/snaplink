@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sso-gateway
+  namespace: sv-sso
+  labels:
+    app: sso-gateway
+    app.kubernetes.io/name: sso-gateway
+    app.kubernetes.io/part-of: snaplink-sso
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sso-gateway
+  template:
+    metadata:
+      labels:
+        app: sso-gateway
+        app.kubernetes.io/name: sso-gateway
+        app.kubernetes.io/part-of: snaplink-sso
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: openresty
+          image: snaplink/sso-gateway:full-b24b0b0-gw6
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /_gateway/health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /_gateway/health
+              port: http
+            initialDelaySeconds: 1
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sso-gateway
+  namespace: sv-sso
+  labels:
+    app: sso-gateway
+    app.kubernetes.io/name: sso-gateway
+    app.kubernetes.io/part-of: snaplink-sso
+spec:
+  type: NodePort
+  selector:
+    app: sso-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: 30101

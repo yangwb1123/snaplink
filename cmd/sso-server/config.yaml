@@ -1,3 +1,5 @@
+version: 1
+
 server:
   # Operator-chosen issuer identifier. Used everywhere consistently:
   # the JWT `iss` claim on every access / id / refresh / logout token,
@@ -15,6 +17,9 @@ server:
   # breaks every RFC 9068 access-token validator. Config validation
   # refuses it.
   issuer: sso-server
+  # Deployment contract: startup and --validate-only fail when the configured
+  # binary was built without any listed capability.
+  required_capabilities: [core.runtime.v1, server.stock.v1]
   # base_url is currently informational only — the SDK derives absolute
   # URLs (callback redirects, JWKS) from incoming request headers and
   # reverse-proxy hints, not from this constant. Keeping it for future
@@ -28,6 +33,12 @@ server:
   pprof:
     enabled: false
     listen: "127.0.0.1:6060"
+  # Declare multi when requests can land on more than one sso-server process.
+  # Multi mode refuses to boot with process-local critical stores. The unsafe
+  # escape hatch exists only for development fault-injection.
+  topology:
+    mode: single
+    allow_per_pod_state: false
   # session_ttl + token_ttl are read by cmd/sso-server when constructing
   # the default SessionManager / TokenIssuer. They are NOT wired through
   # sso.With{Session,Token}TTL (those options are deprecated no-ops);
@@ -100,7 +111,7 @@ logging:
 # share session state for TokenStrategySession clients. DSN can be
 # shared with oauth.sqlite.dsn for a single-file install.
 identity:
-  backend: memory       # memory | sqlite
+  backend: memory       # memory | sqlite | postgres
   sqlite:
     dsn: ""             # e.g. file:/var/lib/sso/sso.db?_journal=WAL
 
@@ -125,16 +136,16 @@ self_service:
     sqlite:
       dsn: ""           # e.g. file:/var/lib/sso/passwords.db?_journal=WAL&_pragma=busy_timeout(5000)
 
-  # Self-service signup email verification. When signup is enabled, this section
-  # controls whether email verification is required (Mode B) or optional (Mode A).
-  # require_verification: when true, POST /auth/register requires email and returns
-  #   201 {"status":"pending"} — the user is NOT created until they complete
-  #   verification via POST /auth/verify-email. When false (default), accounts are
-  #   created immediately and email_verified is set to "true" if email is provided.
-  # verification_token_ttl: how long a verification token remains valid. 0 = 15m.
-  registration:
-    require_verification: false
-    verification_token_ttl: 0
+  # Linked external identities used by federated login and /me/identities.
+  # memory is development-only; sqlite persists one-host installs; postgres
+  # shares the global postgres pool across replicas. link_only is an explicit
+  # opt-in because it atomically moves identity links, not sessions/consents.
+  identity_link:
+    enabled: false
+    backend: "sqlite"       # memory | sqlite | postgres
+    sqlite:
+      dsn: ""               # e.g. file:/var/lib/sso/identity-links.db?_journal=WAL&_pragma=busy_timeout(5000)
+    merge_policy: "reject"  # reject | link_only
 
 # OpenID Connect Native SSO 1.0. When enabled, a /token request that includes
 # the device_sso scope gets a device_secret (+ ds_hash in the id_token); a
@@ -425,6 +436,9 @@ clients:
   - id: web-app
     secret: web-secret
     name: Web App
+    # Required when this client enables OIDC/SAML federation. Point it at the
+    # separately deployed hosted login page (for example the Snaplink Console).
+    # login_page_uri: http://localhost:8081/login/
     redirect_uris:
       - http://localhost:3000/callback
     allowed_scopes: [openid, profile, email]
@@ -495,6 +509,25 @@ clients:
   #       x: <base64url-public-key>
 
 authenticators:
+  # Shared fixed-window delivery budgets for phone/email OTP and magic links.
+  # Identity counts are tenant-scoped; Redis enforces both counters atomically
+  # across replicas. Use -1 to disable either dimension (0 selects the default).
+  code_send_quota:
+    identity_limit: 20
+    tenant_limit: 1000
+    window: 24h
+
+  # Optional bounded async delivery for phone/email OTP and magic links.
+  # Plaintext codes stay in process memory only; exhausted jobs invalidate the
+  # current code and release its quota reservation. Zero values use defaults.
+  code_delivery:
+    async: false
+    queue_size: 256
+    workers: 2
+    attempts: 3
+    attempt_timeout: 10s
+    retry_backoff: 200ms
+
   # Username + password authentication. cmd's reference wiring uses a
   # bcrypt verifier closed over the `users` seed list — each entry
   # maps a username to a bcrypt hash on disk and the sso.Subject
@@ -777,12 +810,23 @@ oauth:
   backend: memory        # memory | sqlite
   sqlite:
     dsn: ""              # e.g. file:/var/lib/sso/sso.db?_journal=WAL&_pragma=busy_timeout(5000)
+    # Optional at-rest protection for opaque OAuth credentials. New rows store
+    # only HMAC lookup keys; reads also try the previous key and legacy
+    # plaintext rows so rotation and rollout do not log users out.
+    lookup_hmac_key_file: ""
+    lookup_hmac_previous_key_file: ""
+  redis:
+    # Same contract for Redis key names, index members, and device-code values.
+    lookup_hmac_key_file: ""
+    lookup_hmac_previous_key_file: ""
   auth_code:
     enabled: true       # grant_type=authorization_code (RFC 6749 §4.1)
     ttl: 10m            # SDK default when <=0 (also 10m)
+    reap_interval: 1m   # memory/SQLite; Redis uses native TTL
   refresh_token:
     enabled: true       # grant_type=refresh_token, single-use rotation
     ttl: 720h           # 30d; SDK default when <=0
+    reap_interval: 15m  # also bounds consumed-token reuse-ledger growth
     # Opt-in grace window: a concurrent double-submit of the just-rotated token
     # is idempotent within the window (multi-tab SPA / mobile cold-start races)
     # instead of tripping family-reuse detection. 0 = strict single-use.
@@ -790,11 +834,13 @@ oauth:
   device_code:
     enabled: false      # grant_type=urn:ietf:params:oauth:grant-type:device_code (RFC 8628)
     ttl: 10m
+    reap_interval: 1m
     poll_interval: 5s   # minimum allowed poll cadence; faster→slow_down
     verification_base_url: ""   # empty: derive from request
   par:
     enabled: false      # POST /par + request_uri (RFC 9126)
     ttl: 90s
+    reap_interval: 1m
   # RFC 9101 §5.2.2 — JAR `request_uri` URL fetching. The inline
   # `request=<jwt>` flow works without this; only the URL-fetched
   # variant needs the HTTP fetcher. Each client also needs
@@ -837,17 +883,28 @@ dpop:
 # OIDC Back-Channel Logout 1.0. When enabled, /logout + /end_session
 # POST a signed logout_token to every affected RP's backchannel_logout_uri
 # so server-side sessions get torn down without depending on a browser
-# round-trip. SDK uses HTTPLogoutNotifier (5s timeout, no proxy).
-# index.backend: memory (single-replica) or sqlite (cluster-shared);
-# the sqlite index lets a logout reaching any replica fan out to every
+# round-trip. SDK uses HTTPLogoutNotifier with one 5s total budget and
+# up to 3 attempts for transport/408/429/5xx failures; each retry has a
+# fresh jti, and browser disconnect does not cancel an in-flight delivery.
+# index.backend: memory (single-replica), sqlite, or redis (cluster-shared);
+# a shared index lets a logout reaching any replica fan out to every
 # client a subject has touched cluster-wide.
 backchannel_logout:
   enabled: false
   max_concurrent: 0     # 0 = SDK default (8)
   index:
-    backend: memory     # memory | sqlite
+    backend: memory     # memory | sqlite | redis
     sqlite:
       dsn: ""           # e.g. file:/var/lib/sso/bcl.db?_journal=WAL
+  # Exhausted deliveries can enter an operator-visible replay queue. Redis
+  # persists entries across restart and uses per-entry leases so only one
+  # replica replays an item. Signed logout tokens are never stored; every
+  # attempt mints a fresh token/jti. Empty backend disables the queue.
+  failure_queue:
+    backend: ""         # "" (disabled) | memory | redis
+    retry_interval: 30s
+    batch_size: 50
+    lease_duration: 30s
 
 # RFC 7591 Dynamic Client Registration + RFC 7592 management endpoints.
 # Without enabled, /register returns 501 and every RP must be operator-
@@ -864,10 +921,11 @@ client_registration:
   allowed_authenticators: []
   # Mint a fresh registration_access_token on every PUT /register/:id
   # (RFC 7592 §3.2), limiting a leaked token's lifetime. The new token is
-  # returned once in the PUT response; the old one stops working. Default
-  # false keeps the token stable — enable only if your managing clients
-  # capture the rotated token from each update response.
+  # returned once in the PUT response. The credential used for the rotation
+  # remains valid during rotate_access_token_overlap so a lost response can be
+  # retried without orphaning management access.
   rotate_access_token: false
+  rotate_access_token_overlap: 5m
 
 # WebAuthn (CTAP/FIDO2) ceremony endpoints. Mounts four POST routes on
 # the SSO router when enabled:
@@ -993,12 +1051,13 @@ registry:
 # tenant suspension) so an admin action on one replica takes effect on
 # every replica immediately, instead of after each node's cache TTL.
 # Unset/memory = single-process (no cross-replica effect; the safe
-# default). etcd = cluster-shared. The bus is fail-open, so it is NOT a
-# /readyz dependency — an etcd outage degrades to TTL convergence, never
-# a 503. Start StartInvalidationBus is wired automatically by cmd.
+# default). etcd/redis = cluster-shared. A live-stream loss trips /readyz
+# until the subscriber reconnects, flushes caches, and re-seeds revocations.
+# StartInvalidationBus is wired automatically by cmd.
 cluster:
   bus:
-    backend: ""               # "" (off) | memory | etcd
+    backend: ""               # "" (off) | memory | etcd | redis
+    redis_channel: ""          # redis only; empty -> snaplink:cluster:bus
     etcd_endpoints: []
     # etcd_prefix: "/snaplink/cluster/bus"
     # etcd_dial_timeout: 5s
@@ -1022,6 +1081,11 @@ keys:
   # the scheduled loop is skipped (manual RotateKey/RetireKey still work).
   signing:
     alg: eddsa             # eddsa | es256 | rs256 | ps256 (ps256 = FAPI-preferred)
+    # Revocations seed the issuer's in-process deny-set at boot and after a
+    # cluster-bus outage. redis is required with cross_replica_revocation in
+    # multi-replica mode so every pod recovers from the same exp-bounded set.
+    revocation_backend: ""   # "" (in-process only) | memory | sqlite | redis
+    revocation_dsn: ""       # required only for sqlite
     # FIPS 140-3 build mode (opt-in, default false — see docs/fips.md).
     # Requires building/running with GOFIPS140 or GODEBUG=fips140=on/only;
     # otherwise the server refuses to start rather than silently run
@@ -1629,6 +1693,20 @@ mfa:
       # Same DSN cookbook as the rest of the SQLite substrate:
       # dsn: "file:/var/lib/sso/sso.db?_journal=WAL&_pragma=busy_timeout(5000)"
       dsn: ""
+
+# User account lifecycle is an optional fail-closed auth/token gate and admin
+# state machine. Memory is single-process; postgres persists state + history
+# and is required when enabled in a declared multi-replica topology. Every
+# transition to a non-active state revokes sessions and refresh tokens.
+user_lifecycle:
+  enabled: false
+  backend: "memory" # memory | postgres (uses the shared top-level postgres block)
+  auto_deprovision:
+    enabled: false
+    dormant_after: 2160h # 90d; >0 required when enabled
+    archive_after: 0s    # additional idle time; 0 keeps inactive indefinitely
+    max_per_sweep: 100
+    sweep_interval: 1h
 
 # Frontend + backend app version pin / rollback. Pinner.PinForward +
 # PinRollback encode asymmetric ordering (backend-first forward,

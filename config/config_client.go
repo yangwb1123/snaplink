@@ -14,6 +14,7 @@ type ClientConfig struct {
 	RedirectURIs          []string `yaml:"redirect_uris"`
 	AllowedScopes         []string `yaml:"allowed_scopes"`
 	AllowedAuthenticators []string `yaml:"allowed_authenticators"`
+	LoginPageURI          string   `yaml:"login_page_uri,omitempty"`
 	TokenStrategy         string   `yaml:"token_strategy"`
 	Active                bool     `yaml:"active"`
 	// TenantID binds this client to one tenant; empty = no tenant
@@ -109,14 +110,15 @@ type ClientSecretRotationConfig struct {
 	// Enabled.
 	Interval time.Duration `yaml:"interval"`
 
-	// Overlap is accepted for schema parity with RotationConfig.Overlap but
-	// is NOT YET ENFORCED — see
-	// shared/security/clientrotation.ClientSecretRotator.OverlapWindow for
-	// the documented reason (no previous-secret fallback in
-	// ClientStore.ValidateSecret yet). Setting it is forward-compatible —
-	// today it has NO EFFECT: a rotated client's old secret stops working
-	// immediately (no grace window).
+	// Overlap keeps the previous hash valid while an application deploys the
+	// newly-issued secret. Zero selects the secure 24-hour default; explicit
+	// values must be at least one hour.
 	Overlap time.Duration `yaml:"overlap"`
+
+	// Lifetime is the validity period installed on each newly rotated secret.
+	// Zero selects Interval+Overlap so a scheduled rotation has a full grace
+	// window before the credential can expire.
+	Lifetime time.Duration `yaml:"lifetime"`
 }
 
 // ClientJWK mirrors sso.JWK in YAML-friendly form. Used to register

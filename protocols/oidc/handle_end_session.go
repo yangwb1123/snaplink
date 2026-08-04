@@ -85,8 +85,8 @@ type EndSessionDeps interface {
 // Security:
 //
 //   - id_token_hint signature MUST verify against the server's wired
-//     token issuers (we treat ID tokens and access tokens as signed
-//     by the same key pair).
+//     token issuers and its authenticated token use MUST be id_token
+//     (ID and access tokens may share the same signing key).
 //   - post_logout_redirect_uri MUST exact-match (no path tolerance,
 //     no scheme-only match) — phishing defense per §3.
 func HandleEndSession(d EndSessionDeps, ctx core.HandlerContext) {
@@ -143,7 +143,7 @@ func resolveEndSessionClient(d EndSessionDeps, ctx core.HandlerContext, idTokenH
 	clientStore := d.ClientStoreAccessor()
 	if idTokenHint != "" {
 		claims, _, err := d.ValidateAnyToken(ctx.Request().Context(), idTokenHint)
-		if err != nil || claims == nil {
+		if err != nil || !core.IsIDTokenClaims(claims) {
 			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidToken))
 			return nil, "", "", true
 		}

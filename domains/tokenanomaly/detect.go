@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/domains/metering"
 )
 
 // detectGeoVelocity scans the per-thumbprint observations for tokens seen from
@@ -80,7 +80,7 @@ type clientMinuteRates map[string]map[int64]int64
 // detection never escalates a telemetry-store outage).
 func (d *Detector) detectRateSpike(ctx context.Context, now time.Time) []Finding {
 	since := now.Add(-d.window)
-	buckets, err := d.next.Query(ctx, tokenusage.Query{Since: since})
+	buckets, err := d.next.Query(ctx, metering.Query{Since: since})
 	if err != nil {
 		return nil
 	}
@@ -102,7 +102,7 @@ func (d *Detector) detectRateSpike(ctx context.Context, now time.Time) []Finding
 
 // foldClientMinuteRates collapses (client, kind, endpoint, minute) buckets
 // into per-client per-minute totals.
-func foldClientMinuteRates(buckets []tokenusage.Bucket) clientMinuteRates {
+func foldClientMinuteRates(buckets []metering.Bucket) clientMinuteRates {
 	rates := make(clientMinuteRates)
 	for _, b := range buckets {
 		byMin := rates[b.ClientID]

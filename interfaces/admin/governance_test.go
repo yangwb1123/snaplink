@@ -74,7 +74,7 @@ func (d *gcTestDeps) MintImpersonationToken(context.Context, core.AdminSession) 
 func (d *gcTestDeps) TargetHoldsAdminScope(context.Context, string, string) (bool, error) {
 	return false, nil
 }
-func (d *gcTestDeps) RevokeToken(context.Context, string) {}
+func (d *gcTestDeps) RevokeToken(context.Context, string) error { return nil }
 
 func newGCTestDeps() *gcTestDeps {
 	return &gcTestDeps{store: admingovernance.NewMemoryApprovalStore()}
@@ -145,6 +145,20 @@ func TestChangeApprovalWorkflow_ProposeApproveLifecycle(t *testing.T) {
 	}
 	if created.Status != admingovernance.ChangeStatusPending {
 		t.Fatalf("Status = %q; want pending", created.Status)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(proposeRec.Body.Bytes(), &wire); err != nil {
+		t.Fatalf("decode propose wire response: %v", err)
+	}
+	if _, ok := wire["action_type"]; !ok {
+		t.Fatalf("wire response lacks action_type: %s", proposeRec.Body.String())
+	}
+	payload, ok := wire["payload"].(map[string]any)
+	if !ok || payload["id"] != "acme" {
+		t.Fatalf("payload is not structured JSON: %#v", wire["payload"])
+	}
+	if _, legacy := wire["ActionType"]; legacy {
+		t.Fatalf("wire response exposes Go field casing: %s", proposeRec.Body.String())
 	}
 
 	listCtx, listRec := gcCtx(http.MethodGet, "/api/v1/admin/changes", "admin-a", "", "")

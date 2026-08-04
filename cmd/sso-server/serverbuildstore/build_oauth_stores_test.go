@@ -11,13 +11,13 @@ import (
 
 func TestBuildAuthCodeStore_MemoryRedisUnknown(t *testing.T) {
 	t.Parallel()
-	if s, err := BuildAuthCodeStore(config.OAuthConfig{}, nil); err != nil || s == nil {
+	if s, err := BuildAuthCodeStore(config.OAuthConfig{}, nil, nil, ""); err != nil || s == nil {
 		t.Fatalf("memory: store=%v err=%v", s, err)
 	}
-	if _, err := BuildAuthCodeStore(config.OAuthConfig{Backend: "redis"}, nil); err == nil {
+	if _, err := BuildAuthCodeStore(config.OAuthConfig{Backend: "redis"}, nil, nil, ""); err == nil {
 		t.Fatal("expected error: redis backend without a redis client")
 	}
-	if _, err := BuildAuthCodeStore(config.OAuthConfig{Backend: "carrier-pigeon"}, nil); err == nil {
+	if _, err := BuildAuthCodeStore(config.OAuthConfig{Backend: "carrier-pigeon"}, nil, nil, ""); err == nil {
 		t.Fatal("expected error: unknown backend")
 	}
 }
@@ -32,7 +32,7 @@ func TestBuildRefreshTokenStore_MemoryHonorsRotationCap(t *testing.T) {
 		RefreshToken: config.OAuthRefreshTokenConfig{
 			OAuthStoreConfig: config.OAuthStoreConfig{MaxRotationsPerWindow: 5},
 		},
-	}, nil)
+	}, nil, nil, "")
 	if err != nil || s == nil {
 		t.Fatalf("memory: store=%v err=%v", s, err)
 	}
@@ -43,36 +43,36 @@ func TestBuildRefreshTokenStore_MemoryHonorsRotationCap(t *testing.T) {
 	if mem.MaxRotationsPerWindow != 5 {
 		t.Errorf("MaxRotationsPerWindow = %d, want 5 (cfg not wired through)", mem.MaxRotationsPerWindow)
 	}
-	if _, err := BuildRefreshTokenStore(config.OAuthConfig{Backend: "redis"}, nil); err == nil {
+	if _, err := BuildRefreshTokenStore(config.OAuthConfig{Backend: "redis"}, nil, nil, ""); err == nil {
 		t.Fatal("expected error: redis backend without a redis client")
 	}
-	if _, err := BuildRefreshTokenStore(config.OAuthConfig{Backend: "carrier-pigeon"}, nil); err == nil {
+	if _, err := BuildRefreshTokenStore(config.OAuthConfig{Backend: "carrier-pigeon"}, nil, nil, ""); err == nil {
 		t.Fatal("expected error: unknown backend")
 	}
 }
 
 func TestBuildDeviceCodeStore_MemoryRedisUnknown(t *testing.T) {
 	t.Parallel()
-	if s, err := BuildDeviceCodeStore(config.OAuthConfig{}, nil); err != nil || s == nil {
+	if s, err := BuildDeviceCodeStore(config.OAuthConfig{}, nil, nil, ""); err != nil || s == nil {
 		t.Fatalf("memory: store=%v err=%v", s, err)
 	}
-	if _, err := BuildDeviceCodeStore(config.OAuthConfig{Backend: "redis"}, nil); err == nil {
+	if _, err := BuildDeviceCodeStore(config.OAuthConfig{Backend: "redis"}, nil, nil, ""); err == nil {
 		t.Fatal("expected error: redis backend without a redis client")
 	}
-	if _, err := BuildDeviceCodeStore(config.OAuthConfig{Backend: "carrier-pigeon"}, nil); err == nil {
+	if _, err := BuildDeviceCodeStore(config.OAuthConfig{Backend: "carrier-pigeon"}, nil, nil, ""); err == nil {
 		t.Fatal("expected error: unknown backend")
 	}
 }
 
 func TestBuildPARStore_MemoryRedisUnknown(t *testing.T) {
 	t.Parallel()
-	if s, err := BuildPARStore(config.OAuthConfig{}, nil); err != nil || s == nil {
+	if s, err := BuildPARStore(config.OAuthConfig{}, nil, nil, ""); err != nil || s == nil {
 		t.Fatalf("memory: store=%v err=%v", s, err)
 	}
-	if _, err := BuildPARStore(config.OAuthConfig{Backend: "redis"}, nil); err == nil {
+	if _, err := BuildPARStore(config.OAuthConfig{Backend: "redis"}, nil, nil, ""); err == nil {
 		t.Fatal("expected error: redis backend without a redis client")
 	}
-	if _, err := BuildPARStore(config.OAuthConfig{Backend: "carrier-pigeon"}, nil); err == nil {
+	if _, err := BuildPARStore(config.OAuthConfig{Backend: "carrier-pigeon"}, nil, nil, ""); err == nil {
 		t.Fatal("expected error: unknown backend")
 	}
 }

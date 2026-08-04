@@ -252,3 +252,29 @@ func TestBroker_ConcurrentFanoutRace(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestBroker_SubjectFilterNeverCrossesUsers(t *testing.T) {
+	b := NewBroker(Options{})
+	alice, err := b.Subscribe(Filter{SubjectID: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer alice.Close()
+	bob, err := b.Subscribe(Filter{SubjectID: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bob.Close()
+	b.Publish(Event{Type: "notification", SubjectID: "alice", Data: []byte("{}")})
+	if event, ok := drain(t, alice, time.Second); !ok || event.SubjectID != "alice" {
+		t.Fatalf("alice event=%#v ok=%v", event, ok)
+	}
+	select {
+	case event := <-bob.C():
+		t.Fatalf("bob received alice event: %#v", event)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if replay := b.Replay(0, Filter{SubjectID: "bob"}); len(replay) != 0 {
+		t.Fatalf("bob replay leaked %d event(s)", len(replay))
+	}
+}

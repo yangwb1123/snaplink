@@ -8,6 +8,12 @@ import (
 )
 
 // HandlerContext is the interface passed to all handlers and middleware.
+//
+// Implementors MUST honor Aborted() in their chain loops: after a middleware
+// calls Abort() (because it wrote — or decided — a terminal response), the
+// router must stop running further middlewares and MUST NOT invoke the
+// handler. Abort is opt-in and sticky: middleware that never calls it changes
+// nothing.
 type HandlerContext interface {
 	Request() *http.Request
 	ResponseWriter() http.ResponseWriter
@@ -18,6 +24,19 @@ type HandlerContext interface {
 	Redirect(code int, url string)
 	Set(key string, val any)
 	Get(key string) any
+	// Abort marks the chain stopped: the middleware has written (or decided)
+	// a terminal response and the handler must not run.
+	Abort()
+	// Aborted reports whether the chain was stopped by a middleware.
+	Aborted() bool
+	// Written reports whether the response has been committed at least once
+	// ("committed", not "finished": a 401 written by Auth followed by an
+	// aborted chain reports true).
+	Written() bool
+	// SetResponseWriter replaces the writer that JSON/Redirect and
+	// ResponseWriter() expose; the previous writer is retained by the
+	// caller. Request-scoped; never shared across requests.
+	SetResponseWriter(w http.ResponseWriter)
 }
 
 // Router abstracts the HTTP routing layer so the SSO server can work with any framework.
@@ -38,17 +57,52 @@ type HandlerFunc func(ctx HandlerContext)
 // MiddlewareFunc is the signature for middleware.
 type MiddlewareFunc func(ctx HandlerContext)
 
+// trackingResponseWriter is the permanent outermost wrapper NewContext
+// installs. It flips a written flag on the first Write/WriteHeader so
+// Written() stays truthful across SetResponseWriter swaps — a bare flag on
+// Context would go stale the moment a capture wrapper is swapped in,
+// because writes flow through whatever writer is current. SetResponseWriter
+// re-installs it outermost, so after a capture swap the chain is
+// tracking → capture → tracking' → original; every write path passes
+// through the outermost wrapper. The double wrapper costs one interface
+// call and one flag flip per write — harmless.
+type trackingResponseWriter struct {
+	http.ResponseWriter
+	written bool
+}
+
+func (w *trackingResponseWriter) WriteHeader(code int) {
+	w.written = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *trackingResponseWriter) Write(b []byte) (int, error) {
+	w.written = true
+	return w.ResponseWriter.Write(b)
+}
+
+// Unwrap exposes the underlying writer to http.ResponseController and
+// protocol-aware middleware (Flusher, Hijacker, Pusher, ReaderFrom).
+// Without it, the wrapper hides those capabilities and Flush-based
+// streaming (the SSE event stream) silently fails with ErrNotSupported;
+// net/http's unwrap protocol follows the chain until a non-wrapping
+// writer is found.
+func (w *trackingResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 // Context implements HandlerContext using the standard library.
 type Context struct {
-	w      http.ResponseWriter
-	r      *http.Request
-	params map[string]string
-	values sync.Map
+	w       http.ResponseWriter
+	r       *http.Request
+	params  map[string]string
+	values  sync.Map
+	aborted bool
 }
 
 func NewContext(w http.ResponseWriter, r *http.Request) *Context {
 	return &Context{
-		w:      w,
+		w:      &trackingResponseWriter{ResponseWriter: w},
 		r:      r,
 		params: make(map[string]string),
 	}
@@ -56,12 +110,25 @@ func NewContext(w http.ResponseWriter, r *http.Request) *Context {
 
 func (c *Context) Request() *http.Request              { return c.r }
 func (c *Context) ResponseWriter() http.ResponseWriter { return c.w }
+func (c *Context) Abort()                              { c.aborted = true }
+func (c *Context) Aborted() bool                       { return c.aborted }
 
-// SetResponseWriter replaces the underlying ResponseWriter. Used by
-// the idempotency wrapper to capture token response bodies.
-func (c *Context) SetResponseWriter(w http.ResponseWriter) { c.w = w }
-func (c *Context) Param(name string) string                { return c.params[name] }
-func (c *Context) Query(name string) string                { return c.r.URL.Query().Get(name) }
+// Written reports whether the response has been committed at least once.
+// c.w is always a *trackingResponseWriter by construction (NewContext and
+// SetResponseWriter both install one), so the assertion cannot fail.
+func (c *Context) Written() bool {
+	tw, ok := c.w.(*trackingResponseWriter)
+	return ok && tw.written
+}
+
+// SetResponseWriter replaces the underlying ResponseWriter — the capture
+// wrapper the idempotency machinery installs — and re-wraps it in a fresh
+// trackingResponseWriter so Written() stays truthful across the swap.
+func (c *Context) SetResponseWriter(w http.ResponseWriter) {
+	c.w = &trackingResponseWriter{ResponseWriter: w}
+}
+func (c *Context) Param(name string) string { return c.params[name] }
+func (c *Context) Query(name string) string { return c.r.URL.Query().Get(name) }
 
 func (c *Context) Bind(v any) error {
 	return json.NewDecoder(c.r.Body).Decode(v)
@@ -145,14 +212,15 @@ func (r *StdRouter) DELETE(path string, handler HandlerFunc) {
 }
 
 func (r *StdRouter) register(method, path string, handler HandlerFunc) {
-	r.registerGated(method, path, handler, nil)
+	r.RegisterGated(method, path, handler, nil)
 }
 
-// registerGated is register's superset: live, when non-nil, is consulted by
+// RegisterGated is register's superset: live, when non-nil, is consulted by
 // ServeHTTP BEFORE this route's own middlewares run (see StdRoute.live).
-// Unexported — reached only through GatedRouter, which owns the decision
-// of when a route needs live gating.
-func (r *StdRouter) registerGated(method, path string, handler HandlerFunc, live func() bool) {
+// Exported as the GatedRegistrar capability so adapter backends (gin/echo)
+// can offer the same route-matching-level gating; GatedRouter owns the
+// decision of when a route needs live gating.
+func (r *StdRouter) RegisterGated(method, path string, handler HandlerFunc, live func() bool) {
 	*r.routes = append(*r.routes, StdRoute{
 		path:        r.prefix + r.buildPath(path),
 		method:      method,
@@ -202,8 +270,13 @@ func (r *StdRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		extractParams(ctx, route.path, req.URL.Path)
 		for _, mw := range route.middlewares {
 			mw(ctx)
+			if ctx.Aborted() {
+				break
+			}
 		}
-		route.handler(ctx)
+		if !ctx.Aborted() {
+			route.handler(ctx)
+		}
 		return
 	}
 
@@ -253,7 +326,7 @@ func extractParams(ctx *Context, pattern, actual string) {
 // boot, off whatever backing dependency (store, filesystem) already exists,
 // then let an independent runtime toggle control reachability afterward
 // without re-registering anything — see GatedRouter's doc for the fuller
-// rationale (interfaces/sso's admin_api / web_spa gates are the motivating
+// rationale (interfaces/sso's admin_api / branding gates are the motivating
 // callers).
 func GateHandler(live func() bool, h HandlerFunc) HandlerFunc {
 	return func(ctx HandlerContext) {
@@ -278,14 +351,19 @@ func GateHTTPHandler(live func() bool, h http.Handler) http.Handler {
 	})
 }
 
-// gatedRegistrar is the unexported capability *StdRouter provides so
-// GatedRouter can gate MATCHING itself (see StdRoute.live) instead of only
-// wrapping the handler. Package-internal by design — a custom Router
-// (wired via sso.WithRouter, e.g. an echo/gin adapter) never implements
-// this, and GatedRouter falls back to handler-wrapping for it (see the
-// GET/POST/etc methods below).
-type gatedRegistrar interface {
-	registerGated(method, path string, handler HandlerFunc, live func() bool)
+// GatedRegistrar is the optional capability a Router implementation may
+// provide so GatedRouter can gate route MATCHING itself (checked BEFORE
+// that route's own middlewares — including Use()-registered global ones —
+// run) instead of wrapping the handler. Implementors MUST evaluate live()
+// before running any middleware of the route, so a gated-off route is
+// byte-identical to a route that was never registered at all (see
+// StdRoute.live for why that distinction is security-relevant). StdRouter
+// and the gin/echo adapters implement this; a Router that does not falls
+// back to handler-wrapping in GatedRouter (reachability still correct, but
+// global middleware may observe gated-off requests — see the GET/POST/etc
+// methods below).
+type GatedRegistrar interface {
+	RegisterGated(method, path string, handler HandlerFunc, live func() bool)
 }
 
 // GatedRouter wraps a Router so every handler registered through it — and
@@ -305,8 +383,8 @@ type gatedRegistrar interface {
 // request — the gate has to prevent the route from matching at all, not
 // just prevent the handler's own business logic from executing.
 //
-// For any OTHER Router implementation (one that doesn't expose
-// registerGated), this falls back to wrapping the handler with
+// For any OTHER Router implementation (one that doesn't implement
+// GatedRegistrar), this falls back to wrapping the handler with
 // GateHandler — reachability is still correctly gated, but a global
 // middleware on THAT router could still observe a gated-off request
 // before the wrapped handler's check runs, same limitation the fallback
@@ -342,13 +420,13 @@ func (g *GatedRouter) PATCH(path string, h HandlerFunc) { g.register(http.Method
 
 func (g *GatedRouter) DELETE(path string, h HandlerFunc) { g.register(http.MethodDelete, path, h) }
 
-// register dispatches to the route-matching-level gate (gatedRegistrar)
+// register dispatches to the route-matching-level gate (GatedRegistrar)
 // when inner supports it, else falls back to handler-wrapping — see
 // GatedRouter's doc for why these give different (but both correct,
 // reachability-wise) guarantees.
 func (g *GatedRouter) register(method, path string, h HandlerFunc) {
-	if gr, ok := g.inner.(gatedRegistrar); ok {
-		gr.registerGated(method, path, h, g.live)
+	if gr, ok := g.inner.(GatedRegistrar); ok {
+		gr.RegisterGated(method, path, h, g.live)
 		return
 	}
 	switch method {

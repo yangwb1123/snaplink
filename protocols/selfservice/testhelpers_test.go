@@ -27,7 +27,9 @@ import (
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorecredential"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/sse"
 	"github.com/yangwb1123/snaplink/protocols/compliance"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -38,16 +40,19 @@ import (
 // convention-within-file (lowercase, same package as the tests) so each test
 // can seed exactly the stores/stubs it needs.
 type testDeps struct {
-	users         *memorystoreidentity.MemoryUserProvider
-	passwords     *memorystorecredential.MemoryPasswordCredentialStore
-	passwordReset *memorystorecredential.MemoryPasswordResetStore
-	emailChange   *memorystorecredential.MemoryEmailChangeStore
-	emailVerify   *memorystorecredential.MemoryEmailVerificationStore
-	sessions      *memorystoreidentity.MemorySessionManager
-	consents      *memorystoreidentity.MemoryConsentStore
-	tenantUsers   *memorystoreidentity.MemoryTenantUserStore
-	invitations   *memorystoreidentity.MemoryInvitationStore
-	identityLinks *identitylinkmemory.Store
+	users          *memorystoreidentity.MemoryUserProvider
+	passwords      *memorystorecredential.MemoryPasswordCredentialStore
+	passwordReset  *memorystorecredential.MemoryPasswordResetStore
+	emailChange    *memorystorecredential.MemoryEmailChangeStore
+	emailVerify    *memorystorecredential.MemoryEmailVerificationStore
+	sessions       core.SessionManager
+	devices        device.Store
+	consents       *memorystoreidentity.MemoryConsentStore
+	tenantUsers    *memorystoreidentity.MemoryTenantUserStore
+	invitations    *memorystoreidentity.MemoryInvitationStore
+	identityLinks  *identitylinkmemory.Store
+	refreshTokens  oauth.RefreshTokenStore
+	trustedDevices core.TrustedDeviceStore
 
 	identityUnlinked []string
 
@@ -117,6 +122,7 @@ func (d *testDeps) PasswordCredentialStore() core.PasswordCredentialStore {
 	return d.passwords
 }
 func (d *testDeps) PasswordResetStore() core.PasswordResetStore { return d.passwordReset }
+func (d *testDeps) RefreshTokenStore() oauth.RefreshTokenStore  { return d.refreshTokens }
 func (d *testDeps) EmailChangeTTL() time.Duration               { return d.emailChangeTTL }
 func (d *testDeps) PasswordResetTTL() time.Duration             { return d.passwordResetTTL }
 
@@ -140,7 +146,7 @@ func (d *testDeps) RegistrationGates() []spi.RegistrationGate      { return d.re
 func (d *testDeps) SignupRateLimiter() selfservicecore.RateLimiter { return d.rateLimiter }
 
 func (d *testDeps) SessionManager() core.SessionManager          { return d.sessions }
-func (d *testDeps) DeviceStore() device.Store                    { return nil }
+func (d *testDeps) DeviceStore() device.Store                    { return d.devices }
 func (d *testDeps) LoginHistoryStore() device.HistoryStore       { return nil }
 func (d *testDeps) TenantUserStore() core.TenantUserStore        { return d.tenantUsers }
 func (d *testDeps) InvitationStore() core.InvitationStore        { return d.invitations }
@@ -224,7 +230,7 @@ func (d *testDeps) WebAuthnRegistrar() core.WebAuthnRegistrar   { return nil }
 func (d *testDeps) MFAEnrollmentStore() core.MFAEnrollmentStore { return nil }
 func (d *testDeps) TOTPEnroller() core.TOTPEnroller             { return nil }
 func (d *testDeps) RecoveryCodeStore() core.RecoveryCodeStore   { return nil }
-func (d *testDeps) TrustedDeviceStore() core.TrustedDeviceStore { return nil }
+func (d *testDeps) TrustedDeviceStore() core.TrustedDeviceStore { return d.trustedDevices }
 func (d *testDeps) TrustedDeviceTTL() time.Duration             { return 0 }
 
 func (d *testDeps) NewMFAFactorID() (string, error) {
@@ -237,6 +243,11 @@ func (d *testDeps) AccountEraser() *compliance.Eraser  { return d.accountEraser 
 
 func (d *testDeps) PasswordPolicyValidator() spi.PasswordPolicyValidator { return d.passwordPolicy }
 func (d *testDeps) PasswordHistoryStore() core.PasswordHistoryStore      { return d.passwordHistory }
+func (d *testDeps) NotificationStore() core.NotificationStore            { return nil }
+func (d *testDeps) NotificationPreferenceStore() core.NotificationPreferenceStore {
+	return nil
+}
+func (d *testDeps) NotificationBroker() *sse.Broker { return nil }
 
 var _ Deps = (*testDeps)(nil)
 

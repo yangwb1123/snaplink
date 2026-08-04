@@ -1,0 +1,27 @@
+All contested claims independently re-verified against the pinned go-redis v9.20.0 source in the module cache and the worktree. Here is my gatekeeper assessment.
+
+# Gatekeeper review: `infrastructure-redis-direction1-design.md`
+
+## Cross-check of review findings against the design
+
+| Finding | Reviewers | Status in design |
+|---|---|---|
+| **C-1 (Critical)** — loss-detection invariant not delivered by `PubSub.Channel()` | database F1, principal C-1, protocol P-1 | **Unresolved.** Design still specifies `rdb.Subscribe` + decode goroutine "ranges the go-redis message channel" whose closure is attributed to "go-redis closes its PubSub receive channel when reconnection fails" (API-surface bullet, taxonomy rows 2–3, G-2). I verified in v9.20.0 `pubsub.go:719-752` (`initMsgChan`): `ctx := context.TODO()`, `close(c.msgCh)` only on `pool.ErrClosed` (set solely by explicit `Close()`, `pubsub.go:211-229`), otherwise infinite 100 ms retry; `ReceiveTimeout(ctx, 0)` sets no read deadline (`internal/pool/conn.go` `noDeadline`). The heartbeat-based stall detection the taxonomy claims does not exist. The mandatory fix (bus-owned `ReceiveMessage`/`ReceiveTimeout` loop, `defer ps.Close()`, single `defer close(out)`) is **not in the design**. The spec's own mechanism sentence (spec:24) is also uncorrected. |
+| **H-1 (High)** — `NewBus(rdb goredis.Cmdable, ...)` cannot compile | database F2, principal H-1, protocol | **Unresolved.** Design unchanged at :116/:314. Verified: `Subscribe` is on `UniversalClient` (universal.go:355), not `Cmdable` (commands.go:173). |
+| **H-2 (High)** — self-skip ID per-host not per-process; startup log required | database F3, principal H-2 | **Unresolved.** Design still claims "unique per host by construction", keeps self-skip on in stock wiring, and demotes the instance-ID startup log to "if a future direction wants belt-and-braces". No T3 decision recorded. |
+| **P-2 (High)** — re-seed is a no-op without `revocation_backend: sqlite` | protocol P-2 | **Unresolved.** Zero mentions of `revocation_backend` in the design. Verified `build_signing.go:84-107`: `""`/`memory` ⇒ nil/in-process-only RevocationStore, so `KindTokenRevoked` re-seed after recovery is empty unless sqlite is configured. The design's "one Redis" recovery story silently no-ops. |
+| **P-3 (High)** — F-1 "TTL fallback" wording wrong for `KindTokenRevoked` | protocol P-3 | **Unresolved.** F-1 and "What could break" #1 say "until its TTL", contradicting the design's own state map ("the ONE fail-closed state: NO TTL safety net"). |
+| **P-4 (Medium)** — channel carries bearer credentials; ACL/isolation MUSTs | protocol P-4 | **Unresolved.** No ACL/network-isolation operational requirements documented. |
+| **M-1** — forced-loss E2E mechanism unspecified; client-close passes vacuously, miniredis-close observes no closure | QA H1, principal M-1 | **Unresolved.** Test plan still says "close the underlying go-redis client (or miniredis)"; under the design's own mechanism the first variant is the only closure path (vacuous) and the second fails. No `StartAddr`/`Restart()` mechanism specified. |
+| **M-2** — nil-rdb first-use + initial-subscribe boot-failure tests | QA H2, principal M-2 | **Unresolved.** Neither test in the test plan. |
+| **M-3/M-4/M-5/M-6** — self-skip edges, Close-with-live-subscriber, concurrent-publish race, bus-ID≡replica-ID pinning | QA M1–M4, principal M-3–M-6 | **Unresolved.** None specified beyond one-line mentions. |
+| **M-7** — bus-owned read deadline | database F5, principal M-7 | **Unresolved.** Absent; design relies on the nonexistent heartbeat. |
+| **L-3** — re-`Subscribe`-after-closure contract | principal L-3 | **Ambiguous.** "may be called once per Bus" wording risks an implementer breaking `resubscribeAndReseed`. |
+
+**Process gap:** the `code-implementer` deliverable submitted for this gate is the implementation plan for a *different* direction (`domains-tokenpolicy-direction3-implementation-plan.md`). No implementation plan exists for `infrastructure-redis-direction1`.
+
+## Assessment
+
+The distributed-engineer revision fixed only line-number/wiring claims (wireRedis location, `ResolveServiceID` scope, function body range). Every load-bearing mechanism finding from the four reviews — including the two the principal review named as **mandatory conditions** — is neither resolved nor dismissed with reasons; the disproven claims (channel closure on reconnect failure, `Cmdable` constructor, heartbeat-driven stall detection) still appear verbatim in the design. The design's own acceptance test for spec Improvement 3 remains unsatisfiable by its own mechanism, and its own test plan ("close the underlying go-redis client … assert the out-channel closes") passes vacuously. The revision cycle stopped before the required redesign; it cannot unblock implementation.
+
+VERDICT: FAIL - C-1 (bus must own a ReceiveMessage/ReceiveTimeout loop with `ps.Close()`; taxonomy rows 2-3, G-2, and spec:24 mechanism sentence must be rewritten), H-1 (`UniversalClient` or minimal local interface in `NewBus`), H-2 (startup instance-ID log in this change + recorded T3 decision), P-2 (state `keys.signing.revocation_backend: sqlite` requirement), P-3 (F-1/wording corrected to exp-bounded), M-1/M-7 (specify miniredis `StartAddr` Restart loss-injection and the read-deadline value), M-2..M-6 (add the missing tests), P-4 (ACL/isolation MUSTs), and a redis-direction implementation plan (the submitted plan belongs to a different direction)

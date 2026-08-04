@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
@@ -24,6 +25,8 @@ func TestClientAdminService_NilStorePreconditionFails(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := svc.List(ctx, &adminv1.ListClientsRequest{})
+	requireCode(t, err, codes.FailedPrecondition)
+	_, err = svc.ListExpiring(ctx, &adminv1.ListExpiringClientsRequest{})
 	requireCode(t, err, codes.FailedPrecondition)
 	_, err = svc.Get(ctx, &adminv1.GetClientRequest{Id: "x"})
 	requireCode(t, err, codes.FailedPrecondition)
@@ -55,6 +58,10 @@ func TestClientAdminService_InvalidArgument(t *testing.T) {
 	requireCode(t, err, codes.InvalidArgument)
 	_, err = svc.Update(ctx, &adminv1.UpdateClientRequest{Client: &adminv1.Client{}})
 	requireCode(t, err, codes.InvalidArgument)
+	_, err = svc.Create(ctx, &adminv1.CreateClientRequest{Client: &adminv1.Client{
+		Id: "unsafe-login", LoginPageUri: "http://public.example/login",
+	}})
+	requireCode(t, err, codes.InvalidArgument)
 	_, err = svc.Delete(ctx, &adminv1.DeleteClientRequest{})
 	requireCode(t, err, codes.InvalidArgument)
 	_, err = svc.RotateSecret(ctx, &adminv1.RotateSecretRequest{})
@@ -81,10 +88,10 @@ func TestClientAdminService_CRUDAndCallbacks(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := svc.Create(ctx, &adminv1.CreateClientRequest{
-		Client: &adminv1.Client{Id: "web-app", Name: "Web", Active: true, AllowedAuthenticators: []string{"password"}},
+		Client: &adminv1.Client{Id: "web-app", Name: "Web", Active: true, AllowedAuthenticators: []string{"password"}, LoginPageUri: "https://login.example/authorize"},
 	})
 	requireOK(t, err, "Create")
-	if created.Client.Id != "web-app" || created.Client.Secret != "" {
+	if created.Client.Id != "web-app" || created.Client.Secret != "" || created.Client.LoginPageUri == "" {
 		t.Errorf("Create response = %+v", created.Client)
 	}
 	if discoveryCalls != 1 || lastChangedClient != "web-app" {
@@ -109,13 +116,13 @@ func TestClientAdminService_CRUDAndCallbacks(t *testing.T) {
 		t.Errorf("List len = %d", len(list.Clients))
 	}
 
-	_, err = svc.Update(ctx, &adminv1.UpdateClientRequest{Client: &adminv1.Client{Id: "web-app", Name: "Web v2", Active: true}})
+	_, err = svc.Update(ctx, &adminv1.UpdateClientRequest{Client: &adminv1.Client{Id: "web-app", Name: "Web v2", Active: true, LoginPageUri: "http://127.0.0.1:8081/login/"}})
 	requireOK(t, err, "Update")
 	if discoveryCalls != 2 {
 		t.Errorf("expected Update to fire onDiscoveryChange again, count=%d", discoveryCalls)
 	}
 	got, _ = svc.Get(ctx, &adminv1.GetClientRequest{Id: "web-app"})
-	if got.Client.Name != "Web v2" {
+	if got.Client.Name != "Web v2" || got.Client.LoginPageUri != "http://127.0.0.1:8081/login/" {
 		t.Errorf("after Update Name=%q", got.Client.Name)
 	}
 
@@ -147,6 +154,70 @@ func TestClientAdminService_CRUDAndCallbacks(t *testing.T) {
 	if len(events) == 0 {
 		t.Error("expected mutations to record audit events")
 	}
+}
+
+func TestClientAdminService_RotateSecretUsesDefaultOverlap(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	ctx := context.Background()
+	if err := store.Add(ctx, &sso.Client{ID: "overlap-client", Secret: "old-secret", Active: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	svc := NewClientAdminService(store, nil, nil, nil)
+	rotated, err := svc.RotateSecret(ctx, &adminv1.RotateSecretRequest{Id: "overlap-client"})
+	requireOK(t, err, "RotateSecret")
+	if err := store.ValidateSecret(ctx, "overlap-client", rotated.Secret); err != nil {
+		t.Fatalf("new secret rejected: %v", err)
+	}
+	if err := store.ValidateSecret(ctx, "overlap-client", "old-secret"); err != nil {
+		t.Fatalf("old secret must remain valid during default overlap: %v", err)
+	}
+	client, err := store.Get(ctx, "overlap-client")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	remaining := time.Until(client.SecretOverlapUntil)
+	if remaining < 23*time.Hour || remaining > 24*time.Hour {
+		t.Fatalf("default overlap remaining = %v, want approximately 24h", remaining)
+	}
+}
+
+func TestClientAdminService_ExpiringAndCustomRotationPolicy(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	ctx := context.Background()
+	now := time.Now()
+	for _, client := range []*sso.Client{
+		{ID: "expired", Secret: "s", Active: true, SecretExpiresAt: now.Add(-time.Hour)},
+		{ID: "soon", Secret: "s", Active: true, SecretExpiresAt: now.Add(2 * time.Hour)},
+		{ID: "far", Secret: "s", Active: true, SecretExpiresAt: now.Add(60 * 24 * time.Hour)},
+		{ID: "public", Active: true},
+	} {
+		if err := store.Add(ctx, client); err != nil {
+			t.Fatalf("Add(%s): %v", client.ID, err)
+		}
+	}
+	svc := NewClientAdminService(store, nil, nil, nil)
+	listed, err := svc.ListExpiring(ctx, &adminv1.ListExpiringClientsRequest{})
+	requireOK(t, err, "ListExpiring")
+	if len(listed.Clients) != 2 || listed.Clients[0].Id != "expired" || listed.Clients[1].Id != "soon" {
+		t.Fatalf("default expiring list = %+v, want [expired soon]", listed.Clients)
+	}
+	rotated, err := svc.RotateSecret(ctx, &adminv1.RotateSecretRequest{
+		Id: "soon", OverlapSeconds: 3600, LifetimeSeconds: 7200,
+	})
+	requireOK(t, err, "RotateSecret(custom policy)")
+	remaining := time.Until(time.Unix(rotated.ClientSecretExpiresAt, 0))
+	if remaining < 119*time.Minute || remaining > 2*time.Hour {
+		t.Fatalf("custom expiry remaining = %v, want approximately 2h", remaining)
+	}
+	if err := store.ValidateSecret(ctx, "soon", "s"); err != nil {
+		t.Fatalf("old secret should work inside custom overlap: %v", err)
+	}
+	_, err = svc.RotateSecret(ctx, &adminv1.RotateSecretRequest{
+		Id: "soon", OverlapSeconds: 1800, LifetimeSeconds: 7200,
+	})
+	requireCode(t, err, codes.InvalidArgument)
 }
 
 // TestClientAdminService_ApproveActivatesPendingClient covers the

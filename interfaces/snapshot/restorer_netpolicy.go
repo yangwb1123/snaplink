@@ -8,16 +8,10 @@ import (
 	"github.com/yangwb1123/snaplink/platform/netpolicy"
 )
 
-func (r *Restorer) restoreNetPolicy(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {
+func (r *Restorer) stageNetPolicy(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {
 	var c CategoryCounts
 	if r.NetPolicy == nil || len(snap.Resources.NetPolicy) == 0 && opts.Mode != ModeReplace {
 		return c, nil
-	}
-
-	if opts.Mode == ModeReplace {
-		if err := r.pruneNetPolicy(ctx, snap, opts.DryRun, &c); err != nil {
-			return c, err
-		}
 	}
 
 	for _, p := range snap.Resources.NetPolicy {
@@ -50,11 +44,12 @@ func (r *Restorer) restoreNetPolicy(ctx context.Context, snap *Snapshot, opts Re
 }
 
 // pruneNetPolicy deletes destination policies absent from the snapshot
-// (ModeReplace only).
-func (r *Restorer) pruneNetPolicy(ctx context.Context, snap *Snapshot, dryRun bool, c *CategoryCounts) error {
+// (ModeReplace, Phase B).
+func (r *Restorer) pruneNetPolicy(ctx context.Context, snap *Snapshot, dryRun bool) (CategoryCounts, error) {
+	var c CategoryCounts
 	existing, err := r.NetPolicy.List(ctx)
 	if err != nil {
-		return fmt.Errorf("list before replace: %w", err)
+		return c, fmt.Errorf("list before replace: %w", err)
 	}
 	keep := make(map[string]bool, len(snap.Resources.NetPolicy))
 	for _, p := range snap.Resources.NetPolicy {
@@ -66,12 +61,12 @@ func (r *Restorer) pruneNetPolicy(ctx context.Context, snap *Snapshot, dryRun bo
 		}
 		if !dryRun {
 			if err := r.NetPolicy.Delete(ctx, p.Name); err != nil {
-				return fmt.Errorf("delete %q: %w", p.Name, err)
+				return c, fmt.Errorf("delete %q: %w", p.Name, err)
 			}
 		}
 		c.Deleted++
 	}
-	return nil
+	return c, nil
 }
 
 // netPolicyPresent reports whether a policy with the given name exists.

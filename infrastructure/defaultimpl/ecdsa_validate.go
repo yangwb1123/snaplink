@@ -39,7 +39,7 @@ func (j *ECDSAJWTIssuer) Validate(_ context.Context, token string) (*sso.TokenCl
 	if err != nil {
 		return nil, err
 	}
-	return claimsFromPayload(p), nil
+	return claimsFromPayload(p, h.Typ), nil
 }
 
 // parseAndGuardHeader base64-decodes + JSON-parses the JWS header and enforces

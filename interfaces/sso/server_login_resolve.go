@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/yangwb1123/snaplink/domains/authenticators/device"
@@ -16,6 +17,55 @@ import (
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
+
+// bindLoginRequestFromQuery binds every authorization parameter that must
+// survive a top-level federated navigation. Credentials and continuation
+// decisions remain POST-only so secrets never enter browser history or logs.
+func bindLoginRequestFromQuery(r *http.Request) (login.Request, error) {
+	q := r.URL.Query()
+	req := login.Request{
+		Provider: q.Get("provider"), ClientID: q.Get("client_id"),
+		State: q.Get("state"), ResponseType: q.Get("response_type"),
+		RedirectURI: q.Get("redirect_uri"), Nonce: q.Get("nonce"),
+		CodeChallenge: q.Get("code_challenge"), CodeChallengeMethod: q.Get("code_challenge_method"),
+		RequestURI: q.Get("request_uri"), Request: q.Get("request"),
+		Prompt: q.Get("prompt"), IDTokenHint: q.Get("id_token_hint"),
+		LoginHint: q.Get("login_hint"), ResponseMode: q.Get("response_mode"),
+		ACRValues: q.Get("acr_values"), UILocales: q.Get("ui_locales"),
+		AuthorizationDetails: rawQueryJSON(q.Get("authorization_details")),
+		Claims:               rawQueryJSON(q.Get("claims")),
+		Scope:                strings.Fields(q.Get("scope")), Resource: queryFieldValues(q["resource"]),
+	}
+	maxAge, err := parseLoginMaxAge(q.Get("max_age"))
+	req.MaxAge = maxAge
+	return req, err
+}
+
+func rawQueryJSON(value string) json.RawMessage {
+	if value == "" {
+		return nil
+	}
+	return json.RawMessage(value)
+}
+
+func queryFieldValues(values []string) []string {
+	var result []string
+	for _, value := range values {
+		result = append(result, strings.Fields(value)...)
+	}
+	return result
+}
+
+func parseLoginMaxAge(raw string) (*int64, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value < 0 {
+		return nil, errors.New("invalid max_age")
+	}
+	return &value, nil
+}
 
 // resolveLoginRequest handles JAR request_uri URL-fetch and PAR consume. Returns
 // true if the request is fully handled (caller should return immediately).
@@ -163,13 +213,9 @@ func (s *Server) handlePromptNone(ctx HandlerContext, prompts []string, req *log
 	if s.residencyGateLogin(ctx, c.ID, "silent_renewal", c.TenantID) {
 		return
 	}
-	granted, scopeErr := oauth.GrantedScopes(req.Scope, c)
-	if scopeErr != nil {
-		s.recordLoginFailure(ctx, req.ClientID, "silent_renewal", ErrInvalidScope)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidScope, req.State))
+	if s.validatePromptNoneAuthorization(ctx, req, c) {
 		return
 	}
-	req.Scope = granted
 	s.handleSilentRenewal(ctx, prompts, oidc.SilentRenewalRequest{
 		ClientID:             req.ClientID,
 		Scope:                req.Scope,
@@ -182,6 +228,34 @@ func (s *Server) handlePromptNone(ctx HandlerContext, prompts []string, req *log
 	}, c)
 }
 
+func (s *Server) validatePromptNoneAuthorization(ctx HandlerContext, req *login.Request, client *Client) bool {
+	if client.RequirePAR && !loginUsedPAR(req) {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
+		return true
+	}
+	if client.RequireSignedRequestObject && req.Request == "" {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
+		return true
+	}
+	if s.runPostMergeAuthzValidation(ctx, req, client) {
+		return true
+	}
+	// Empty is intentionally preserved: after validating the hint, the OIDC
+	// handler restores its bound grant. oauth.GrantedScopes would otherwise
+	// default it to every client-allowed scope and silently elevate renewal.
+	if len(req.Scope) == 0 {
+		return false
+	}
+	granted, err := oauth.GrantedScopes(req.Scope, client)
+	if err == nil {
+		req.Scope = granted
+		return false
+	}
+	s.recordLoginFailure(ctx, req.ClientID, "silent_renewal", ErrInvalidScope)
+	ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidScope, req.State))
+	return true
+}
+
 // PathHomeRealm is the opt-in B2B home-realm-discovery endpoint: given a login
 // identifier (email), it returns the enterprise connection serving that domain
 // so the login UI routes the user to their organization's upstream IdP.
@@ -189,11 +263,12 @@ const PathHomeRealm = "/auth/home-realm"
 
 // Home-realm-discovery response keys.
 const (
-	keyHRFound        = "found"
-	keyHRConnectionID = "connection_id"
-	keyHRType         = "type"
-	keyHRTenantID     = "tenant_id"
-	keyHRDisplayName  = "display_name"
+	keyHRFound                 = "found"
+	keyHRConnectionID          = "connection_id"
+	keyHRType                  = "type"
+	keyHRTenantID              = "tenant_id"
+	keyHRDisplayName           = "display_name"
+	keyAuthzRequestPassthrough = "authorization_request_passthrough_supported"
 	// keyHRConnectionRequired marks an /auth/login provider-discovery response
 	// that resolved to an enterprise connection: the client MUST authenticate
 	// via the named connection's upstream IdP rather than the provider list.
@@ -380,10 +455,11 @@ func (s *Server) handleHomeRealm(ctx HandlerContext) {
 		return
 	}
 	ctx.JSON(http.StatusOK, map[string]any{
-		keyHRFound:        true,
-		keyHRConnectionID: conn.ID,
-		keyHRType:         string(conn.Type),
-		keyHRTenantID:     conn.TenantID,
-		keyHRDisplayName:  conn.DisplayName,
+		keyHRFound:                 true,
+		keyHRConnectionID:          conn.ID,
+		keyHRType:                  string(conn.Type),
+		keyHRTenantID:              conn.TenantID,
+		keyHRDisplayName:           conn.DisplayName,
+		keyAuthzRequestPassthrough: true,
 	})
 }

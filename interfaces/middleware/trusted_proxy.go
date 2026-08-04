@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"context"
 	"net"
 	"net/http"
 	"net/netip"
@@ -9,15 +8,6 @@ import (
 
 	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
-
-// realClientIPKey is the unexported context key for the validated client IP.
-// Unexported to prevent collisions with other packages.
-type realClientIPKey struct{}
-
-// forwardedTrustKey is the unexported context key for the peer-trust verdict:
-// whether the request's DIRECT TCP peer is inside the trusted-proxy CIDRs and
-// its proxy-supplied headers (X-Forwarded-*) may therefore be honored.
-type forwardedTrustKey struct{}
 
 // TrustedProxies validates X-Forwarded-For against a CIDR allowlist,
 // deriving the "real" client IP by walking the XFF chain from right to
@@ -154,9 +144,11 @@ func (tp *TrustedProxies) Middleware(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := tp.resolve(r)
-		ctx := context.WithValue(r.Context(), realClientIPKey{}, ip)
-		ctx = context.WithValue(ctx, forwardedTrustKey{},
-			tp.checker.TrustsRemoteAddr(r.RemoteAddr))
+		trusted := tp.checker.TrustsRemoteAddr(r.RemoteAddr)
+		ctx := peertrust.WithRequestInfo(r.Context(), peertrust.RequestInfo{
+			ClientIP:                ip,
+			ForwardedHeadersTrusted: trusted,
+		})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -168,8 +160,8 @@ func (tp *TrustedProxies) Middleware(next http.Handler) http.Handler {
 // byte-identical to pre-TrustedProxies behaviour when the middleware is
 // absent.
 func RealClientIP(r *http.Request) string {
-	if v, ok := r.Context().Value(realClientIPKey{}).(string); ok && v != "" {
-		return v
+	if info, ok := peertrust.RequestInfoFrom(r); ok && info.ClientIP != "" {
+		return info.ClientIP
 	}
 	return stripPort(r.RemoteAddr)
 }
@@ -182,13 +174,7 @@ func RealClientIP(r *http.Request) string {
 // request bypassed the chain) it returns true, preserving the legacy
 // first-hop-trust behavior byte-identically.
 func ForwardedHeadersTrusted(r *http.Request) bool {
-	if r == nil {
-		return true
-	}
-	if v, ok := r.Context().Value(forwardedTrustKey{}).(bool); ok {
-		return v
-	}
-	return true
+	return peertrust.ForwardedHeadersTrusted(r)
 }
 
 // stripPort removes the :<port> suffix from a host:port address, returning

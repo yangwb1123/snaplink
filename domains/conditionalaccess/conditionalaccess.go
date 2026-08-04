@@ -23,12 +23,13 @@
 //
 // PEP integration: the Server exposes an advisory evaluation entry point
 // (Server.EvaluateConditionalAccess), a read-only admin governance view, AND —
-// when Config.Enforce is set — a live gate on /auth/login (after credential
-// validation, before token/session issuance) that acts on the Decision:
+// when Config.Enforce is set — live gates on /auth/login, prompt=none renewal,
+// and refresh-token rotation that act on the Decision:
 // VerdictDeny blocks the login, VerdictRequireStepUp routes through the SAME
 // MFA orchestration a RiskScorer's RequireMFA uses (never inventing a step-up
-// path the deployment hasn't already configured). Config.Enforce defaults to
-// false (the historical advisory-only behavior), so wiring a store via
+// path the deployment hasn't already configured) and fails closed when that
+// orchestration is not wired. Config.Enforce defaults to false (the historical
+// advisory-only behavior), so wiring a store via
 // WithConditionalAccess without also setting Enforce changes no live auth
 // decision. A DeviceFingerprint (see devicefingerprint.go) is the engine's
 // device-posture signal source, feeding AccessContext.DevicePosture the same
@@ -91,10 +92,11 @@ type Config struct {
 	// zero-trust default-deny posture). It also governs the fallback verdict
 	// when the policy store is unavailable in Engine.Evaluate.
 	DefaultDeny bool
-	// Enforce activates LIVE enforcement at /auth/login (the PEP integration):
+	// Enforce activates LIVE enforcement at login and renewal PEPs:
 	// when true, a wired Server acts on Decision.Verdict — VerdictDeny blocks
 	// the login, VerdictRequireStepUp routes through the configured MFA
-	// step-up (only when one is wired; see the Server's login gate). The zero
+	// step-up and fails closed when it is not wired (see the Server's login
+	// gate). The zero
 	// value (false) is the historical ADVISORY-only behavior: the engine
 	// still answers EvaluateConditionalAccess and serves the read-only admin
 	// view, but /auth/login itself is byte-identical to a build without this
@@ -102,6 +104,12 @@ type Config struct {
 	// picks the verdict for a NO-MATCH/store-outage case, Enforce picks
 	// whether any verdict (match or default) is ever ACTED on.
 	Enforce bool
+	// SessionSweepInterval controls active-session convergence. A non-positive
+	// value normalizes to DefaultSessionSweepInterval when Enforce is enabled.
+	SessionSweepInterval time.Duration
+	// SessionSweepBatchSize bounds mutations per pass. A non-positive value
+	// normalizes to DefaultSessionSweepBatchSize.
+	SessionSweepBatchSize int
 }
 
 // degradedTrust returns the normalized floor. Kept a method so the pure Decide
@@ -153,6 +161,17 @@ type Conditions struct {
 	// match (the window can't be evaluated without a clock).
 	TimeAfter  string `yaml:"time.after,omitempty" json:"time_after,omitempty"`
 	TimeBefore string `yaml:"time.before,omitempty" json:"time_before,omitempty"`
+	// SessionAgeSeconds matches an existing session at or beyond this age.
+	// Missing session metadata never matches (fail-open on absent signal).
+	SessionAgeSeconds int64 `yaml:"session.age_seconds,omitempty" json:"session_age_seconds,omitempty"`
+	// AuthenticationAgeSeconds matches when the original end-user
+	// authentication event is at least this old, enabling periodic reauth.
+	AuthenticationAgeSeconds int64 `yaml:"authentication.age_seconds,omitempty" json:"authentication_age_seconds,omitempty"`
+	// MaxConcurrentSessions matches when the current active session count for
+	// the same subject/client is greater than this ceiling. Login supplies the
+	// prospective count (existing + 1), while convergence supplies the live
+	// count, so a deny rule rejects only the new/excess sessions.
+	MaxConcurrentSessions int `yaml:"session.max_concurrent,omitempty" json:"session_max_concurrent,omitempty"`
 }
 
 // specificity counts the set condition fields. Used as the tie-break in
@@ -172,6 +191,9 @@ func (c Conditions) specificity() int {
 		len(c.GeoNotIn) > 0,
 		c.TimeAfter != "",
 		c.TimeBefore != "",
+		c.SessionAgeSeconds > 0,
+		c.AuthenticationAgeSeconds > 0,
+		c.MaxConcurrentSessions > 0,
 	} {
 		if set {
 			n++
@@ -230,6 +252,9 @@ func (p Policy) Validate() error {
 			return err
 		}
 	}
+	if p.Conditions.SessionAgeSeconds < 0 || p.Conditions.AuthenticationAgeSeconds < 0 || p.Conditions.MaxConcurrentSessions < 0 {
+		return errors.New("conditionalaccess: session conditions must not be negative")
+	}
 	return nil
 }
 
@@ -252,6 +277,15 @@ type AccessContext struct {
 	// Now is the evaluation time; time-of-day conditions compare its UTC
 	// wall clock. A zero value disables time conditions.
 	Now time.Time
+	// SessionCreatedAt and AuthTime feed age-based reauthentication policies.
+	// Zero means the caller had no durable signal, which does not match.
+	SessionCreatedAt time.Time
+	AuthTime         time.Time
+	// ConcurrentSessions is the active count for Subject+ClientID. The Known
+	// bit prevents a session-store outage from turning a quota policy into an
+	// account-lockout oracle.
+	ConcurrentSessions      int
+	ConcurrentSessionsKnown bool
 	// RequestedScopes are the scopes the request asked for (carried for the
 	// caller's restrict_scopes application; the engine does not gate on them).
 	RequestedScopes []string

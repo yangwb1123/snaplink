@@ -256,6 +256,15 @@ paths:
                     redirect_uris:
                       type: array
                       items: { type: string }
+                    recovery_client_id:
+                      type: string
+                      writeOnly: true
+                      description: Opaque client ID returned by a prior 207 recovery envelope.
+                    recovery_client_secret:
+                      type: string
+                      format: password
+                      writeOnly: true
+                      description: One-time recovery credential returned by a prior 207 response.
       responses:
         "200":
           description: First admin (and optional application) created.
@@ -265,6 +274,8 @@ paths:
                 type: object
                 properties:
                   ok: { type: boolean }
+                  status: { type: string, enum: [complete] }
+                  recovered: { type: boolean }
                   created:
                     type: object
                     properties:
@@ -274,6 +285,53 @@ paths:
                         properties:
                           client_id: { type: string }
                           client_secret: { type: string }
+        "207":
+          description: |
+            The administrator was created but the optional application was
+            not. `created` identifies committed resources, `failed` identifies
+            the failed resource, and reposting the returned recovery
+            application with the same administrator credentials is
+            idempotent.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, status, created, failed, recovery]
+                properties:
+                  ok: { type: boolean, enum: [false] }
+                  status: { type: string, enum: [partial_success] }
+                  created:
+                    type: object
+                    properties:
+                      admin: { type: string }
+                  failed:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        resource: { type: string, enum: [application] }
+                        code: { type: string, enum: [provision_failed] }
+                        retryable: { type: boolean }
+                  recovery:
+                    type: object
+                    properties:
+                      action: { type: string, enum: [retry_setup_application] }
+                      method: { type: string, enum: [POST] }
+                      path: { type: string, enum: [/api/v1/setup] }
+                      application:
+                        type: object
+                        properties:
+                          name: { type: string }
+                          redirect_uris:
+                            type: array
+                            items: { type: string }
+                          recovery_client_id:
+                            type: string
+                            writeOnly: true
+                          recovery_client_secret:
+                            type: string
+                            format: password
+                            writeOnly: true
         "400":
           description: "`invalid_request` — malformed body or missing/short admin credentials."
           content:
@@ -312,6 +370,93 @@ paths:
                 $ref: "#/components/schemas/JWKS"
 
   /auth/login:
+    get:
+      tags: [auth]
+      summary: Start a browser-based federated login.
+      description: |
+        Browser-navigation counterpart to POST `/auth/login`. Query parameters
+        are bound to the same authorization request, including PAR/JAR and
+        repeated resource indicators, but this method is intended only for
+        providers that redirect the browser to an external identity provider.
+        Provider discovery advertises
+        `authorization_request_passthrough_supported: true` when this complete
+        binding contract is available for an active client with a valid
+        `login_page_uri`; clients MUST fail closed when the field is absent
+        instead of stripping or abandoning the effective authorization request.
+      operationId: getLogin
+      parameters:
+        - name: provider
+          in: query
+          schema: { type: string }
+        - name: client_id
+          in: query
+          schema: { type: string }
+        - name: redirect_uri
+          in: query
+          schema: { type: string, format: uri }
+        - name: state
+          in: query
+          schema: { type: string }
+        - name: response_type
+          in: query
+          schema: { type: string }
+        - name: response_mode
+          in: query
+          schema: { type: string }
+        - name: scope
+          in: query
+          schema: { type: string }
+        - name: resource
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string, format: uri }
+        - name: request_uri
+          in: query
+          schema: { type: string }
+        - name: request
+          in: query
+          schema: { type: string, description: Compact RFC 9101 request object. }
+        - name: authorization_details
+          in: query
+          schema: { type: string, description: JSON-encoded RFC 9396 array. }
+        - name: claims
+          in: query
+          schema: { type: string, description: JSON-encoded OIDC claims object. }
+        - name: id_token_hint
+          in: query
+          schema: { type: string }
+        - name: max_age
+          in: query
+          schema: { type: integer, format: int64, minimum: 0 }
+        - name: nonce
+          in: query
+          schema: { type: string }
+        - name: code_challenge
+          in: query
+          schema: { type: string }
+        - name: code_challenge_method
+          in: query
+          schema: { type: string }
+        - name: prompt
+          in: query
+          schema: { type: string }
+        - name: login_hint
+          in: query
+          schema: { type: string }
+        - name: acr_values
+          in: query
+          schema: { type: string }
+        - name: ui_locales
+          in: query
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to the configured external identity provider.
+        "400":
+          $ref: "#/components/responses/BadRequest"
     post:
       tags: [auth]
       summary: Authenticate and receive a token.
@@ -341,6 +486,19 @@ paths:
         + `DPoP-Nonce` header when §8 nonce enforcement is wired),
         mirroring `/token`'s DPoP gate. Omitting the header keeps the
         code unbound — fully backwards compatible.
+
+        **Silent renewal** (`prompt=none`) requires a valid ID Token hint and
+        the exact session named by its `sid` to remain live; access tokens are
+        not accepted as hints. The ID Token binds the scopes, RFC 8707
+        resources, and RFC 9396 authorization details originally granted.
+        Omitting those parameters preserves the bound grant, while a supplied
+        subset downscopes it. Any expansion returns `400 consent_required` so
+        the RP falls back to an interactive authorization flow.
+
+        When `WithUserLifecycle` is wired, only an `active` user may complete
+        primary login, MFA, a federated continuation, or silent renewal. A
+        non-active state or lifecycle-store read failure fails closed as `403
+        account_locked`. This gate is additive to the core/SCIM `active` flag.
       operationId: postLogin
       requestBody:
         required: true
@@ -375,6 +533,11 @@ paths:
               engine wired with live enforcement, demanded a step-up factor.
               `mfa_challenge_id` + `mfa_methods` direct the client
               to POST `/auth/mfa` next.
+            Terminal authorization JSON with a registered redirect URI also
+            includes `redirect_uri_validated: true`, the effective post-PAR/JAR
+            `redirect_uri`, normalized `response_mode`, and effective `state`.
+            JARM keeps result parameters inside the signed `response` JWT and
+            exposes only that delivery metadata outside it.
           content:
             application/json:
               schema:
@@ -399,7 +562,17 @@ paths:
             when a write would leave the home region under enforced writes) /
             risk-denied (`risk_denied`) / conditional-access denied
             (`conditional_access_denied`, only when the CAP engine is wired
-            with live enforcement and a matched policy's verdict is deny).
+            with live enforcement and a matched policy denies or requires
+            unavailable step-up dependencies) /
+            authentication Hook refusal (`hook_rejected`) / required
+            profile data missing (`profile_incomplete`) / verified user blocked
+            by core/SCIM or lifecycle state (`account_locked`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: A fail-closed authentication Hook timed out (`hook_timeout`).
           content:
             application/json:
               schema:
@@ -477,7 +650,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: |
-            Client became inactive (or tenant suspended) between
+            Client became inactive, tenant was suspended, or the verified user
+            became unavailable by core/SCIM or lifecycle state between
             challenge issue and completion. Distinguished from
             mfa_invalid so operators triaging audit can tell it
             wasn't the factor that failed.
@@ -501,7 +675,16 @@ paths:
         `CodeSender` (phone, email, magiclink). The follow-up call to
         `/auth/login` carries the delivered code as
         `credential.code` — for `magiclink` this is the opaque token
-        embedded in the emailed link, not something the user types.
+        embedded in the emailed link, not something the user types. Built-in
+        stores allow at most five failed verification attempts for each issued
+        value; the fifth mismatch invalidates it without exposing a distinct
+        error. A synchronous downstream delivery failure conditionally revokes
+        the undelivered value and releases its cooldown and send-budget
+        reservation for an immediate retry. Built-in stores also enforce
+        fixed-window per-tenant-identity and tenant-wide send budgets (defaults:
+        20 and 1,000 per 24 hours). Budget exhaustion suppresses delivery but
+        intentionally returns the same 200 `{"status":"sent"}` response as a
+        successful send, so callers cannot probe target or quota state.
       operationId: postSendCode
       requestBody:
         required: true
@@ -518,13 +701,21 @@ paths:
                 value: { provider: magiclink, target: "user@example.com" }
       responses:
         "200":
-          description: Code sent. Body is empty / minimal.
+          description: Code accepted for delivery, or oracle-safe suppression because its send budget was exhausted.
           content:
             application/json:
               schema:
                 type: object
+                properties:
+                  status: { type: string, enum: [sent] }
         "400":
           $ref: "#/components/responses/BadRequest"
+        "429":
+          description: A code was already sent to this target during the fixed 60-second resend cooldown.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Delivery failed (downstream SMS / email error).
           content:
@@ -614,8 +805,10 @@ paths:
       description: |
         Consumes the single-use reset token (before setting the password, so a
         race/failure can't replay it), sets the new password, and best-effort
-        revokes the user's existing sessions. Oracle-safe: unknown / expired /
-        consumed token, user gone, and set-password errors ALL collapse to one
+        revokes the user's existing sessions, refresh tokens across every
+        client, and trusted-device grants minted under the old credential.
+        Oracle-safe: unknown / expired / consumed token, user gone, and
+        set-password errors ALL collapse to one
         `reset_invalid` (400, never 500). When a password policy validator
         and/or history store is wired, a non-compliant or recently-reused new
         password instead returns `password_policy_violation` (the token is
@@ -652,6 +845,20 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   /auth/home-realm:
+    get:
+      tags: [federation]
+      summary: Discover the home realm for a browser login identifier.
+      operationId: getHomeRealm
+      parameters:
+        - name: identifier
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Matching connection metadata or an empty result.
+        "400":
+          $ref: "#/components/responses/BadRequest"
     post:
       tags: [auth]
       summary: B2B home-realm discovery — resolve an email domain to its IdP.
@@ -696,26 +903,24 @@ paths:
       description: |
         Where upstream OIDC / OAuth 2.0 providers (Google, Microsoft,
         GitHub, Auth0, Keycloak, ...) redirect after a federated login
-        kicked off by `/auth/login?provider=<name>`. This endpoint
-        finishes the redirect leg of the upstream flow: it pops the
-        per-provider `state`, exchanges `code` for tokens at the
-        upstream IdP, materializes a local `User` via `UserProvider`,
-        and mints a single-use `session_id` the SPA can carry into
-        subsequent calls.
+        kicked off by `/auth/login?provider=<name>`. Snaplink consumes the
+        server-minted state before exchanging the upstream code, resolves the
+        one authenticator bound to that state, and never probes other
+        authenticators. Legacy or replayed state returns `invalid_callback`.
 
-        The `provider` query is optional — when omitted, every wired
-        `oidc_federation` authenticator is tried in registration order
-        until one accepts the `(code, state)` pair. Missing or
-        unparseable `code` / `state` returns `400 invalid_callback`;
-        an unknown / mismatched `state` collapses to
-        `401 callback_failed` to keep state-binding probes from
-        leaking which provider issued the original kickoff (one of the
-        oracle-leak hardening rules in AGENTS.md).
+        A verified identity does not mint an unrelated generic session. The
+        original effective post-PAR/JAR authorization request is advanced
+        through the same account, policy, MFA, consent, and response-delivery
+        gates as primary login. The browser receives `302` to the registered
+        client's `login_page_uri`; the URL fragment contains only a fresh
+        one-use `login_transaction_id`. The hosted page removes that fragment
+        before POSTing it to `/auth/login`. Original RP state and credentials
+        are never exposed in this continuation URL.
       operationId: getAuthCallback
       parameters:
         - name: code
           in: query
-          required: true
+          required: false
           schema: { type: string }
           description: Authorization code returned by the upstream IdP.
         - name: state
@@ -728,30 +933,27 @@ paths:
           required: false
           schema: { type: string }
           description: |
-            Federation provider name (matches the `provider:` value in
-            the cmd `authenticators.oidc_federation[]` block). When
-            omitted, every wired federation authenticator is probed.
+            Optional provider assertion. When present it MUST match the
+            provider bound to the server state; omission does not trigger
+            authenticator probing.
+        - name: error
+          in: query
+          required: false
+          schema: { type: string }
+          description: Upstream OAuth error, such as `access_denied`.
       responses:
-        "200":
-          description: Federation succeeded; session minted.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CallbackResponse"
+        "302":
+          description: |
+            Redirect to the client's validated hosted login page with a
+            one-use `login_transaction_id` in the fragment.
         "400":
-          description: Missing / malformed `code` or `state`, or unknown provider.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Upstream exchange or state validation failed.
+          description: Missing, legacy, expired, or replayed callback state.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
-          description: Local session storage failed after upstream succeeded.
+          description: The one-use hosted-login continuation could not be stored.
           content:
             application/json:
               schema:
@@ -809,13 +1011,17 @@ paths:
 
         **Client authentication** — per RFC 6749 §2.3.1, `Authorization:
         Basic <base64(client_id:client_secret)>` beats body
-        `client_id` / `client_secret`. RFC 7521 + 7523 `private_key_jwt`
-        is accepted via `client_assertion` + `client_assertion_type =
-        urn:ietf:params:oauth:client-assertion-type:jwt-bearer` for
-        clients whose `Client.JWKS` is registered. Public clients
-        authenticate with `client_id` only (PKCE-bound). RFC 8705 mTLS
-        is accepted when `WithClientCertExtractor` is wired (cert
-        thumbprint binds the issued token via `cnf.x5t#S256`).
+        `client_id` / `client_secret`. A `client_assertion` is a distinct
+        authentication method and cannot be combined with Basic or a body
+        secret. The selected method MUST match the client's registered
+        `token_endpoint_auth_method`; mismatch or fallback returns opaque
+        `401 invalid_client`. RFC 7521 + 7523 `private_key_jwt` is accepted
+        via `client_assertion` + `client_assertion_type =
+        urn:ietf:params:oauth:client-assertion-type:jwt-bearer` for clients
+        whose `Client.JWKS` is registered. Public clients authenticate with
+        `client_id` only (PKCE-bound). RFC 8705 mTLS is accepted when
+        `WithClientCertExtractor` is wired (cert thumbprint binds the issued
+        token via `cnf.x5t#S256`).
 
         **DPoP** (RFC 9449) — supply `DPoP: <proof>` header to bind the
         issued access token to a sender-constrained key. Server may
@@ -845,6 +1051,14 @@ paths:
         than the one presented at `/auth/login`) all collapse to a
         single `400 invalid_grant` response so an attacker polling
         can't distinguish failure modes.
+
+        **User lifecycle** — when wired, only `active` user subjects may redeem
+        authorization-code, refresh, device, CIBA, token-exchange, JWT-bearer,
+        SAML-bearer, or agent-delegation grants. Access validation checks the
+        token's `sub` and every RFC 8693 `act` link, so a suspended delegating
+        human also blocks agent-token use. A non-active state or lifecycle-store
+        read error fails closed as the same `400 invalid_grant`;
+        `client_credentials` is unaffected because it has no user subject.
       operationId: postToken
       requestBody:
         required: true
@@ -907,7 +1121,8 @@ paths:
           description: |
             Grant-specific failure — `invalid_request`,
             `invalid_grant`, `invalid_target`, `invalid_dpop_proof`,
-            `use_dpop_nonce`. Body shape is the standard
+            `use_dpop_nonce`. `invalid_grant` also covers a non-active user
+            lifecycle state or fail-closed lifecycle lookup. Body shape is the standard
             ErrorResponse.
           content:
             application/json:
@@ -928,7 +1143,14 @@ paths:
           description: |
             Client allowed but tenant binding rejected the request
             (the resolved tenant ≠ `Client.TenantID`). Wire code:
-            `tenant_mismatch`.
+            `tenant_mismatch`; a fail-closed pre-token Hook may instead return
+            `hook_rejected` or another explicitly configured 403 code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: A fail-closed pre-token Hook timed out (`hook_timeout`).
           content:
             application/json:
               schema:
@@ -956,6 +1178,12 @@ paths:
         `{"active": false}` and nothing else; presence of any other
         field on the response implies the token was valid at the
         moment of introspection.
+
+        When user lifecycle is wired, an access or refresh token whose subject
+        is no longer `active` returns exactly `{"active": false}`; a lifecycle
+        read error fails closed to the same response. This live check includes
+        the access token's complete `act` chain and runs even on an introspection
+        cache hit, so a cached `active: true` cannot bypass account suspension.
 
         Client authentication follows the same rules as /token:
         Basic > body > private_key_jwt. Caller MUST be a registered
@@ -1300,6 +1528,69 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /backchannel-authentication:
+    post:
+      tags: [auth]
+      summary: Initiate OpenID Connect CIBA authentication.
+      description: |
+        Authenticated clients initiate a CIBA Core 1.0 request using exactly
+        one of `login_hint`, `id_token_hint`, or `login_hint_token`. HTTP Basic
+        credentials take precedence over body credentials; private_key_jwt is
+        accepted through `client_assertion`.
+
+        `requested_expiry` may shorten the server-configured request lifetime
+        but can never extend it. `user_code` is accepted only when the SDK has
+        a dedicated `WithCIBAUserCodeVerifier`; the value is verified after
+        hint resolution and is never persisted in the CIBA request or reused
+        as the user's OP password. Discovery advertises this with
+        `backchannel_user_code_parameter_supported`.
+      operationId: postBackchannelAuthentication
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/CIBABackchannelRequest"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CIBABackchannelRequest"
+      responses:
+        "200":
+          description: Pending CIBA request accepted and delivered.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CIBABackchannelResponse"
+        "400":
+          description: |
+            invalid_request, invalid_scope, invalid_target, unknown_user_id,
+            missing_user_code, or invalid_user_code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Client authentication failed (`invalid_client`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Client inactive or tenant mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: CIBA store/transport not wired (`ciba_not_configured`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /register:
     post:
       tags: [auth]
@@ -1417,9 +1708,11 @@ paths:
         this self-service surface. When the deployment enables
         registration-access-token rotation (`client_registration.
         rotate_access_token`, RFC 7592 §3.2), the response carries a
-        fresh `registration_access_token` (one-time reveal) and the
-        prior token stops working; otherwise the token is omitted and
-        stays stable.
+        fresh `registration_access_token` (one-time reveal). The credential
+        used for that rotation remains valid for a short overlap window so a
+        caller that lost the response can retry and recover a fresh token.
+        Once the recovered current token is used, the older credential is
+        retired. Otherwise the token is omitted and stays stable.
       operationId: putRegistration
       security:
         - bearerAuth: []
@@ -1472,6 +1765,16 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   /device/verify:
+    get:
+      tags: [auth]
+      summary: Render the device authorization verification page.
+      operationId: getDeviceVerify
+      responses:
+        "200":
+          description: Browser-facing device verification page.
+          content:
+            text/html:
+              schema: { type: string }
     post:
       tags: [auth]
       summary: User-side device-code approval (RFC 8628 §3.3).
@@ -1526,7 +1829,10 @@ paths:
         Body is optional; bearer-only logouts are allowed. When both
         a session id and a bearer are supplied, both are revoked
         (covers the "log me out everywhere" case where the SPA holds
-        a JWT but the device that started the session is gone).
+        a JWT but the device that started the session is gone). When OIDC
+        Back-Channel Logout is enabled, RP delivery survives client disconnect,
+        retries transient failures up to three total attempts within one
+        five-second budget, and emits one final success/failure audit result.
       operationId: postLogout
       security:
         - bearerAuth: []
@@ -1744,6 +2050,170 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /me/notifications:
+    get:
+      tags: [self-service]
+      summary: List the authenticated user's notifications.
+      description: |
+        Returns a newest-first, subject-isolated inbox page and the caller's
+        total unread count. Mounted only when a NotificationStore is wired.
+        `Cache-Control: no-store`.
+      operationId: listMyNotifications
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: before_id
+          in: query
+          description: Opaque notification ID returned on the preceding page.
+          schema: { type: string }
+        - name: unread_only
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Notification page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: Notification storage is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /me/notifications/{id}/read:
+    post:
+      tags: [self-service]
+      summary: Mark one owned notification as read.
+      description: |
+        Idempotently marks a notification belonging to the authenticated
+        subject. Unknown and cross-subject IDs both return `not_found`.
+        `Cache-Control: no-store`.
+      operationId: markMyNotificationRead
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Notification is read.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, id]
+                properties:
+                  status: { type: string, enum: [read] }
+                  id: { type: string }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: Notification storage is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /me/notifications/preferences:
+    get:
+      tags: [self-service]
+      summary: Get notification delivery preferences.
+      description: |
+        Returns all supported type/channel pairs. Pairs without an explicit
+        stored value default to enabled. `Cache-Control: no-store`.
+      operationId: getMyNotificationPreferences
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Effective notification preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPreferences"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: Notification preference storage is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    put:
+      tags: [self-service]
+      summary: Replace notification delivery preferences.
+      description: |
+        Replaces the caller's explicit preferences. Type/channel pairs must be
+        supported and unique; subject_id from the request is ignored and bound
+        to the authenticated subject. `Cache-Control: no-store`.
+      operationId: replaceMyNotificationPreferences
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationPreferences"
+      responses:
+        "200":
+          description: Effective notification preferences after replacement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPreferences"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: Notification preference storage is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /me/notifications/stream:
+    get:
+      tags: [self-service]
+      summary: Stream the authenticated user's notifications.
+      description: |
+        Bearer-authenticated Server-Sent Events. Live and replayed events are
+        forcibly filtered to the authenticated subject; query parameters
+        cannot widen that filter. Each `notification` event's data is a
+        NotificationEvent JSON object.
+      operationId: streamMyNotifications
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Subject-filtered notification event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Tenant residency policy denied access.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "503":
+          description: Notification stream is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
   /me/account/erase:
     post:
       tags: [self-service]
@@ -1779,6 +2249,7 @@ paths:
                   dry_run: { type: boolean }
                   refresh_tokens_deleted: { type: integer }
                   sessions_destroyed: { type: integer }
+                  notifications_deleted: { type: boolean }
                   user_deleted: { type: boolean }
                   skipped: { type: array, items: { type: string } }
         "400":
@@ -1803,7 +2274,7 @@ paths:
 
         Account-compromise signal: when a `TrustedDeviceStore` is wired, a
         successful change also revokes every one of the caller's "remember
-        this device" MFA-skip grants (`GET/POST/DELETE /me/devices*`), so a
+        this device" MFA-skip grants (`GET/POST/DELETE /me/trusted-devices*`), so a
         grant minted under the old password cannot outlive it.
       operationId: changeMyPassword
       security:
@@ -2134,7 +2605,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /me/devices:
+  /me/trusted-devices:
     get:
       tags: [self-service]
       summary: List the authenticated user's trusted (MFA-skip) devices.
@@ -2142,7 +2613,7 @@ paths:
         Returns non-sensitive metadata (id, client_id, label, timestamps) for
         each live "remember this device" grant — never the device token or
         its hash, which the store retains only as a one-way hash and never
-        returns again once `POST /me/devices/trust` has minted it. Mounted
+        returns again once `POST /me/trusted-devices/trust` has minted it. Mounted
         only when a `TrustedDeviceStore` is wired. `Cache-Control: no-store`.
       operationId: listMyTrustedDevices
       security:
@@ -2168,7 +2639,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /me/devices/trust:
+  /me/trusted-devices/trust:
     post:
       tags: [self-service]
       summary: Mark the current device trusted, skipping MFA on future logins.
@@ -2234,7 +2705,35 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /me/devices/{id}:
+  /me/devices:
+    get:
+      tags: [me]
+      summary: List physical devices owned by the authenticated subject.
+      description: |
+        Returns posture and activity metadata from the physical-device store.
+        This resource is separate from MFA-skip grants at
+        `/me/trusted-devices`.
+      operationId: listMyPhysicalDevices
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Physical device records with active-session counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/trusted-devices/{id}:
     delete:
       tags: [self-service]
       summary: Revoke one of the authenticated user's trusted-device grants.
@@ -2262,6 +2761,77 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /me/devices/{id}:
+    get:
+      tags: [me]
+      summary: Get one device owned by the authenticated subject.
+      operationId: getMyDevice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Device metadata and trust state.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [me]
+      summary: Update the display metadata for one owned device.
+      operationId: patchMyDevice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Updated device metadata.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [me]
+      summary: Delete one physical device and revoke its associated sessions.
+      description: |
+        Reports the device deletion and every session-destruction outcome.
+        Returns 207 when any item failed so callers can reconcile partial
+        completion without treating the mutation as unconditional success.
+      operationId: deleteMyPhysicalDevice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Device and all associated sessions were revoked.
+        "207":
+          description: Device or one or more associated sessions failed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /.well-known/oauth-protected-resource:
     get:
@@ -2552,8 +3122,11 @@ paths:
       summary: Fetch the user record for the bearer's subject.
       description: |
         OpenID-style `/userinfo` endpoint — validates the bearer,
-        resolves the subject id, and returns the OIDC claim projection
-        for tokens carrying the `openid` scope.
+        resolves the subject id, and returns the OIDC claim projection for
+        tokens carrying the `openid` scope. Other access tokens receive the
+        sanitized configured `UserProvider` record. A signed ID Token is not
+        an access-token credential here and receives the same `401
+        invalid_token` response as any other invalid bearer.
       operationId: getUserInfo
       security:
         - bearerAuth: []
@@ -2563,7 +3136,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UserInfo"
+                oneOf:
+                  - $ref: "#/components/schemas/UserInfo"
+                  - $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3181,6 +3756,12 @@ paths:
         `post_logout_redirect_uri` (when in the client's allowlist)
         or returns 204.
 
+        Back-channel RP delivery, when enabled, is detached from browser
+        cancellation and retries transient failures up to three total attempts
+        inside one five-second budget. Local logout remains successful when an
+        RP is unavailable; the failed target stays in the subject-client index
+        for a later logout pass.
+
         `post_logout_redirect_uri` MUST exact-match a registered
         URI — no path tolerance, no scheme-only match. Unrecognized
         URIs fall back to 204 rather than opening a redirect vector
@@ -3239,7 +3820,8 @@ paths:
         "400":
           description: |
             `id_token_hint` was supplied but failed signature / expiry
-            / format validation.
+            / format / token-use validation. A valid access token is not an
+            ID Token hint and is rejected here.
           content:
             application/json:
               schema:
@@ -5199,23 +5781,40 @@ paths:
         policies, ordered by evaluation precedence (priority descending, then
         name) so an operator sees exactly the order the engine resolves them
         in. Each policy carries its conditions (`user.member_of`,
-        `device.managed`, `risk_score` comparison, geo, time window) and its
+        `device.managed`, `device.type`, `device.trust_level`, first-seen
+        device/location, `risk_score` comparison, geo, time window,
+        `session.age_seconds`, `authentication.age_seconds`,
+        `session.max_concurrent`) and its
         actions (`allow` / `deny` / `require_step_up` / `restrict_scopes` /
         `log`).
 
         The server always exposes an evaluation entry point (an allow / deny /
         require-step-up decision, degrading to a conservative trust floor when
         a signal is missing rather than denying outright). It ADDITIONALLY
-        becomes a live `/auth/login` Policy Enforcement Point — after
-        credential validation, before token/session issuance — only when the
-        engine's `enforce` config is set; a matched `deny` blocks the login
+        becomes a live Policy Enforcement Point after credential validation
+        on `/auth/login`, on `prompt=none` renewal, and before refresh-token
+        successor issuance only when the engine's `enforce` config is set; a
+        matched `deny` blocks the interactive login
         (`403 conditional_access_denied`) and a matched `require_step_up`
-        routes through the existing MFA orchestration (never inventing a
-        step-up path the deployment hasn't configured). With `enforce` left at
+        routes through the existing MFA orchestration. If that orchestration
+        is not configured, the resolved operator policy fails closed with the
+        same 403 instead of being bypassed. `restrict_scopes` is enforced as an
+        intersection after client scope authorization and persists across MFA
+        and consent continuations; `log` emits a structured policy decision.
+        `prompt=none` renewals re-evaluate the policy after exact hint/session
+        validation, returning `interaction_required` when step-up is needed;
+        their bound scope/resource/RAR grant can only stay equal or shrink.
+        Refresh-token use re-evaluates live groups, device, trust, geo, session
+        age, and authentication age. Deny collapses to `400 invalid_grant`;
+        policy step-up or a continuously verified session marked for step-up
+        returns `400 insufficient_user_authentication`; scope restrictions can
+        only shrink the successor grant. Missing/future age signals do not
+        match. The user must return to interactive login to satisfy step-up.
+        With `enforce` left at
         its default `false`, wiring policies changes no live auth decision —
         this endpoint remains a pure read-only view either way. A trust-scorer
-        or policy-store outage always fails OPEN on `/auth/login` regardless of
-        `enforce`/`default_deny`. Policy authoring is out of band (a YAML
+        or policy-store outage always fails OPEN on login, silent renewal, and
+        refresh regardless of `enforce`/`default_deny`. Policy authoring is out of band (a YAML
         bundle loaded at boot), so this endpoint only lists.
 
         Admin-gated — the admin middleware enforces `admin:read` (the path
@@ -5239,6 +5838,49 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Bearer lacks the `admin:read` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/access-policies/converge:
+    post:
+      tags: [admin]
+      summary: Apply current conditional-access policies to active sessions now.
+      description: |
+        Runs one bounded active-session convergence pass using a single current
+        policy snapshot. `deny` revokes the session, `require_step_up` marks it
+        for reauthentication, and `restrict_scopes` durably shrinks its scope
+        ceiling before the next refresh. A backend that cannot persist a
+        security-relevant mutation revokes the affected session instead of
+        silently retaining broader authority. Policy-store failure performs no
+        mutations (fail-open on the data source) and returns 500 so an operator
+        can retry. The periodic worker performs the same pass automatically
+        when `access_policies.enforce` is enabled.
+
+        Admin-gated with `admin:write`. The pass is bounded by
+        `access_policies.session_sweep_batch_size`; repeated calls advance a
+        cursor through the active set.
+      operationId: convergeAccessPolicySessions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Bounded convergence pass result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessPolicyConvergenceSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Bearer lacks the `admin:write` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Policy/session store unavailable; no session mutations were applied.
           content:
             application/json:
               schema:
@@ -5373,9 +6015,10 @@ paths:
       description: |
         Re-attempts delivery to the entry's subscription, resolved FRESH (a
         since-rotated secret or since-edited URL is honored). A single
-        attempt — no retry chain. Success removes the entry from the queue;
-        a repeat failure updates the same entry's attempt count/last error
-        in place. admin:write.
+        attempt — no retry chain. Every outbound replay carries a stable
+        `Idempotency-Key`. Delivery success is durably marked before queue
+        cleanup, so retrying after a cleanup failure performs cleanup only.
+        admin:write.
       operationId: webhookReplayDeadLetter
       security:
         - bearerAuth: []
@@ -5388,6 +6031,23 @@ paths:
                 type: object
                 properties:
                   dead_letter: { $ref: "#/components/schemas/WebhookDeadLetterEntry" }
+                  delivery_status: { type: string, enum: [delivered] }
+                  cleanup_status: { type: string, enum: [complete] }
+                  retry_safe: { type: boolean }
+        "207":
+          description: Delivery succeeded, but DLQ cleanup failed; retry is cleanup-only.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [dead_letter, delivery_status, cleanup_status, retry_safe]
+                properties:
+                  dead_letter: { $ref: "#/components/schemas/WebhookDeadLetterEntry" }
+                  delivery_status: { type: string, enum: [delivered] }
+                  cleanup_status: { type: string, enum: [failed] }
+                  retry_safe: { type: boolean, enum: [true] }
+        "409":
+          description: A replay is already in flight or has an ambiguous outcome; no second delivery was attempted.
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404":
           description: Unknown dead-letter id.
@@ -5401,6 +6061,101 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/backchannel-logout/failures:
+    get:
+      tags: [admin]
+      summary: List exhausted OIDC back-channel logout deliveries.
+      description: |
+        Returns the tenant-scoped failure queue when a BCL failure queue is
+        configured. Redis entries survive restart. Records contain only the
+        inputs needed to mint a new logout token; signed tokens are never
+        persisted. Permanent RP 4xx failures remain visible but are excluded
+        from automatic sweeps. admin:read.
+      operationId: listBackchannelLogoutFailures
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        "200":
+          description: Matching failures ordered by next attempt time.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  failures:
+                    type: array
+                    items: { $ref: "#/components/schemas/BCLFailure" }
+                  total: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/backchannel-logout/failures/{id}/replay:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Replay one OIDC back-channel logout failure.
+      description: |
+        Acquires a cluster-shared lease and mints a fresh logout token/JTI for
+        every attempt. Success acknowledges the queue entry and removes the
+        subject/client fan-out index record. Tenant mismatch is the same 404
+        as an unknown id. admin:write.
+      operationId: replayBackchannelLogoutFailure
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Delivery and queue cleanup completed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  failure: { $ref: "#/components/schemas/BCLFailure" }
+                  delivery_status: { type: string, enum: [delivered] }
+                  cleanup_status: { type: string, enum: [complete] }
+        "207": { description: RP delivery succeeded but queue cleanup remains pending. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: Unknown or cross-tenant failure id. }
+        "409": { description: Another replay owns the failure lease. }
+        "502": { description: Delivery failed again; the entry remains queued. }
+
+  /api/v1/admin/backchannel-logout/failures/replay:
+    post:
+      tags: [admin]
+      summary: Replay a batch of due OIDC back-channel logout failures.
+      description: |
+        Claims and replays up to limit due failures for the acting tenant.
+        Concurrent claims are reported as busy rather than duplicated.
+        Permanent RP 4xx entries require the single-item manual replay route.
+        admin:write.
+      operationId: replayDueBackchannelLogoutFailures
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        "200":
+          description: Replay pass completed; individual delivery failures remain queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+                  replay: { $ref: "#/components/schemas/BCLReplaySummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/v1/admin/rebac/check:
     get:
@@ -5684,7 +6439,11 @@ paths:
         schema: { type: string }
     get:
       tags: [admin]
-      summary: Fetch a single snapshot (header + decoded resources).
+      summary: Fetch a single snapshot (header + server-redacted resources).
+      description: |
+        The sealed stored artifact remains fully restorable, but ordinary
+        reads always redact credential-bearing values before serializing
+        resources_json.
       operationId: snapshotGet
       security:
         - bearerAuth: []
@@ -5733,7 +6492,9 @@ paths:
         snapshot id so accidental drops can't happen). `dry_run`
         returns counts only without persisting. `advance_bootstrap`
         bumps the Tracker high-water to the snapshot's recorded
-        version (skip already-covered seeds on the same boot).
+        version (skip already-covered seeds on the same boot). A durable
+        operation is created before loading begins; the response returns its
+        id and state, and failures carry `operation_id` in gRPC error details.
       operationId: snapshotRestore
       security:
         - bearerAuth: []
@@ -5879,7 +6640,9 @@ paths:
       description: |
         Forward pin: backend-first ordering. Rejects pins that
         regress schema_version (use Rollback). Health probe gates
-        when wired; an all-fail probe triggers auto-rollback.
+        when wired; an all-fail probe triggers auto-rollback. Step,
+        compensation, and final states are written to the durable operation
+        journal before the request completes.
       operationId: releasePin
       security:
         - bearerAuth: []
@@ -5921,7 +6684,51 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PinReleaseResponse"
+                $ref: "#/components/schemas/RollbackReleaseResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/operations:
+    get:
+      tags: [admin]
+      summary: List durable multi-step admin operations.
+      operationId: adminOperationList
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Operations ordered newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  operations:
+                    type: array
+                    items: { $ref: "#/components/schemas/AdminOperation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/operations/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Get a durable operation after reconnecting.
+      operationId: adminOperationGet
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current step, completed steps, compensations, and final state.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  operation: { $ref: "#/components/schemas/AdminOperation" }
+        "404": { description: Operation not found. }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/v1/admin/tenants:
@@ -6022,17 +6829,18 @@ paths:
       description: |
         Fires the cache invalidation callback so the deleted
         tenant re-resolves as "no tenant" on the next request
-        rather than staying cached as Active until TTL expiry.
+        rather than staying cached as Active until TTL expiry. The response
+        reports every refresh-token and session revocation leg.
       operationId: tenantDelete
       security:
         - bearerAuth: []
       responses:
         "200":
-          description: Deleted.
+          description: Tenant deleted; credential cleanup may be complete or partial.
           content:
             application/json:
               schema:
-                type: object
+                $ref: "#/components/schemas/DeleteTenantResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/v1/admin/tenants/{id}/usage:
@@ -6979,7 +7787,9 @@ paths:
         The surgical entry point for suspension changes. Fires the
         cache invalidation callback so the flip takes effect on the
         next request (not just after the suspension-check TTL
-        expires). Status MUST be `active` or `suspended`.
+        expires). Status MUST be `active` or `suspended`. A real transition
+        to suspended returns exact refresh-token/session revocation results;
+        activation and no-op transitions omit that report.
       operationId: tenantSetStatus
       security:
         - bearerAuth: []
@@ -7183,6 +7993,34 @@ paths:
                 $ref: "#/components/schemas/CreateClientResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/clients/expiring:
+    get:
+      tags: [admin]
+      summary: List clients whose secret is expired or nearing expiry.
+      operationId: adminClientListExpiring
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: within_seconds
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 1 }
+          description: Look-ahead window. Omit or use 0 for the 30-day default; maximum 100 years.
+      responses:
+        "200":
+          description: Clients ordered by secret expiry, then ID. Legacy/public clients with no expiry are omitted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListExpiringClientsResponse"
+        "400":
+          description: Invalid look-ahead window.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/admin/clients/{id}:
     parameters:
       - name: id
@@ -7257,10 +8095,18 @@ paths:
         Returns the new secret ONCE; the caller MUST capture it
         immediately. Subsequent Get / List responses will not
         re-emit it. Audit event `admin_client_rotate_secret`
-        records the rotation.
+        records the rotation. The old secret remains valid during
+        `overlap_seconds`; authentication fails after the returned
+        `client_secret_expires_at` deadline.
       operationId: adminClientRotateSecret
       security:
         - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotateSecretRequest"
       responses:
         "200":
           description: New secret.
@@ -7268,6 +8114,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RotateSecretResponse"
+        "400":
+          description: Invalid overlap/lifetime policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/v1/admin/clients/{id}/approve:
@@ -7901,7 +8753,10 @@ paths:
         illegal_lifecycle_transition, an unrecognized target 400
         unknown_lifecycle_state, and a concurrent change 409
         lifecycle_state_conflict. Emits admin_user_lifecycle_changed
-        (target_user, from_state, to_state, reason).
+        (target_user, from_state, to_state, reason). The stock server also
+        destroys the subject's sessions and all refresh tokens synchronously
+        when the target state is invited, suspended, inactive, archived, or
+        purged.
       operationId: adminUserTransitionLifecycle
       security:
         - bearerAuth: []
@@ -7987,8 +8842,11 @@ paths:
         Sets the user's password on their behalf — the helpdesk "reset this
         user's password" flow. admin:write; emits admin_password_reset (never
         the password). Writes the same credential the self-service
-        /me/password change does, so it takes effect on the user's next login.
-        Mounted only when a PasswordCredentialStore is wired.
+        /me/password change does. After the password commits, all existing
+        sessions, refresh tokens across every client, and trusted-device grants
+        are revoked best-effort so credentials minted under the old password
+        cannot remain active. Mounted only when a PasswordCredentialStore is
+        wired.
       operationId: adminUserResetPassword
       security:
         - bearerAuth: []
@@ -8102,8 +8960,9 @@ paths:
         regardless of caller input. `require_approval: true` creates a
         PENDING grant that a DIFFERENT admin must approve via
         `POST /api/v1/admin/break-glass/{id}/approve` before it can be used;
-        otherwise the grant activates immediately, minting its impersonation
-        session up front for `impersonate`/`escalate` scope only —
+        otherwise the pending grant record is persisted first and only then
+        is its impersonation session minted and atomically attached while
+        activating it for `impersonate`/`escalate` scope only —
         `readonly` (the default) never mints a session, so it is
         structurally incapable of acting as the user. Emits
         `admin_break_glass_created`. Mounted only when a BreakGlassStore is
@@ -8174,13 +9033,23 @@ paths:
         Revokes the grant and cascades destruction of every impersonation
         session minted under it, so it can never be used again even though
         the underlying session's own TTL hasn't lapsed yet. admin:write.
-        Idempotent on an already revoked/expired grant. Emits
+        Idempotent on an already revoked/expired grant. Every derived session
+        and bearer has a stable idempotency key and an explicit result. Emits
         `admin_break_glass_revoked`.
       operationId: adminRevokeBreakGlass
       security:
         - bearerAuth: []
       responses:
-        "200": { description: Revoked. }
+        "200":
+          description: Grant and every derived credential revoked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BreakGlassRevocationResponse" }
+        "207":
+          description: Grant revoked, but at least one derived credential revocation failed and is retryable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BreakGlassRevocationResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404":
           description: No such break-glass session.
@@ -9547,7 +10416,9 @@ paths:
         Operator-driven one-time token bound to a user — password
         resets, magic-link distribution, first-login flows.
         TTL is server-side via authenticators.temp_token.ttl.
-        Display the returned token ONCE; never echo it back.
+        Display the returned token ONCE; never echo it back. Emits
+        admin_temp_token_issued with target_user_id so the affected user can
+        receive a security notification when notifications are enabled.
       operationId: adminTokenIssueTemp
       security:
         - bearerAuth: []
@@ -9805,8 +10676,9 @@ paths:
       summary: SCIM resource schemas (RFC 7643 §7).
       description: |
         Returns the implemented resource schemas (always `User`; `Group`
-        only when `scim.groups.enabled`) wrapped in the SCIM
-        `ListResponse` envelope. Admin-gated — `admin:read`.
+        only when `scim.groups.enabled`) plus the always-supported RFC 7643
+        Enterprise User extension, wrapped in the SCIM `ListResponse`
+        envelope. Admin-gated — `admin:read`.
       operationId: scimSchemas
       security:
         - bearerAuth: []
@@ -9983,9 +10855,10 @@ paths:
       description: |
         Returns Users in the SCIM `ListResponse` envelope. Supports the
         optional `filter` query parameter (RFC 7644 §3.4.2.2) — applied
-        BEFORE pagination so `totalResults` reflects the filtered set — and
-        1-based `startIndex` / `count` pagination (§3.4.2.4; `count` is
-        clamped to 200, default 100). Admin-gated — `admin:read`.
+        BEFORE sorting and pagination so `totalResults` reflects the filtered
+        set — `sortBy` / `sortOrder` (§3.4.2.3), and 1-based `startIndex` /
+        `count` pagination (§3.4.2.4; `count` is clamped to 200, default 100).
+        Admin-gated — `admin:read`.
       operationId: scimListUsers
       security:
         - bearerAuth: []
@@ -9998,6 +10871,21 @@ paths:
             `userName eq "alice"`. A malformed expression yields HTTP 400
             `invalidFilter`.
           example: userName eq "alice"
+        - name: sortBy
+          in: query
+          schema: { type: string }
+          description: |
+            SCIM attribute path used to stable-sort the filtered result set
+            before pagination (RFC 7644 §3.4.2.3), for example `userName`,
+            `externalId`, or `name.familyName`.
+          example: userName
+        - name: sortOrder
+          in: query
+          schema:
+            type: string
+            enum: [ascending, descending]
+            default: ascending
+          description: Sort direction; defaults to ascending when omitted.
         - name: startIndex
           in: query
           schema: { type: integer, default: 1, minimum: 1 }
@@ -10204,10 +11092,10 @@ paths:
       summary: List / search SCIM Groups (RFC 7644 §3.4).
       description: |
         Returns Groups in the SCIM `ListResponse` envelope, with the same
-        `filter` / `startIndex` / `count` semantics as `/Users`. A SCIM
-        Group maps onto a `permissions.Role`; members are the users
-        assigned that role. Mounted ONLY when `scim.groups.enabled` (a
-        `permissions.Provider` is wired) — otherwise the route is absent
+        `filter` / `sortBy` / `sortOrder` / `startIndex` / `count` semantics
+        as `/Users`. A SCIM Group maps onto a `permissions.Role`; members are
+        the users assigned that role. Mounted ONLY when `scim.groups.enabled`
+        (a `permissions.Provider` is wired) — otherwise the route is absent
         (404). Admin-gated — `admin:read`.
       operationId: scimListGroups
       security:
@@ -10218,6 +11106,20 @@ paths:
           schema: { type: string }
           description: SCIM filter expression (RFC 7644 §3.4.2.2); malformed → 400 `invalidFilter`.
           example: displayName eq "admins"
+        - name: sortBy
+          in: query
+          schema: { type: string }
+          description: |
+            SCIM attribute path used to stable-sort the filtered result set
+            before pagination (RFC 7644 §3.4.2.3), for example `displayName`.
+          example: displayName
+        - name: sortOrder
+          in: query
+          schema:
+            type: string
+            enum: [ascending, descending]
+            default: ascending
+          description: Sort direction; defaults to ascending when omitted.
         - name: startIndex
           in: query
           schema: { type: integer, default: 1, minimum: 1 }
@@ -10400,6 +11302,758 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScimError"
 
+  /.well-known/openid-federation-historical-keys:
+    get:
+      tags: [federation]
+      summary: Return historical federation verification keys.
+      operationId: getFederationHistoricalKeys
+      responses:
+        "200":
+          description: Historical keys retained for federation statement verification.
+
+  /.well-known/openid-federation-list:
+    get:
+      tags: [federation]
+      summary: List configured federation subordinates.
+      operationId: listFederationSubordinates
+      responses:
+        "200":
+          description: Subordinate entity identifiers visible to this superior.
+
+  /.well-known/openid-federation-trust-mark-status:
+    get:
+      tags: [federation]
+      summary: Resolve the status of a federation trust mark.
+      operationId: getFederationTrustMarkStatus
+      parameters:
+        - name: trust_mark_id
+          in: query
+          required: true
+          schema: { type: string, format: uri }
+        - name: sub
+          in: query
+          required: true
+          schema: { type: string, format: uri }
+      responses:
+        "200":
+          description: Trust-mark activity status.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /.well-known/ssf-configuration:
+    get:
+      tags: [ssf]
+      summary: Return Shared Signals Framework transmitter metadata.
+      operationId: getSSFConfiguration
+      responses:
+        "200":
+          description: SSF configuration derived from the live server.
+
+  /ssf/streams:
+    get:
+      tags: [ssf]
+      summary: List Shared Signals delivery streams.
+      operationId: listSSFStreams
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Configured SSF streams visible to the caller.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [ssf]
+      summary: Create a Shared Signals delivery stream.
+      operationId: createSSFStream
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "201":
+          description: Stream created.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /ssf/streams/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [ssf]
+      summary: Get one Shared Signals delivery stream.
+      operationId: getSSFStream
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Stream configuration.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [ssf]
+      summary: Replace one Shared Signals delivery stream.
+      operationId: updateSSFStream
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Stream updated.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [ssf]
+      summary: Delete one Shared Signals delivery stream.
+      operationId: deleteSSFStream
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Stream deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/status:
+    get:
+      tags: [operational]
+      summary: Return the versioned API status document.
+      operationId: getRuntimeStatus
+      responses:
+        "200":
+          description: Runtime status and build metadata.
+
+  /login-ui/metadata:
+    get:
+      tags: [auth]
+      summary: Return client-specific login UI metadata.
+      operationId: getLoginUIMetadata
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Branding and available login-provider metadata.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /auth/verify-email:
+    post:
+      tags: [auth]
+      summary: Consume a self-service email verification token.
+      operationId: verifyEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        "200":
+          description: Email address verified.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /authz/check:
+    get:
+      tags: [authorization]
+      summary: Check whether a subject has a relation to an object.
+      operationId: checkAuthorization
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Authorization decision.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /authz/graph:
+    get:
+      tags: [authorization]
+      summary: Reverse-expand an authorization relation graph.
+      operationId: expandAuthorizationGraph
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Bounded reverse relation graph.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /authz/tuples:
+    get:
+      tags: [authorization]
+      summary: List authorization tuples.
+      operationId: listAuthorizationTuples
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Matching authorization tuples.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [authorization]
+      summary: Write an authorization tuple.
+      operationId: writeAuthorizationTuple
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: Tuple written.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [authorization]
+      summary: Delete an authorization tuple.
+      operationId: deleteAuthorizationTuple
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Tuple deleted.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /authz/tuples/batch:
+    post:
+      tags: [authorization]
+      summary: Atomically apply a batch of authorization tuple mutations.
+      operationId: batchWriteAuthorizationTuples
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Stable caller key. When omitted, the server derives one from the exact request body.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReBACBatchRequest" }
+      responses:
+        "200":
+          description: Entire batch applied with a stable result for every item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReBACBatchResponse" }
+        "400":
+          description: Validation failed; no mutation was applied and every item is reported as not_applied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReBACBatchResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/branding:
+    parameters:
+      - name: tenant_id
+        in: query
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Get tenant branding.
+      operationId: getAdminBranding
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Dedicated tenant branding with an ETag and version.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantBranding"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [admin]
+      summary: Conditionally replace tenant branding.
+      operationId: updateAdminBranding
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [branding]
+              properties:
+                branding:
+                  type: object
+                  additionalProperties: { type: string }
+      responses:
+        "200":
+          description: Branding updated and version advanced.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "412":
+          description: Branding changed since it was read.
+        "428":
+          description: A current If-Match value is required.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [admin]
+      summary: Conditionally clear tenant-specific branding.
+      operationId: deleteAdminBranding
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Branding cleared and version advanced.
+        "412":
+          description: Branding changed since it was read.
+        "428":
+          description: A current If-Match value is required.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/providers:
+    get:
+      tags: [admin]
+      summary: List registered authentication providers.
+      operationId: listAdminProviders
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Provider inventory with no secret material.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [admin]
+      summary: Register an authentication provider.
+      operationId: createAdminProvider
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: Provider registered.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/providers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Get one authentication provider.
+      operationId: getAdminProvider
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Provider metadata with secret fields redacted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [admin]
+      summary: Replace one authentication provider.
+      operationId: updateAdminProvider
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Provider updated.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [admin]
+      summary: Delete one authentication provider.
+      operationId: deleteAdminProvider
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Provider deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/admin/devices:
+    get:
+      tags: [admin]
+      summary: List devices across users.
+      operationId: listAdminDevices
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Paginated device inventory.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/devices/stats:
+    get:
+      tags: [admin]
+      summary: Return aggregate device-security statistics.
+      operationId: getAdminDeviceStats
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Device counts grouped by trust and activity.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/devices/bulk-revoke:
+    post:
+      tags: [admin]
+      summary: Revoke a filtered set of devices.
+      operationId: bulkRevokeAdminDevices
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Number of devices revoked.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/devices/{id}/activity:
+    get:
+      tags: [admin]
+      summary: Get security activity for one device.
+      operationId: getAdminDeviceActivity
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Device activity timeline.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/admin/devices/{id}/trust:
+    post:
+      tags: [admin]
+      summary: Reset the trust state for one device.
+      operationId: resetAdminDeviceTrust
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Updated trust state.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/admin/security/activity:
+    get:
+      tags: [admin]
+      summary: List security activity across users and devices.
+      operationId: listAdminSecurityActivity
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Paginated security activity.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/users/{id}/devices:
+    get:
+      tags: [admin]
+      summary: List devices for one user.
+      operationId: listAdminUserDevices
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: User-scoped device inventory.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/users/{id}/devices/{deviceId}:
+    delete:
+      tags: [admin]
+      summary: Revoke one device owned by a user.
+      operationId: deleteAdminUserDevice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Device revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/admin/users/{id}/login-history:
+    get:
+      tags: [admin]
+      summary: List login history for one user.
+      operationId: getAdminUserLoginHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: User login history.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/sessions:
+    get:
+      tags: [self-service]
+      summary: List the authenticated user's active sessions.
+      operationId: getMeSessions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Active user sessions.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/sessions/{id}:
+    delete:
+      tags: [self-service]
+      summary: Revoke one session owned by the authenticated user.
+      operationId: deleteMeSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Session revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /me/sessions/enriched:
+    get:
+      tags: [self-service]
+      summary: List active sessions enriched with device metadata.
+      operationId: getEnrichedMeSessions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Active sessions with device and activity context.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/sessions/revoke-all:
+    post:
+      tags: [self-service]
+      summary: Revoke all sessions owned by the authenticated user.
+      operationId: revokeAllMeSessions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Number of sessions revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/devices/{id}/activity:
+    get:
+      tags: [self-service]
+      summary: Get activity for one owned device.
+      operationId: getMyDeviceActivity
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Device activity timeline.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /me/devices/{id}/sessions:
+    get:
+      tags: [self-service]
+      summary: List sessions associated with one owned device.
+      operationId: getMyDeviceSessions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Sessions associated with the device.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /me/devices/{id}/trust:
+    post:
+      tags: [self-service]
+      summary: Change the trust state of one owned device.
+      operationId: setMyDeviceTrust
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Updated device trust state.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /me/devices/{id}/lost:
+    post:
+      tags: [self-service]
+      summary: Report an owned device lost and revoke its sessions.
+      operationId: reportMyDeviceLost
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Device marked lost and associated access revoked.
+        "207":
+          description: Device was marked lost but one or more session revocations failed, or the device update failed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /me/login-history:
+    get:
+      tags: [self-service]
+      summary: List login history for the authenticated user.
+      operationId: getMyLoginHistory
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User login history.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/security/activity:
+    get:
+      tags: [self-service]
+      summary: List the authenticated user's security activity.
+      operationId: getMySecurityActivity
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Combined device and login security activity.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
 components:
 
   securitySchemes:
@@ -10492,6 +12146,19 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+
+    TenantBranding:
+      type: object
+      required: [tenant_id, branding, version]
+      properties:
+        status: { type: string }
+        tenant_id: { type: string }
+        branding:
+          type: object
+          additionalProperties: { type: string }
+        version:
+          type: string
+          description: Monotonic value used to construct the strong branding ETag.
 
     HealthResponse:
       type: object
@@ -10674,7 +12341,7 @@ components:
           type: string
           description: |
             Opaque "remember this device" grant minted by a prior
-            `POST /me/devices/trust`. When the configured RiskScorer would
+            `POST /me/trusted-devices/trust`. When the configured RiskScorer would
             otherwise demand step-up MFA, a live grant for the SAME
             (user, client) skips the challenge. Omit on an untrusted or
             first-time device — the ordinary MFA gate applies unchanged.
@@ -10707,6 +12374,19 @@ components:
         session_id:
           type: string
           description: Server-side session handle for logout calls.
+        state:
+          type: string
+          description: Effective server-owned authorization state, when supplied.
+        redirect_uri_validated:
+          type: boolean
+          description: True only after redirect_uri passed the registered-client checks.
+        redirect_uri:
+          type: string
+          format: uri
+          description: Effective post-PAR/JAR authorization response target.
+        response_mode:
+          type: string
+          description: Effective mode; defaults to query for code and fragment for token responses.
         session_state:
           type: string
           description: |
@@ -10755,7 +12435,7 @@ components:
             request set `trust_device: true` (see MFACompleteRequest)
             AND a `TrustedDeviceStore` is wired AND the store minted a
             grant successfully. Same bearer-equivalent MFA-skip
-            credential `POST /me/devices/trust` returns — shown exactly
+            credential `POST /me/trusted-devices/trust` returns — shown exactly
             once; capture it now. Never present on a plain (non-MFA, or
             trust_device unset) login response.
         passkey_enrollment_recommended:
@@ -10800,6 +12480,12 @@ components:
           items:
             type: string
           description: Authenticator names this client may use.
+        authorization_request_passthrough_supported:
+          type: boolean
+          description: |
+            True only when top-level federated GET can preserve the complete
+            authorization request, the active client has a valid secure
+            `login_page_uri`, and terminal JSON attests effective delivery.
 
     MFARequiredResponse:
       type: object
@@ -10914,7 +12600,7 @@ components:
             When true AND a `TrustedDeviceStore` is wired, a SUCCESSFUL
             factor verification mints a fresh "remember this device"
             grant for (the challenge's user, client) — the same grant
-            `POST /me/devices/trust` mints — and returns it in the 200
+            `POST /me/trusted-devices/trust` mints — and returns it in the 200
             response as `device_token` (see LoginResponse). A later
             `POST /auth/login` for the same (user, client) presenting
             that value as `device_token` skips a risk-scorer-demanded
@@ -10931,12 +12617,12 @@ components:
       type: object
       description: |
         Metadata for one "remember this device" MFA-skip grant, as returned
-        by `GET /me/devices`. Never carries the device token or its hash —
-        the token is shown exactly once, at `POST /me/devices/trust` time.
+        by `GET /me/trusted-devices`. Never carries the device token or its hash —
+        the token is shown exactly once, at `POST /me/trusted-devices/trust` time.
       properties:
         id:
           type: string
-          description: Opaque grant id, used by `DELETE /me/devices/{id}`.
+          description: Opaque grant id, used by `DELETE /me/trusted-devices/{id}`.
         user_id:
           type: string
         client_id:
@@ -11209,8 +12895,8 @@ components:
             token_endpoint_auth_method=workload_identity, whenever
             `client_assertion` is supplied; otherwise rejected with
             `invalid_request`. For workload-identity, `client_id`
-            (form field or Basic auth) is REQUIRED — the cloud token's
-            verified identity is not itself this server's client_id.
+            is REQUIRED as a form/JSON field — the cloud token's verified
+            identity is not itself this server's client_id.
         agent_session_id:
           type: string
           description: |
@@ -11526,6 +13212,71 @@ components:
           type: integer
           description: Minimum seconds between /token polls.
 
+    CIBABackchannelRequest:
+      type: object
+      oneOf:
+        - required: [login_hint]
+        - required: [id_token_hint]
+        - required: [login_hint_token]
+      properties:
+        client_id:
+          type: string
+          description: May instead be supplied by HTTP Basic or client assertion.
+        client_secret:
+          type: string
+          writeOnly: true
+        scope:
+          type: string
+          description: Space-delimited scope list.
+        login_hint:
+          type: string
+        id_token_hint:
+          type: string
+        login_hint_token:
+          type: string
+        binding_message:
+          type: string
+        acr_values:
+          type: string
+        nonce:
+          type: string
+        resource:
+          type: array
+          items: { type: string, format: uri }
+        user_code:
+          type: string
+          writeOnly: true
+          description: Dedicated CIBA secret; requires a wired user-code verifier.
+        requested_expiry:
+          type: integer
+          minimum: 1
+          description: Requested lifetime in seconds; only shortens the server limit.
+        client_notification_token:
+          type: string
+          writeOnly: true
+          description: Bearer credential used for ping/push notification.
+        client_assertion:
+          type: string
+          writeOnly: true
+        client_assertion_type:
+          type: string
+          enum: [urn:ietf:params:oauth:client-assertion-type:jwt-bearer]
+
+    CIBABackchannelResponse:
+      type: object
+      required: [auth_req_id, expires_in, interval]
+      properties:
+        auth_req_id:
+          type: string
+          description: Opaque single-use identifier redeemed through the CIBA grant.
+        expires_in:
+          type: integer
+          minimum: 1
+        interval:
+          type: integer
+          minimum: 1
+          description: Minimum seconds between token polls.
+
     DeviceVerifyRequest:
       type: object
       required: [user_code, approve]
@@ -11553,6 +13304,8 @@ components:
             - client_secret_basic
             - client_secret_post
             - private_key_jwt
+            - tls_client_auth
+            - self_signed_tls
             - none
           description: |
             `none` opts out of secret issuance (public client / PKCE
@@ -11592,6 +13345,23 @@ components:
           type: string
         require_pkce:
           type: boolean
+        jwks:
+          type: object
+          required: [keys]
+          properties:
+            keys:
+              type: array
+              items:
+                type: object
+                description: RFC 7517 JWK object.
+        tls_client_auth_subject_dn: { type: string }
+        tls_client_auth_san_dns: { type: string }
+        tls_client_auth_san_email: { type: string }
+        tls_client_auth_san_uri: { type: string }
+        id_token_encrypted_response_alg: { type: string }
+        id_token_encrypted_response_enc: { type: string }
+        userinfo_encrypted_response_alg: { type: string }
+        userinfo_encrypted_response_enc: { type: string }
 
     ClientMetadata:
       type: object
@@ -11600,6 +13370,10 @@ components:
         id: { type: string }
         name: { type: string }
         active: { type: boolean }
+        client_secret_expires_at:
+          type: integer
+          format: int64
+          description: Unix seconds; 0 means never expires (legacy/public client).
         token_strategy:
           type: string
           enum: [jwt, session]
@@ -11607,6 +13381,13 @@ components:
         redirect_uris:
           type: array
           items: { type: string }
+        login_page_uri:
+          type: string
+          format: uri
+          description: |
+            HTTPS hosted-login URL (HTTP is allowed only for loopback hosts).
+            Required to resume OIDC/SAML federation into this client's
+            original authorization request.
         post_logout_redirect_uris:
           type: array
           items: { type: string }
@@ -11988,6 +13769,42 @@ components:
       type: object
       properties:
         report: { $ref: "#/components/schemas/RestoreReport" }
+        operation_id: { type: string }
+        operation: { $ref: "#/components/schemas/AdminOperation" }
+
+    OperationStep:
+      type: object
+      required: [name, state]
+      properties:
+        name: { type: string }
+        state: { type: string, enum: [running, succeeded, failed] }
+        error: { type: string }
+        started_at_unix: { type: integer, format: int64 }
+        finished_at_unix: { type: integer, format: int64 }
+
+    AdminOperation:
+      type: object
+      required: [id, kind, target, state, steps, compensations]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [snapshot_restore, release_pin, release_rollback]
+        target: { type: string }
+        state: { type: string, enum: [running, succeeded, failed] }
+        current_step: { type: string }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/OperationStep" }
+        compensations:
+          type: array
+          items: { $ref: "#/components/schemas/OperationStep" }
+        result_json:
+          type: string
+          format: byte
+        error: { type: string }
+        created_at_unix: { type: integer, format: int64 }
+        updated_at_unix: { type: integer, format: int64 }
 
     RestoreReport:
       type: object
@@ -12081,6 +13898,15 @@ components:
       type: object
       properties:
         report: { $ref: "#/components/schemas/PinReport" }
+        operation_id: { type: string }
+        operation: { $ref: "#/components/schemas/AdminOperation" }
+
+    RollbackReleaseResponse:
+      type: object
+      properties:
+        report: { $ref: "#/components/schemas/PinReport" }
+        operation_id: { type: string }
+        operation: { $ref: "#/components/schemas/AdminOperation" }
 
     PinReport:
       type: object
@@ -12169,6 +13995,40 @@ components:
       type: object
       properties:
         tenant: { $ref: "#/components/schemas/Tenant" }
+        credential_revocation:
+          $ref: "#/components/schemas/TenantCredentialRevocationReport"
+
+    DeleteTenantResponse:
+      type: object
+      properties:
+        credential_revocation:
+          $ref: "#/components/schemas/TenantCredentialRevocationReport"
+
+    CredentialRevocationResult:
+      type: object
+      required: [idempotency_key, kind, resource_id, status, revoked_count]
+      properties:
+        idempotency_key: { type: string }
+        kind:
+          type: string
+          enum: [refresh_tokens, sessions, session_roster, session_user, session]
+        resource_id: { type: string }
+        status: { type: string, enum: [revoked, failed] }
+        revoked_count: { type: integer, format: int32 }
+        error: { type: string }
+
+    TenantCredentialRevocationReport:
+      type: object
+      required:
+        [tenant_id, refresh_tokens_revoked, sessions_revoked, complete, results]
+      properties:
+        tenant_id: { type: string }
+        refresh_tokens_revoked: { type: integer, format: int32 }
+        sessions_revoked: { type: integer, format: int32 }
+        complete: { type: boolean }
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/CredentialRevocationResult" }
 
     ListDomainsResponse:
       type: object
@@ -12212,6 +14072,12 @@ components:
         redirect_uris:
           type: array
           items: { type: string }
+        login_page_uri:
+          type: string
+          format: uri
+          description: |
+            Hosted-login continuation URL for OIDC/SAML federation. HTTPS is
+            required except for loopback HTTP development URLs.
         allowed_scopes:
           type: array
           items: { type: string }
@@ -12237,6 +14103,13 @@ components:
           format: int32
           description: Count of clients matching `filter` (approximate under concurrent mutation — see the List description).
 
+    ListExpiringClientsResponse:
+      type: object
+      properties:
+        clients:
+          type: array
+          items: { $ref: "#/components/schemas/AdminClient" }
+
     GetAdminClientResponse:
       type: object
       properties:
@@ -12252,12 +14125,28 @@ components:
       properties:
         client: { $ref: "#/components/schemas/AdminClient" }
 
+    RotateSecretRequest:
+      type: object
+      properties:
+        overlap_seconds:
+          type: integer
+          format: int64
+          description: 0 selects 24h; explicit values must be at least 3600.
+        lifetime_seconds:
+          type: integer
+          format: int64
+          description: 0 selects 90d; must be greater than overlap_seconds.
+
     RotateSecretResponse:
       type: object
       properties:
         secret:
           type: string
           description: New client_secret — display once.
+        client_secret_expires_at:
+          type: integer
+          format: int64
+          description: Unix expiry of the newly-issued secret.
 
     ApproveClientResponse:
       type: object
@@ -12289,6 +14178,14 @@ components:
           type: integer
           format: int64
           description: The grace window actually applied (seconds).
+        key_class:
+          type: string
+          enum: [token_signing]
+          description: Exact cryptographic key class affected.
+        rollout_state:
+          type: string
+          enum: [new_active_old_verify_only]
+          description: The new key is active and the demoted key remains verify-only for the grace window.
     SigningKeyInfo:
       type: object
       properties:
@@ -12553,8 +14450,8 @@ components:
           type: integer
           description: |
             Unix seconds; `0` means "never expires" per RFC 7591
-            §3.2.1. Operators rotating secrets manage expiry
-            externally.
+            §3.2.1 (public clients). Newly registered confidential
+            clients receive the server's 90-day default lifetime.
         registration_access_token:
           type: string
           description: |
@@ -12593,6 +14490,24 @@ components:
           items: { type: string }
         require_pkce:
           type: boolean
+        tenant_id:
+          type: string
+        jwks:
+          type: object
+          required: [keys]
+          properties:
+            keys:
+              type: array
+              items:
+                type: object
+        tls_client_auth_subject_dn: { type: string }
+        tls_client_auth_san_dns: { type: string }
+        tls_client_auth_san_email: { type: string }
+        tls_client_auth_san_uri: { type: string }
+        id_token_encrypted_response_alg: { type: string }
+        id_token_encrypted_response_enc: { type: string }
+        userinfo_encrypted_response_alg: { type: string }
+        userinfo_encrypted_response_enc: { type: string }
 
     User:
       type: object
@@ -12881,6 +14796,29 @@ components:
           items: { type: string }
           description: Impersonation sessions minted under this grant (impersonate/escalate scope only).
 
+    DerivedCredentialResult:
+      type: object
+      required: [idempotency_key, kind, id, status]
+      properties:
+        idempotency_key: { type: string }
+        kind: { type: string, enum: [session, token] }
+        id:
+          type: string
+          description: Session id or a non-secret hash-derived token identifier.
+        status: { type: string, enum: [revoked, failed] }
+        error: { type: string }
+
+    BreakGlassRevocationResponse:
+      type: object
+      required: [status, grant_id, credential_results, retryable]
+      properties:
+        status: { type: string, enum: [revoked] }
+        grant_id: { type: string }
+        credential_results:
+          type: array
+          items: { $ref: "#/components/schemas/DerivedCredentialResult" }
+        retryable: { type: boolean }
+
     ChangeRequest:
       type: object
       description: |
@@ -12972,6 +14910,85 @@ components:
         last_error: { type: string }
         first_failed_at: { type: string, format: date-time }
         last_failed_at: { type: string, format: date-time }
+        replay_state:
+          type: string
+          enum: [in_progress, delivered_cleanup_pending, delivery_failed]
+        replay_idempotency_key: { type: string }
+        replay_started_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time }
+        cleanup_error: { type: string }
+
+    BCLFailure:
+      type: object
+      description: Exhausted BCL delivery inputs and retry state. Never contains a signed logout token.
+      required: [id, client_id, subject, token_subject, uri, attempts, last_error, permanent, first_failed_at, last_failed_at, next_attempt_at]
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        client_id: { type: string }
+        subject: { type: string, description: Local subject used for fan-out index cleanup. }
+        token_subject: { type: string, description: Pairwise or public subject to place in the freshly signed logout token. }
+        uri: { type: string, format: uri }
+        sid: { type: string }
+        attempts: { type: integer }
+        last_error: { type: string }
+        permanent: { type: boolean, description: True for RP 4xx failures excluded from background sweeps. }
+        first_failed_at: { type: string, format: date-time }
+        last_failed_at: { type: string, format: date-time }
+        next_attempt_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time }
+
+    BCLReplaySummary:
+      type: object
+      required: [attempted, delivered, failed, busy]
+      properties:
+        attempted: { type: integer }
+        delivered: { type: integer }
+        failed: { type: integer }
+        busy: { type: integer }
+
+    ReBACTuple:
+      type: object
+      required: [object, relation, subject]
+      properties:
+        object: { type: string, example: "document:42" }
+        relation: { type: string, example: "viewer" }
+        subject: { type: string, example: "user:alice" }
+
+    ReBACBatchRequest:
+      type: object
+      properties:
+        idempotency_key:
+          type: string
+          description: Body alternative to the Idempotency-Key header; the header wins when both are present.
+        writes:
+          type: array
+          items: { $ref: "#/components/schemas/ReBACTuple" }
+        deletes:
+          type: array
+          items: { $ref: "#/components/schemas/ReBACTuple" }
+
+    ReBACBatchItemResult:
+      type: object
+      required: [idempotency_key, operation, status, tuple]
+      properties:
+        idempotency_key: { type: string }
+        operation: { type: string, enum: [write, delete] }
+        status: { type: string, enum: [applied, not_applied] }
+        tuple: { $ref: "#/components/schemas/ReBACTuple" }
+        error: { type: string }
+
+    ReBACBatchResponse:
+      type: object
+      required: [idempotency_key, items]
+      properties:
+        status: { type: string }
+        idempotency_key: { type: string }
+        written: { type: integer }
+        deleted: { type: integer }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ReBACBatchItemResult" }
 
     ConnectionDomainClaim:
       type: object
@@ -13024,6 +15041,53 @@ components:
             or status-code text only — never upstream response body).
             Omitted when status is healthy.
 
+    NotificationEvent:
+      type: object
+      required: [id, type, title, body, severity, channel, created_at]
+      properties:
+        id: { type: string }
+        subject_id: { type: string, description: Authenticated notification owner. }
+        tenant_id: { type: string }
+        type:
+          type: string
+          enum: [password_expiring, new_device_login, mfa_removed, consent_granted, session_expiring, password_leaked, account_locked, security_event]
+        title: { type: string }
+        body: { type: string }
+        severity: { type: string, enum: [info, warning, critical] }
+        channel: { type: string, enum: [in_app, email] }
+        created_at: { type: string, format: date-time }
+        read_at: { type: string, format: date-time }
+
+    NotificationPreference:
+      type: object
+      required: [type, channel, enabled]
+      properties:
+        subject_id: { type: string, readOnly: true }
+        type:
+          type: string
+          enum: [password_expiring, new_device_login, mfa_removed, consent_granted, session_expiring, password_leaked, account_locked, security_event]
+        channel: { type: string, enum: [in_app, email] }
+        enabled: { type: boolean }
+
+    NotificationPreferences:
+      type: object
+      required: [preferences]
+      properties:
+        preferences:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/NotificationPreference" }
+
+    NotificationList:
+      type: object
+      required: [notifications, unread_count, has_more]
+      properties:
+        notifications:
+          type: array
+          items: { $ref: "#/components/schemas/NotificationEvent" }
+        unread_count: { type: integer, minimum: 0 }
+        has_more: { type: boolean }
+
     ErasureReport:
       type: object
       properties:
@@ -13036,6 +15100,9 @@ components:
           description: Tokens revoked (or, under dry_run, the projected count when previewable).
         sessions_destroyed:
           type: integer
+        notifications_deleted:
+          type: boolean
+          description: Whether in-app notifications were deleted; preferences are erased in the same step when wired.
         user_deleted:
           type: boolean
         skipped:
@@ -13404,6 +15471,13 @@ components:
           format: date-time
         compromise_reason:
           type: string
+        retirement_status:
+          type: string
+          enum: [unsupported, failed, pending_verification, retired]
+          description: Exact outcome observed from the owning key source.
+        retirement_error:
+          type: string
+          description: Source retirement error when retirement_status is failed.
 
     DegradationMode:
       type: object
@@ -13476,6 +15550,26 @@ components:
           items:
             $ref: "#/components/schemas/AccessPolicy"
 
+    AccessPolicyConvergenceSummary:
+      type: object
+      required: [scanned, revoked, step_up_marked, scopes_restricted, failed]
+      properties:
+        scanned:
+          type: integer
+          minimum: 0
+        revoked:
+          type: integer
+          minimum: 0
+        step_up_marked:
+          type: integer
+          minimum: 0
+        scopes_restricted:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+
     AccessPolicy:
       type: object
       required: [name, enabled]
@@ -13501,10 +15595,26 @@ components:
             user_member_of:
               type: array
               items: { type: string }
-              description: Any-of. Matches when the subject is in at least one of these groups.
+              description: Any-of current per-user/client permissions role codes. A missing/erroring provider supplies no groups.
             device_managed:
               type: boolean
               description: Tri-state (omitted = unconstrained). true matches only a managed device; false matches an unmanaged or unreported device.
+            device_type:
+              type: string
+              enum: [mobile, desktop, browser, tablet, app, bot, unknown]
+              description: Device classification parsed from the current User-Agent.
+            device_trust_level:
+              type: number
+              format: double
+              minimum: 0
+              maximum: 1
+              description: Minimum tracked physical-device trust score. Zero/unavailable device inventory is unconstrained at the signal source.
+            device_is_new:
+              type: boolean
+              description: When true, matches a fingerprint not yet present in the physical device inventory.
+            device_is_new_location:
+              type: boolean
+              description: When true, matches a tracked device whose current client IP differs from its last IP.
             risk_score:
               type: string
               description: Comparison against derived risk (1 - effective trust), e.g. "> 0.5".
@@ -13524,6 +15634,23 @@ components:
               type: string
               description: UTC "HH:MM" exclusive upper bound; when before < after the window wraps midnight.
               example: "18:00"
+            session_age_seconds:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Inclusive minimum age of the current session in seconds. Zero is unconstrained; missing or future session metadata never matches.
+              example: 86400
+            authentication_age_seconds:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Inclusive minimum age of the original end-user authentication event in seconds, used for periodic reauthentication. Zero is unconstrained; missing or future auth_time never matches.
+              example: 43200
+            session_max_concurrent:
+              type: integer
+              minimum: 0
+              description: Maximum active sessions for the same subject/client. The login gate evaluates the prospective count, while convergence revokes only sessions beyond the ceiling. Zero is unconstrained; an unavailable count does not match.
+              example: 3
         actions:
           type: object
           description: Deny beats require_step_up beats allow; restrict_scopes and log ride along.

@@ -1,6 +1,7 @@
 package grpcadmin
 
 import (
+	"bytes"
 	"context"
 	"sort"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	inline "github.com/yangwb1123/snaplink/interfaces/snapshot/storageinline"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/operations"
 	"google.golang.org/grpc/codes"
 )
 
@@ -65,6 +67,7 @@ type snapshotFixture struct {
 	dst *defaultimpl.MemoryClientStore
 	svc *SnapshotAdminService
 	rec *audit.Recorder
+	ops *operations.MemoryStore
 }
 
 func newSnapshotFixture(sink *audit.MemorySink) *snapshotFixture {
@@ -75,9 +78,10 @@ func newSnapshotFixture(sink *audit.MemorySink) *snapshotFixture {
 	snapper := &snapshot.Snapshotter{Clients: src, Namespace: "sso-server"}
 	restorer := &snapshot.Restorer{Clients: dst, Namespace: "sso-server"}
 	rec := audit.New(sink)
+	ops := operations.NewMemoryStore()
 	return &snapshotFixture{
-		src: src, dst: dst, rec: rec,
-		svc: NewSnapshotAdminService(pipeline, storage, snapper, restorer, rec),
+		src: src, dst: dst, rec: rec, ops: ops,
+		svc: NewSnapshotAdminService(pipeline, storage, snapper, restorer, rec, ops),
 	}
 }
 
@@ -89,7 +93,10 @@ func TestSnapshotAdminService_FullCycle(t *testing.T) {
 	sink := audit.NewMemorySink(50)
 	fx := newSnapshotFixture(sink)
 	ctx := context.Background()
-	fx.src.AddSeed(&sso.Client{ID: "web-app", Name: "Web", Active: true})
+	fx.src.AddSeed(&sso.Client{
+		ID: "web-app", Name: "Web", Active: true,
+		Secret: "must-not-read", RegistrationAccessToken: "must-not-read-rat",
+	})
 
 	exp, err := fx.svc.Export(ctx, &adminv1.ExportSnapshotRequest{SourceNodeId: "node-A"})
 	requireOK(t, err, "Export")
@@ -108,6 +115,9 @@ func TestSnapshotAdminService_FullCycle(t *testing.T) {
 	if len(got.ResourcesJson) == 0 {
 		t.Error("Get returned empty ResourcesJson")
 	}
+	if bytes.Contains(got.ResourcesJson, []byte("must-not-read")) {
+		t.Fatalf("Get exposed credential material: %s", got.ResourcesJson)
+	}
 
 	if _, err := fx.dst.Get(ctx, "web-app"); err == nil {
 		t.Fatal("destination store must not already have web-app before Restore")
@@ -120,6 +130,11 @@ func TestSnapshotAdminService_FullCycle(t *testing.T) {
 	}
 	if _, err := fx.dst.Get(ctx, "web-app"); err != nil {
 		t.Errorf("expected Restore to have inserted web-app into the destination store: %v", err)
+	}
+	tracked, err := fx.ops.Get(ctx, restore.OperationId)
+	if err != nil || tracked.State != operations.StateSucceeded ||
+		len(tracked.Steps) != 2 || restore.Operation.GetId() != restore.OperationId {
+		t.Fatalf("restore operation = %+v, stored=%+v, err=%v", restore.Operation, tracked, err)
 	}
 
 	_, err = fx.svc.Delete(ctx, &adminv1.DeleteSnapshotRequest{Id: exp.Meta.SnapshotId})
@@ -153,6 +168,16 @@ func TestSnapshotAdminService_RestoreValidation(t *testing.T) {
 
 	_, err = fx.svc.Restore(ctx, &adminv1.RestoreSnapshotRequest{Id: "missing"})
 	requireCode(t, err, codes.NotFound)
+	// The replace-without-confirm failure is retained as a failed operation
+	// (load step failed; the safety capture never ran — validation precedes
+	// capture). The "missing" restore fails BEFORE operations.Start (the
+	// D1 pre-Start kind peek is a read, and a not-found id must not write
+	// anything, not even a ledger record) — so exactly one failed op exists.
+	operationsList, listErr := fx.ops.List(ctx)
+	requireOK(t, listErr, "list operations")
+	if len(operationsList) != 1 || operationsList[0].State != operations.StateFailed {
+		t.Fatalf("failed restores not retained: %+v", operationsList)
+	}
 
 	_, err = fx.svc.Get(ctx, &adminv1.GetSnapshotRequest{})
 	requireCode(t, err, codes.InvalidArgument)

@@ -194,6 +194,10 @@ func handleOptionalVerificationSignup(d Deps, ctx core.HandlerContext, username,
 	if email != "" {
 		attrs["email_verified"] = "true"
 	}
+	// The username IS the OIDC profile identity a signup account presents:
+	// stamp it as preferred_username so /userinfo carries a usable profile
+	// claim (OIDC Core §5.4) without relying on a later login carrying it.
+	attrs["preferred_username"] = username
 
 	u := &core.User{
 		ID:         username,

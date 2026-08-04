@@ -114,6 +114,28 @@ func TestBuildCredentialRotation_ClientSecretRotationRequiresInterval(t *testing
 	}
 }
 
+func TestBuildCredentialRotation_ClientSecretRotationRejectsShortOverlap(t *testing.T) {
+	t.Parallel()
+	clientCfg := config.ClientSecretRotationConfig{
+		Enabled: true, Interval: 24 * time.Hour, Overlap: 30 * time.Minute,
+	}
+	store := defaultimpl.NewMemoryClientStore()
+	if _, _, err := BuildCredentialRotation(config.RotationConfig{}, clientCfg, nil, store, govLogger(), nil); err == nil {
+		t.Fatal("expected overlap shorter than one hour to fail closed")
+	}
+}
+
+func TestBuildCredentialRotation_ClientSecretRotationRejectsLifetimeAtInterval(t *testing.T) {
+	t.Parallel()
+	clientCfg := config.ClientSecretRotationConfig{
+		Enabled: true, Interval: 24 * time.Hour, Overlap: time.Hour, Lifetime: 24 * time.Hour,
+	}
+	store := defaultimpl.NewMemoryClientStore()
+	if _, _, err := BuildCredentialRotation(config.RotationConfig{}, clientCfg, nil, store, govLogger(), nil); err == nil {
+		t.Fatal("expected lifetime at the rotation interval to fail closed")
+	}
+}
+
 func TestBuildCredentialRotation_ClientSecretRotationRequiresClientStore(t *testing.T) {
 	t.Parallel()
 	clientCfg := config.ClientSecretRotationConfig{Enabled: true, Interval: time.Hour}
@@ -320,7 +342,7 @@ func TestBuildConditionalAccess_EnforceDefaultsFalse(t *testing.T) {
 func TestBuildConditionalAccess_EnforcePassesThrough(t *testing.T) {
 	t.Parallel()
 	_, capCfg, err := BuildConditionalAccess(config.AccessPolicyConfig{
-		Enforce:  true,
+		Enforce: true, SessionSweepInterval: time.Minute, SessionSweepBatchSize: 25,
 		Policies: []conditionalaccess.Policy{{Name: "deny", Enabled: true, Actions: conditionalaccess.Actions{Deny: true}}},
 	})
 	if err != nil {
@@ -328,6 +350,17 @@ func TestBuildConditionalAccess_EnforcePassesThrough(t *testing.T) {
 	}
 	if !capCfg.Enforce {
 		t.Error("engine config must carry enforce through")
+	}
+	if capCfg.SessionSweepInterval != time.Minute || capCfg.SessionSweepBatchSize != 25 {
+		t.Fatalf("session sweep config = %s/%d", capCfg.SessionSweepInterval, capCfg.SessionSweepBatchSize)
+	}
+}
+
+func TestBuildConditionalAccessRejectsNegativeSessionSweep(t *testing.T) {
+	t.Parallel()
+	_, _, err := BuildConditionalAccess(config.AccessPolicyConfig{SessionSweepBatchSize: -1, Policies: []conditionalaccess.Policy{{Name: "p", Enabled: true}}})
+	if err == nil {
+		t.Fatal("negative session sweep batch must fail")
 	}
 }
 
@@ -427,7 +460,7 @@ func TestBuildTokenAnomaly_EnabledCoWiresRecorderAndDetector(t *testing.T) {
 	if rec == nil || det == nil {
 		t.Fatal("enabled token_anomaly must return a recorder + detector")
 	}
-	// The recorder must drain into the detector (the tokenusage.Store decorator),
+	// The recorder must drain into the detector (the metering.Store decorator),
 	// not into a bare aggregation store — otherwise the detector never observes.
 	if got, ok := rec.UsageStore().(*tokenanomaly.Detector); !ok || got != det {
 		t.Fatalf("recorder store = %T; want the returned *tokenanomaly.Detector (co-wired)", rec.UsageStore())
