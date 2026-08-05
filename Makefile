@@ -47,16 +47,20 @@ bench-gate: ## Benchmark budget CI gate: fails if a gated hot-path benchmark reg
 bench-gate-record: ## Regenerate ops/deploy/benchgate/baseline.txt from the current tree. Run manually after an accepted perf change.
 	bash ops/deploy/benchgate/record-baseline.sh
 
-load-test: ## Load-test /token (requires k6).
+load-test: ## Load-test the hot-path scenarios (requires k6).
 	@command -v k6 >/dev/null 2>&1 || { echo "k6 not installed" >&2; exit 1; }
 	k6 run ops/deploy/loadtest/token.js
+	k6 run ops/deploy/loadtest/authcode.js
+	k6 run ops/deploy/loadtest/introspect.js
+	k6 run ops/deploy/loadtest/par.js
+	k6 run ops/deploy/loadtest/discovery.js
 
-load-test-record: ## Record load test baseline to ops/deploy/loadtest/baseline.json.
+load-test-record: ## Record load test baseline (SCENARIO=token|authcode|introspect|par|discovery).
 	@command -v k6 >/dev/null 2>&1 || { echo "k6 not installed" >&2; exit 1; }
 	@command -v jq >/dev/null 2>&1 || { echo "jq not installed" >&2; exit 1; }
 	cd ops/deploy/loadtest && bash record-baseline.sh baseline.json
 
-load-test-compare: ## Compare current load test results against baseline (threshold=20%%).
+load-test-compare: ## Compare current load test results against baseline (threshold=20%%, SCENARIO).
 	@command -v k6 >/dev/null 2>&1 || { echo "k6 not installed" >&2; exit 1; }
 	@command -v jq >/dev/null 2>&1 || { echo "jq not installed" >&2; exit 1; }
 	@command -v bc >/dev/null 2>&1 || { echo "bc not installed" >&2; exit 1; }
@@ -67,12 +71,14 @@ load-test-ci: ## Run load test in CI (compare against baseline on target branch)
 	@command -v jq >/dev/null 2>&1 || { echo "jq not installed" >&2; exit 1; }
 	@command -v bc >/dev/null 2>&1 || { echo "bc not installed" >&2; exit 1; }
 	@echo "==> Load test CI: running baseline comparison..."
-	@cd ops/deploy/loadtest && \
-		if [ -f baseline.json ]; then \
-			bash compare-baseline.sh baseline.json ${THRESHOLD:-20}; \
+	@for scenario in token authcode; do \
+		cd ops/deploy/loadtest && \
+		if [ -f baseline-$$scenario.json ]; then \
+			SCENARIO=$$scenario bash compare-baseline.sh baseline-$$scenario.json ${THRESHOLD:-20}; \
 		else \
-			bash record-baseline.sh baseline.json; \
-		fi
+			SCENARIO=$$scenario bash record-baseline.sh baseline-$$scenario.json; \
+		fi; \
+	done
 
 vet: ## Static analysis.
 	$(GO) vet ./...

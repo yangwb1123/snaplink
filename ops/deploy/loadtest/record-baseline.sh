@@ -3,13 +3,14 @@
 # Usage: ./record-baseline.sh [iterations]
 set -euo pipefail
 
-BASELINE_FILE="${1:-baseline.json}"
+BASELINE_FILE="${1:-baseline-${SCENARIO:-token}.json}"
 ITERATIONS="${2:-3}"
+SCENARIO="${SCENARIO:-token}"
 
 echo "==> Recording load test baseline ($ITERATIONS iterations)..."
 
 # Run k6 and capture JSON output
-k6 run --out json=results.json ../loadtest/token.js 2>&1 | tee k6-output.txt
+k6 run --out json=results.json ../loadtest/${SCENARIO}.js 2>&1 | tee k6-output.txt
 
 # Extract metrics from k6 JSON output
 if [ -f results.json ]; then

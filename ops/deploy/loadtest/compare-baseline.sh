@@ -4,8 +4,9 @@
 # Exit codes: 0 = within threshold, 1 = regression detected
 set -eu
 
-BASELINE="${1:-baseline.json}"
+BASELINE="${1:-baseline-${SCENARIO:-token}.json}"
 THRESHOLD="${2:-20}"  # Allow 20% degradation by default
+SCENARIO="${SCENARIO:-token}"
 
 if [ ! -f "$BASELINE" ]; then
   echo "ERROR: Baseline file not found: $BASELINE"
@@ -18,7 +19,7 @@ echo "    Threshold: ${THRESHOLD}% degradation allowed"
 echo ""
 
 # Run k6 and capture metrics
-k6 run --summary-export=current.json ../loadtest/token.js 2>&1
+k6 run --summary-export=current.json ../loadtest/${SCENARIO}.js 2>&1
 
 if [ ! -f current.json ]; then
   echo "ERROR: current.json not generated"
