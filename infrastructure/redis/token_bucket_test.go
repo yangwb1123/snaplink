@@ -7,15 +7,19 @@ import (
 
 // TestTokenBucketLimiter_BurstThenDrip proves the smoothing shape: burst
 // tokens are admitted back-to-back, the next is denied, and after a refill
-// delay (FastForward on the miniredis clock) admission resumes — no 2x
-// fixed-window edge burst.
+// delay admission resumes — no 2x fixed-window edge burst. The burst phase
+// uses a slow refill rate (1 token/s) so scheduling spread between the five
+// back-to-back Lua calls can never refill a token mid-burst under race-
+// detector load (the calls complete in ~ms; a whole-second stall would be
+// required to change the outcome).
 func TestTokenBucketLimiter_BurstThenDrip(t *testing.T) {
 	t.Parallel()
 	_, rdb := newTestClient(t)
-	l := NewTokenBucketLimiter(rdb, 10, 4, "test")
+	l := NewTokenBucketLimiter(rdb, 1, 4, "test")
 	key := "ip-1"
 
-	// Burst: 4 admissions, 5th denied.
+	// Burst: 4 admissions, 5th denied (deterministic: refill during the
+	// ~ms burst is < 0.05 tokens at 1 token/s).
 	for i := 0; i < 4; i++ {
 		if ok, _ := l.Allow(key); !ok {
 			t.Fatalf("admission %d denied within burst", i+1)
@@ -26,12 +30,22 @@ func TestTokenBucketLimiter_BurstThenDrip(t *testing.T) {
 	} else if retry <= 0 {
 		t.Fatalf("retryAfter = %v, want > 0", retry)
 	}
-	// Refill at rate 10/s against the SERVER clock (miniredis TIME is the
-	// real wall clock; a real sleep is the honest way to advance it).
-	// Deterministic under load: ANY sleep >= 400ms refills >= burst (4
-	// tokens at 10/s), so after 500ms the bucket is guaranteed FULL again —
-	// 4 admissions succeed, the 5th is denied. A shorter sleep cannot
-	// happen, so no timing margin is asserted.
+}
+
+// TestTokenBucketLimiter_FullRefillRestoresBurst proves the refill half
+// against the SERVER clock (miniredis TIME is the real wall clock; a real
+// sleep is the honest way to advance it). Deterministic under load: ANY
+// sleep >= 400ms refills >= burst at 10 tokens/s, so after 500ms the bucket
+// is guaranteed FULL again — 4 admissions succeed, the 5th is denied (the
+// refill admissions complete in ms, refilling < 0.05 tokens at 10/s).
+func TestTokenBucketLimiter_FullRefillRestoresBurst(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	l := NewTokenBucketLimiter(rdb, 10, 4, "test")
+	key := "ip-1"
+	for i := 0; i < 4; i++ {
+		l.Allow(key)
+	}
 	time.Sleep(500 * time.Millisecond)
 	for i := 0; i < 4; i++ {
 		if ok, _ := l.Allow(key); !ok {
