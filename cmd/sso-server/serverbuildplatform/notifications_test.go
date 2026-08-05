@@ -16,7 +16,7 @@ func TestBuildNotificationsMemoryAndSQLite(t *testing.T) {
 		{Enabled: true, Backend: "memory", QueueSize: 8, Workers: 1},
 		{Enabled: true, Backend: "sqlite", SQLite: config.NotificationSQLiteConfig{DSN: "file:" + filepath.Join(t.TempDir(), "n.db")}, QueueSize: 8, Workers: 1},
 	} {
-		opts, err := BuildNotifications(cfg, nil, nil, nil, nil, nil)
+		opts, err := BuildNotifications(cfg, nil, nil, nil, nil, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -44,7 +44,7 @@ func TestBuildNotificationsEmailResolver(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts, err := BuildNotifications(config.NotificationsConfig{Enabled: true, Backend: "memory",
-		EmailEnabled: true, QueueSize: 8, Workers: 1}, users, nil, nil, nil, nil)
+		EmailEnabled: true, QueueSize: 8, Workers: 1}, users, nil, nil, nil, nil, nil)
 	if err != nil || len(opts) != 2 {
 		t.Fatalf("opts=%d err=%v", len(opts), err)
 	}

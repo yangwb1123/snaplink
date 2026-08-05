@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"strings"
 
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/yangwb1123/snaplink/config"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/emailsmtp"
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/notification"
 	"github.com/yangwb1123/snaplink/platform/metrics"
@@ -49,31 +51,20 @@ func BuildEmailSender(cfg config.SMTPConfig, log spi.Logger) (*emailsmtp.Sender,
 
 // BuildNotifications resolves the inbox stores, delivery channels, and audit router.
 func BuildNotifications(cfg config.NotificationsConfig, users core.UserProvider, sessions core.SessionManager, email *emailsmtp.Sender,
-	m *metrics.Metrics, log spi.Logger) ([]sso.Option, error) {
+	m *metrics.Metrics, log spi.Logger, rdb goredis.Cmdable) ([]sso.Option, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
-	var store core.NotificationStore
-	var prefs core.NotificationPreferenceStore
-	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
-	case "", "memory":
-		memory := defaultimpl.NewMemoryNotificationStore()
-		store, prefs = memory, memory.PreferenceStore()
-	case "sqlite":
-		inbox, err := sqlitestores.NewNotificationStore(cfg.SQLite.DSN)
-		if err != nil {
-			return nil, err
-		}
-		preferences, err := sqlitestores.NewNotificationPreferenceStore(cfg.SQLite.DSN)
-		if err != nil {
-			_ = inbox.Close()
-			return nil, err
-		}
-		store, prefs = inbox, preferences
-	default:
-		return nil, fmt.Errorf("unsupported notification backend %q", cfg.Backend)
+	store, prefs, err := resolveNotificationStores(cfg)
+	if err != nil {
+		return nil, err
 	}
 	senders := map[core.NotificationChannel]core.NotificationSender{core.NotificationChannelInApp: store.(core.NotificationSender)}
+	// Cluster-shared cooldown: with a Redis client wired, the per-{subject,
+	// type} suppression window is agreed across replicas (two replicas
+	// seeing the same audit event no longer each pass their own local
+	// cooldown and send a duplicate notice). Nil rdb keeps the in-process
+	// map (byte-identical).
 	if cfg.EmailEnabled && email != nil && users != nil {
 		senders[core.NotificationChannelEmail] = emailsmtp.NewNotificationSender(email, func(ctx context.Context, subjectID string) (string, error) {
 			user, err := users.GetByID(ctx, subjectID)
@@ -83,11 +74,50 @@ func BuildNotifications(cfg config.NotificationsConfig, users core.UserProvider,
 			return user.Email, nil
 		})
 	}
-	router := notification.NewRouter(nil, prefs, senders, log, notification.WithCooldown(cfg.Cooldown),
+	routerOpts := []notification.Option{
+		notification.WithCooldown(cfg.Cooldown),
 		notification.WithQueueSize(cfg.QueueSize), notification.WithWorkers(cfg.Workers),
 		notification.WithObserver(m.ObserveNotificationDelivery),
 		notification.WithUserProvider(users),
 		notification.WithSessionExpiry(sessions, cfg.SessionExpiryWarning, cfg.SessionScanInterval),
-		notification.WithBroker(sse.NewBroker(sse.Options{MaxSubscribers: 1024})))
+		notification.WithBroker(sse.NewBroker(sse.Options{MaxSubscribers: 1024})),
+	}
+	routerOpts = append(routerOpts, sharedCooldownOption(rdb)...)
+	router := notification.NewRouter(nil, prefs, senders, log, routerOpts...)
 	return []sso.Option{sso.WithNotificationStore(store, prefs), sso.WithNotificationRouter(router)}, nil
+}
+
+// sharedCooldownOption returns the cluster-shared cooldown store option when
+// a Redis client is wired: the per-{subject,type} suppression window is then
+// agreed across replicas, so two replicas seeing the same audit event no
+// longer each pass their own local cooldown and send a duplicate notice.
+// Nil rdb keeps the router's in-process map (byte-identical).
+func sharedCooldownOption(rdb goredis.Cmdable) []notification.Option {
+	if rdb == nil {
+		return nil
+	}
+	return []notification.Option{notification.WithCooldownStore(redisbackend.NewNotificationCooldown(rdb))}
+}
+
+// resolveNotificationStores builds the inbox + preference stores for the
+// configured notification backend.
+func resolveNotificationStores(cfg config.NotificationsConfig) (core.NotificationStore, core.NotificationPreferenceStore, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
+	case "", "memory":
+		memory := defaultimpl.NewMemoryNotificationStore()
+		return memory, memory.PreferenceStore(), nil
+	case "sqlite":
+		inbox, err := sqlitestores.NewNotificationStore(cfg.SQLite.DSN)
+		if err != nil {
+			return nil, nil, err
+		}
+		preferences, err := sqlitestores.NewNotificationPreferenceStore(cfg.SQLite.DSN)
+		if err != nil {
+			_ = inbox.Close()
+			return nil, nil, err
+		}
+		return inbox, preferences, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported notification backend %q", cfg.Backend)
+	}
 }

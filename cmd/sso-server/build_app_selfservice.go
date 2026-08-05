@@ -151,7 +151,7 @@ func (b *appBuilder) wireEmailSenders() error {
 		b.logger.Info("built-in SMTP email delivery enabled", "host", b.cfg.SMTP.Host, "port", b.cfg.SMTP.Port)
 	}
 	notificationOpts, err := serverbuildplatform.BuildNotifications(
-		b.cfg.Notifications, b.userProvider, b.sessionMgr, sender, b.metricsRegistry, b.logger)
+		b.cfg.Notifications, b.userProvider, b.sessionMgr, sender, b.metricsRegistry, b.logger, b.redis)
 	if err != nil {
 		return fmt.Errorf("notifications: %w", err)
 	}

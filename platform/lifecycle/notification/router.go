@@ -89,6 +89,7 @@ type Router struct {
 	sessionScan    time.Duration
 	mu             sync.Mutex
 	recent         map[string]time.Time
+	cooldownStore  CooldownStore // optional cluster-shared cooldown (nil = in-process map)
 	start          sync.Once
 	done           chan struct{}
 	cancel         context.CancelFunc
@@ -238,7 +239,7 @@ func (r *Router) route(ctx context.Context, event *audit.Event) {
 
 func (r *Router) routeNotification(ctx context.Context, typ core.NotificationType, event *audit.Event) {
 	subjectID := r.eventSubject(ctx, event)
-	if subjectID == "" || r.suppressed(subjectID, typ) {
+	if subjectID == "" || r.suppressed(ctx, subjectID, typ) {
 		return
 	}
 	title, body, severity := presentation(typ, event)
@@ -340,11 +341,24 @@ func (r *Router) enabled(ctx context.Context, subjectID string, typ core.Notific
 	return true
 }
 
-func (r *Router) suppressed(subjectID string, typ core.NotificationType) bool {
+func (r *Router) suppressed(ctx context.Context, subjectID string, typ core.NotificationType) bool {
 	if r.cooldown == 0 {
 		return false
 	}
 	now, key := r.now(), subjectID+"\x00"+string(typ)
+	if r.cooldownStore != nil {
+		// Cluster-shared suppression: two replicas seeing the same event
+		// agree on the window. Fail-open: a store error proceeds (never
+		// drop a security notice because the cooldown store is down).
+		suppressed, err := r.cooldownStore.Suppressed(ctx, key, now, r.cooldown)
+		if err != nil {
+			if r.log != nil {
+				r.log.Error("notification cooldown store failed; proceeding", "error", err)
+			}
+			return false
+		}
+		return suppressed
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if until := r.recent[key]; until.After(now) {
