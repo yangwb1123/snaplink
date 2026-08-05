@@ -363,5 +363,7 @@ func TestRedisClientStore_ImplementsTenantScopedExtensions(t *testing.T) {
 	_, rdb := newTestClient(t)
 	cs := NewClientStore(rdb)
 	var _ sso.TenantScopedClientStore = cs
-	var _ interface{ Stats(context.Context) (int, string, error) } = cs
+	var _ interface {
+		Stats(context.Context) (int, string, error)
+	} = cs
 }

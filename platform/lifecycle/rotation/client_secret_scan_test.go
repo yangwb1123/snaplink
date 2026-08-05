@@ -28,13 +28,15 @@ func (f *fakeClientStore) List(context.Context) ([]*core.Client, error) {
 	return f.clients, nil
 }
 
-func (f *fakeClientStore) Get(context.Context, string) (*core.Client, error) { return nil, core.ErrNoSuchClient }
+func (f *fakeClientStore) Get(context.Context, string) (*core.Client, error) {
+	return nil, core.ErrNoSuchClient
+}
 func (f *fakeClientStore) ValidateSecret(context.Context, string, string) error {
 	return errors.New("invalid")
 }
-func (f *fakeClientStore) Add(context.Context, *core.Client) error           { return nil }
-func (f *fakeClientStore) Update(context.Context, *core.Client) error        { return nil }
-func (f *fakeClientStore) Delete(context.Context, string) error              { return nil }
+func (f *fakeClientStore) Add(context.Context, *core.Client) error    { return nil }
+func (f *fakeClientStore) Update(context.Context, *core.Client) error { return nil }
+func (f *fakeClientStore) Delete(context.Context, string) error       { return nil }
 func (f *fakeClientStore) RotateSecret(context.Context, string) (string, error) {
 	return "", nil
 }
@@ -46,7 +48,7 @@ func TestClientSecretScan_WarnsWithinWindows(t *testing.T) {
 		{ID: "c-10d", SecretExpiresAt: time.Now().Add(10 * 24 * time.Hour)}, // inside 30d + 14d
 		{ID: "c-3d", SecretExpiresAt: time.Now().Add(3 * 24 * time.Hour)},   // inside all three
 		{ID: "c-far", SecretExpiresAt: time.Now().Add(90 * 24 * time.Hour)}, // outside all
-		{ID: "c-never"},                                                     // no expiry pinned
+		{ID: "c-never"}, // no expiry pinned
 		{ID: "c-public", TokenEndpointAuthMethod: "none", SecretExpiresAt: time.Now().Add(24 * time.Hour)},
 		{ID: "c-expired", SecretExpiresAt: time.Now().Add(-time.Hour)},
 	}}

@@ -189,7 +189,9 @@ func (b *basicClientStore) Get(_ context.Context, id string) (*core.Client, erro
 	}
 	return nil, core.ErrNoSuchClient
 }
-func (b *basicClientStore) ValidateSecret(context.Context, string, string) error { return errors.New("invalid secret") }
+func (b *basicClientStore) ValidateSecret(context.Context, string, string) error {
+	return errors.New("invalid secret")
+}
 func (b *basicClientStore) List(context.Context) ([]*core.Client, error) {
 	out := make([]*core.Client, 0, len(b.clients))
 	for _, c := range b.clients {
