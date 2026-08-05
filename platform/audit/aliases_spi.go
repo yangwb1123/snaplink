@@ -187,6 +187,7 @@ const (
 	EventTenantSessionsRevoked               = auditspi.EventTenantSessionsRevoked
 	EventTenantQuotaStoreFailure             = auditspi.EventTenantQuotaStoreFailure
 	EventClientSecretExpiring                = auditspi.EventClientSecretExpiring
+	EventAuditChainCheckpoint                  = auditspi.EventAuditChainCheckpoint
 	EventTenantQuotaProjectionApplied        = auditspi.EventTenantQuotaProjectionApplied
 	EventTenantTokensRevoked                 = auditspi.EventTenantTokensRevoked
 	EventTokenIssued                         = auditspi.EventTokenIssued

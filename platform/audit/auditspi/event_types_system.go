@@ -76,6 +76,13 @@ const (
 	EventClientSecretExpiring EventType = "client_secret_expiring"
 )
 
+// Audit-chain notarization events: emitted by the Notary on every signed
+// chain-head checkpoint (success) and on any tip/sign/store failure
+// (fail-open — the checkpoint itself is the primary record).
+const (
+	EventAuditChainCheckpoint EventType = "audit_chain_checkpoint"
+)
+
 // Tenant quota dependency events. Emitted only when quota enforcement fails
 // open because its backing store is unavailable or returns an internal error.
 const (

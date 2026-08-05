@@ -1,13 +1,19 @@
 package audit
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // chainer maintains a running hash chain over the events a Recorder
@@ -208,4 +214,287 @@ func verifyChainFrom(events []*Event, prev string) error {
 		prev = e.Hash
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Chain-head notarization (see the chainer limitation note above).
+// ---------------------------------------------------------------------------
+
+// Checkpoint is a signed attestation of the chain head at one moment.
+// Sequence is monotonic; PrevHash (the previous checkpoint's HeadHash)
+// chains checkpoints so a deleted/reordered one is tamper-evident.
+type Checkpoint struct {
+	Sequence  int64     `json:"sequence"`
+	Timestamp time.Time `json:"timestamp"`
+	HeadHash  string    `json:"head_hash"`
+	PrevHash  string    `json:"prev_hash,omitempty"`
+}
+
+// SignedCheckpoint is a Checkpoint plus its signature and the signer's
+// public key (verification needs no key registry).
+type SignedCheckpoint struct {
+	Checkpoint Checkpoint `json:"checkpoint"`
+	Signature  []byte     `json:"signature"`
+	SignerKey  []byte     `json:"signer_key"`
+}
+
+// CheckpointSigner signs checkpoint bytes (independent of the signing-key
+// registry used for tokens/discovery metadata).
+type CheckpointSigner interface {
+	Sign(data []byte) (signature []byte, err error)
+	// PublicKey returns the raw public key for verification.
+	PublicKey() []byte
+}
+
+// Ed25519CheckpointSigner is the concrete signer.
+type Ed25519CheckpointSigner struct {
+	priv ed25519.PrivateKey
+}
+
+// NewEd25519CheckpointSigner generates a fresh key pair.
+func NewEd25519CheckpointSigner() (*Ed25519CheckpointSigner, error) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("audit notary: generate key: %w", err)
+	}
+	return &Ed25519CheckpointSigner{priv: priv}, nil
+}
+
+// Sign implements CheckpointSigner.
+func (s *Ed25519CheckpointSigner) Sign(data []byte) ([]byte, error) {
+	return ed25519.Sign(s.priv, data), nil
+}
+
+// PublicKey implements CheckpointSigner.
+func (s *Ed25519CheckpointSigner) PublicKey() []byte {
+	return s.priv.Public().(ed25519.PublicKey)
+}
+
+// CheckpointStore persists signed checkpoints (interface + Memory*
+// reference impl per AGENTS.md §4; a durable backend slots in without
+// touching the Notary).
+type CheckpointStore interface {
+	Append(ctx context.Context, c *SignedCheckpoint) error
+	// Latest returns the most recent checkpoint, or (nil, nil) when empty.
+	Latest(ctx context.Context) (*SignedCheckpoint, error)
+	List(ctx context.Context, since time.Time, limit int) ([]*SignedCheckpoint, error)
+}
+
+// MemoryCheckpointStore is the in-process reference implementation.
+type MemoryCheckpointStore struct {
+	mu          sync.Mutex
+	checkpoints []*SignedCheckpoint
+}
+
+// NewMemoryCheckpointStore returns an empty store.
+func NewMemoryCheckpointStore() *MemoryCheckpointStore {
+	return &MemoryCheckpointStore{}
+}
+
+// Append implements CheckpointStore.
+func (m *MemoryCheckpointStore) Append(_ context.Context, c *SignedCheckpoint) error {
+	if c == nil {
+		return errors.New("audit notary: nil checkpoint")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checkpoints = append(m.checkpoints, c)
+	return nil
+}
+
+// Latest implements CheckpointStore.
+func (m *MemoryCheckpointStore) Latest(_ context.Context) (*SignedCheckpoint, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.checkpoints) == 0 {
+		return nil, nil
+	}
+	return m.checkpoints[len(m.checkpoints)-1], nil
+}
+
+// List implements CheckpointStore.
+func (m *MemoryCheckpointStore) List(_ context.Context, since time.Time, limit int) ([]*SignedCheckpoint, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*SignedCheckpoint
+	for _, c := range m.checkpoints {
+		if c.Checkpoint.Timestamp.Before(since) {
+			continue
+		}
+		out = append(out, c)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// Notary is the periodic chain-head notarization loop: each tick it reads
+// the durable sink's ChainTip and signs + stores a checkpoint when the head
+// changed. Fail-open: a tip/store error is logged + audited, never fatal,
+// never blocking the audit pipeline (the notary consumes the head; it does
+// not participate in recording).
+type Notary struct {
+	tip      ChainTip
+	store    CheckpointStore
+	signer   CheckpointSigner
+	interval time.Duration
+	recorder *Recorder
+	logger   spi.Logger
+
+	mu         sync.Mutex // guards lastSigned/lastSeq
+	lastSigned string
+	lastSeq    int64
+}
+
+// NewNotary builds the notary (tip + store required; recorder/logger optional).
+func NewNotary(tip ChainTip, store CheckpointStore, signer CheckpointSigner, interval time.Duration, recorder *Recorder, logger spi.Logger) *Notary {
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	return &Notary{tip: tip, store: store, signer: signer, interval: interval, recorder: recorder, logger: logger}
+}
+
+// Run executes the loop until ctx is cancelled; the first checkpoint is
+// attempted immediately (a restart surfaces the current head right away).
+func (n *Notary) Run(ctx context.Context) {
+	_, _ = n.CheckpointNow(ctx)
+	ticker := time.NewTicker(n.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_, _ = n.CheckpointNow(ctx)
+		}
+	}
+}
+
+// StartNotary launches the loop; the done channel closes on ctx cancel.
+func StartNotary(ctx context.Context, tip ChainTip, store CheckpointStore, signer CheckpointSigner, interval time.Duration, recorder *Recorder, logger spi.Logger) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		NewNotary(tip, store, signer, interval, recorder, logger).Run(ctx)
+	}()
+	return done
+}
+
+// CheckpointNow signs + stores one checkpoint of the current chain head
+// (the testable unit and an admin-triggerable attestation), or (nil, nil)
+// when the head is unchanged since the last checkpoint.
+func (n *Notary) CheckpointNow(ctx context.Context) (*SignedCheckpoint, error) {
+	head, err := n.tip.LastHash(ctx)
+	if err != nil {
+		n.recordFailure(ctx, fmt.Sprintf("tip read failed: %v", err))
+		return nil, err
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if head == "" {
+		head = GenesisHash // empty store: attest genesis
+	}
+	if head == n.lastSigned {
+		return nil, nil // unchanged head: nothing new to attest
+	}
+	cp := Checkpoint{
+		Sequence:  n.lastSeq + 1,
+		Timestamp: time.Now().UTC(),
+		HeadHash:  head,
+		PrevHash:  n.lastSigned,
+	}
+	raw, err := json.Marshal(cp)
+	if err != nil {
+		return nil, fmt.Errorf("audit notary: encode checkpoint: %w", err)
+	}
+	sig, err := n.signer.Sign(raw)
+	if err != nil {
+		n.recordFailure(ctx, fmt.Sprintf("checkpoint signing failed: %v", err))
+		return nil, err
+	}
+	signed := &SignedCheckpoint{Checkpoint: cp, Signature: sig, SignerKey: n.signer.PublicKey()}
+	if err := n.store.Append(ctx, signed); err != nil {
+		n.recordFailure(ctx, fmt.Sprintf("checkpoint store write failed: %v", err))
+		return nil, err
+	}
+	n.lastSigned = head
+	n.lastSeq = cp.Sequence
+	// Deliberately NO success audit event: the notary's own event would
+	// change the chain head it just attested, turning every tick into a new
+	// head (and the checkpoint itself IS the record). Failures are recorded
+	// (below) because a missed attestation is an operational signal.
+	return signed, nil
+}
+
+func (n *Notary) recordFailure(ctx context.Context, detail string) {
+	if n.logger != nil {
+		n.logger.Error("audit chain checkpoint failed", "error", detail)
+	}
+	if n.recorder == nil {
+		return
+	}
+	n.recorder.Record(ctx, &Event{
+		Type:    EventAuditChainCheckpoint,
+		Outcome: OutcomeFailure,
+		Reason:  "checkpoint_failed",
+	})
+}
+
+// VerifyCheckpointSignature checks the signature against the embedded
+// signer key (Ed25519).
+func VerifyCheckpointSignature(c *SignedCheckpoint) error {
+	if c == nil {
+		return errors.New("audit notary: nil checkpoint")
+	}
+	if len(c.SignerKey) != ed25519.PublicKeySize {
+		return errors.New("audit notary: invalid signer key size")
+	}
+	raw, err := json.Marshal(c.Checkpoint)
+	if err != nil {
+		return fmt.Errorf("audit notary: encode checkpoint: %w", err)
+	}
+	if !ed25519.Verify(c.SignerKey, raw, c.Signature) {
+		return errors.New("audit notary: checkpoint signature invalid")
+	}
+	return nil
+}
+
+// VerifyChainAgainstCheckpoint replays the chain and asserts its computed
+// head matches the checkpoint's attested head — closing the last-event
+// blind spot: an attacker who modified the final event (or replaced the
+// whole chain) cannot make the replayed head equal the attestation without
+// forging the signature. events carry their persisted Hash fields in chain
+// order (oldest first).
+func VerifyChainAgainstCheckpoint(events []*Event, c *SignedCheckpoint) error {
+	if c == nil {
+		return errors.New("audit notary: nil checkpoint")
+	}
+	if err := VerifyCheckpointSignature(c); err != nil {
+		return err
+	}
+	if err := VerifyChain(events); err != nil {
+		return err
+	}
+	if len(events) == 0 {
+		if c.Checkpoint.HeadHash != GenesisHash {
+			return fmt.Errorf("audit notary: empty chain head %q, checkpoint attests %q", GenesisHash, c.Checkpoint.HeadHash)
+		}
+		return nil
+	}
+	head := events[len(events)-1].Hash
+	if head != c.Checkpoint.HeadHash {
+		return fmt.Errorf("audit notary: replayed head %q does not match checkpoint attestation %q", head, c.Checkpoint.HeadHash)
+	}
+	return nil
+}
+
+// CheckpointEqual reports byte equality of two checkpoints.
+func CheckpointEqual(a, b *SignedCheckpoint) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	ar, _ := json.Marshal(a)
+	br, _ := json.Marshal(b)
+	return bytes.Equal(ar, br)
 }

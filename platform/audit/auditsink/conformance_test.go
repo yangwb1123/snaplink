@@ -138,6 +138,7 @@ var allKnownEventTypes = []auditspi.EventType{
 	auditspi.EventTenantSessionsRevoked,
 	auditspi.EventTenantQuotaStoreFailure,
 	auditspi.EventClientSecretExpiring,
+	auditspi.EventAuditChainCheckpoint,
 	auditspi.EventTenantQuotaProjectionApplied,
 	auditspi.EventTenantTokensRevoked,
 	auditspi.EventTokenIssued,

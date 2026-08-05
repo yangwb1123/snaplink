@@ -211,6 +211,7 @@ var ocsfEventActivities = map[auditspi.EventType]ocsfActivity{
 	auditspi.EventInvalidationBusReconnected:     {ocsfClassPlatformEvent, ocsfCategoryUnmapped, 2, "Invalidation Bus Reconnected"},
 	auditspi.EventTenantQuotaStoreFailure:        {ocsfClassPlatformEvent, ocsfCategoryUnmapped, 3, "Tenant Quota Store Failure"},
 	auditspi.EventClientSecretExpiring:           {ocsfClassPlatformEvent, ocsfCategoryUnmapped, 3, "Client Secret Expiring"},
+	auditspi.EventAuditChainCheckpoint:           {ocsfClassPlatformEvent, ocsfCategoryUnmapped, 3, "Audit Chain Checkpoint"},
 	auditspi.EventTenantQuotaProjectionApplied:   {ocsfClassPlatformEvent, ocsfCategoryUnmapped, 1, "Tenant Quota Projection Applied"},
 }
 
