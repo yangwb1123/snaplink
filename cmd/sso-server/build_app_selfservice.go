@@ -28,8 +28,7 @@ import (
 )
 
 // wireSelfServicePassword builds the self-service password store and the
-// authenticators that depend on it, then wires signup, password reset, and
-// data-export self-service endpoints.
+// authenticators that depend on it, then wires signup/reset/export.
 func (b *appBuilder) wireSelfServicePassword() error {
 	cfg, logger := b.cfg, b.logger
 	// Self-service password store. When wired it seeds login from the YAML
@@ -79,10 +78,9 @@ func (b *appBuilder) wireSelfServicePassword() error {
 	return nil
 }
 
-// wireSelfServiceSignup opts in the unauthenticated self-service registration
-// endpoint POST /auth/register (creates a user + sets a password, reusing the
-// wired password store). Default-off — open signup is an abuse surface most
-// enterprise deployments don't want; enable deliberately for B2C.
+// wireSelfServiceSignup opts in the unauthenticated self-service
+// registration endpoint POST /auth/register. Default-off — open signup is
+// an abuse surface; enable deliberately for B2C.
 func (b *appBuilder) wireSelfServiceSignup() error {
 	if !b.cfg.SelfService.Signup {
 		return nil
@@ -95,8 +93,7 @@ func (b *appBuilder) wireSelfServiceSignup() error {
 	return nil
 }
 
-// wirePasswordReset wires the unauthenticated forgot-password flow: the
-// reset-token store plus the default identifier/delivery resolvers.
+// wirePasswordReset wires the unauthenticated forgot-password flow.
 func (b *appBuilder) wirePasswordReset() error {
 	cfg, logger := b.cfg, b.logger
 	passwordResetStore, err := serverbuildstore.BuildPasswordResetStore(cfg.SelfService.PasswordReset, b.redis)
@@ -162,8 +159,8 @@ func (b *appBuilder) wireEmailSenders() error {
 	return nil
 }
 
-// wireGeoRegionRisk wires the geo provider, the serving-region resolver +
-// residency check, and the risk scorer — in that order so risk rules see geo.
+// wireGeoRegionRisk wires geo, region resolver + residency check (with its
+// optional policy store), and the risk scorer — in that order.
 func (b *appBuilder) wireGeoRegionRisk() error {
 	cfg, logger := b.cfg, b.logger
 	geoProvider, err := serverbuildstore.BuildGeoProvider(cfg, logger)
@@ -175,7 +172,9 @@ func (b *appBuilder) wireGeoRegionRisk() error {
 		b.wireGeoMiddlewareOptions()
 	}
 
-	b.wireRegion()
+	if err := b.wireRegion(); err != nil {
+		return err
+	}
 
 	// Risk scorer wired AFTER geo so country-based rules see the
 	// populated GeoInfo on RiskRequest.Geo. When risk.enabled is
@@ -192,8 +191,7 @@ func (b *appBuilder) wireGeoRegionRisk() error {
 }
 
 // wireGeoMiddlewareOptions wires the geo middleware's Timeout/IPExtractor/
-// OnError. Split out of wireGeoRegionRisk to stay under the function-length
-// budget. Only called when a geo provider is actually configured.
+// OnError. Only called when a geo provider is configured.
 func (b *appBuilder) wireGeoMiddlewareOptions() {
 	cfg, logger := b.cfg, b.logger
 	geoOpts := sso.GeoMiddlewareOptions{
@@ -234,17 +232,14 @@ func trustedProxyIPExtractor(r *http.Request) net.IP {
 	return net.ParseIP(middleware.RealClientIP(r))
 }
 
-// wireRegion wires the serving-region resolver + residency enforcement.
-// serverbuildstore.BuildRegionResolver returns nil when region is unconfigured → the middleware
-// is NOT installed and the residency check stays inert (byte-identical). When
-// configured, the middleware-level AllowedRegions backstop mirrors the header
-// resolver's allowlist, and the residency engine enforces the tenant's policy.
-func (b *appBuilder) wireRegion() {
+// wireRegion wires the serving-region resolver + residency enforcement +
+// the optional region.PolicyStore (nil resolver → inert, byte-identical).
+func (b *appBuilder) wireRegion() error {
 	cfg := b.cfg
 	regionResolver := serverbuildstore.BuildRegionResolver(cfg, b.peerTrust)
 	b.regionResolver = regionResolver
 	if regionResolver == nil {
-		return
+		return nil
 	}
 	var allowed []region.ID
 	if len(cfg.Region.AllowedRegions) > 0 {
@@ -260,16 +255,22 @@ func (b *appBuilder) wireRegion() {
 		},
 	}))
 	b.opts = append(b.opts, sso.WithTenantResidencyCheck(cfg.Region.ResidencyCheckCacheTTL))
+	policyStore, err := serverbuildstore.BuildRegionPolicyStore(cfg, b.logger)
+	if err != nil {
+		return err
+	}
+	b.opts = append(b.opts, sso.WithResidencyPolicyStore(policyStore)) // nil store = tenant-row-only
 	b.logger.Info("region residency: enabled",
 		"serving_region", cfg.Region.ServingRegion,
 		"header_name", cfg.Region.HeaderName,
 		"allowed_regions", cfg.Region.AllowedRegions,
 	)
+	return nil
 }
 
-// wireWebAuthnMFA builds the shared WebAuthn helper (before MFA so step-up can
-// wrap it), the composite MFA enrollment store, passkey registrar, the MFA
-// orchestration provider, and the optional push-approval prune loop.
+// wireWebAuthnMFA builds the shared WebAuthn helper (before MFA so step-up
+// can wrap it), the composite MFA store, passkey registrar, orchestration
+// provider, and the optional push-approval prune loop.
 func (b *appBuilder) wireWebAuthnMFA() error {
 	cfg, logger := b.cfg, b.logger
 	// WebAuthn helper built here (before MFA so mfa.provider.kind=

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/domains/tenant/quotabinding"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
@@ -64,10 +65,35 @@ type GeoStaticEntry struct {
 // ResidencyCheckCacheTTL bounds how long a tenant's ResidencyPolicy is cached
 // (<= 0 → the SDK default, DefaultTenantResidencyCacheTTL).
 type RegionConfig struct {
-	ServingRegion          string        `yaml:"serving_region"`
-	HeaderName             string        `yaml:"header_name"`
-	AllowedRegions         []string      `yaml:"allowed_regions"`
-	ResidencyCheckCacheTTL time.Duration `yaml:"residency_check_cache_ttl"`
+	ServingRegion          string                    `yaml:"serving_region"`
+	HeaderName             string                    `yaml:"header_name"`
+	AllowedRegions         []string                  `yaml:"allowed_regions"`
+	ResidencyCheckCacheTTL time.Duration             `yaml:"residency_check_cache_ttl"`
+	PolicyStore            RegionPolicyStoreConfig   `yaml:"policy_store"`
+}
+
+// RegionPolicyStoreConfig selects the durable residency-policy source
+// (region.PolicyStore). Empty backend = not wired (tenant-row-only
+// derivation, byte-identical). memory is in-process; sqlite is
+// cluster-shared. Seed entries are operator-declared policies applied at
+// boot — an invalid seed region ID fails boot loud.
+type RegionPolicyStoreConfig struct {
+	Backend string                      `yaml:"backend"` // "" | memory | sqlite
+	SQLite  RegionPolicyStoreSQLiteConfig `yaml:"sqlite"`
+	Seed    []RegionPolicySeedConfig    `yaml:"seed"`
+}
+
+// RegionPolicyStoreSQLiteConfig configures the sqlite policy backend.
+type RegionPolicyStoreSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
+}
+
+// RegionPolicySeedConfig declares one tenant's residency policy at boot.
+type RegionPolicySeedConfig struct {
+	TenantID       string   `yaml:"tenant_id"`
+	HomeRegion     string   `yaml:"home_region"`
+	AllowedRegions []string `yaml:"allowed_regions"`
+	EnforceWrites  bool     `yaml:"enforce_writes"`
 }
 
 // TenantConfig configures the multi-tenant + multi-domain
@@ -321,3 +347,46 @@ type TenantDomainConfig struct {
 // chosen backend at boot — duplicate seeds across replicas pointed
 // at the same SQLite DSN deduplicate via the ON CONFLICT UPSERT
 // the backend uses.
+
+// validateRegionPolicyStore normalizes and validates region.policy_store.
+// Empty backend is normalized to not wired (nil store → tenant-row-only
+// residency, byte-identical). An invalid seed region ID fails boot loud —
+// region IDs are exact-match governance keys, so a typo must never boot.
+func (c *Config) validateRegionPolicyStore() error {
+	cfg := &c.Region.PolicyStore
+	cfg.Backend = strings.ToLower(strings.TrimSpace(cfg.Backend))
+	switch cfg.Backend {
+	case "":
+		if len(cfg.Seed) > 0 {
+			return fmt.Errorf("config: region.policy_store.seed requires an enabled backend")
+		}
+		return nil
+	case "memory", "sqlite":
+	default:
+		return fmt.Errorf("config: region.policy_store.backend must be memory or sqlite, got %q", cfg.Backend)
+	}
+	if cfg.Backend == "sqlite" && strings.TrimSpace(cfg.SQLite.DSN) == "" {
+		return fmt.Errorf("config: region.policy_store.sqlite.dsn required when backend=sqlite")
+	}
+	seen := make(map[string]struct{}, len(cfg.Seed))
+	for _, seed := range cfg.Seed {
+		if seed.TenantID == "" {
+			return fmt.Errorf("config: region.policy_store.seed tenant_id required")
+		}
+		if _, dup := seen[seed.TenantID]; dup {
+			return fmt.Errorf("config: region.policy_store.seed duplicates tenant %q", seed.TenantID)
+		}
+		seen[seed.TenantID] = struct{}{}
+		if seed.HomeRegion != "" {
+			if err := region.ValidateID(region.ID(seed.HomeRegion)); err != nil {
+				return fmt.Errorf("config: region.policy_store.seed tenant %q home_region: %w", seed.TenantID, err)
+			}
+		}
+		for _, r := range seed.AllowedRegions {
+			if err := region.ValidateID(region.ID(r)); err != nil {
+				return fmt.Errorf("config: region.policy_store.seed tenant %q allowed_region: %w", seed.TenantID, err)
+			}
+		}
+	}
+	return nil
+}

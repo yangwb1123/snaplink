@@ -15,6 +15,10 @@ import (
 	"github.com/yangwb1123/snaplink/config"
 	"github.com/yangwb1123/snaplink/domains/connections"
 
+	"github.com/yangwb1123/snaplink/domains/region"
+	regionmemory "github.com/yangwb1123/snaplink/domains/region/memory"
+	regionsqlite "github.com/yangwb1123/snaplink/domains/region/sqlite"
+
 	connectionssqlite "github.com/yangwb1123/snaplink/domains/connections/sqlite"
 
 	"github.com/yangwb1123/snaplink/platform/geo"
@@ -26,7 +30,6 @@ import (
 
 	meteringsqlite "github.com/yangwb1123/snaplink/domains/metering/sqlite"
 
-	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 
 	"github.com/yangwb1123/snaplink/domains/tenant"
@@ -225,3 +228,67 @@ type BootstrapLogger struct{ Inner spi.Logger }
 
 func (b BootstrapLogger) Info(msg string, kv ...any)  { b.Inner.Info(msg, kv...) }
 func (b BootstrapLogger) Error(msg string, kv ...any) { b.Inner.Error(msg, kv...) }
+
+// BuildRegionPolicyStore materialises the region.PolicyStore from
+// region.policy_store config. Returns (nil, nil) when the backend is empty —
+// cmd passes the result to sso.WithResidencyPolicyStore unconditionally (the
+// option no-ops on nil, keeping the tenant-row-only path byte-identical).
+// Seed entries are applied at build; an invalid seed region ID fails boot
+// loud through the same Set path the stores enforce.
+func BuildRegionPolicyStore(cfg *config.Config, logger spi.Logger) (region.PolicyStore, error) {
+	rc := cfg.Region.PolicyStore
+	switch rc.Backend {
+	case "":
+		return nil, nil
+	case "memory":
+		logger.Info("region policy store: memory (in-process)")
+		store := regionmemory.New()
+		if err := seedRegionPolicies(store, rc.Seed); err != nil {
+			return nil, err
+		}
+		return store, nil
+	case "sqlite":
+		if strings.TrimSpace(rc.SQLite.DSN) == "" {
+			return nil, errors.New("region.policy_store.sqlite.dsn required when backend=sqlite")
+		}
+		store, err := regionsqlite.New(rc.SQLite.DSN)
+		if err != nil {
+			return nil, fmt.Errorf("region policy store sqlite: %w", err)
+		}
+		if err := seedRegionPolicies(store, rc.Seed); err != nil {
+			_ = store.Close()
+			return nil, err
+		}
+		logger.Info("region policy store: sqlite (cluster-shared)", "dsn", rc.SQLite.DSN)
+		return store, nil
+	default:
+		return nil, fmt.Errorf("unknown region.policy_store.backend %q (supported: memory, sqlite)", rc.Backend)
+	}
+}
+
+// seedRegionPolicies applies the YAML-declared policy seeds, failing boot
+// loud on any invalid entry (config validation already rejects malformed
+// region IDs; the store Set is the second line of defense).
+func seedRegionPolicies(store region.PolicyStore, seeds []config.RegionPolicySeedConfig) error {
+	writer, ok := store.(interface {
+		Set(ctx context.Context, tenantID string, p region.ResidencyPolicy) error
+	})
+	if !ok {
+		return errors.New("region policy store: backend does not support seeding")
+	}
+	ctx := context.Background()
+	for _, seed := range seeds {
+		allowed := make([]region.ID, len(seed.AllowedRegions))
+		for i, r := range seed.AllowedRegions {
+			allowed[i] = region.ID(r)
+		}
+		if err := writer.Set(ctx, seed.TenantID, region.ResidencyPolicy{
+			HomeRegion:     region.ID(seed.HomeRegion),
+			AllowedRegions: allowed,
+			EnforceWrites:  seed.EnforceWrites,
+		}); err != nil {
+			return fmt.Errorf("seed region policy for tenant %q: %w", seed.TenantID, err)
+		}
+	}
+	return nil
+}

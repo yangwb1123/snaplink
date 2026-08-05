@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/yangwb1123/snaplink/config"
@@ -201,5 +202,79 @@ func TestBuildRegionResolver_ThreadsPeerTrust(t *testing.T) {
 	untrusted.Header.Set("X-Serving-Region", "us-east-1")
 	if got, _ := r.Resolve(untrusted); string(got) != "eu-west-1" {
 		t.Errorf("untrusted peer resolved %q, want eu-west-1 (pinned default)", got)
+	}
+}
+
+func TestBuildRegionPolicyStore_DisabledMemorySqliteAndSeeds(t *testing.T) {
+	t.Parallel()
+	logger := testLogger()
+
+	// Empty backend → (nil, nil): tenant-row-only path, byte-identical.
+	if store, err := BuildRegionPolicyStore(&config.Config{}, logger); err != nil || store != nil {
+		t.Fatalf("disabled: store=%v err=%v, want (nil, nil)", store, err)
+	}
+
+	// Memory without a dsn is fine; seeds land and are readable.
+	memCfg := &config.Config{}
+	memCfg.Region.PolicyStore = config.RegionPolicyStoreConfig{
+		Backend: "memory",
+		Seed: []config.RegionPolicySeedConfig{{
+			TenantID: "t1", HomeRegion: "eu-west-1",
+			AllowedRegions: []string{"eu-west-1", "eu-central-1"}, EnforceWrites: true,
+		}},
+	}
+	store, err := BuildRegionPolicyStore(memCfg, logger)
+	if err != nil {
+		t.Fatalf("memory build: %v", err)
+	}
+	if store == nil {
+		t.Fatal("memory build returned nil store")
+	}
+	p, err := store.GetPolicy(context.Background(), "t1")
+	if err != nil || p.HomeRegion != "eu-west-1" || !p.EnforceWrites {
+		t.Fatalf("seeded policy = %+v, %v", p, err)
+	}
+
+	// Invalid seed region ID → boot error (loud).
+	badCfg := &config.Config{}
+	badCfg.Region.PolicyStore = config.RegionPolicyStoreConfig{
+		Backend: "memory",
+		Seed:    []config.RegionPolicySeedConfig{{TenantID: "t2", HomeRegion: "EU-WEST-1"}},
+	}
+	if _, err := BuildRegionPolicyStore(badCfg, logger); err == nil {
+		t.Fatal("invalid seed must fail boot")
+	}
+
+	// sqlite backend seeds land durably.
+	sqlCfg := &config.Config{}
+	sqlCfg.Region.PolicyStore = config.RegionPolicyStoreConfig{
+		Backend: "sqlite",
+		SQLite:  config.RegionPolicyStoreSQLiteConfig{DSN: "file:" + filepath.Join(t.TempDir(), "region.db")},
+		Seed:    []config.RegionPolicySeedConfig{{TenantID: "t3", HomeRegion: "us-east-1"}},
+	}
+	sqlStore, err := BuildRegionPolicyStore(sqlCfg, logger)
+	if err != nil {
+		t.Fatalf("sqlite build: %v", err)
+	}
+	if closer, ok := sqlStore.(interface{ Close() error }); ok {
+		defer func() { _ = closer.Close() }()
+	}
+	p, err = sqlStore.GetPolicy(context.Background(), "t3")
+	if err != nil || p.HomeRegion != "us-east-1" {
+		t.Fatalf("sqlite seeded policy = %+v, %v", p, err)
+	}
+
+	// sqlite without dsn → boot error.
+	noDSN := &config.Config{}
+	noDSN.Region.PolicyStore = config.RegionPolicyStoreConfig{Backend: "sqlite"}
+	if _, err := BuildRegionPolicyStore(noDSN, logger); err == nil {
+		t.Fatal("sqlite without dsn must fail boot")
+	}
+
+	// Unknown backend → boot error.
+	unknown := &config.Config{}
+	unknown.Region.PolicyStore = config.RegionPolicyStoreConfig{Backend: "carrier-pigeon"}
+	if _, err := BuildRegionPolicyStore(unknown, logger); err == nil {
+		t.Fatal("unknown backend must fail boot")
 	}
 }

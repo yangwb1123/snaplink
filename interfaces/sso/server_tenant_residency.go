@@ -51,11 +51,8 @@ func (s *Server) checkSuspensionCache(tenantID string) (suspended bool, decided 
 }
 
 // DefaultTenantResidencyCacheTTL bounds how long a tenant's resolved
-// ResidencyPolicy may be cached between lookups. Mirrors the
-// suspension-cache TTL rationale: short enough that a policy edit
-// (HomeRegion / AllowedRegions / EnforceWrites) propagates promptly across
-// the fleet, long enough that hot-path enforcement doesn't hammer the
-// tenant store on every request.
+// ResidencyPolicy is cached: short enough for policy edits to propagate,
+// long enough that hot-path enforcement doesn't hammer the tenant store.
 const DefaultTenantResidencyCacheTTL = 60 * time.Second
 
 // residencyCacheEntry pairs a tenant's resolved residency policy with its
@@ -66,11 +63,9 @@ type residencyCacheEntry struct {
 	expiresAt time.Time
 }
 
-// residencyCache is a tiny TTL map indexed by tenant ID, sized for the
-// typical tens-to-low-thousands of tenants (swap to an LRU if you need
-// more). Reads take RLock so they don't contend on the enforcement path.
-// Mirrors suspensionCache exactly, caching a ResidencyPolicy instead of a
-// suspended bool.
+// residencyCache is a tiny TTL map indexed by tenant ID (swap to an LRU
+// for more). Reads take RLock so they don't contend on the enforcement
+// path. Mirrors suspensionCache, caching a ResidencyPolicy.
 type residencyCache struct {
 	mu      sync.RWMutex
 	entries map[string]*residencyCacheEntry
@@ -134,28 +129,19 @@ func (c *residencyCache) flush() {
 //
 // Coverage: checkTenantResidency backs BOTH a WRITE-side and a READ-side gate.
 //
-//   - WRITE side: every token-MINTING path. residencyGateLogin gates the
-//     interactive-login mints — the credential path's /auth/login direct/code
-//     mint, the prompt=none silent-renewal branch, and the /auth/mfa second
-//     leg (handleLogin + handleMFAComplete). residencyGateTokenGrant gates the
-//     /token grant endpoint (authorization_code exchange, refresh rotation,
-//     token-exchange, CIBA, device, client_credentials) at the post-client-auth
-//     choke point — that handler runs in the HandlerContext pipeline, so the
-//     live serving region is in scope without threading it through the
-//     bare-context issuance helpers. Both use isWrite=true.
-//   - READ side (residencyDeniedForAccess): the resource-ACCESS bearer
-//     endpoints that serve tenant data — /userinfo (403 region_not_allowed)
-//     and the mesh ext_authz endpoint (oracle-safe DENY) — so a still-valid
-//     token for a region-constrained tenant cannot be USED from a disallowed
-//     serving region. isWrite=false, so only the AllowedRegions check fires.
-//     These HTTP handlers have the HandlerContext (hence the serving region)
-//     in scope.
+//   - WRITE side (isWrite=true): every token-minting path — residencyGateLogin
+//     gates the interactive-login mints (direct/code mint, prompt=none
+//     silent-renewal, the /auth/mfa second leg), residencyGateTokenGrant gates
+//     the /token grant endpoint (authorization_code, refresh, token-exchange,
+//     CIBA, device, client_credentials) at the post-client-auth choke point.
+//   - READ side (isWrite=false, AllowedRegions check only): the resource-ACCESS
+//     bearer endpoints serving tenant data — /userinfo (403 region_not_allowed)
+//     and the mesh ext_authz endpoint (oracle-safe DENY).
 //
-// Deliberately NOT gated: /token/introspect returns a token-status answer to an
-// authenticated RS client, not the data subject's tenant data, and the calling
-// RS's region is not the data-serving region — its own {"active":false}
-// anti-enumeration contract also makes a residency overlay a poor fit. The
-// interactive-login write-gate remains the primary control.
+// Deliberately NOT gated: /token/introspect (a token-status answer to an
+// authenticated RS, not tenant data; its own {"active":false} contract makes a
+// residency overlay a poor fit). The interactive-login write-gate remains the
+// primary control.
 func WithTenantResidencyCheck(ttl time.Duration) Option {
 	return func(s *Server) {
 		if ttl <= 0 {
@@ -177,24 +163,12 @@ func WithTenantResidencyCheck(ttl time.Duration) Option {
 // under EnforceWrites.
 //
 // Decision order (each early-return is its own "unconstrained" gate):
-//
-//  1. not enabled / no serving region / no tenant → nil (byte-identical,
-//     unconstrained — region is a routing signal, absence means anywhere).
-//  2. tenant store outage → nil (FAIL-OPEN — see below).
-//  3. empty HomeRegion → nil (tenant set no residency anchor).
-//  4. servingRegion == HomeRegion → nil (home is always allowed).
-//  5. AllowedRegions non-empty AND servingRegion not in it →
-//     ErrRegionNotAllowed.
-//  6. isWrite AND EnforceWrites AND servingRegion != HomeRegion →
-//     ErrResidencyViolation.
-//  7. else → nil.
-//
-// FAIL-OPEN rationale: residency is an AP/governance control, NOT a
-// security CP invariant. A tenant-store partition must not 4xx every
-// tenant-bound request across the fleet — we'd rather serve a request in a
-// possibly-non-home region for the brief outage window than take the
-// service down. This mirrors checkTenantNotSuspended's fail-open exactly
-// (an unreachable tenant store, or a not-found tenant, allows the request).
+// not enabled / no region / no tenant → nil; tenant-store outage → nil
+// (FAIL-OPEN — residency is an AP control, not a security CP invariant; a
+// store partition must not 4xx the fleet, mirroring checkTenantNotSuspended);
+// empty HomeRegion → nil; home-region match → nil; AllowedRegions non-empty
+// and not containing the serving region → ErrRegionNotAllowed; isWrite ∧
+// EnforceWrites ∧ not-home → ErrResidencyViolation; else → nil.
 func (s *Server) checkTenantResidency(ctx context.Context, tenantID string, servingRegion region.ID, isWrite bool) error {
 	if !s.tenantResidencyEnabled || servingRegion == "" || tenantID == "" {
 		return nil
@@ -204,38 +178,6 @@ func (s *Server) checkTenantResidency(ctx context.Context, tenantID string, serv
 		return nil // unconstrained / fail-open — byte-identical to prior path.
 	}
 	return evaluateResidency(policy, servingRegion, isWrite)
-}
-
-// resolveResidencyPolicy returns the tenant's residency policy with ok=true
-// when one was obtained (cache hit or live tenant-store read). ok=false marks
-// every UNCONSTRAINED / FAIL-OPEN case — no store wired, store outage, or
-// not-found tenant — and MUST allow the request, mirroring
-// checkTenantNotSuspended's fail-open contract. A live read is cached if wired.
-func (s *Server) resolveResidencyPolicy(ctx context.Context, tenantID string) (region.ResidencyPolicy, bool) {
-	if s.tenantResidencyCache != nil {
-		if policy, hit := s.tenantResidencyCache.get(tenantID); hit {
-			return policy, true
-		}
-	}
-	if s.tenantStore == nil {
-		return region.ResidencyPolicy{}, false
-	}
-	t, err := s.tenantStore.GetTenant(ctx, tenantID)
-	if err != nil || t == nil {
-		// Fail open on store outage (or not-found tenant) — don't 4xx the
-		// world during a tenant store partition. Matches
-		// checkTenantNotSuspended.
-		if err != nil && s.logger != nil {
-			s.logger.Error("tenant residency check: tenant store lookup failed; failing open",
-				"error", err, "tenant", tenantID)
-		}
-		return region.ResidencyPolicy{}, false
-	}
-	policy := residencyPolicyFromTenant(t)
-	if s.tenantResidencyCache != nil {
-		s.tenantResidencyCache.put(tenantID, policy)
-	}
-	return policy, true
 }
 
 // evaluateResidency renders the residency verdict for a resolved policy. The
@@ -497,4 +439,58 @@ func (s *Server) maybeEncryptIDToken(ctx context.Context, client *Client, signed
 		return "", false
 	}
 	return jwe, true
+}
+
+// WithResidencyPolicyStore wires an explicit region.PolicyStore as the
+// authoritative, constraint-adding policy source (two-tier: a non-zero
+// store policy wins and is cached; zero or store error falls through to
+// tenant fields). Nil (default) keeps the tenant-row-only path identical.
+func WithResidencyPolicyStore(store region.PolicyStore) Option {
+	return func(s *Server) { s.residencyPolicyStore = store }
+}
+
+// resolveResidencyPolicy returns the tenant's residency policy with ok=true
+// when one was obtained; ok=false marks every UNCONSTRAINED / FAIL-OPEN case
+// (no store, policy-store outage, tenant-store outage, not-found tenant) and
+// MUST allow the request. Two-tier order (cache above both): a wired
+// policy store's non-zero answer wins; zero or error falls through to the
+// tenant-field derivation, with store errors logged fail-open. Live reads
+// are cached when wired.
+func (s *Server) resolveResidencyPolicy(ctx context.Context, tenantID string) (region.ResidencyPolicy, bool) {
+	if s.tenantResidencyCache != nil {
+		if policy, hit := s.tenantResidencyCache.get(tenantID); hit {
+			return policy, true
+		}
+	}
+	if s.residencyPolicyStore != nil {
+		policy, err := s.residencyPolicyStore.GetPolicy(ctx, tenantID)
+		if err == nil && !policy.IsZero() {
+			if s.tenantResidencyCache != nil {
+				s.tenantResidencyCache.put(tenantID, policy)
+			}
+			return policy, true
+		}
+		if err != nil && s.logger != nil {
+			s.logger.Error("tenant residency check: policy store lookup failed; falling through to tenant fields",
+				"error", err, "tenant", tenantID)
+		}
+	}
+	if s.tenantStore == nil {
+		return region.ResidencyPolicy{}, false
+	}
+	t, err := s.tenantStore.GetTenant(ctx, tenantID)
+	if err != nil || t == nil {
+		// Fail open on store outage (or not-found tenant) — matches
+		// checkTenantNotSuspended.
+		if err != nil && s.logger != nil {
+			s.logger.Error("tenant residency check: tenant store lookup failed; failing open",
+				"error", err, "tenant", tenantID)
+		}
+		return region.ResidencyPolicy{}, false
+	}
+	policy := residencyPolicyFromTenant(t)
+	if s.tenantResidencyCache != nil {
+		s.tenantResidencyCache.put(tenantID, policy)
+	}
+	return policy, true
 }

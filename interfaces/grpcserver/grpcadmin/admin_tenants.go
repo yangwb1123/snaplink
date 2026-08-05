@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/platform/audit"
@@ -216,6 +217,9 @@ func (s *TenantAdminService) CreateTenant(ctx context.Context, in *adminv1.Creat
 		return nil, status.Errorf(codes.Internal, "preflight: %v", err)
 	}
 	t := protoToTenant(in.Tenant)
+	if err := validateTenantRegions(t.HomeRegion, t.AllowedRegions); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
 	if err := s.store.PutTenant(ctx, t); err != nil {
 		if errors.Is(err, tenant.ErrInvalidTenant) {
 			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
@@ -257,6 +261,9 @@ func (s *TenantAdminService) UpdateTenant(ctx context.Context, in *adminv1.Updat
 	// so callers can't sneak a suspended flip past the cache by
 	// piggybacking on Update.
 	t.Status = existing.Status
+	if err := validateTenantRegions(t.HomeRegion, t.AllowedRegions); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
 	if err := s.store.PutTenant(ctx, t); err != nil {
 		if errors.Is(err, tenant.ErrInvalidTenant) {
 			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
@@ -437,10 +444,7 @@ func protoToTenant(p *adminv1.Tenant) *tenant.Tenant {
 
 // trimRegions normalizes the inbound allowed-regions list: trims surrounding
 // whitespace on each entry and drops empties, mirroring the light HomeRegion
-// trim. It does NOT validate region identity (the tenant store doesn't), so
-// an unknown region is accepted here and enforced/ignored downstream by the
-// residency layer — keeping admin write semantics aligned with config-seeded
-// tenants. nil/empty in -> nil out (zero value = unconstrained).
+// trim. nil/empty in -> nil out (zero value = unconstrained).
 func trimRegions(in []string) []string {
 	if len(in) == 0 {
 		return nil
@@ -455,6 +459,25 @@ func trimRegions(in []string) []string {
 		return nil
 	}
 	return out
+}
+
+// validateTenantRegions rejects malformed region IDs on the admin write
+// boundary. Region IDs are exact-match governance keys in the residency
+// layer, so a typo ("EU-WEST-1" vs "eu-west-1") would silently loosen or
+// tighten a default-fail-open control — the write must be loud. NO silent
+// case normalization: all major clouds use lowercase region names.
+func validateTenantRegions(home string, allowed []string) error {
+	if home != "" {
+		if err := region.ValidateID(region.ID(home)); err != nil {
+			return err
+		}
+	}
+	for _, r := range allowed {
+		if err := region.ValidateID(region.ID(r)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // domainToProto / protoToDomain live in admin_domains.go alongside the

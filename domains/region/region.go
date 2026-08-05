@@ -61,6 +61,16 @@ type ResidencyPolicy struct {
 	EnforceWrites  bool
 }
 
+// IsZero reports whether the policy is the unconstrained zero value.
+// The zero policy (empty HomeRegion, nil AllowedRegions, EnforceWrites
+// false) accepts every region — tenants that never set a policy stay
+// byte-compatible with pre-residency behavior, and a zero answer from a
+// PolicyStore must fall through to the tenant-field tier, never
+// un-constrain a tenant the operator pinned there.
+func (p ResidencyPolicy) IsZero() bool {
+	return p.HomeRegion == "" && len(p.AllowedRegions) == 0 && !p.EnforceWrites
+}
+
 // PolicyStore resolves a tenant's ResidencyPolicy. It is keyed by tenant
 // ID (a plain string — region/ sits above tenant/ and the residency policy
 // is derived from the tenant's pinned-region fields). Absent or

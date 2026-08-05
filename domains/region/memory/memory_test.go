@@ -18,7 +18,7 @@ func TestSetGetPolicy_Roundtrip(t *testing.T) {
 		AllowedRegions: []region.ID{"eu-west-1", "eu-central-1"},
 		EnforceWrites:  true,
 	}
-	s.Set("t1", want)
+	s.Set(context.Background(), "t1", want)
 
 	got, err := s.GetPolicy(ctx, "t1")
 	if err != nil {
@@ -48,8 +48,10 @@ func TestDelete_RevertsToUnconstrained(t *testing.T) {
 	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
-	s.Set("t1", region.ResidencyPolicy{HomeRegion: "us-east-1", EnforceWrites: true})
-	s.Delete("t1")
+	if err := s.Set(context.Background(), "t1", region.ResidencyPolicy{HomeRegion: "us-east-1", EnforceWrites: true}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	_ = s.Delete(context.Background(), "t1")
 	got, _ := s.GetPolicy(ctx, "t1")
 	if got.HomeRegion != "" || got.EnforceWrites {
 		t.Errorf("policy survived Delete: %+v", got)
@@ -60,7 +62,7 @@ func TestDelete_Idempotent(t *testing.T) {
 	t.Parallel()
 	s := memory.New()
 	// Delete of an absent tenant must not panic.
-	s.Delete("ghost")
+	_ = s.Delete(context.Background(), "ghost")
 }
 
 func TestSet_IsolatesAllowedRegionsSlice(t *testing.T) {
@@ -68,7 +70,9 @@ func TestSet_IsolatesAllowedRegionsSlice(t *testing.T) {
 	s := memory.New()
 	ctx := context.Background()
 	regions := []region.ID{"eu-west-1", "eu-central-1"}
-	s.Set("t1", region.ResidencyPolicy{HomeRegion: "eu-west-1", AllowedRegions: regions})
+	if err := s.Set(context.Background(), "t1", region.ResidencyPolicy{HomeRegion: "eu-west-1", AllowedRegions: regions}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
 
 	// Mutating the caller's slice must not reach into the stored policy.
 	regions[0] = "us-east-1"
@@ -89,7 +93,9 @@ func TestConcurrentAccess_NoRace(t *testing.T) {
 	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
-	s.Set("t1", region.ResidencyPolicy{HomeRegion: "eu-west-1"})
+	if err := s.Set(context.Background(), "t1", region.ResidencyPolicy{HomeRegion: "eu-west-1"}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
 
 	var wg sync.WaitGroup
 	for i := range 50 {
@@ -101,11 +107,11 @@ func TestConcurrentAccess_NoRace(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			id := "t" + string(rune('a'+(i%10)))
-			s.Set(id, region.ResidencyPolicy{HomeRegion: region.ID("r" + id)})
+			_ = s.Set(context.Background(), id, region.ResidencyPolicy{HomeRegion: region.ID("r" + id)})
 		}(i)
 		go func(i int) {
 			defer wg.Done()
-			s.Delete("t" + string(rune('a'+(i%10))))
+			_ = s.Delete(context.Background(), "t"+string(rune('a'+(i%10))))
 		}(i)
 	}
 	wg.Wait()

@@ -11,7 +11,7 @@ segment IS the layer. The dependency direction is **enforced** by
 
 ```
 shared/          dependency-free kernel        core · spi · security · i18n · trust
-domains/         business capabilities         tenant (commerce) · region · permissions · federation · connections · metering (usageledger) · anomaly · authenticators · conditionalaccess · identitylink · threataction · tokenanomaly · tokenexchange · tokenpolicy · tokenusage · userlifecycle
+domains/         business capabilities         tenant (commerce) · region (policy store: memory|sqlite) · permissions · federation · connections · metering (usageledger) · anomaly · authenticators · conditionalaccess · identitylink · threataction · tokenanomaly · tokenexchange · tokenpolicy · tokenusage · userlifecycle
 protocols/       identity-protocol use-cases   oauth · oidc · scim · fapi · caep · selfservice · compliance · lifecyclereactions · scimprovision
 platform/        cross-cutting capabilities    cluster · signingkeys · registry · netpolicy · metrics · tracing · bootstrap · buildinfo · releases · migrate · geo · audit · sse · configaudit · lifecycle (dr · rotation)
 interfaces/      inbound delivery + Server API grpcserver · adapters (Router backends std/gin/echo, byte-normalized unmatched responses; contract in docs/adapters.md, reference usage in docs/examples/embed-*) · admin · apidocs · commerce · metering · middleware · cors · ratelimit · ssoclient · snapshot · sso (public API-only Server)

@@ -26,19 +26,27 @@ func New() *Store {
 
 // Set stores (or replaces) the policy for a tenant. AllowedRegions is
 // copied so a later mutation of the caller's slice can't reach into the
-// stored policy.
-func (s *Store) Set(tenantID string, p region.ResidencyPolicy) {
+// stored policy. Returns region.ErrInvalidRegion (state unchanged) when
+// the policy carries a malformed region ID — region IDs are compared by
+// exact string equality in the enforcement layer, so a typo must be loud
+// at write time.
+func (s *Store) Set(_ context.Context, tenantID string, p region.ResidencyPolicy) error {
+	if err := region.ValidatePolicy(p); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.policies[tenantID] = clonePolicy(p)
+	return nil
 }
 
 // Delete removes a tenant's policy. After Delete, GetPolicy returns the
 // zero (unconstrained) ResidencyPolicy for that tenant. Idempotent.
-func (s *Store) Delete(tenantID string) {
+func (s *Store) Delete(_ context.Context, tenantID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.policies, tenantID)
+	return nil
 }
 
 // GetPolicy returns the tenant's ResidencyPolicy, or the zero

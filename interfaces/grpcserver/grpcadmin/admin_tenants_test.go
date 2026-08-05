@@ -10,6 +10,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // tenantCallbacks captures the three optional hook invocations
@@ -379,4 +380,57 @@ func TestTenantAdminService_ListDomainsPagination(t *testing.T) {
 
 	_, err = svc.ListDomains(ctx, &adminv1.ListDomainsRequest{PageToken: "!!!not-valid-base64!!!"})
 	requireCode(t, err, codes.InvalidArgument)
+}
+
+// TestTenantAdminService_RejectsMalformedRegionIDs proves the admin write
+// boundary is loud about region identity: "EU-WEST-1" (uppercase) is not a
+// canonical region ID and must be rejected with InvalidArgument, leaving the
+// store untouched. NO silent case normalization — a governance control must
+// fail at write time.
+func TestTenantAdminService_RejectsMalformedRegionIDs(t *testing.T) {
+	t.Parallel()
+	store := tenantmemory.New()
+	svc, _ := newTenantAdminServiceForTest(store, nil)
+	ctx := context.Background()
+	_ = store.PutTenant(ctx, &tenant.Tenant{ID: "t1", Slug: "t1", Name: "T1", Status: tenant.StatusActive})
+
+	// Create with an uppercase home region.
+	_, err := svc.CreateTenant(ctx, &adminv1.CreateTenantRequest{Tenant: &adminv1.Tenant{
+		Id: "t2", Slug: "t2", Name: "T2", HomeRegion: "EU-WEST-1",
+	}})
+	if statusCode(t, err) != codes.InvalidArgument {
+		t.Fatalf("CreateTenant(uppercase) err = %v, want InvalidArgument", err)
+	}
+	if _, gerr := store.GetTenant(ctx, "t2"); gerr == nil {
+		t.Errorf("invalid create persisted the tenant")
+	}
+
+	// Update with a malformed allowed region.
+	_, err = svc.UpdateTenant(ctx, &adminv1.UpdateTenantRequest{Tenant: &adminv1.Tenant{
+		Id: "t1", Slug: "t1", Name: "T1", HomeRegion: "eu-west-1",
+		AllowedRegions: []string{"eu-west-1", "eu_central_1"}, // underscores: invalid
+	}})
+	if statusCode(t, err) != codes.InvalidArgument {
+		t.Fatalf("UpdateTenant(bad allowed) err = %v, want InvalidArgument", err)
+	}
+	got, _ := store.GetTenant(ctx, "t1")
+	if len(got.AllowedRegions) != 0 {
+		t.Errorf("invalid update mutated stored allowed_regions: %v", got.AllowedRegions)
+	}
+
+	// Valid lowercase regions still pass through unchanged.
+	if _, err := svc.UpdateTenant(ctx, &adminv1.UpdateTenantRequest{Tenant: &adminv1.Tenant{
+		Id: "t1", Slug: "t1", Name: "T1", HomeRegion: "eu-west-1",
+		AllowedRegions: []string{"eu-central-1"},
+	}}); err != nil {
+		t.Fatalf("UpdateTenant(valid) err = %v, want nil", err)
+	}
+}
+
+func statusCode(t *testing.T, err error) codes.Code {
+	t.Helper()
+	if err == nil {
+		return codes.OK
+	}
+	return status.Code(err)
 }

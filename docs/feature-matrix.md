@@ -156,7 +156,7 @@ are tracked in [deferred-backlog.md](deferred-backlog.md).
 | RADIUS authenticator | via `WithAuthenticator` | `radius` nested module | `infrastructure/radius/authenticator.go` |
 | WebAuthn attestation policy | `/webauthn/registration/finish` | `webauthn.Config.{AttestationConveyance,AttestationPolicy,MDS}` | `domains/authenticators/webauthn/` |
 | WebAuthn passwordless PRIMARY login | `/auth/login` `provider=webauthn` | `webauthn.primary_auth_enabled`; per-client `Client.AllowPasswordlessOnly` | `domains/authenticators/webauthn/conditional_login.go` |
-| Multi-region data residency | `/auth/login` + `/userinfo` + mesh + WebAuthn | `WithRegionMiddleware` + `WithTenantResidencyCheck` | `domains/region/region.go` + `interfaces/sso/server_extensions.go` |
+| Multi-region data residency | `/auth/login` + `/userinfo` + mesh + WebAuthn | `WithRegionMiddleware` + `WithTenantResidencyCheck` (+ optional `WithResidencyPolicyStore` for a durable policy source; contract in `docs/config-reference.md`) | `domains/region/` + `interfaces/sso/server_tenant_residency.go` |
 | SCIM 2.0 | `/api/v1/scim/v2/` | `scim.NewHandler(users, basePath, ...)` | `protocols/scim/handler.go` |
 | SCIM 2.0 push provisioning (outbound) | pushes to a downstream SCIM app's `/Users` + `/Groups` | `scim.push.enabled` / `sso.WithSCIMProvisioner` | `protocols/scimprovision/http_provisioner.go` + `protocols/scimprovision/sink.go` |
 | FGA / ReBAC product API | `/authz/tuples`, `/authz/tuples/batch`, `/authz/graph`, `/authz/check` | tuple routes: `WithRebacStore`; check: `WithRebacEngine`; client-credentials gated; memory + SQLite stores | `platform/lifecycle/rebac/` + `infrastructure/defaultimpl/sqlite/authz_stores.go` + `interfaces/sso/server_routes.go` |

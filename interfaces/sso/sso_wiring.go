@@ -88,6 +88,7 @@ type wiringState struct {
 	tenantSuspensionCache      *suspensionCache
 	tenantResidencyEnabled     bool
 	tenantResidencyCache       *residencyCache
+	residencyPolicyStore       region.PolicyStore // two-tier source; nil = tenant-row only
 	regionResolver             region.Resolver
 	regionMiddlewareOpts       region.MiddlewareOptions
 	servingRegionAdvertisement region.ID

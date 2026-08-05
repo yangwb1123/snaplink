@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/region"
+	regionmemory "github.com/yangwb1123/snaplink/domains/region/memory"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	tenantmemory "github.com/yangwb1123/snaplink/domains/tenant/memory"
 	"github.com/yangwb1123/snaplink/platform/cluster"
@@ -422,5 +423,116 @@ func TestResidency_PolicyEditPropagatesAfterInvalidate(t *testing.T) {
 	err := srv.checkTenantResidency(context.Background(), trTenantID, "eu-central-1", false)
 	if !errors.Is(err, region.ErrRegionNotAllowed) {
 		t.Fatalf("post-edit check = %v want ErrRegionNotAllowed", err)
+	}
+}
+
+// -------- policy-store tier (WithResidencyPolicyStore) --------
+
+// recordingErrorLogger captures Error calls so a fail-open store outage can
+// be asserted as logged-and-allowed, not silent.
+type recordingErrorLogger struct {
+	errors []string
+}
+
+func (l *recordingErrorLogger) Info(string, ...any) {}
+func (l *recordingErrorLogger) Debug(string, ...any) {}
+func (l *recordingErrorLogger) Error(msg string, _ ...any) { l.errors = append(l.errors, msg) }
+
+// erroringPolicyStore returns a sentinel error for every tenant.
+type erroringPolicyStore struct{ err error }
+
+func (s erroringPolicyStore) GetPolicy(context.Context, string) (region.ResidencyPolicy, error) {
+	return region.ResidencyPolicy{}, s.err
+}
+
+// TestResidencyPolicyStore_StorePolicyWinsAndAddsConstraint proves the
+// two-tier resolution's store tier: a store-wired constraint for a tenant
+// whose tenant fields are unconstrained is enforced on both the write and
+// read gates.
+func TestResidencyPolicyStore_StorePolicyWinsAndAddsConstraint(t *testing.T) {
+	t.Parallel()
+	// Tenant fields unconstrained; the store pins eu-west-1 only.
+	tstore := tenantmemory.New()
+	_ = tstore.PutTenant(context.Background(), &tenant.Tenant{ID: trTenantID, Slug: "tr", Name: "tr", Status: tenant.StatusActive})
+	store := regionmemory.New()
+	if err := store.Set(context.Background(), trTenantID, region.ResidencyPolicy{
+		HomeRegion: "eu-west-1", AllowedRegions: []region.ID{"eu-west-1"},
+	}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	srv := NewServer(
+		WithTenantStore(tstore),
+		WithResidencyPolicyStore(store),
+		WithTenantResidencyCheck(time.Minute),
+	)
+
+	if _, denied := srv.ResidencyDecision(context.Background(), trTenantID, "ap-southeast-2", true); !denied {
+		t.Errorf("write gate: ap-southeast-2 not denied by store policy")
+	}
+	if _, denied := srv.ResidencyDecision(context.Background(), trTenantID, "eu-west-1", true); denied {
+		t.Errorf("write gate: home region denied by store policy")
+	}
+	// READ gate (isWrite=false) fires the AllowedRegions check only.
+	if _, denied := srv.ResidencyDecision(context.Background(), trTenantID, "ap-southeast-2", false); !denied {
+		t.Errorf("read gate: ap-southeast-2 not denied by store policy")
+	}
+}
+
+// TestResidencyPolicyStore_ZeroStoreAnswerFallsThroughToTenantFields proves
+// the fallback tier: a zero store answer can never un-constrain a tenant
+// pinned via tenant fields.
+func TestResidencyPolicyStore_ZeroStoreAnswerFallsThroughToTenantFields(t *testing.T) {
+	t.Parallel()
+	tstore := tenantmemory.New()
+	_ = tstore.PutTenant(context.Background(), constrainedTenant()) // eu-west-1 / eu-central-1
+	store := regionmemory.New()                                    // no policy for trTenantID → zero
+	srv := NewServer(
+		WithTenantStore(tstore),
+		WithResidencyPolicyStore(store),
+		WithTenantResidencyCheck(time.Minute),
+	)
+
+	if _, denied := srv.ResidencyDecision(context.Background(), trTenantID, "us-east-1", true); !denied {
+		t.Errorf("fallback tier lost the tenant-field constraint")
+	}
+	if _, denied := srv.ResidencyDecision(context.Background(), trTenantID, "eu-central-1", true); denied {
+		t.Errorf("allowed region denied by fallback tier")
+	}
+}
+
+// TestResidencyPolicyStore_StoreOutageFailsOpen proves the store-error
+// branch: with an UNCONSTRAINED tenant the request is allowed (the tenant
+// field tier also has nothing to add) and the outage is logged (never
+// silent, never blocking).
+func TestResidencyPolicyStore_StoreOutageFailsOpen(t *testing.T) {
+	t.Parallel()
+	logger := &recordingErrorLogger{}
+	tstore := tenantmemory.New()
+	_ = tstore.PutTenant(context.Background(), &tenant.Tenant{ID: trTenantID, Slug: "tr", Name: "tr", Status: tenant.StatusActive})
+	srv := NewServer(
+		WithLogger(logger),
+		WithTenantStore(tstore),
+		WithResidencyPolicyStore(erroringPolicyStore{err: errors.New("policy store down")}),
+		WithTenantResidencyCheck(time.Minute),
+	)
+
+	if _, denied := srv.ResidencyDecision(context.Background(), trTenantID, "us-east-1", true); denied {
+		t.Errorf("store outage denied the request; must fail open")
+	}
+	if len(logger.errors) == 0 {
+		t.Errorf("store outage not logged")
+	}
+}
+
+// TestResidencyPolicyStore_NoStoreWiredKeepsTenantRowPath proves nil-default
+// byte-identity: without the option the tenant-row derivation is unchanged.
+func TestResidencyPolicyStore_NoStoreWiredKeepsTenantRowPath(t *testing.T) {
+	t.Parallel()
+	srv := newResidencyServer(t, true, constrainedTenant())
+	if _, denied := srv.ResidencyDecision(context.Background(), trTenantID, "us-east-1", true); !denied {
+		t.Errorf("tenant-row constraint not enforced without a policy store")
+	}
+	if _, denied := srv.ResidencyDecision(context.Background(), trTenantID, "eu-west-1", true); denied {
+		t.Errorf("home region denied without a policy store")
 	}
 }
