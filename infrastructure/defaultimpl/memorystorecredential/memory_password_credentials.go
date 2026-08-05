@@ -9,6 +9,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/domains/identitylink"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/passwordhash"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -32,12 +33,12 @@ type MemoryPasswordCredentialStore struct {
 // real verify — otherwise a cost-10 dummy would finish faster than a cost-12
 // imported hash and leak "this username is unknown" as a timing oracle.
 func NewMemoryPasswordCredentialStore() *MemoryPasswordCredentialStore {
-	dummy, _ := bcrypt.GenerateFromPassword([]byte("dummy-for-timing-equalization-only"), bcrypt.DefaultCost)
+	dummy, _ := passwordhash.DummyHash(passwordhash.DefaultCost)
 	return &MemoryPasswordCredentialStore{
 		hashes:    make(map[string]string),
 		changedAt: make(map[string]time.Time),
 		dummy:     dummy,
-		dummyCost: bcrypt.DefaultCost,
+		dummyCost: passwordhash.DefaultCost,
 	}
 }
 
@@ -46,10 +47,10 @@ func NewMemoryPasswordCredentialStore() *MemoryPasswordCredentialStore {
 // the slowest stored hash. Caller MUST hold m.mu. A bcrypt.GenerateFromPassword
 // failure leaves the existing dummy in place (best-effort timing parity).
 func (m *MemoryPasswordCredentialStore) raiseDummyCost(cost int) {
-	if cost <= m.dummyCost || cost > bcrypt.MaxCost {
+	if cost <= m.dummyCost || cost > passwordhash.MaxCost {
 		return
 	}
-	if d, err := bcrypt.GenerateFromPassword([]byte("dummy-for-timing-equalization-only"), cost); err == nil {
+	if d, err := passwordhash.DummyHash(cost); err == nil {
 		m.dummy = d
 		m.dummyCost = cost
 	}
@@ -59,7 +60,7 @@ func (m *MemoryPasswordCredentialStore) SetPassword(_ context.Context, userID, n
 	if userID == "" {
 		return core.ErrPasswordMismatch
 	}
-	h, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	h, err := passwordhash.Hash(newPassword, passwordhash.DefaultCost)
 	if err != nil {
 		return err
 	}
@@ -87,7 +88,7 @@ func (m *MemoryPasswordCredentialStore) SetPasswordHash(_ context.Context, userI
 	// unknown-username login isn't measurably faster (enumeration timing
 	// oracle). A malformed hash yields cost 0 from bcrypt.Cost, which is a
 	// no-op against the >= DefaultCost dummy.
-	if cost, err := bcrypt.Cost([]byte(bcryptHash)); err == nil {
+	if cost, ok := passwordhash.Cost(bcryptHash); ok {
 		m.raiseDummyCost(cost)
 	}
 	m.mu.Unlock()
@@ -106,10 +107,22 @@ func (m *MemoryPasswordCredentialStore) VerifyPassword(_ context.Context, userID
 		_ = bcrypt.CompareHashAndPassword(dummy, []byte(plaintext))
 		return core.ErrPasswordMismatch
 	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(plaintext)) != nil {
+	if !passwordhash.Verify(hash, plaintext) {
 		return core.ErrPasswordMismatch
 	}
 	return nil
+}
+
+// NeedsRehash implements core.PasswordRehashNeeder: reports whether the
+// stored hash is below the policy target (progressive upgrade on login).
+func (m *MemoryPasswordCredentialStore) NeedsRehash(_ context.Context, userID string) (bool, error) {
+	m.mu.RLock()
+	hash, ok := m.hashes[userID]
+	m.mu.RUnlock()
+	if !ok {
+		return false, nil
+	}
+	return passwordhash.NeedsRehash(hash, passwordhash.DefaultCost), nil
 }
 
 // HasPassword implements identitylink.PasswordPresenceChecker: reports
@@ -190,7 +203,7 @@ func (m *MemoryPasswordHistoryStore) Record(_ context.Context, userID, newPasswo
 	if m.maxHist <= 0 {
 		return nil
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	hash, err := passwordhash.Hash(newPassword, passwordhash.DefaultCost)
 	if err != nil {
 		return err
 	}

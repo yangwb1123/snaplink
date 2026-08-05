@@ -339,6 +339,18 @@ type PasswordCredentialStore interface {
 	VerifyPassword(ctx context.Context, userID, plaintext string) error
 }
 
+// PasswordRehashNeeder is the OPTIONAL extension of
+// [PasswordCredentialStore] that reports whether a stored hash is below the
+// current hashing policy (passwordhash.NeedsRehash). The login verifier
+// consults it after a successful verify and upgrades the hash in place —
+// progressive rehash-on-login — so imported low-cost hashes converge to the
+// policy target without a batch migration. Implementations return (false,
+// nil) on absent credentials; errors are fail-open (the login already
+// succeeded; a rehash is best-effort).
+type PasswordRehashNeeder interface {
+	NeedsRehash(ctx context.Context, userID string) (bool, error)
+}
+
 // PasswordHashImporter is an optional extension a PasswordCredentialStore MAY
 // satisfy to seed a PRE-COMPUTED bcrypt hash (no plaintext) — e.g. importing
 // existing users from a YAML seed, an Auth0/Keycloak export, or a prior store.

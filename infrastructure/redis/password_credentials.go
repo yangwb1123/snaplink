@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/yangwb1123/snaplink/domains/identitylink"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/passwordhash"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -36,7 +36,7 @@ type PasswordCredentialStore struct {
 // the client lifecycle. The dummy hash is generated once here so VerifyPassword
 // never pays a fresh GenerateFromPassword on the unknown-user path.
 func NewPasswordCredentialStore(rdb goredis.Cmdable) *PasswordCredentialStore {
-	dummy, _ := bcrypt.GenerateFromPassword([]byte("dummy-for-timing-equalization-only"), bcrypt.DefaultCost)
+	dummy, _ := passwordhash.DummyHash(passwordhash.DefaultCost)
 	return &PasswordCredentialStore{rdb: rdb, dummy: dummy}
 }
 
@@ -54,7 +54,7 @@ func (s *PasswordCredentialStore) SetPassword(ctx context.Context, userID, newPa
 	if userID == "" {
 		return core.ErrPasswordMismatch
 	}
-	h, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	h, err := passwordhash.Hash(newPassword, passwordhash.DefaultCost)
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func (s *PasswordCredentialStore) SetPasswordHash(ctx context.Context, userID, b
 	if userID == "" {
 		return core.ErrPasswordMismatch
 	}
-	if !strings.HasPrefix(bcryptHash, "$2") {
+	if !passwordhash.IsBcrypt(bcryptHash) {
 		return errors.New("redis: SetPasswordHash requires a bcrypt hash")
 	}
 	if err := s.rdb.Set(ctx, pwcredKey(userID), bcryptHash, 0).Err(); err != nil {
@@ -98,7 +98,7 @@ func (s *PasswordCredentialStore) VerifyPassword(ctx context.Context, userID, pl
 	if err != nil {
 		return fmt.Errorf("redis: get password_credential: %w", err)
 	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(plaintext)) != nil {
+	if !passwordhash.Verify(hash, plaintext) {
 		return core.ErrPasswordMismatch
 	}
 	return nil
@@ -121,6 +121,19 @@ func (s *PasswordCredentialStore) HasPassword(ctx context.Context, userID string
 		return false, fmt.Errorf("redis: has password_credential: %w", err)
 	}
 	return n > 0, nil
+}
+
+// NeedsRehash implements core.PasswordRehashNeeder over the shared Redis
+// credential store.
+func (s *PasswordCredentialStore) NeedsRehash(ctx context.Context, userID string) (bool, error) {
+	hash, err := s.rdb.Get(ctx, pwcredKey(userID)).Result()
+	if errors.Is(err, goredis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("redis: get password_credential: %w", err)
+	}
+	return passwordhash.NeedsRehash(hash, passwordhash.DefaultCost), nil
 }
 
 var (

@@ -61,7 +61,7 @@ Generated from [`ops/build/capabilities.json`](../ops/build/capabilities.json); 
 | Setup application (`frontend.setup`) | `external-frontend` | `external` | — | — | `/setup/*` |
 | Enterprise authenticators (`identity.enterprise-auth`) | `module-only` | `disabled` | — | — | `/auth/saml/*`<br>`/auth/kerberos`<br>`Authenticator SPI` |
 | MFA and passkeys (`identity.mfa`) | `sdk`<br>`stock-binary` | `conditional` | — | `MFAChallengeStore`<br>`MFAEnrollmentStore` | `/auth/mfa`<br>`/me/mfa/*`<br>`/webauthn/*` |
-| Password authentication (`identity.password`) | `sdk`<br>`stock-binary` | `enabled` | — | `UserProvider`<br>`PasswordCredentialStore` | `/auth/login` |
+| Password authentication (`identity.password`) | `sdk`<br>`stock-binary` | `enabled` | — | `UserProvider`<br>`PasswordCredentialStore` (progressive rehash-on-login via the optional `PasswordRehashNeeder`; shared hashing primitives in `shared/security/passwordhash`) | `/auth/login` |
 | Identity self-service APIs (`identity.self-service`) | `sdk`<br>`stock-binary` | `conditional` | `feature_gates.self_service` | `UserProvider`<br>`feature-specific stores` | `/me/*`<br>`/sessions/me/*`<br>`/consents/me/*` |
 | Signing-key lifecycle (`keys.lifecycle`) | `sdk`<br>`stock-binary` | `conditional` | — | `signing key Registry` | `/.well-known/jwks.json`<br>`/readyz` |
 | Machine usage and entitlement API (`metering.usage`) | `sdk`<br>`standalone-binary` | `conditional` | — | `usageledger.Store`<br>`usageledger.SourceBindingStore`<br>`commerce.EntitlementReader` | `/api/v1/metering/usage`<br>`/api/v1/metering/reservations*`<br>`/api/v1/metering/entitlement` |

@@ -5,13 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/identitylink"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/passwordhash"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -51,7 +51,7 @@ type PasswordCredentialStore struct {
 // newDummyHash builds the cost-matched dummy used on the unknown-user
 // path. Generated once so VerifyPassword never pays a fresh GenerateFromPassword.
 func newDummyHash() []byte {
-	dummy, _ := bcrypt.GenerateFromPassword([]byte("dummy-for-timing-equalization-only"), bcrypt.DefaultCost)
+	dummy, _ := passwordhash.DummyHash(passwordhash.DefaultCost)
 	return dummy
 }
 
@@ -87,7 +87,7 @@ func NewPasswordCredentialStore(dsn string) (*PasswordCredentialStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate password_credentials: %w", err)
 	}
-	return &PasswordCredentialStore{db: db, dummy: newDummyHash(), dummyCost: bcrypt.DefaultCost}, nil
+	return &PasswordCredentialStore{db: db, dummy: newDummyHash(), dummyCost: passwordhash.DefaultCost}, nil
 }
 
 // NewPasswordCredentialStoreWithDB wraps an existing *sql.DB (shared-pool
@@ -96,7 +96,7 @@ func NewPasswordCredentialStoreWithDB(db *sql.DB) (*PasswordCredentialStore, err
 	if err := ensureSchema(db, "password_credentials", passwordCredentialsSchema); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate password_credentials: %w", err)
 	}
-	return &PasswordCredentialStore{db: db, dummy: newDummyHash(), dummyCost: bcrypt.DefaultCost}, nil
+	return &PasswordCredentialStore{db: db, dummy: newDummyHash(), dummyCost: passwordhash.DefaultCost}, nil
 }
 
 // Close releases the SQLite connection. Idempotent.
@@ -129,7 +129,7 @@ func (s *PasswordCredentialStore) SetPassword(ctx context.Context, userID, newPa
 	if userID == "" {
 		return core.ErrPasswordMismatch
 	}
-	h, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	h, err := passwordhash.Hash(newPassword, passwordhash.DefaultCost)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func (s *PasswordCredentialStore) SetPasswordHash(ctx context.Context, userID, b
 	if userID == "" {
 		return core.ErrPasswordMismatch
 	}
-	if !strings.HasPrefix(bcryptHash, "$2") {
+	if !passwordhash.IsBcrypt(bcryptHash) {
 		return errors.New("sqlite: SetPasswordHash requires a bcrypt hash")
 	}
 	_, err := s.db.ExecContext(ctx, `
@@ -167,7 +167,7 @@ func (s *PasswordCredentialStore) SetPasswordHash(ctx context.Context, userID, b
 	// Keep the miss-path dummy as slow as the slowest imported hash so an
 	// unknown-username login isn't measurably faster (enumeration timing
 	// oracle). A malformed hash yields cost 0, a no-op against the dummy.
-	if cost, cerr := bcrypt.Cost([]byte(bcryptHash)); cerr == nil {
+	if cost, ok := passwordhash.Cost(bcryptHash); ok {
 		s.raiseDummyCost(cost)
 	}
 	return nil
@@ -194,7 +194,7 @@ func (s *PasswordCredentialStore) VerifyPassword(ctx context.Context, userID, pl
 	if err != nil {
 		return fmt.Errorf("sqlite: get password_credential: %w", err)
 	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(plaintext)) != nil {
+	if !passwordhash.Verify(hash, plaintext) {
 		return core.ErrPasswordMismatch
 	}
 	return nil
@@ -258,6 +258,21 @@ func (s *PasswordCredentialStore) HasPassword(ctx context.Context, userID string
 		return false, fmt.Errorf("sqlite: has password_credential: %w", err)
 	}
 	return true, nil
+}
+
+// NeedsRehash implements core.PasswordRehashNeeder: reports whether the
+// stored hash is below the policy target (progressive upgrade on login).
+func (s *PasswordCredentialStore) NeedsRehash(ctx context.Context, userID string) (bool, error) {
+	var hash string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT hash FROM password_credentials WHERE user_id = ?`, userID).Scan(&hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("sqlite: get password_credential: %w", err)
+	}
+	return passwordhash.NeedsRehash(hash, passwordhash.DefaultCost), nil
 }
 
 var (
