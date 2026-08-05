@@ -368,6 +368,12 @@ type app struct {
 	userAutoDeprovisionCancel context.CancelFunc
 	userAutoDeprovisionDone   <-chan struct{}
 
+	// clientSecretScanCancel/Done stop the client-secret expiry warning
+	// scanner (always wired when a client store exists — it is read-only
+	// and cheap). Nil/zero when no client store is configured.
+	clientSecretScanCancel context.CancelFunc
+	clientSecretScanDone   <-chan struct{}
+
 	// redisClient is the one shared Redis client fanned out to every
 	// redis-backed store; nil when no redis block is configured. Closed once at
 	// shutdown to release its connection pool.

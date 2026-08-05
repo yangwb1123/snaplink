@@ -68,6 +68,14 @@ const (
 	EventIdempotencyCaptureMissing EventType = "idempotency_capture_missing"
 )
 
+// Client-credential lifecycle events. Emitted by the operator-facing
+// client-secret expiry scanner (cmd/sso-server) when a client's
+// secret_expires_at lands inside a warning window — the consumer is the
+// operations team, not an end user.
+const (
+	EventClientSecretExpiring EventType = "client_secret_expiring"
+)
+
 // Tenant quota dependency events. Emitted only when quota enforcement fails
 // open because its backing store is unavailable or returns an internal error.
 const (

@@ -316,6 +316,7 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventFeatureGatesDisabled: {}, EventSessionTrustStepUp: {},
 	EventConnectionAuthenticatorBuildFailed: {},
 	EventIdempotencyCaptureMissing:          {}, EventTenantQuotaStoreFailure: {},
+	EventClientSecretExpiring:         {},
 	EventTenantQuotaProjectionApplied: {},
 	// agent delegation + identity linking + cross-tenant exchange + DR
 	EventAgentDelegationTokenIssued: {}, EventAgentSessionRevoked: {},

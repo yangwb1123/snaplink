@@ -319,6 +319,8 @@ func shutdownSchedulers(ctx context.Context, a *app, logger spi.Logger) {
 		"token anomaly sweep did not exit cleanly")
 	stopScheduler(ctx, logger, a.userAutoDeprovisionCancel, a.userAutoDeprovisionDone,
 		"user auto-deprovision sweep did not exit cleanly")
+	stopScheduler(ctx, logger, a.clientSecretScanCancel, a.clientSecretScanDone,
+		"client secret expiry scan did not exit cleanly")
 }
 
 // stopScheduler cancels a background scheduler and waits for its done channel

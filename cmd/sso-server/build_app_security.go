@@ -15,9 +15,9 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/cors"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/rotation"
 )
 
-// wireBodyAndRateLimit wires the request body-size limits + the rate limiter.
 func (b *appBuilder) wireBodyAndRateLimit() error {
 	cfg, logger := b.cfg, b.logger
 	if n := cfg.Security.BodyLimit.MaxBytes; n > 0 {
@@ -51,8 +51,7 @@ func (b *appBuilder) wireBodyAndRateLimit() error {
 	return nil
 }
 
-// wireJTIReplaySPIFFE wires the JTI replay-protection store + SPIFFE
-// JWT-SVID token-exchange acceptance.
+// wireJTIReplaySPIFFE wires JTI replay protection + SPIFFE JWT-SVID.
 func (b *appBuilder) wireJTIReplaySPIFFE() error {
 	cfg, logger := b.cfg, b.logger
 	if cfg.Security.JTIReplay.Enabled {
@@ -89,8 +88,7 @@ func (b *appBuilder) wireJTIReplaySPIFFE() error {
 	return nil
 }
 
-// wireCAEPReceiverMesh wires the CAEP/SSF inbound receiver + the mesh
-// ext_authz endpoint.
+// wireCAEPReceiverMesh wires the CAEP/SSF inbound receiver + mesh ext_authz.
 func (b *appBuilder) wireCAEPReceiverMesh() error {
 	cfg, logger := b.cfg, b.logger
 	if cfg.CAEP.Receiver.Enabled {
@@ -128,8 +126,7 @@ func (b *appBuilder) wireCAEPReceiverMesh() error {
 	return nil
 }
 
-// wireMTLSLockoutProxiesCORS wires mTLS-bound tokens, account lockout, trusted
-// proxies (XFF validation), and CORS.
+// wireMTLSLockoutProxiesCORS wires mTLS tokens, lockout, trusted proxies, CORS.
 func (b *appBuilder) wireMTLSLockoutProxiesCORS() error {
 	cfg, logger := b.cfg, b.logger
 	if cfg.Security.MTLS.Enabled {
@@ -181,13 +178,11 @@ func (b *appBuilder) wireMTLSLockoutProxiesCORS() error {
 	return nil
 }
 
-// wireSecurityHeaders wires the opt-in security-headers framework: CSP (with
-// a per-request script-src nonce) + Permissions-Policy + Clear-Site-Data on
-// logout/erase, on top of the always-emitted X-Content-Type-Options/
-// X-Frame-Options/Referrer-Policy/HSTS. Off by default; a bare enabled:true
-// with no directive overrides uses the SDK's conservative default policy.
-// Split out of wireMTLSLockoutProxiesCORS (which sits at the function-length
-// budget) rather than grown inline.
+// wireSecurityHeaders wires the opt-in security-headers framework: CSP
+// (with a per-request script-src nonce) + Permissions-Policy +
+// Clear-Site-Data on logout/erase, plus the always-emitted
+// X-Content-Type-Options / X-Frame-Options / Referrer-Policy / HSTS.
+// Off by default; bare enabled:true uses the SDK's default policy.
 func (b *appBuilder) wireSecurityHeaders() {
 	sh := b.cfg.Security.SecurityHeaders
 	if !sh.Enabled {
@@ -203,11 +198,9 @@ func (b *appBuilder) wireSecurityHeaders() {
 
 // --- Governance plane: credential rotation, config-audit, break-glass -------
 //
-// These three wave-1 admin-plane subsystems all follow the same two-phase
-// shape: wireGovernance appends their Options BEFORE NewServer (so the routes
-// mount + the Server holds its read seams), then startGovernanceWorkers launches
-// their background loops AFTER the Server is constructed, each under the standard
-// cancel+done shutdown lifecycle (main_shutdown.go stopScheduler).
+// Two-phase shape: wireGovernance appends Options BEFORE NewServer,
+// startGovernanceWorkers launches background loops AFTER it, each under the
+// standard cancel+done shutdown lifecycle (main_shutdown.go stopScheduler).
 
 // wireGovernance appends the credential-rotation, config-audit, and break-glass
 // Options and builds their backing registry/store, leaving the loops for
@@ -422,6 +415,13 @@ func (b *appBuilder) wireConfigAudit() error {
 // loop, and the break-glass expiry sweeper. Each records a cancel+done pair for
 // graceful shutdown.
 func (b *appBuilder) startGovernanceWorkers(srv *sso.Server) error {
+	if b.clientStore != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		b.clientSecretScanCancel = cancel
+		b.clientSecretScanDone = rotation.StartClientSecretScan(
+			ctx, b.clientStore, b.recorder, b.metricsRegistry, b.logger)
+		b.logger.Info("client secret expiry scan enabled", "interval", rotation.ClientSecretScanInterval)
+	}
 	if b.credentialScheduler != nil {
 		ctx, cancel := context.WithCancel(context.Background())
 		b.credentialSchedCancel = cancel

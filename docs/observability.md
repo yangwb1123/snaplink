@@ -76,6 +76,13 @@ Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; ver
 - Optional `FacetQuerier` (type-asserted, `GET /api/v1/audit/facets`); 501 when unsupported.
 - `feature_gates_disabled` — emitted once at boot ONLY when an operator explicitly disabled ≥1 `feature_gates` surface; `Reason`/`disabled_gates` metadata lists the gate names (comma-joined). A build that never touches `feature_gates` emits nothing new here.
 - `auth_hook_executed` / `auth_hook_failed` — one per registered authentication-pipeline Hook invocation; metadata includes phase, bounded hook name, duration, and whether the flow continued. Hook errors, headers, credentials, claims, and token material are excluded.
+- `client_secret_expiring` — the client-secret expiry scanner (always
+  wired with a client store) found a client whose `secret_expires_at`
+  landed inside a 30/14/7-day warning window. `ClientID` names the machine
+  identity and `Reason` is the window; emitted once per (client, window)
+  per day. The metric `sso_client_secrets_expiring_total{window}` carries
+  the same signal and the log message is the fixed `client secret
+  expiring` with bounded `client_id`/`window`/`days_remaining` keys.
 - `tenant_quota_store_failure` — the authenticated tenant token-rate check failed open because its backing store returned an operational error. `Reason` is the fixed `increment_failed` enum; `resource=token_rate` is added only through `SetMeta`; tenant/client identifiers remain internal to audit and never appear in the `rate_limited` wire response.
 - Session quota lifecycle logs use the fixed messages `tenant session quota reservation failed open`, `tenant session quota reconciliation failed`, and `tenant session quota release failed`, with bounded `tenant_id`/`session_id` plus the dependency error. A definitive cap is not logged as an infrastructure failure and remains the stable `403 quota_exceeded` response.
 

@@ -54,6 +54,7 @@ var severityOverrides = map[auditspi.EventType]severityLevel{
 	auditspi.EventAdminDeviceSecretsRevoked:    severityMedium,
 	auditspi.EventInvalidationBusDegraded:      severityMedium,
 	auditspi.EventTenantQuotaStoreFailure:      severityMedium,
+	auditspi.EventClientSecretExpiring:         severityMedium,
 	auditspi.EventTenantQuotaProjectionApplied: severityInfo,
 	auditspi.EventPasswordWeak:                 severityLow,
 

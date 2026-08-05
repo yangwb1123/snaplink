@@ -27,6 +27,16 @@ const (
 	OutcomeFailure = "failure"
 )
 
+// Client-secret expiry warning metrics (platform/lifecycle/rotation
+// client_secret_scan.go). The consumer is the operations team: a client
+// secret that expires is a sudden-death production outage for machine
+// identities, so the scanner emits one counter per warning window
+// (30/14/7 days) instead of only the final day.
+const (
+	NameClientSecretsExpiringTotal = "sso_client_secrets_expiring_total"
+	LabelWindow                    = "window"
+)
+
 func registerCredentialRotationMetrics(factory promauto.Factory, m *Metrics) {
 	m.CredentialRotationsTotal = factory.NewCounterVec(
 		prometheus.CounterOpts{
@@ -36,6 +46,14 @@ func registerCredentialRotationMetrics(factory promauto.Factory, m *Metrics) {
 		[]string{LabelCredentialType, LabelOutcome},
 	)
 
+	m.ClientSecretsExpiringTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameClientSecretsExpiringTotal,
+			Help: "Clients whose secret_expires_at landed inside an expiry warning window, by window. Emitted once per client per window per day by the client-secret expiry scanner; alert on ANY sustained positive rate — every increment is a machine identity at risk of sudden-death expiry. Zero traffic when the scanner is not wired.",
+		},
+		[]string{LabelWindow},
+	)
+
 	m.CredentialAgeSeconds = factory.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: NameCredentialAgeSeconds,
@@ -43,6 +61,15 @@ func registerCredentialRotationMetrics(factory promauto.Factory, m *Metrics) {
 		},
 		[]string{LabelCredentialType},
 	)
+}
+
+// ObserveClientSecretExpiring bumps the warning counter for window.
+// Nil-safe so the scanner can call it unconditionally.
+func (m *Metrics) ObserveClientSecretExpiring(window string) {
+	if m == nil || m.ClientSecretsExpiringTotal == nil {
+		return
+	}
+	m.ClientSecretsExpiringTotal.WithLabelValues(window).Inc()
 }
 
 // ObserveCredentialRotation bumps the rotation-attempt counter for credType +

@@ -336,8 +336,9 @@ type Metrics struct {
 	// Credential-rotation framework (platform/rotation Scheduler). Zero
 	// traffic when no Scheduler is running. See credential_rotation.go for
 	// the label/outcome vocabulary and the nil-safe observe helpers.
-	CredentialRotationsTotal *prometheus.CounterVec // labels: credential_type, outcome
-	CredentialAgeSeconds     *prometheus.GaugeVec   // labels: credential_type
+	CredentialRotationsTotal   *prometheus.CounterVec // labels: credential_type, outcome
+	ClientSecretsExpiringTotal *prometheus.CounterVec // labels: window
+	CredentialAgeSeconds       *prometheus.GaugeVec   // labels: credential_type
 
 	// ConfigDriftDetectedTotal counts cross-replica configuration-drift
 	// detections (platform/configaudit.DriftDetector): this replica's

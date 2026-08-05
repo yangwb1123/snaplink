@@ -161,6 +161,7 @@ var cefEventNames = map[auditspi.EventType]string{
 	auditspi.EventInvalidationBusDegraded:        "Invalidation Bus Degraded",
 	auditspi.EventInvalidationBusReconnected:     "Invalidation Bus Reconnected",
 	auditspi.EventTenantQuotaStoreFailure:        "Tenant Quota Store Failure",
+	auditspi.EventClientSecretExpiring:           "Client Secret Expiring",
 	auditspi.EventTenantQuotaProjectionApplied:   "Tenant Quota Projection Applied",
 }
 

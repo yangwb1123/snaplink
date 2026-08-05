@@ -43,13 +43,11 @@ import (
 )
 
 // appBuilder threads the shared mutable wiring state through buildApp's
-// cohesive sub-builders. buildApp is pure server-assembly: each wireXxx
-// method appends Options to b.opts (order-significant — option order can
-// change which security feature wins) and accumulates the storage-health
-// sources + background-worker lifecycle handles that the final *app needs.
-// The struct exists ONLY to keep that ordered accumulation explicit while
-// the body is split below the 50-line / cyclo-15 budget; it changes no
-// behavior. Field names mirror the original buildApp locals 1:1.
+// cohesive sub-builders. Each wireXxx appends Options to b.opts
+// (order-significant) and accumulates the storage-health sources +
+// background-worker handles the final *app needs. The struct exists ONLY
+// to keep that ordered accumulation explicit below the line/cyclo budgets;
+// field names mirror the original buildApp locals 1:1.
 type appBuilder struct {
 	cfg    *config.Config
 	logger spi.Logger
@@ -223,11 +221,12 @@ type appBuilder struct {
 	// current posture (and a future health loop can call SetMode). Nil when off.
 	degradationMgr *sso.DegradationManager
 
-	// userAutoDeprovisionInterval: set by wireUserLifecycle when enabled; 0 =
-	// off. See startUserAutoDeprovisionSweep (build_stores.go).
 	userAutoDeprovisionInterval time.Duration
 	userAutoDeprovisionCancel   context.CancelFunc
 	userAutoDeprovisionDone     <-chan struct{}
+	// clientSecretScan* stop the client-secret expiry warning scanner.
+	clientSecretScanCancel context.CancelFunc
+	clientSecretScanDone   <-chan struct{}
 }
 
 // finalize wires the cluster subsystems + the last Options, constructs the
