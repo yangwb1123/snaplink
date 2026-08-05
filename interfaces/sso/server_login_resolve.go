@@ -273,6 +273,9 @@ const (
 	// that resolved to an enterprise connection: the client MUST authenticate
 	// via the named connection's upstream IdP rather than the provider list.
 	keyHRConnectionRequired = "connection_required"
+	// keyHRUnavailable marks a home-realm connection whose stored probe
+	// health is HealthUnreachable — display-level for the login UI.
+	keyHRUnavailable = "unavailable"
 )
 
 // resolveHomeRealm does B2B home-realm discovery for the interactive login

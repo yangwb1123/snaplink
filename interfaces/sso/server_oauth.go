@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/yangwb1123/snaplink/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/domains/connections"
 	"github.com/yangwb1123/snaplink/domains/connections/provider"
 	"github.com/yangwb1123/snaplink/domains/tokenpolicy"
 	"github.com/yangwb1123/snaplink/internal/auth/login"
@@ -51,7 +52,6 @@ func isValidPKCEMethod(method string) bool {
 	return oauth.IsValidPKCEMethod(method)
 }
 
-// isPKCEMethodAllowedForClient delegates to oauth.IsPKCEMethodAllowedForClient.
 func isPKCEMethodAllowedForClient(method string, allowed []string) bool {
 	return oauth.IsPKCEMethodAllowedForClient(method, allowed)
 }
@@ -97,7 +97,7 @@ func isScopeSubset(want, have []string) bool {
 	return oauth.IsScopeSubset(want, have)
 }
 
-// handleCallback handles the OAuth callback. This remains in root as it's a Server HTTP handler.
+// handleCallback handles the OAuth callback (a Server HTTP handler).
 func (s *Server) handleCallback(ctx HandlerContext) {
 	tokenNoStoreHeaders(ctx)
 	state := ctx.Query("state")
@@ -167,23 +167,15 @@ func validFederatedCallbackClient(
 }
 
 // errMaxActiveSessions is the sentinel createSession returns when a wired
-// token-policy max_active_sessions cap would be exceeded by minting another
-// session for this (user, client). Unlike the tenant-quota path, createSession
-// writes NO response for it — the login caller maps it to a clean access_denied
-// and owns the single wire write, so there is no double WriteHeader.
+// token-policy max_active_sessions cap would be exceeded. Unlike the
+// tenant-quota path, createSession writes NO response for it — the login
+// caller maps it to access_denied and owns the single wire write.
 var errMaxActiveSessions = errors.New("sso: max active sessions reached")
 
 // sessionPolicyCapExceeded reports whether minting another session for (userID,
-// clientID) would breach the wired token-policy max_active_sessions dimension.
-// Default-OFF: a nil token-policy store returns false immediately, so a login
-// with no policy wired is byte-identical to before the feature. This is a
-// GOVERNANCE property, not a credential check — every uncertainty FAILS OPEN
-// (returns false, allow the session): a policy-store load error or a ListByUser
-// count error must never block a legitimate login (same stance as
-// tenant-suspension / risk-scorer, AGENTS.md §3 Fail Modes). It reuses
-// ListByUser — the same enumerator the WithMaxSessionsPerUser eviction cap uses
-// — to count the subject's live sessions, and enforces the cap BEFORE the mint
-// so an over-cap login is refused rather than evicting a peer session.
+// clientID) breaches the wired token-policy max_active_sessions dimension.
+// Default-OFF (nil policy store = false); every uncertainty FAILS OPEN; the
+// count reuses ListByUser and the cap is enforced BEFORE the mint.
 func (s *Server) sessionPolicyCapExceeded(ctx HandlerContext, userID, clientID, tenantID string) bool {
 	if s.tokenPolicyStore == nil || s.sessionMgr == nil {
 		return false
@@ -433,6 +425,7 @@ func (s *Server) providerStoreProviders(ctx HandlerContext, tnID string) []provi
 	}
 	return out
 }
+
 func displayNameForBuiltin(name string) string {
 	switch name {
 	case "password":
@@ -445,12 +438,23 @@ func displayNameForBuiltin(name string) string {
 		return name
 	}
 }
+
 func (s *Server) respondLoginProviders(ctx HandlerContext, req *login.Request) bool {
 	if req.Provider != "" {
 		return false
 	}
 	if conn, ok := s.resolveHomeRealm(ctx, req.LoginHint); ok {
-		ctx.JSON(http.StatusOK, map[string]any{keyHRConnectionRequired: true, keyHRConnectionID: conn.ID, keyHRType: string(conn.Type), keyHRTenantID: conn.TenantID, keyHRDisplayName: conn.DisplayName, keyAuthzRequestPassthrough: s.federatedContinuationSupported(ctx, req.ClientID), KeyIss: s.resolveIssuer(ctx)})
+		resp := map[string]any{keyHRConnectionRequired: true, keyHRConnectionID: conn.ID, keyHRType: string(conn.Type), keyHRTenantID: conn.TenantID, keyHRDisplayName: conn.DisplayName, keyAuthzRequestPassthrough: s.federatedContinuationSupported(ctx, req.ClientID), KeyIss: s.resolveIssuer(ctx)}
+		// Login-path consumption of the admin-probe health: an unreachable
+		// IdP is flagged so the UI can grey it out before the user clicks
+		// into a timeout. Fail-open: a health read error leaves the flag
+		// unset and the attempt still collapses to the standard error.
+		if s.connectionStore != nil {
+			if h, herr := s.connectionStore.Health(ctx.Request().Context(), conn.ID); herr == nil && h != nil && h.Status == connections.HealthUnreachable {
+				resp[keyHRUnavailable] = true
+			}
+		}
+		ctx.JSON(http.StatusOK, resp)
 		return true
 	}
 	resp := map[string]any{KeyProviders: s.providersForClient(ctx, req.ClientID), KeyClientContext: buildClientContext(ctx), keyAuthzRequestPassthrough: s.federatedContinuationSupported(ctx, req.ClientID), KeyIss: s.resolveIssuer(ctx)}

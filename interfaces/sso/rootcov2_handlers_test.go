@@ -494,3 +494,61 @@ func TestRcov2H_GetLoginNoProvider(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 }
+
+// TestRcov2H_HomeRealmFlagsUnreachableConnection covers the login-path
+// consumption of the admin-probe health data: a home-realm response for a
+// connection whose stored health is HealthUnreachable carries
+// unavailable:true so the login UI can grey the IdP out, while a healthy
+// or never-probed connection stays unflagged (fail-open; the attempt still
+// collapses to the standard unknown-provider error).
+func TestRcov2H_HomeRealmFlagsUnreachableConnection(t *testing.T) {
+	t.Parallel()
+	store := connections.NewMemoryStore()
+	_ = store.Upsert(context.Background(), &connections.Connection{
+		ID: "down-idp", TenantID: "acme", Type: connections.TypeOIDC,
+		DisplayName: "Down IdP", Domains: []string{"down.example"}, Enabled: true,
+	})
+	_ = store.Upsert(context.Background(), &connections.Connection{
+		ID: "ok-idp", TenantID: "acme", Type: connections.TypeOIDC,
+		DisplayName: "OK IdP", Domains: []string{"ok.example"}, Enabled: true,
+	})
+	_ = store.RecordHealth(context.Background(), "down-idp", &connections.ConnectionHealth{
+		ConnectionID: "down-idp", Status: connections.HealthUnreachable,
+		LastCheckedAt: time.Now(),
+	})
+	_ = store.RecordHealth(context.Background(), "ok-idp", &connections.ConnectionHealth{
+		ConnectionID: "ok-idp", Status: connections.HealthHealthy,
+		LastCheckedAt: time.Now(), LastSuccessAt: time.Now(),
+	})
+	s := rcovNewServer(t, sso.WithConnectionStore(store))
+
+	// Down IdP: connection_required + unavailable:true.
+	status, out := rcovPostJSON(t, s.http.URL+"/auth/login", "", map[string]any{
+		"client_id":  rcovClient,
+		"login_hint": "bob@down.example",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("home-realm = %d body=%v", status, out)
+	}
+	if out["connection_id"] != "down-idp" {
+		t.Fatalf("connection_id = %v, want down-idp", out["connection_id"])
+	}
+	if out["unavailable"] != true {
+		t.Errorf("unreachable connection not flagged unavailable: %v", out)
+	}
+
+	// Healthy IdP: no flag.
+	status, out = rcovPostJSON(t, s.http.URL+"/auth/login", "", map[string]any{
+		"client_id":  rcovClient,
+		"login_hint": "bob@ok.example",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("home-realm ok = %d body=%v", status, out)
+	}
+	if out["connection_id"] != "ok-idp" {
+		t.Fatalf("connection_id = %v, want ok-idp", out["connection_id"])
+	}
+	if v, present := out["unavailable"]; present && v == true {
+		t.Errorf("healthy connection flagged unavailable: %v", out)
+	}
+}
