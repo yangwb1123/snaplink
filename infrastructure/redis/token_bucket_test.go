@@ -27,17 +27,19 @@ func TestTokenBucketLimiter_BurstThenDrip(t *testing.T) {
 		t.Fatalf("retryAfter = %v, want > 0", retry)
 	}
 	// Refill at rate 10/s against the SERVER clock (miniredis TIME is the
-	// real wall clock; a real sleep is the honest way to advance it): after
-	// 250ms the bucket has ~2 tokens.
-	time.Sleep(250 * time.Millisecond)
-	if ok, _ := l.Allow(key); !ok {
-		t.Fatal("admission denied after 250ms refill (rate 10/s should have 2 tokens)")
-	}
-	if ok, _ := l.Allow(key); !ok {
-		t.Fatal("second admission denied after 250ms refill")
+	// real wall clock; a real sleep is the honest way to advance it).
+	// Deterministic under load: ANY sleep >= 400ms refills >= burst (4
+	// tokens at 10/s), so after 500ms the bucket is guaranteed FULL again —
+	// 4 admissions succeed, the 5th is denied. A shorter sleep cannot
+	// happen, so no timing margin is asserted.
+	time.Sleep(500 * time.Millisecond)
+	for i := 0; i < 4; i++ {
+		if ok, _ := l.Allow(key); !ok {
+			t.Fatalf("admission %d denied after full refill", i+1)
+		}
 	}
 	if ok, _ := l.Allow(key); ok {
-		t.Fatal("third admission allowed; only 2 tokens refilled")
+		t.Fatal("5th admission allowed after refill — bucket must be empty again")
 	}
 }
 
