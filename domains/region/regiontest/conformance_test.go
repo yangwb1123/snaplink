@@ -4,9 +4,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/yangwb1123/snaplink/domains/region"
 	regionmemory "github.com/yangwb1123/snaplink/domains/region/memory"
 	regionsqlite "github.com/yangwb1123/snaplink/domains/region/sqlite"
-	"github.com/yangwb1123/snaplink/domains/region"
 )
 
 // Both shipped backends must satisfy the same contract. The memory store's

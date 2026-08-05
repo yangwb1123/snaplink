@@ -434,8 +434,8 @@ type recordingErrorLogger struct {
 	errors []string
 }
 
-func (l *recordingErrorLogger) Info(string, ...any) {}
-func (l *recordingErrorLogger) Debug(string, ...any) {}
+func (l *recordingErrorLogger) Info(string, ...any)        {}
+func (l *recordingErrorLogger) Debug(string, ...any)       {}
 func (l *recordingErrorLogger) Error(msg string, _ ...any) { l.errors = append(l.errors, msg) }
 
 // erroringPolicyStore returns a sentinel error for every tenant.
@@ -485,7 +485,7 @@ func TestResidencyPolicyStore_ZeroStoreAnswerFallsThroughToTenantFields(t *testi
 	t.Parallel()
 	tstore := tenantmemory.New()
 	_ = tstore.PutTenant(context.Background(), constrainedTenant()) // eu-west-1 / eu-central-1
-	store := regionmemory.New()                                    // no policy for trTenantID → zero
+	store := regionmemory.New()                                     // no policy for trTenantID → zero
 	srv := NewServer(
 		WithTenantStore(tstore),
 		WithResidencyPolicyStore(store),

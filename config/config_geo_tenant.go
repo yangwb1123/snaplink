@@ -65,11 +65,11 @@ type GeoStaticEntry struct {
 // ResidencyCheckCacheTTL bounds how long a tenant's ResidencyPolicy is cached
 // (<= 0 → the SDK default, DefaultTenantResidencyCacheTTL).
 type RegionConfig struct {
-	ServingRegion          string                    `yaml:"serving_region"`
-	HeaderName             string                    `yaml:"header_name"`
-	AllowedRegions         []string                  `yaml:"allowed_regions"`
-	ResidencyCheckCacheTTL time.Duration             `yaml:"residency_check_cache_ttl"`
-	PolicyStore            RegionPolicyStoreConfig   `yaml:"policy_store"`
+	ServingRegion          string                  `yaml:"serving_region"`
+	HeaderName             string                  `yaml:"header_name"`
+	AllowedRegions         []string                `yaml:"allowed_regions"`
+	ResidencyCheckCacheTTL time.Duration           `yaml:"residency_check_cache_ttl"`
+	PolicyStore            RegionPolicyStoreConfig `yaml:"policy_store"`
 }
 
 // RegionPolicyStoreConfig selects the durable residency-policy source
@@ -78,9 +78,9 @@ type RegionConfig struct {
 // cluster-shared. Seed entries are operator-declared policies applied at
 // boot — an invalid seed region ID fails boot loud.
 type RegionPolicyStoreConfig struct {
-	Backend string                      `yaml:"backend"` // "" | memory | sqlite
+	Backend string                        `yaml:"backend"` // "" | memory | sqlite
 	SQLite  RegionPolicyStoreSQLiteConfig `yaml:"sqlite"`
-	Seed    []RegionPolicySeedConfig    `yaml:"seed"`
+	Seed    []RegionPolicySeedConfig      `yaml:"seed"`
 }
 
 // RegionPolicyStoreSQLiteConfig configures the sqlite policy backend.
