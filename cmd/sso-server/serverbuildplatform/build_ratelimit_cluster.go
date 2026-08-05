@@ -89,22 +89,26 @@ func newMemoryLimiterPruned(perSec float64, burst int, interval time.Duration) *
 	return lim
 }
 
-// redisRateLimitPolicy builds shared cluster-wide buckets. Each bucket is a
-// single key, so the limiter's Lua stays single-slot on Redis Cluster.
-// Fail-open on a redis error is the Limiter's contract — an attacker must not be
-// able to DoS the fleet into lockout by killing Redis.
+// redisRateLimitPolicy builds shared cluster-wide SMOOTH buckets: a
+// distributed token bucket (rate + burst, refilled against the Redis server
+// clock) per rule, so the effective limit is exactly the configured one
+// across N replicas and no 2x fixed-window burst slips through at window
+// edges. Each bucket is a single key, so the limiter's Lua stays
+// single-slot on Redis Cluster. Fail-open on a redis error is the Limiter's
+// contract — an attacker must not be able to DoS the fleet into lockout by
+// killing Redis.
 func redisRateLimitPolicy(cfg config.RateLimitConfig, rdb goredis.Cmdable) (ratelimit.Policy, error) {
 	if rdb == nil {
 		return ratelimit.Policy{}, errors.New("security.rate_limit.backend=redis but no redis block configured (set redis.addrs)")
 	}
 	p := ratelimit.Policy{Key: ratelimit.KeyByClientIP}
 	if cfg.DefaultPerSec > 0 {
-		p.Default = redisbackend.NewLimiterFromRate(rdb, cfg.DefaultPerSec, cfg.DefaultBurst, "default")
+		p.Default = redisbackend.NewTokenBucketLimiter(rdb, cfg.DefaultPerSec, cfg.DefaultBurst, "default")
 	}
 	for _, r := range cfg.Prefixes {
 		p.Prefixes = append(p.Prefixes, ratelimit.PrefixRule{
 			Prefix:  r.Prefix,
-			Limiter: redisbackend.NewLimiterFromRate(rdb, r.PerSec, r.Burst, r.Prefix),
+			Limiter: redisbackend.NewTokenBucketLimiter(rdb, r.PerSec, r.Burst, r.Prefix),
 		})
 	}
 	return p, nil

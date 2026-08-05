@@ -115,7 +115,7 @@ Values below are exactly what the binary's boot-time dispatch accepts
 | WebAuthn ceremony sessions | `webauthn.storage.sessions.backend` | `memory` · `sqlite` · `redis` |
 | JTI replay | `security.jti_replay.backend` | `memory` · `sqlite` · `redis` |
 | Account lockout | `security.account_lockout.backend` | `memory` · `sqlite` · `redis` |
-| Rate limiter | `security.rate_limit.backend` | `memory` · `sqlite` · `redis` |
+| Rate limiter | `security.rate_limit.backend` | `memory` · `sqlite` · `redis` (redis = cluster-shared smooth token bucket: burst + per-second refill against the server clock, so the effective limit is exactly the configured one across replicas with no fixed-window edge burst) |
 | Pairwise subjects | `server.pairwise_subjects.backend` | `memory` · `sqlite` · `postgres` |
 | BCL subject-client index | `backchannel_logout.index.backend` | `memory` · `sqlite` · `redis` |
 | Native SSO device_secrets | `native_sso.backend` | off (`""`) · `memory` · `sqlite` · `postgres` |
