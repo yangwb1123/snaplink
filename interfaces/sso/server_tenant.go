@@ -164,7 +164,14 @@ func (s *Server) revokeTenantRefreshTokens(
 ) (int, []core.CredentialRevocationResult) {
 	scoped, ok := s.clientStore.(TenantScopedClientStore)
 	if !ok {
-		return 0, nil
+		// Explicit degradation, never silent success: a backend without
+		// tenant-scoped enumeration cannot purge this tenant's refresh
+		// tokens, and the admin hook must SEE that the leg was skipped
+		// (the pre-fix behavior returned (0, nil) — a silent no-op that
+		// looked like "0 tokens revoked because none existed").
+		return 0, []core.CredentialRevocationResult{tenantRevocationFailure(
+			tenantID, "refresh_tokens", tenantID,
+			errors.New("client store does not support tenant-scoped enumeration; refresh-token revocation skipped"))}
 	}
 	purger, ok := s.refreshTokenStore.(oauth.RefreshTokenClientPurger)
 	if !ok {

@@ -80,6 +80,7 @@ func TestServer_RevokeTenant_DestroysSessionsByIndex(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithIssuer("sso-test"),
 		sso.WithSessionManager(sm),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()), // tenant-scoped: refresh leg is a clean no-op
 	)
 
 	if _, err := srv.RevokeTenantRefreshTokens(ctx, "t1"); err != nil {
@@ -123,6 +124,7 @@ func TestServer_RevokeTenant_DestroysSessionsByRoster(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithIssuer("sso-test"),
 		sso.WithSessionManager(sm),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()), // tenant-scoped: refresh leg is a no-op, not unsupported
 		sso.WithTenantUserStore(members),
 	)
 
@@ -159,6 +161,7 @@ func TestServer_RevokeTenantCredentials_ReturnsSessionFailures(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithIssuer("sso-test"),
 		sso.WithSessionManager(failingTenantSessionManager{SessionManager: base}),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()), // tenant-scoped: refresh leg contributes no results
 		sso.WithTenantUserStore(members),
 	)
 
@@ -170,5 +173,72 @@ func TestServer_RevokeTenantCredentials_ReturnsSessionFailures(t *testing.T) {
 	if result.Kind != "session" || result.ResourceID != session.ID ||
 		result.Status != "failed" || result.IdempotencyKey == "" || result.Error == "" {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+// basicClientStore is a minimal core.ClientStore WITHOUT the
+// TenantScopedClientStore extension — the embedder-store shape that must
+// now degrade explicitly instead of silently succeeding.
+type basicClientStore struct {
+	clients map[string]*core.Client
+}
+
+func (b *basicClientStore) Get(_ context.Context, id string) (*core.Client, error) {
+	if c, ok := b.clients[id]; ok {
+		return c, nil
+	}
+	return nil, core.ErrNoSuchClient
+}
+func (b *basicClientStore) ValidateSecret(context.Context, string, string) error { return errors.New("invalid secret") }
+func (b *basicClientStore) List(context.Context) ([]*core.Client, error) {
+	out := make([]*core.Client, 0, len(b.clients))
+	for _, c := range b.clients {
+		out = append(out, c)
+	}
+	return out, nil
+}
+func (b *basicClientStore) Add(context.Context, *core.Client) error    { return nil }
+func (b *basicClientStore) Update(context.Context, *core.Client) error { return nil }
+func (b *basicClientStore) Delete(context.Context, string) error       { return nil }
+func (b *basicClientStore) RotateSecret(context.Context, string) (string, error) {
+	return "", nil
+}
+
+// TestServer_RevokeTenantRefreshTokens_UnsupportedStoreDegradesExplicitly
+// pins the silent-no-op fix: a client store without tenant-scoped
+// enumeration yields a distinguishable failure (not (0, nil)), so the admin
+// hook cannot mistake "backend unsupported" for "zero tokens existed".
+func TestServer_RevokeTenantRefreshTokens_UnsupportedStoreDegradesExplicitly(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	clients := &basicClientStore{clients: map[string]*core.Client{
+		"ca": {ID: "ca", TenantID: "t1"},
+	}}
+	rts := defaultimpl.NewMemoryRefreshTokenStore()
+	_ = rts.Issue(ctx, "tok", &oauth.RefreshToken{
+		UserID: "u", ClientID: "ca", ExpiresAt: time.Now().Add(time.Hour),
+	})
+	srv := sso.NewServer(
+		sso.WithIssuer("sso-test"),
+		sso.WithClientStore(clients),
+		sso.WithRefreshTokenStore(rts, time.Hour),
+	)
+
+	report := srv.RevokeTenantCredentials(ctx, "t1")
+	if len(report.Results) == 0 {
+		t.Fatal("unsupported store produced zero results — silent no-op regression")
+	}
+	unsupported := false
+	for _, r := range report.Results {
+		if r.Status == "failed" && r.Kind == "refresh_tokens" {
+			unsupported = true
+		}
+	}
+	if !unsupported {
+		t.Fatalf("no refresh_tokens failure result: %+v", report.Results)
+	}
+	// The token is untouched (nothing could be purged) — but the report says so.
+	if _, err := rts.Inspect(ctx, "tok"); err != nil {
+		t.Fatalf("token should survive an unsupported purge: %v", err)
 	}
 }

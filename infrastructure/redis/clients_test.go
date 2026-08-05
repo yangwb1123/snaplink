@@ -247,3 +247,121 @@ func TestRedisClientStore_DCRRATOverlapPersists(t *testing.T) {
 		t.Fatalf("RAT overlap did not persist safely: %+v", stored)
 	}
 }
+
+// TestRedisClientStore_TenantIndexAndStats proves the TenantScopedClientStore
+// + ClientStoreStats extensions: the per-tenant SET index tracks writes and
+// tenant moves, and Stats returns a canonical fingerprint that flips on a
+// discovery-relevant change and stays stable otherwise.
+func TestRedisClientStore_TenantIndexAndStats(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	cs := NewClientStore(rdb)
+	ctx := context.Background()
+
+	if err := cs.Add(ctx, &sso.Client{ID: "t1-a", Secret: "s1", Active: true, TenantID: "t1"}); err != nil {
+		t.Fatalf("Add t1-a: %v", err)
+	}
+	if err := cs.Add(ctx, &sso.Client{ID: "t1-b", Secret: "s2", Active: true, TenantID: "t1"}); err != nil {
+		t.Fatalf("Add t1-b: %v", err)
+	}
+	if err := cs.Add(ctx, &sso.Client{ID: "t2-a", Secret: "s3", Active: true, TenantID: "t2"}); err != nil {
+		t.Fatalf("Add t2-a: %v", err)
+	}
+	if err := cs.Add(ctx, &sso.Client{ID: "none-a", Secret: "s4", Active: true}); err != nil {
+		t.Fatalf("Add none-a: %v", err)
+	}
+
+	t1, err := cs.ListByTenant(ctx, "t1")
+	if err != nil {
+		t.Fatalf("ListByTenant t1: %v", err)
+	}
+	if len(t1) != 2 {
+		t.Fatalf("t1 clients = %d, want 2 (no cross-tenant leakage)", len(t1))
+	}
+	t2, err := cs.ListByTenant(ctx, "t2")
+	if err != nil {
+		t.Fatalf("ListByTenant t2: %v", err)
+	}
+	if len(t2) != 1 || t2[0].ID != "t2-a" {
+		t.Fatalf("t2 clients = %+v, want exactly t2-a", t2)
+	}
+	none, err := cs.ListByTenant(ctx, "")
+	if err != nil {
+		t.Fatalf("ListByTenant empty: %v", err)
+	}
+	if len(none) != 1 || none[0].ID != "none-a" {
+		t.Fatalf("tenant-less clients = %+v, want exactly none-a", none)
+	}
+
+	// Stats: count + fingerprint; a scope edit flips the hash, a secret
+	// rotation does not (discovery-relevant fields only).
+	count, hash1, err := cs.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if count != 4 {
+		t.Fatalf("Stats count = %d, want 4", count)
+	}
+	if _, err := cs.RotateSecret(ctx, "t1-a"); err != nil {
+		t.Fatalf("RotateSecret: %v", err)
+	}
+	_, hashAfterRotation, err := cs.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hashAfterRotation != hash1 {
+		t.Errorf("secret rotation flipped the discovery fingerprint")
+	}
+	if err := cs.Update(ctx, &sso.Client{ID: "t1-a", Secret: "", Active: true, TenantID: "t1", AllowedScopes: []string{"openid", "profile"}}); err != nil {
+		t.Fatalf("Update t1-a: %v", err)
+	}
+	_, hashAfterScope, err := cs.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hashAfterScope == hash1 {
+		t.Errorf("scope edit did not flip the discovery fingerprint")
+	}
+
+	// Tenant move: Update with a different tenant relocates the index.
+	if err := cs.Update(ctx, &sso.Client{ID: "t2-a", Secret: "", Active: true, TenantID: "t1"}); err != nil {
+		t.Fatalf("Update t2-a tenant move: %v", err)
+	}
+	t1, err = cs.ListByTenant(ctx, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(t1) != 3 {
+		t.Fatalf("t1 clients after move = %d, want 3", len(t1))
+	}
+	t2, err = cs.ListByTenant(ctx, "t2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(t2) != 0 {
+		t.Fatalf("t2 clients after move = %d, want 0", len(t2))
+	}
+
+	// Delete unindexes the tenant set.
+	if err := cs.Delete(ctx, "t1-a"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	t1, err = cs.ListByTenant(ctx, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(t1) != 2 {
+		t.Fatalf("t1 clients after delete = %d, want 2", len(t1))
+	}
+}
+
+// TestRedisClientStore_ImplementsTenantScopedExtensions pins the interface
+// guards: the server's tenant-revocation leg and discovery cache must see
+// the Redis backend as tenant-scoped + statted.
+func TestRedisClientStore_ImplementsTenantScopedExtensions(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	cs := NewClientStore(rdb)
+	var _ sso.TenantScopedClientStore = cs
+	var _ interface{ Stats(context.Context) (int, string, error) } = cs
+}

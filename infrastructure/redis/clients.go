@@ -13,6 +13,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 	"github.com/yangwb1123/snaplink/shared/security/clientrotation"
 	"golang.org/x/crypto/bcrypt"
@@ -22,9 +23,12 @@ import (
 // every id so List() (which a stateless deployment still needs for the admin
 // console + discovery projection) works without a SCAN.
 const (
-	clientKeyPrefix = "sso:client:"    // sso:client:<id> -> JSON
-	clientAllKey    = "sso:client:all" // SET of every client id
+	clientKeyPrefix    = "sso:client:"          // sso:client:<id> -> JSON
+	clientAllKey       = "sso:client:all"       // SET of every client id
+	clientTenantPrefix = "sso:client:bytenant:" // SET of client ids per tenant ("" tenant included)
 )
+
+func clientTenantKey(tenantID string) string { return clientTenantPrefix + tenantID }
 
 // ClientStore is the Redis-backed [sso.ClientStore]. Unlike the ephemeral
 // single-use stores in this module, clients are durable — this is the scale
@@ -37,10 +41,12 @@ const (
 // routes through security.CompareClientSecret so a pre-hashed seed and a
 // plaintext legacy value both compare in constant time.
 //
-// The optional ClientStoreStats and TenantScopedClientStore extensions are
-// intentionally not implemented: the server falls back to List()-and-filter
-// for tenant scoping and to a full discovery re-projection without Stats, both
-// of which are correct (just unoptimized) over Redis.
+// ClientStoreStats and TenantScopedClientStore are implemented: a
+// per-tenant SET index (maintained on the write paths) serves ListByTenant,
+// and Stats materializes the set once (one pipelined read) for the
+// discovery-doc cache's fingerprint decision — the memory/SQLite peers'
+// shape. The server therefore never falls back to List()-and-filter or a
+// silent no-op tenant revocation over Redis.
 type ClientStore struct {
 	rdb goredis.Cmdable
 }
@@ -204,6 +210,11 @@ func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
 	if err := s.rdb.SAdd(ctx, clientAllKey, c.ID).Err(); err != nil {
 		return fmt.Errorf("redis: index client: %w", err)
 	}
+	// Tenant index: same best-effort style as clientAllKey (a failure leaves
+	// an orphan id that readers skip).
+	if err := s.rdb.SAdd(ctx, clientTenantKey(c.TenantID), c.ID).Err(); err != nil {
+		return fmt.Errorf("redis: index client tenant: %w", err)
+	}
 	return nil
 }
 
@@ -211,12 +222,16 @@ func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
 	if c == nil || c.ID == "" {
 		return errors.New("redis: client.ID required")
 	}
-	exists, err := s.rdb.Exists(ctx, clientKey(c.ID)).Result()
+	oldRaw, err := s.rdb.Get(ctx, clientKey(c.ID)).Bytes()
+	if errors.Is(err, goredis.Nil) {
+		return sso.ErrNoSuchClient
+	}
 	if err != nil {
 		return fmt.Errorf("redis: check client: %w", err)
 	}
-	if exists == 0 {
-		return sso.ErrNoSuchClient
+	oldTenant := ""
+	if old, uerr := unmarshalClient(oldRaw); uerr == nil {
+		oldTenant = old.TenantID
 	}
 	if err := hashClientSecrets(c); err != nil {
 		return err
@@ -228,16 +243,34 @@ func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
 	if err := s.rdb.Set(ctx, clientKey(c.ID), raw, 0).Err(); err != nil {
 		return fmt.Errorf("redis: update client: %w", err)
 	}
-	// Keep the index consistent (idempotent) in case it drifted.
+	// Keep the indexes consistent (idempotent) in case they drifted: the
+	// all-clients set, plus the tenant set when the binding moved.
+	if oldTenant != c.TenantID {
+		if err := s.rdb.SRem(ctx, clientTenantKey(oldTenant), c.ID).Err(); err != nil {
+			return fmt.Errorf("redis: unindex client tenant: %w", err)
+		}
+		if err := s.rdb.SAdd(ctx, clientTenantKey(c.TenantID), c.ID).Err(); err != nil {
+			return fmt.Errorf("redis: index client tenant: %w", err)
+		}
+	}
 	return s.rdb.SAdd(ctx, clientAllKey, c.ID).Err()
 }
 
 func (s *ClientStore) Delete(ctx context.Context, clientID string) error {
 	// Idempotent: missing ids return nil so reconciliation loops don't churn.
+	oldTenant := ""
+	if oldRaw, gerr := s.rdb.Get(ctx, clientKey(clientID)).Bytes(); gerr == nil {
+		if old, uerr := unmarshalClient(oldRaw); uerr == nil {
+			oldTenant = old.TenantID
+		}
+	}
 	if err := s.rdb.Del(ctx, clientKey(clientID)).Err(); err != nil {
 		return fmt.Errorf("redis: delete client: %w", err)
 	}
-	return s.rdb.SRem(ctx, clientAllKey, clientID).Err()
+	if err := s.rdb.SRem(ctx, clientAllKey, clientID).Err(); err != nil {
+		return fmt.Errorf("redis: unindex client: %w", err)
+	}
+	return s.rdb.SRem(ctx, clientTenantKey(oldTenant), clientID).Err()
 }
 
 func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string, error) {
@@ -318,6 +351,59 @@ return 1`
 	}
 	return result == 1, nil
 }
+
+// ListByTenant satisfies sso.TenantScopedClientStore: returns every client
+// whose TenantID matches, via the per-tenant SET index. Empty tenantID
+// returns the tenant-less bucket. Orphan index ids (record deleted out of
+// band) are skipped like List does.
+func (s *ClientStore) ListByTenant(ctx context.Context, tenantID string) ([]*sso.Client, error) {
+	ids, err := s.rdb.SMembers(ctx, clientTenantKey(tenantID)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis: list tenant client ids: %w", err)
+	}
+	if len(ids) == 0 {
+		return []*sso.Client{}, nil
+	}
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = clientKey(id)
+	}
+	vals, err := mgetCompat(ctx, s.rdb, keys)
+	if err != nil {
+		return nil, fmt.Errorf("redis: mget tenant clients: %w", err)
+	}
+	out := make([]*sso.Client, 0, len(vals))
+	for _, v := range vals {
+		str, ok := v.(string)
+		if !ok {
+			continue
+		}
+		c, err := unmarshalClient([]byte(str))
+		if err != nil {
+			return nil, fmt.Errorf("redis: decode tenant client: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// Stats satisfies core.ClientStoreStats with the memory/SQLite peers'
+// shape: materialize the set once and fingerprint it with the canonical
+// core.ClientSetFingerprint. The discovery-doc cache uses the hash to skip
+// its re-projection when nothing discovery-relevant changed.
+func (s *ClientStore) Stats(ctx context.Context) (int, string, error) {
+	clients, err := s.List(ctx)
+	if err != nil {
+		return 0, "", err
+	}
+	return len(clients), core.ClientSetFingerprint(clients), nil
+}
+
+var (
+	_ sso.ClientStore             = (*ClientStore)(nil)
+	_ sso.TenantScopedClientStore = (*ClientStore)(nil)
+	_ core.ClientStoreStats       = (*ClientStore)(nil)
+)
 
 func (s *ClientStore) ListDueForRotation(ctx context.Context, olderThan time.Time) ([]string, error) {
 	clients, err := s.List(ctx)
