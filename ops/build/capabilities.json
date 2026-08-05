@@ -279,7 +279,7 @@
       "availability": ["sdk", "stock-binary"],
       "default_state": "enabled",
       "feature_gate": null,
-      "required_stores": ["UserProvider", "PasswordCredentialStore"],
+      "required_stores": ["UserProvider", "PasswordCredentialStore (progressive rehash-on-login via the optional PasswordRehashNeeder; shared hashing primitives in shared/security/passwordhash)"],
       "module_capabilities": ["authenticator.password.v1"],
       "config_keys": ["authenticators.password", "password_policy"],
       "surfaces": ["/auth/login"],
