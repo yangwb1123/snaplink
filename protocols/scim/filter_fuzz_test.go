@@ -48,6 +48,6 @@ func FuzzParseFilter(f *testing.F) {
 		// A successful parse must still be safe to evaluate against an
 		// attribute lookup that never has anything — match must not panic
 		// either, and must return a plain bool.
-		_ = expr.match(func(string) ([]string, bool) { return nil, false })
+		_ = expr.match(attrView{resolve: func(string) ([]string, bool) { return nil, false }})
 	})
 }

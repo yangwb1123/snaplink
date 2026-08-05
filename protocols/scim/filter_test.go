@@ -276,8 +276,7 @@ func TestFilterInvalid(t *testing.T) {
 		{"unbalanced open paren", `(userName eq "a"`},
 		{"unbalanced close paren", `userName eq "a")`},
 		{"not without paren", `not userName eq "a"`},
-		{"value filter unsupported", `emails[type eq "work"]`},
-		{"schema-qualified path", `urn:ietf:params:scim:schemas:core:2.0:User:userName eq "a"`},
+
 		{"co with non-string", `userName co 5`},
 		{"sw with bool", `userName sw true`},
 		{"bare value", `"alice"`},

@@ -6,76 +6,95 @@ import (
 	"strings"
 )
 
-// SCIM 2.0 filter support (RFC 7644 §3.4.2.2). This is a self-contained
-// recursive-descent parser + evaluator for the COMMON connector subset of
-// the SCIM filter grammar — no external dependency. It powers
-// GET /Users?filter= and GET /Groups?filter=, which Azure AD / Okta rely
-// on to reconcile a single resource (filter=userName eq "alice") rather
-// than paging the whole directory.
+// SCIM 2.0 filter support (RFC 7644 §3.4.2.2): a self-contained
+// recursive-descent parser + evaluator powering GET /Users?filter= and
+// GET /Groups?filter=, which Azure AD / Okta rely on to reconcile a single
+// resource rather than paging the whole directory.
 //
-// Grammar implemented (a subset of RFC 7644 §3.4.2.2 ABNF):
+// Grammar (RFC 7644 §3.4.2.2 ABNF): or < and < not < grouping;
+// attrExpr = attrPath pr | attrPath compareOp compValue |
+// valuePath (attrPath "[" filter "]" [ "." subAttr ]) [ pr | compareOp compValue ];
+// compareOp = eq/ne/co/sw/ew/gt/ge/lt/le. Value-path sub-filters parse as
+// a full filter (a lenient superset of the restricted valFilter) and
+// schema-URN-prefixed attribute paths resolve to their base attribute.
+// Anything else is rejected as invalidFilter, never silently honored.
 //
-//	filter   = orExpr
-//	orExpr   = andExpr  *( "or"  andExpr )
-//	andExpr  = notExpr  *( "and" notExpr )
-//	notExpr  = "not" "(" filter ")" / primary
-//	primary  = "(" filter ")" / attrExpr
-//	attrExpr = attrPath "pr" / attrPath compareOp compValue
-//	compareOp= "eq" / "ne" / "co" / "sw" / "ew" / "gt" / "ge" / "lt" / "le"
-//
-// Operator precedence (lowest to highest): or < and < not < grouping —
-// "and" binds tighter than "or" per the ABNF, so
-// `a eq 1 or b eq 2 and c eq 3` parses as `a eq 1 or (b eq 2 and c eq 3)`.
-//
-// NOT implemented (rejected as invalidFilter, never silently honored):
-// value-path filters ("emails[type eq \"work\"]"), the schema-URN-prefixed
-// attribute form, and complex grouping inside an attribute path. These are
-// uncommon for the provisioning reconcile path; surfacing them as
-// invalidFilter lets a connector fall back rather than trust a wrong page.
-//
-// PERFORMANCE: evaluation runs over a full List scan (filter applied in
-// the handler after List, before pagination). That is acceptable at admin
-// / directory-provisioning scale (operator-defined user + group counts).
-// An indexed lookup SPI (e.g. UserProvider.FindByAttribute) is a future
-// optimization for SaaS-scale directories; the parser/evaluator here are
-// the reusable front end for it.
+// PERFORMANCE: evaluation runs over a full List scan (acceptable at admin
+// / directory-provisioning scale). An indexed lookup SPI
+// (UserProvider.FindByAttribute) is a future optimization for SaaS-scale
+// directories; the parser/evaluator here are its reusable front end.
 
-// errInvalidFilter is the sentinel a malformed filter resolves to. The
+// errInvalidFilter is the sentinel a malformed filter resolves to; the
 // handler maps it to a SCIM 400 with scimType=invalidFilter (RFC 7644
-// §3.4.2.2 / §3.12). All parse failures collapse to this one sentinel so
-// the wire response is uniform; the textual reason is intentionally NOT
-// echoed (connectors branch on scimType, not the detail, and the surface
-// is admin-only so a position offset would only add noise).
+// §3.4.2.2 / §3.12). All parse failures collapse to this sentinel so the
+// wire response is uniform; the reason is intentionally not echoed.
 var errInvalidFilter = errors.New("invalid SCIM filter")
 
-// filterError returns the single invalidFilter sentinel. WHY a function
-// rather than returning errInvalidFilter directly: it documents intent at
-// each parse-failure site and leaves one seam to attach a richer detail
-// later without touching every caller.
+// filterError returns the invalidFilter sentinel (one seam for attaching
+// richer detail later).
 func filterError(string) error { return errInvalidFilter }
 
-// maxFilterLen is the byte limit enforced before tokenizing. A real SCIM
-// filter for even the most complex provisioning reconcile is a few hundred
-// bytes; 4096 is generous. Rejecting overlong inputs early prevents the
-// O(n) tokenizer from amplifying a memory-abuse payload.
+// parseValuePath parses attrPath "[" filter "]" [ "." subAttr ] with the
+// trailing pr / compareOp compValue; the bracketed filter is a lenient
+// superset of the ABNF's restricted valFilter.
+func (p *filterParser) parseValuePath(attr string) (filterExpr, error) {
+	p.next() // consume '['
+	subFilter, err := p.parseOr()
+	if err != nil {
+		return nil, err
+	}
+	closeTok, ok := p.next()
+	if !ok || closeTok.kind != tokRBracket {
+		return nil, filterError("expected ']'")
+	}
+	subAttr := ""
+	if t, ok := p.peek(); ok && t.kind == tokAttr {
+		// The lexer emits the post-']' ".word" as a tokAttr.
+		subAttr = t.text
+		p.next()
+	}
+	opTok, ok := p.next()
+	if !ok || opTok.kind != tokKeyword {
+		return nil, filterError("expected a comparison operator after value-path")
+	}
+	if opTok.text == opPr {
+		return valuePathNode{attr: attr, subFilter: subFilter, subAttr: subAttr}, nil
+	}
+	switch opTok.text {
+	case opEq, opNe, opCo, opSw, opEw, opGt, opGe, opLt, opLe:
+	default:
+		return nil, filterError("unknown operator: " + opTok.text)
+	}
+	valTok, ok := p.next()
+	if !ok || valTok.kind != tokValue {
+		return nil, filterError("expected a value after operator")
+	}
+	switch opTok.text {
+	case opCo, opSw, opEw:
+		if valTok.lit.kind != litString {
+			return nil, filterError(opTok.text + " requires a string value")
+		}
+	}
+	return valuePathCompareNode{attr: attr, subFilter: subFilter, subAttr: subAttr, op: opTok.text, lit: valTok.lit}, nil
+}
+
+// maxFilterLen caps filter length before tokenizing (a real reconcile
+// filter is a few hundred bytes; early rejection prevents memory-abuse
+// amplification).
 const maxFilterLen = 4096
 
-// maxFilterDepth caps recursive-descent nesting (parenthesized groups and
-// "not(…)" clauses both enter a new recursive frame). 50 levels is far
-// beyond any legitimate SCIM filter; the limit prevents a crafted deeply-
-// nested filter string from causing a goroutine stack overflow.
+// maxFilterDepth caps recursive-descent nesting so a crafted deeply-nested
+// filter cannot overflow the goroutine stack.
 const maxFilterDepth = 50
 
-// logicalAnd / logicalOr / logicalNot are the lower-cased logical keywords
-// (RFC 7644 §3.4.2.2). Keyword matching folds case ("AND" == "and").
+// logicalAnd/Or/Not are the lower-cased logical keywords (case-folded).
 const (
 	logicalAnd = "and"
 	logicalOr  = "or"
 	logicalNot = "not"
 )
 
-// Comparison operator keywords (RFC 7644 §3.4.2.2 Table 3). Lower-cased;
-// the tokenizer folds the inbound operator's case before comparing.
+// Comparison operator keywords (RFC 7644 §3.4.2.2 Table 3), lower-cased.
 const (
 	opEq = "eq" // equal
 	opNe = "ne" // not equal
@@ -92,43 +111,40 @@ const (
 // filterExpr is a parsed filter AST node. Each evaluator type implements
 // match; matchesFilter walks the tree against a resource's attribute view.
 type filterExpr interface {
-	// match reports whether the resource described by attrs satisfies the
-	// expression. attrs resolves an attribute path (lower-cased) to its
-	// value set; see resourceAttrs / groupAttrs.
-	match(attrs attrLookup) bool
+	// match reports whether the resource described by view satisfies the
+	// expression. view.resolve maps an attribute path (lower-cased) to its
+	// value set; view.elements resolves multi-valued complex attributes
+	// for value-path filters. See userAttrs / groupAttrs.
+	match(view attrView) bool
 }
 
-// attrLookup resolves a lower-cased SCIM attribute path to its value(s).
-// A single-valued attribute returns one element; a multi-valued attribute
-// (emails, members) returns one element per value so a comparison can
-// match ANY value (RFC 7644 §3.4.2.2: a multi-valued attribute matches if
-// any of its values matches). present reports whether the attribute is
-// modeled and carries any value, distinguishing an absent attribute from
-// an empty one for the "pr" operator.
+// attrLookup resolves a lower-cased attribute path to its value(s): one
+// element for a single-valued attribute, one per value for a multi-valued
+// one (a comparison matches ANY value, RFC 7644 §3.4.2.2). present
+// distinguishes an absent attribute from an empty one for "pr".
 type attrLookup func(path string) (values []string, present bool)
 
 // --- AST node types ---
 
-// orNode is a logical OR of two sub-expressions.
+// orNode / andNode / notNode are the logical combinators.
 type orNode struct{ left, right filterExpr }
 
-func (n orNode) match(a attrLookup) bool { return n.left.match(a) || n.right.match(a) }
+func (n orNode) match(v attrView) bool { return n.left.match(v) || n.right.match(v) }
 
 // andNode is a logical AND of two sub-expressions.
 type andNode struct{ left, right filterExpr }
 
-func (n andNode) match(a attrLookup) bool { return n.left.match(a) && n.right.match(a) }
+func (n andNode) match(v attrView) bool { return n.left.match(v) && n.right.match(v) }
 
-// notNode negates a parenthesized sub-expression.
 type notNode struct{ inner filterExpr }
 
-func (n notNode) match(a attrLookup) bool { return !n.inner.match(a) }
+func (n notNode) match(v attrView) bool { return !n.inner.match(v) }
 
 // presentNode is the "attr pr" presence test.
 type presentNode struct{ attr string }
 
-func (n presentNode) match(a attrLookup) bool {
-	vals, present := a(n.attr)
+func (n presentNode) match(v attrView) bool {
+	vals, present := v.resolve(n.attr)
 	if !present {
 		return false
 	}
@@ -152,17 +168,15 @@ type compareNode struct {
 	lit literal
 }
 
-func (n compareNode) match(a attrLookup) bool {
-	vals, present := a(n.attr)
+func (n compareNode) match(v attrView) bool {
+	vals, present := v.resolve(n.attr)
 	if !present {
-		// An absent attribute never equals a value; "ne" against an absent
-		// attribute is true (the resource does NOT carry that value). This
-		// matches the Azure AD / Okta reconcile expectation that
-		// `attr ne "x"` surfaces resources lacking the attribute.
+		// Absent attribute: "ne" is true (the resource does NOT carry that
+		// value — the Azure AD / Okta reconcile expectation), everything
+		// else false.
 		return n.op == opNe
 	}
-	// "ne" means "no value equals the literal", so it must hold for ALL
-	// values of a multi-valued attribute — evaluate via the eq result.
+	// "ne" holds only when NO value equals the literal.
 	if n.op == opNe {
 		for _, v := range vals {
 			if compareOne(v, opEq, n.lit) {
@@ -171,7 +185,7 @@ func (n compareNode) match(a attrLookup) bool {
 		}
 		return true
 	}
-	// All other operators match if ANY value matches (RFC 7644 §3.4.2.2).
+	// All other operators match if ANY value matches.
 	for _, v := range vals {
 		if compareOne(v, n.op, n.lit) {
 			return true
@@ -181,11 +195,9 @@ func (n compareNode) match(a attrLookup) bool {
 }
 
 // compareOne evaluates one scalar value against the literal under op.
-// String comparisons fold case (the attributes this slice models —
-// userName, displayName, emails, name.*, externalId, members — are not
-// caseExact, and RFC 7644 §3.4.2.2 specifies case-insensitive matching for
-// non-caseExact string attributes). Ordering ops (gt/ge/lt/le) compare
-// numerically when both sides are numbers, else lexically.
+// String comparisons fold case (RFC 7644 §3.4.2.2: non-caseExact
+// attributes match case-insensitively); ordering ops compare numerically
+// when both sides are numbers, else lexically.
 func compareOne(value, op string, lit literal) bool {
 	switch op {
 	case opEq:
@@ -202,9 +214,9 @@ func compareOne(value, op string, lit literal) bool {
 	return false
 }
 
-// literalEquals implements "eq" against a typed literal. Boolean and null
-// literals compare against the value's canonical form; strings fold case;
-// numbers compare numerically (so `1` eq `1.0`) with a textual fallback.
+// literalEquals implements "eq" against a typed literal (bool/null against
+// the canonical form, strings folded, numbers numerically with a textual
+// fallback).
 func literalEquals(value string, lit literal) bool {
 	switch lit.kind {
 	case litBool:
@@ -225,9 +237,9 @@ func literalEquals(value string, lit literal) bool {
 	}
 }
 
-// orderCompare implements gt/ge/lt/le. Numbers compare numerically when
-// both sides parse; otherwise the comparison is lexical on the raw strings
-// (SCIM does not define case folding for the ordering operators).
+// orderCompare implements gt/ge/lt/le: numeric when both sides parse,
+// else lexical on the raw strings (SCIM defines no case folding for
+// ordering operators).
 func orderCompare(value, op string, lit literal) bool {
 	if lit.kind == litNumber {
 		if a, errA := strconv.ParseFloat(value, 64); errA == nil {
@@ -240,6 +252,7 @@ func orderCompare(value, op string, lit literal) bool {
 }
 
 func numOrder(a, b float64, op string) bool {
+
 	switch op {
 	case opGt:
 		return a > b
@@ -267,8 +280,8 @@ func strOrder(cmp int, op string) bool {
 	return false
 }
 
-// foldLower lower-cases s for case-insensitive string comparison. Pulled
-// out so the intent (SCIM caseExact=false folding) reads at each call site.
+// foldLower lower-cases for case-insensitive comparison (SCIM
+// caseExact=false folding).
 func foldLower(s string) string { return strings.ToLower(s) }
 
 // parseFilter parses a SCIM filter string into an evaluable AST, or
@@ -301,10 +314,8 @@ func parseFilter(raw string) (filterExpr, error) {
 	return expr, nil
 }
 
-// filterParser is the recursive-descent cursor over the token stream.
-// depth tracks the current paren-group nesting level; it is incremented on
-// entry to each parenthesized sub-expression and checked against
-// maxFilterDepth to prevent stack overflow from adversarial input.
+// filterParser is the recursive-descent cursor; depth tracks paren
+// nesting against maxFilterDepth.
 type filterParser struct {
 	toks  []token
 	pos   int
@@ -328,7 +339,8 @@ func (p *filterParser) next() (token, bool) {
 	return t, ok
 }
 
-// parseOr := parseAnd ( "or" parseAnd )*
+// parseOr / parseAnd / parseNot / parsePrimary implement the precedence
+// ladder (or < and < not < grouping).
 func (p *filterParser) parseOr() (filterExpr, error) {
 	left, err := p.parseAnd()
 	if err != nil {
@@ -348,7 +360,6 @@ func (p *filterParser) parseOr() (filterExpr, error) {
 	}
 }
 
-// parseAnd := parseNot ( "and" parseNot )*
 func (p *filterParser) parseAnd() (filterExpr, error) {
 	left, err := p.parseNot()
 	if err != nil {
@@ -368,7 +379,6 @@ func (p *filterParser) parseAnd() (filterExpr, error) {
 	}
 }
 
-// parseNot := "not" "(" parseOr ")" | parsePrimary
 func (p *filterParser) parseNot() (filterExpr, error) {
 	t, ok := p.peek()
 	if ok && t.kind == tokKeyword && t.text == logicalNot {
@@ -396,7 +406,6 @@ func (p *filterParser) parseNot() (filterExpr, error) {
 	return p.parsePrimary()
 }
 
-// parsePrimary := "(" parseOr ")" | attrExpr
 func (p *filterParser) parsePrimary() (filterExpr, error) {
 	t, ok := p.peek()
 	if !ok {
@@ -421,7 +430,6 @@ func (p *filterParser) parsePrimary() (filterExpr, error) {
 	return p.parseAttrExpr()
 }
 
-// expectRParen consumes a required ")", erroring on anything else.
 func (p *filterParser) expectRParen() error {
 	t, ok := p.next()
 	if !ok || t.kind != tokRParen {
@@ -430,11 +438,15 @@ func (p *filterParser) expectRParen() error {
 	return nil
 }
 
-// parseAttrExpr := attrPath "pr" | attrPath compareOp compValue
+// parseAttrExpr := attrPath "pr" | attrPath compareOp compValue |
+// valuePath (attrPath "[" valFilter "]" [ "." subAttr ]) [ pr | compareOp compValue ]
 func (p *filterParser) parseAttrExpr() (filterExpr, error) {
 	attrTok, ok := p.next()
 	if !ok || attrTok.kind != tokAttr {
 		return nil, filterError("expected an attribute path")
+	}
+	if t, ok := p.peek(); ok && t.kind == tokLBracket {
+		return p.parseValuePath(attrTok.text)
 	}
 	opTok, ok := p.next()
 	if !ok || opTok.kind != tokKeyword {

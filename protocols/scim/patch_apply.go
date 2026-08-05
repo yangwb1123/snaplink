@@ -327,7 +327,7 @@ func applyUserEmails(res *Resource, verb string, raw json.RawMessage) (ErrorResp
 func applyUserEmailsFiltered(res *Resource, verb string, pp patchPath, raw json.RawMessage) (ErrorResponse, bool) {
 	matched := false
 	for i := range res.Emails {
-		if !pp.filter.match(emailElementAttrs(res.Emails[i])) {
+		if !pp.filter.match(attrView{resolve: emailElementAttrs(res.Emails[i])}) {
 			continue
 		}
 		matched = true
@@ -340,7 +340,7 @@ func applyUserEmailsFiltered(res *Resource, verb string, pp patchPath, raw json.
 		// (mutating the slice mid-range would skip elements).
 		kept := res.Emails[:0]
 		for _, e := range res.Emails {
-			if !pp.filter.match(emailElementAttrs(e)) {
+			if !pp.filter.match(attrView{resolve: emailElementAttrs(e)}) {
 				kept = append(kept, e)
 			}
 		}

@@ -181,3 +181,100 @@ func TestFilterIDAttribute(t *testing.T) {
 		t.Error("group id eq did not match")
 	}
 }
+
+// ---- value-path filters (RFC 7644 §3.4.2.2) ----
+
+func TestFilterValuePath_PresenceAndSubAttr(t *testing.T) {
+	res := Resource{
+		ID: "u1", UserName: "alice",
+		Emails: []Email{
+			{Value: "alice@work.example", Type: "work", Primary: true},
+			{Value: "alice@home.example", Type: "home"},
+		},
+	}
+	cases := []struct {
+		filter string
+		want   bool
+	}{
+		// Presence: any element with type=work.
+		{`emails[type eq "work"] pr`, true},
+		{`emails[type eq "carrier"] pr`, false},
+		// Sub-attribute comparison against the MATCHING elements only:
+		// the work email's value matches, the home one does not.
+		{`emails[type eq "work"].value eq "alice@work.example"`, true},
+		{`emails[type eq "work"].value eq "alice@home.example"`, false},
+		// ne semantics: no matching element carries the value.
+		{`emails[type eq "work"].value ne "alice@home.example"`, true},
+		{`emails[type eq "work"].value ne "alice@work.example"`, false},
+		// Empty result set: ne is true, eq is false.
+		{`emails[type eq "carrier"].value eq "x@y"`, false},
+		{`emails[type eq "carrier"].value ne "x@y"`, true},
+		// Comparison without subAttr applies to every value of the
+		// matching element.
+		{`emails[type eq "work"] eq "alice@work.example"`, true},
+		// Combined with the outer boolean grammar.
+		{`userName eq "alice" and emails[type eq "home"].value co "home.example"`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.filter, func(t *testing.T) {
+			expr, err := parseFilter(tc.filter)
+			if err != nil {
+				t.Fatalf("parseFilter(%q) = %v, want valid", tc.filter, err)
+			}
+			if got := matchesUser(res, expr); got != tc.want {
+				t.Errorf("matchesUser(%q) = %v, want %v", tc.filter, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFilterValuePath_GroupMembers(t *testing.T) {
+	g := GroupResource{
+		ID: "g1", DisplayName: "Eng",
+		Members: []GroupMember{
+			{Value: "u1", Type: "User", Display: "Alice"},
+			{Value: "u2", Type: "User", Display: "Bob"},
+		},
+	}
+	expr, err := parseFilter(`members[value eq "u2"] pr`)
+	if err != nil {
+		t.Fatalf("parseFilter: %v", err)
+	}
+	if !matchesGroup(g, expr) {
+		t.Error("members[value eq \"u2\"] pr must match")
+	}
+	expr, err = parseFilter(`members[display eq "Carol"] pr`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matchesGroup(g, expr) {
+		t.Error("members[display eq \"Carol\"] pr must not match")
+	}
+	expr, err = parseFilter(`members[value eq "u2"].display eq "Bob"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matchesGroup(g, expr) {
+		t.Error("members[value eq \"u2\"].display eq \"Bob\" must match")
+	}
+}
+
+// TestFilterSchemaURNPrefix covers the URN-prefixed attribute form
+// (RFC 7643 §2.1): the schema prefix is a namespace, not part of the path.
+func TestFilterSchemaURNPrefix(t *testing.T) {
+	res := Resource{ID: "u1", UserName: "alice", Active: true}
+	expr, err := parseFilter(`urn:ietf:params:scim:schemas:core:2.0:User:userName eq "alice"`)
+	if err != nil {
+		t.Fatalf("parseFilter: %v", err)
+	}
+	if !matchesUser(res, expr) {
+		t.Error("URN-prefixed userName eq must match")
+	}
+	expr, err = parseFilter(`urn:ietf:params:scim:schemas:core:2.0:User:active eq true`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matchesUser(res, expr) {
+		t.Error("URN-prefixed active eq true must match")
+	}
+}

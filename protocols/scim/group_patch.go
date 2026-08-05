@@ -208,7 +208,7 @@ func (h *Handler) removeMembersMatching(ctx context.Context, roleCode string, fi
 		return &e
 	}
 	for _, id := range current {
-		if !filter.match(memberElementAttrs(id)) {
+		if !filter.match(attrView{resolve: memberElementAttrs(id)}) {
 			continue
 		}
 		if err := h.groups.removeMember(ctx, id, roleCode); err != nil {

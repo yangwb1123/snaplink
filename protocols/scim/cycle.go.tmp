@@ -1,0 +1,68 @@
+package scim
+
+import (
+	"context"
+	"errors"
+)
+
+// ErrManagerCycle is returned by DetectManagerCycle when a manager
+// reference would create a cycle (A → B → A). SCIM PUT and PATCH callers
+// MUST reject the update with a 409 Conflict + scimTypeMutuality rather
+// than persist the cycle.
+var ErrManagerCycle = errors.New("scim: manager cycle detected")
+
+// maxManagerCycleDepth is the maximum number of manager hops DetectManagerCycle
+// traverses before giving up. Bounded to prevent a deeply-nested org chart
+// from causing an unbounded storage walk. A cycle shorter than this bound
+// is always detected; a chain deeper than this bound that is NOT a cycle
+// (10+ levels of management) is allowed through — acceptable for realistic
+// org structures.
+const maxManagerCycleDepth = 10
+
+// DetectManagerCycle checks whether setting managerID as the manager of
+// userID would create a cycle (userID → managerID → ... → userID). It
+// walks the manager chain from managerID up to maxManagerCycleDepth hops,
+// using getManager to resolve each node's manager. Returns ErrManagerCycle
+// when a cycle is detected, nil otherwise (including when the walk exceeds
+// maxManagerCycleDepth without finding userID — safe, not a cycle). A nil
+// or empty managerID is always valid (no manager configured).
+//
+// getManager is a function that retrieves the manager ID for a given userID.
+// It is called at most maxManagerCycleDepth times. The caller is responsible
+// for providing the appropriate storage-backed lookup (UserProvider.Get or
+// similar). Errors from getManager are propagated as-is.
+//
+// BFS vs DFS: simple forward-chain walk (each node has at most one manager),
+// so a DFS from managerID up to the org root is correct and efficient —
+// there is no branching to BFS over.
+func DetectManagerCycle(ctx context.Context, userID, managerID string,
+	getManager func(ctx context.Context, userID string) (string, error),
+) error {
+	if managerID == "" || userID == "" {
+		return nil // empty manager is always valid; empty userID can't cycle
+	}
+	if userID == managerID {
+		return ErrManagerCycle // self-reference is a trivial cycle
+	}
+	visited := map[string]bool{userID: true}
+	current := managerID
+	for depth := 0; depth < maxManagerCycleDepth; depth++ {
+		if visited[current] {
+			return ErrManagerCycle
+		}
+		visited[current] = true
+		next, err := getManager(ctx, current)
+		if err != nil {
+			return err
+		}
+		if next == "" {
+			return nil // top of org chart reached — no cycle
+		}
+		current = next
+	}
+	// Exceeded max depth without finding a cycle. The chain is either
+	// deeper than maxManagerCycleDepth (unusual but valid) or the data
+	// has a cycle longer than our detection horizon — allow through
+	// rather than false-positive block realistic deep org structures.
+	return nil
+}

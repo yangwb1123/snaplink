@@ -12,14 +12,65 @@ import "strings"
 // rather than erroring, which would reject otherwise-valid connector
 // filters that probe optional attributes.
 
+// attrView bundles the flat attribute resolver with the element resolver
+// value-path filters need: resolve maps an attribute path to its value set
+// (the pre-existing contract), elements resolves a multi-valued COMPLEX
+// attribute (emails, members) to its elements — each element a map of
+// sub-attribute -> value set. A nil elements resolver means the resource
+// models no complex multi-valued attribute.
+type attrView struct {
+	resolve  attrLookup
+	elements elementLookup
+}
+
+// elementLookup resolves a multi-valued complex attribute to its elements.
+// Sub-attribute keys and values are lower-cased, matching the flat view.
+type elementLookup func(path string) []map[string][]string
+
 // matchesUser reports whether res satisfies expr.
 func matchesUser(res Resource, expr filterExpr) bool {
-	return expr.match(userAttrs(res))
+	return expr.match(attrView{resolve: userAttrs(res), elements: userElements(res)})
 }
 
 // matchesGroup reports whether g satisfies expr.
 func matchesGroup(g GroupResource, expr filterExpr) bool {
-	return expr.match(groupAttrs(g))
+	return expr.match(attrView{resolve: groupAttrs(g), elements: groupElements(g)})
+}
+
+// userElements resolves the emails complex attribute to its elements.
+func userElements(res Resource) elementLookup {
+	return func(path string) []map[string][]string {
+		if path != "emails" {
+			return nil
+		}
+		out := make([]map[string][]string, 0, len(res.Emails))
+		for _, e := range res.Emails {
+			out = append(out, map[string][]string{
+				"value":   {e.Value},
+				"type":    {strings.ToLower(e.Type)},
+				"primary": {boolText(e.Primary)},
+			})
+		}
+		return out
+	}
+}
+
+// groupElements resolves the members complex attribute to its elements.
+func groupElements(g GroupResource) elementLookup {
+	return func(path string) []map[string][]string {
+		if path != "members" {
+			return nil
+		}
+		out := make([]map[string][]string, 0, len(g.Members))
+		for _, m := range g.Members {
+			out = append(out, map[string][]string{
+				"value":   {m.Value},
+				"display": {m.Display},
+				"type":    {strings.ToLower(m.Type)},
+			})
+		}
+		return out
+	}
 }
 
 // userAttrs returns the attribute resolver for a User Resource. Paths are
@@ -229,3 +280,79 @@ func memberTypeSet(members []GroupMember) []string {
 // filter is treated as no filter by the caller; this only trims surrounding
 // space so a value like " userName eq \"a\" " parses.
 func trimFilter(raw string) string { return strings.TrimSpace(raw) }
+
+// valuePathNode is the "attrPath[valFilter] pr" presence form: true when
+// ANY element satisfies the sub-filter (RFC 7644 §3.4.2.2).
+type valuePathNode struct {
+	attr      string
+	subFilter filterExpr
+	subAttr   string // optional ".subAttr" after the brackets (unused for pr)
+}
+
+func (n valuePathNode) match(v attrView) bool {
+	if v.elements == nil {
+		return false
+	}
+	for _, el := range v.elements(n.attr) {
+		if n.subFilter.match(attrView{resolve: elementAttrs(el)}) {
+			return true
+		}
+	}
+	return false
+}
+
+// valuePathCompareNode is "attrPath[valFilter][.subAttr] OP literal": the
+// comparison applies to the matching elements' sub-attribute values (or
+// every value without a subAttr).
+type valuePathCompareNode struct {
+	attr      string
+	subFilter filterExpr
+	subAttr   string
+	op        string
+	lit       literal
+}
+
+func (n valuePathCompareNode) match(v attrView) bool {
+	if v.elements == nil {
+		return false
+	}
+	var vals []string
+	for _, el := range v.elements(n.attr) {
+		if !n.subFilter.match(attrView{resolve: elementAttrs(el)}) {
+			continue
+		}
+		if n.subAttr == "" {
+			for _, subVals := range el {
+				vals = append(vals, subVals...)
+			}
+			continue
+		}
+		vals = append(vals, el[n.subAttr]...)
+	}
+	if len(vals) == 0 {
+		return n.op == opNe // absent-attribute semantics, mirroring compareNode
+	}
+	if n.op == opNe {
+		for _, vv := range vals {
+			if compareOne(vv, opEq, n.lit) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, vv := range vals {
+		if compareOne(vv, n.op, n.lit) {
+			return true
+		}
+	}
+	return false
+}
+
+// elementAttrs adapts one complex-attribute element to the flat
+// attrLookup a sub-filter walks.
+func elementAttrs(el map[string][]string) attrLookup {
+	return func(path string) ([]string, bool) {
+		vals, ok := el[path]
+		return vals, ok
+	}
+}

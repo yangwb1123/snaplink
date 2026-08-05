@@ -16,11 +16,13 @@ import (
 type tokenKind int
 
 const (
-	tokKeyword tokenKind = iota // logical (and/or/not) or comparison (eq/.../pr) word
-	tokAttr                     // an attribute path (e.g. userName, name.familyName)
-	tokValue                    // a typed literal (string/number/bool/null)
-	tokLParen                   // (
-	tokRParen                   // )
+	tokKeyword  tokenKind = iota // logical (and/or/not) or comparison (eq/.../pr) word
+	tokAttr                      // an attribute path (e.g. userName, name.familyName)
+	tokValue                     // a typed literal (string/number/bool/null)
+	tokLParen                    // (
+	tokRParen                    // )
+	tokLBracket                  // [ (value-path opener)
+	tokRBracket                  // ] (value-path closer)
 )
 
 // literalKind types a value literal so the evaluator picks the right
@@ -89,17 +91,13 @@ func tokenizeFilter(raw string) ([]token, error) {
 	rs := []rune(raw)
 	i := 0
 	n := len(rs)
+	var handled bool
 	for i < n {
 		c := rs[i]
 		switch {
 		case unicode.IsSpace(c):
 			i++
-		case c == '(':
-			toks = append(toks, token{kind: tokLParen})
-			i++
-		case c == ')':
-			toks = append(toks, token{kind: tokRParen})
-			i++
+
 		case c == '"':
 			s, next, err := readString(rs, i)
 			if err != nil {
@@ -119,10 +117,61 @@ func tokenizeFilter(raw string) ([]token, error) {
 			i = next
 			toks = append(toks, classifyWord(word))
 		default:
+			if toks, i, handled = lexBracket(rs, toks, c, i); handled {
+				continue
+			}
 			return nil, filterError("unexpected character in filter")
 		}
 	}
 	return toks, nil
+}
+
+// lexBracket handles the grouping/bracket runes ('(', ')', '[', ']'),
+// returning handled=true when c was consumed (including the value-path
+// sub-attribute after ']'). Kept out of the main switch so the tokenizer's
+// complexity stays within budget.
+func lexBracket(rs []rune, toks []token, c rune, i int) ([]token, int, bool) {
+	toks = append(toks, token{kind: bracketKind(c)})
+	i++
+	// A value-path sub-attribute (emails[...].value) lexes as a tokAttr
+	// after the closer.
+	if c == ']' {
+		if sub, next := lexSubAttrAfterDot(rs, i); sub != nil {
+			toks = append(toks, *sub)
+			i = next
+		}
+	}
+	return toks, i, true
+}
+
+// bracketKind maps a grouping/bracket rune to its token kind.
+func bracketKind(c rune) tokenKind {
+	switch c {
+	case '(':
+		return tokLParen
+	case ')':
+		return tokRParen
+	case '[':
+		return tokLBracket
+	default:
+		return tokRBracket
+	}
+}
+
+// lexSubAttrAfterDot consumes the ".subAttr" that follows a value-path
+// closer (emails[...].value). Returns nil when the next rune is not a
+// dot; a bare '.' with no word is left for the main loop to reject as an
+// unexpected character.
+func lexSubAttrAfterDot(rs []rune, i int) (*token, int) {
+	if i >= len(rs) || rs[i] != '.' {
+		return nil, i
+	}
+	i++
+	word, next := readWord(rs, i)
+	if word == "" {
+		return nil, i
+	}
+	return &token{kind: tokAttr, text: strings.ToLower(word)}, next
 }
 
 // classifyWord turns a bareword into the right token: a logical/comparison
@@ -138,6 +187,12 @@ func classifyWord(word string) token {
 	if lit, ok := literalWords[lower]; ok {
 		return token{kind: tokValue, lit: lit}
 	}
+	// Schema-URN-prefixed attribute (RFC 7643 §2.1 URN form): the
+	// attribute is everything after the LAST ':' — the schema part is a
+	// namespace, not part of the path the evaluator resolves.
+	if idx := strings.LastIndex(lower, ":"); idx >= 0 && strings.HasPrefix(lower, "urn:") {
+		lower = lower[idx+1:]
+	}
 	return token{kind: tokAttr, text: lower}
 }
 
@@ -151,12 +206,12 @@ func isWordStart(c rune) bool {
 
 // isWordChar reports whether c can continue an attribute path. Beyond
 // letters/digits it admits '.' (sub-attribute separator, e.g.
-// name.familyName), '-' and '_' (RFC 7643 name chars). It deliberately
-// does NOT admit '[' or ']' so a value-path filter ("emails[...]") splits
-// such that the parser rejects it as a malformed expression rather than
-// silently treating the bracket as part of the attribute name.
+// name.familyName), '-' and '_' (RFC 7643 name chars), and ':' so a
+// schema-URN-prefixed attribute
+// (urn:ietf:params:scim:schemas:core:2.0:User:userName) lexes; the prefix
+// is stripped in classifyWord. '[' and ']' are their own tokens.
 func isWordChar(c rune) bool {
-	return unicode.IsLetter(c) || unicode.IsDigit(c) || c == '.' || c == '-' || c == '_'
+	return unicode.IsLetter(c) || unicode.IsDigit(c) || c == '.' || c == '-' || c == '_' || c == ':'
 }
 
 // readWord consumes a bareword starting at i, returning it and the next
