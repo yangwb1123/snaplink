@@ -181,12 +181,12 @@ type trustIPFailureAdapter struct {
 // the same salted scheme domains/anomaly detectors already use before
 // querying the shared counter, so ip_reputation reads the exact rows the
 // brute-force-shadow detector wrote — not a second hash space.
-func (a *trustIPFailureAdapter) CountFailures(ctx context.Context, ip string, since time.Time) (int, int, error) {
+func (a *trustIPFailureAdapter) CountFailures(ctx context.Context, tenantID, ip string, since time.Time) (int, int, error) {
 	hash := hashIPForTrust(ip, a.salt)
 	if hash == "" {
 		return 0, 0, nil
 	}
-	return a.counter.Count(ctx, hash, since)
+	return a.counter.Count(ctx, tenantID, hash, since)
 }
 
 var _ trust.IPFailureLookup = (*trustIPFailureAdapter)(nil)
@@ -211,8 +211,8 @@ type trustLoginHistoryAdapter struct {
 // anomaly.RecentLoginStore — no lower time bound (Recent's since.IsZero()
 // contract is "no lower bound"), just the recency limit BehaviorScorer asks
 // for.
-func (a *trustLoginHistoryAdapter) History(ctx context.Context, subjectID string, limit int) ([]time.Time, error) {
-	entries, err := a.store.Recent(ctx, subjectID, time.Time{}, limit)
+func (a *trustLoginHistoryAdapter) History(ctx context.Context, tenantID, subjectID string, limit int) ([]time.Time, error) {
+	entries, err := a.store.Recent(ctx, tenantID, subjectID, time.Time{}, limit)
 	if err != nil {
 		return nil, err
 	}

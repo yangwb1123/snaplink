@@ -26,7 +26,7 @@ func TestMemoryRecentLoginStore_AppendAndRecentRoundtrip(t *testing.T) {
 			t.Fatalf("Append: %v", err)
 		}
 	}
-	got, err := s.Recent(ctx, "alice", time.Time{}, 0)
+	got, err := s.Recent(ctx, "", "alice", time.Time{}, 0)
 	if err != nil {
 		t.Fatalf("Recent: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestMemoryRecentLoginStore_RecentRespectsSince(t *testing.T) {
 	_ = s.Append(ctx, &anomaly.LoginEntry{SubjectID: "alice", Timestamp: now.Add(-1 * time.Hour)})
 	_ = s.Append(ctx, &anomaly.LoginEntry{SubjectID: "alice", Timestamp: now.Add(-1 * time.Minute)})
 
-	got, _ := s.Recent(ctx, "alice", now.Add(-2*time.Minute), 0)
+	got, _ := s.Recent(ctx, "", "alice", now.Add(-2*time.Minute), 0)
 	if len(got) != 1 {
 		t.Fatalf("since filter: got %d, want 1 entry newer than 2 min ago", len(got))
 	}
@@ -82,7 +82,7 @@ func TestMemoryRecentLoginStore_RecentRespectsLimit(t *testing.T) {
 			Timestamp: now.Add(-time.Duration(i) * time.Second),
 		})
 	}
-	got, _ := s.Recent(ctx, "alice", time.Time{}, 2)
+	got, _ := s.Recent(ctx, "", "alice", time.Time{}, 2)
 	if len(got) != 2 {
 		t.Fatalf("limit: got %d, want 2", len(got))
 	}
@@ -91,7 +91,7 @@ func TestMemoryRecentLoginStore_RecentRespectsLimit(t *testing.T) {
 func TestMemoryRecentLoginStore_RecentEmptySubjectReturnsNil(t *testing.T) {
 	t.Parallel()
 	s := defaultimpl.NewMemoryRecentLoginStore()
-	got, err := s.Recent(context.Background(), "", time.Time{}, 0)
+	got, err := s.Recent(context.Background(), "", "", time.Time{}, 0)
 	if err != nil {
 		t.Fatalf("Recent(empty): %v", err)
 	}
@@ -113,7 +113,7 @@ func TestMemoryRecentLoginStore_PerSubjectCapEnforced(t *testing.T) {
 			Timestamp: now.Add(time.Duration(i) * time.Second),
 		})
 	}
-	got, _ := s.Recent(ctx, "alice", time.Time{}, 0)
+	got, _ := s.Recent(ctx, "", "alice", time.Time{}, 0)
 	if len(got) != 3 {
 		t.Fatalf("cap: got %d, want 3", len(got))
 	}
@@ -141,11 +141,11 @@ func TestMemoryRecentLoginStore_PruneOlderRemovesPastCutoff(t *testing.T) {
 		t.Fatalf("deleted = %d, want 2", deleted)
 	}
 	// alice keeps her recent entry; bob's bucket disappears (was empty after prune).
-	aliceLeft, _ := s.Recent(ctx, "alice", time.Time{}, 0)
+	aliceLeft, _ := s.Recent(ctx, "", "alice", time.Time{}, 0)
 	if len(aliceLeft) != 1 {
 		t.Errorf("alice should have 1 entry, got %d", len(aliceLeft))
 	}
-	bobLeft, _ := s.Recent(ctx, "bob", time.Time{}, 0)
+	bobLeft, _ := s.Recent(ctx, "", "bob", time.Time{}, 0)
 	if len(bobLeft) != 0 {
 		t.Errorf("bob bucket should be cleaned up, got %d entries", len(bobLeft))
 	}
@@ -171,8 +171,36 @@ func TestMemoryRecentLoginStore_CallerMutationDoesNotLeak(t *testing.T) {
 	entry := &anomaly.LoginEntry{SubjectID: "alice", IPHash: "original", Timestamp: time.Now()}
 	_ = s.Append(ctx, entry)
 	entry.IPHash = "MUTATED"
-	got, _ := s.Recent(ctx, "alice", time.Time{}, 0)
+	got, _ := s.Recent(ctx, "", "alice", time.Time{}, 0)
 	if got[0].IPHash != "original" {
 		t.Errorf("caller mutation leaked: %v", got[0].IPHash)
+	}
+}
+
+// TestMemoryRecentLoginStore_TenantIsolation pins the composite-key
+// contract: same SubjectID in different tenants never shares a bucket.
+func TestMemoryRecentLoginStore_TenantIsolation(t *testing.T) {
+	s := defaultimpl.NewMemoryRecentLoginStore()
+	ctx := context.Background()
+	now := time.Now()
+	if err := s.Append(ctx, &anomaly.LoginEntry{TenantID: "t1", SubjectID: "alice", IPHash: "ip1", Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(ctx, &anomaly.LoginEntry{TenantID: "t2", SubjectID: "alice", IPHash: "ip2", Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Recent(ctx, "t1", "alice", time.Time{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].IPHash != "ip1" {
+		t.Fatalf("t1 entries = %v, want exactly ip1 (no t2 leakage)", got)
+	}
+	got, err = s.Recent(ctx, "t2", "alice", time.Time{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].IPHash != "ip2" {
+		t.Fatalf("t2 entries = %v, want exactly ip2", got)
 	}
 }

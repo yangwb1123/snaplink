@@ -119,7 +119,7 @@ func TestMemoryLoginHistory_RecordAndHistory(t *testing.T) {
 	h.Record("user-1", now.Add(-1*time.Hour))
 	h.Record("user-2", now)
 
-	history, err := h.History(context.Background(), "user-1", 100)
+	history, err := h.History(context.Background(), "", "user-1", 100)
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestMemoryLoginHistory_RecordAndHistory(t *testing.T) {
 		t.Errorf("expected 2 entries for user-1, got %d", len(history))
 	}
 
-	history2, err := h.History(context.Background(), "user-2", 100)
+	history2, err := h.History(context.Background(), "", "user-2", 100)
 	if err != nil {
 		t.Fatalf("History user-2: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestMemoryLoginHistory_RecordAndHistory(t *testing.T) {
 
 func TestMemoryLoginHistory_UnknownUser(t *testing.T) {
 	h := NewMemoryLoginHistory()
-	history, err := h.History(context.Background(), "nonexistent", 100)
+	history, err := h.History(context.Background(), "", "nonexistent", 100)
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestMemoryLoginHistory_ConcurrentRecord(t *testing.T) {
 		<-done
 	}
 
-	history, err := h.History(context.Background(), "user-c", 100)
+	history, err := h.History(context.Background(), "", "user-c", 100)
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestMemoryLoginHistory_Limit(t *testing.T) {
 		h.Record("user-limit", now.Add(time.Duration(i)*time.Second))
 	}
 
-	history, err := h.History(context.Background(), "user-limit", 5)
+	history, err := h.History(context.Background(), "", "user-limit", 5)
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}

@@ -60,6 +60,13 @@ func NewRecorderSink(recorder *audit.Recorder) Sink {
 			Reason:   a.Type,
 			TraceID:  event.TraceID,
 		}
+		// Tenant-stamp the audit event from the event itself (the
+		// runner is off the request path, so ctx routing cannot help)
+		// — mirrors EnrichTenant's metadata vocabulary.
+		if event.TenantID != "" {
+			e.TenantID = event.TenantID
+			audit.SetMeta(e, "tenant.id", event.TenantID)
+		}
 		audit.SetMeta(e, "anomaly.severity", string(a.Severity))
 		if a.Score > 0 {
 			audit.SetMeta(e, "anomaly.score", strconv.Itoa(a.Score))

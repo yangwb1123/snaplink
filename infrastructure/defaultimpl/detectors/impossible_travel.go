@@ -156,7 +156,7 @@ func (d *ImpossibleTravelDetector) Inspect(ctx context.Context, event *anomaly.L
 	if event.Geo != nil && (event.Geo.Latitude != 0 || event.Geo.Longitude != 0) {
 		since := event.Timestamp.Add(-d.historyWindow)
 		// limit=1 — only the most recent matters for the speed check.
-		prior, err := d.store.Recent(ctx, event.SubjectID, since, 1)
+		prior, err := d.store.Recent(ctx, event.TenantID, event.SubjectID, since, 1)
 		if err != nil {
 			return nil, fmt.Errorf("anomaly/impossible_travel: lookup: %w", err)
 		}

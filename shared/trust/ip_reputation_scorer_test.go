@@ -100,7 +100,7 @@ func TestIPReputationScorer_WindowExcludesOldFailures(t *testing.T) {
 
 type erroringIPFailureLookup struct{ err error }
 
-func (e erroringIPFailureLookup) CountFailures(context.Context, string, time.Time) (int, int, error) {
+func (e erroringIPFailureLookup) CountFailures(context.Context, string, string, time.Time) (int, int, error) {
 	return 0, 0, e.err
 }
 

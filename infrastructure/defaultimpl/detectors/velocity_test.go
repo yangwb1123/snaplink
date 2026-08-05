@@ -211,7 +211,7 @@ func TestVelocity_DoesNotWriteToStore(t *testing.T) {
 	_, _ = d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice", Timestamp: now,
 	})
-	got, _ := store.Recent(context.Background(), "alice", time.Time{}, 0)
+	got, _ := store.Recent(context.Background(), "", "alice", time.Time{}, 0)
 	if len(got) != 0 {
 		t.Errorf("velocity wrote to store: %d entries", len(got))
 	}

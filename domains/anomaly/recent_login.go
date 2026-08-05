@@ -50,13 +50,15 @@ type RecentLoginStore interface {
 	Append(ctx context.Context, entry *LoginEntry) error
 
 	// Recent returns up to limit most-recent entries for subjectID
-	// newer than since, ordered newest-first. Backends MAY return
-	// fewer entries (limit + window combined); MUST NOT return
-	// older entries. limit <= 0 → backend-defined cap (typically
-	// 100); since.IsZero() → no lower bound.
+	// within tenantID, newer than since, ordered newest-first.
+	// Backends MAY return fewer entries (limit + window combined);
+	// MUST NOT return older entries or other tenants' entries.
+	// limit <= 0 → backend-defined cap (typically 100);
+	// since.IsZero() → no lower bound. Empty tenantID scopes to the
+	// tenant-less partition (legacy embedders).
 	//
 	// Empty result is NOT an error.
-	Recent(ctx context.Context, subjectID string, since time.Time, limit int) ([]*LoginEntry, error)
+	Recent(ctx context.Context, tenantID, subjectID string, since time.Time, limit int) ([]*LoginEntry, error)
 
 	// PruneOlder deletes entries older than cutoff. Operators wire
 	// from a retention scheduler (mirrors the audit / snapshot /
@@ -67,6 +69,11 @@ type RecentLoginStore interface {
 // LoginEntry is one row of recent-login history. Field names
 // mirror [LoginEvent] but with PII hashed.
 type LoginEntry struct {
+	// TenantID partitions the history: same-name subjects in
+	// different tenants never share entries. Empty = tenant-less
+	// partition (legacy embedders), scoped like any other tenant.
+	TenantID string
+
 	SubjectID string
 
 	// ClientID is optional — detectors usually don't filter by

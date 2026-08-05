@@ -177,11 +177,11 @@ type fakeIPFailureCounter struct {
 	total, distinct int
 }
 
-func (f *fakeIPFailureCounter) Record(ctx context.Context, ipHash, subjectID string, ts time.Time) error {
+func (f *fakeIPFailureCounter) Record(ctx context.Context, tenantID, ipHash, subjectID string, ts time.Time) error {
 	return nil
 }
 
-func (f *fakeIPFailureCounter) Count(ctx context.Context, ipHash string, since time.Time) (int, int, error) {
+func (f *fakeIPFailureCounter) Count(ctx context.Context, tenantID, ipHash string, since time.Time) (int, int, error) {
 	f.lastHash = ipHash
 	return f.total, f.distinct, nil
 }

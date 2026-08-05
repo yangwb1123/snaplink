@@ -121,7 +121,7 @@ func (d *BruteForceShadowDetector) Inspect(ctx context.Context, event *anomaly.L
 		return nil, nil
 	}
 	if event.Outcome == "failure" {
-		if err := d.counter.Record(ctx, ipHash, event.SubjectID, event.Timestamp); err != nil {
+		if err := d.counter.Record(ctx, event.TenantID, ipHash, event.SubjectID, event.Timestamp); err != nil {
 			return nil, fmt.Errorf("anomaly/brute_force_shadow: record: %w", err)
 		}
 	}
@@ -129,7 +129,7 @@ func (d *BruteForceShadowDetector) Inspect(ctx context.Context, event *anomaly.L
 	// other accounts — a successful login from a suspicious IP is
 	// itself a signal (attacker found a valid credential).
 	since := event.Timestamp.Add(-d.window)
-	total, distinct, err := d.counter.Count(ctx, ipHash, since)
+	total, distinct, err := d.counter.Count(ctx, event.TenantID, ipHash, since)
 	if err != nil {
 		return nil, fmt.Errorf("anomaly/brute_force_shadow: count: %w", err)
 	}

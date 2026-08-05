@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/anomaly"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 // recentLoginSchema persists per-subject login history for behavioral
@@ -22,6 +23,7 @@ import (
 const recentLoginSchema = `
 CREATE TABLE IF NOT EXISTS recent_logins (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id             TEXT    NOT NULL DEFAULT '',
     subject_id            TEXT    NOT NULL,
     client_id             TEXT    NOT NULL DEFAULT '',
     outcome               TEXT    NOT NULL,
@@ -33,11 +35,76 @@ CREATE TABLE IF NOT EXISTS recent_logins (
     ts_unix_ns            INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_recent_logins_subject_ts
-    ON recent_logins(subject_id, ts_unix_ns DESC);
+CREATE INDEX IF NOT EXISTS idx_recent_logins_tenant_subject_ts
+    ON recent_logins(tenant_id, subject_id, ts_unix_ns DESC);
 CREATE INDEX IF NOT EXISTS idx_recent_logins_ts
     ON recent_logins(ts_unix_ns);
 `
+
+// recentLoginMigrations is the schema history. v1 is the original
+// baseline (pre-tenant shape); v2 backfills tenant_id onto a
+// pre-existing database — SQLite has no ADD COLUMN IF NOT EXISTS, so
+// the Func checks first — and swaps the subject index for the
+// tenant-scoped one. A fresh database already has both from the v1
+// baseline DDL above and skips the adds.
+var recentLoginMigrations = []migrate.Migration{
+	{Version: 1, Name: "baseline", SQL: recentLoginSchema},
+	{Version: 2, Name: "tenant_dimension", Func: addRecentLoginTenantID},
+}
+
+// addRecentLoginTenantID migrates a pre-tenant recent_logins table:
+// adds the tenant_id column when missing and replaces the
+// cross-tenant subject index with the (tenant_id, subject_id, ts)
+// index.
+func addRecentLoginTenantID(ctx context.Context, x migrate.Execer) error {
+	has, err := recentLoginColumnExists(ctx, x, "tenant_id")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err := x.ExecContext(ctx,
+			`ALTER TABLE recent_logins ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	// The old cross-tenant index would shadow the new one for the
+	// tenant-less partition; drop it when present.
+	if _, err := x.ExecContext(ctx,
+		`DROP INDEX IF EXISTS idx_recent_logins_subject_ts`); err != nil {
+		return err
+	}
+	_, err = x.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS idx_recent_logins_tenant_subject_ts
+		 ON recent_logins(tenant_id, subject_id, ts_unix_ns DESC)`)
+	return err
+}
+
+// recentLoginColumnExists reports whether a column is present on
+// recent_logins (SQLite PRAGMA introspection).
+func recentLoginColumnExists(ctx context.Context, x migrate.Execer, column string) (bool, error) {
+	rows, err := x.QueryContext(ctx, `PRAGMA table_info(recent_logins)`)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notNull   int
+			dfltValue any
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
 
 // RecentLoginStore is the SQLite-backed [anomaly.RecentLoginStore].
 // Cluster-shared: detectors on replica B see entries appended by
@@ -59,7 +126,7 @@ func NewRecentLoginStore(dsn string) (*RecentLoginStore, error) {
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
 	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
-	if err := ensureSchema(db, "recent_login", recentLoginSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "recent_login", recentLoginMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate recent_logins: %w", err)
 	}
@@ -69,7 +136,7 @@ func NewRecentLoginStore(dsn string) (*RecentLoginStore, error) {
 // NewRecentLoginStoreWithDB wraps an existing *sql.DB. Caller owns
 // the connection lifecycle.
 func NewRecentLoginStoreWithDB(db *sql.DB) (*RecentLoginStore, error) {
-	if err := ensureSchema(db, "recent_login", recentLoginSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "recent_login", recentLoginMigrations); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate recent_logins: %w", err)
 	}
 	return &RecentLoginStore{db: db}, nil
@@ -105,11 +172,11 @@ func (s *RecentLoginStore) Append(ctx context.Context, entry *anomaly.LoginEntry
 	}
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO recent_logins (
-            subject_id, client_id, outcome,
+            tenant_id, subject_id, client_id, outcome,
             ip_hash, country_code, latitude, longitude,
             ua_fingerprint_hash, ts_unix_ns
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		entry.SubjectID, entry.ClientID, entry.Outcome,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		entry.TenantID, entry.SubjectID, entry.ClientID, entry.Outcome,
 		entry.IPHash, entry.CountryCode, entry.Latitude, entry.Longitude,
 		entry.UAFingerprintHash, entry.Timestamp.UnixNano(),
 	)
@@ -119,10 +186,10 @@ func (s *RecentLoginStore) Append(ctx context.Context, entry *anomaly.LoginEntry
 	return nil
 }
 
-// Recent returns up to limit most-recent entries for subjectID
-// newer than since. Backend cap = 100 when limit <= 0 (matches the
-// SPI contract).
-func (s *RecentLoginStore) Recent(ctx context.Context, subjectID string, since time.Time, limit int) ([]*anomaly.LoginEntry, error) {
+// Recent returns up to limit most-recent entries for subjectID within
+// tenantID, newer than since. Backend cap = 100 when limit <= 0
+// (matches the SPI contract).
+func (s *RecentLoginStore) Recent(ctx context.Context, tenantID, subjectID string, since time.Time, limit int) ([]*anomaly.LoginEntry, error) {
 	if subjectID == "" {
 		return nil, nil
 	}
@@ -131,12 +198,12 @@ func (s *RecentLoginStore) Recent(ctx context.Context, subjectID string, since t
 	}
 	var args []any
 	query := `
-        SELECT subject_id, client_id, outcome,
+        SELECT tenant_id, subject_id, client_id, outcome,
                ip_hash, country_code, latitude, longitude,
                ua_fingerprint_hash, ts_unix_ns
           FROM recent_logins
-         WHERE subject_id = ?`
-	args = append(args, subjectID)
+         WHERE tenant_id = ? AND subject_id = ?`
+	args = append(args, tenantID, subjectID)
 	if !since.IsZero() {
 		query += ` AND ts_unix_ns >= ?`
 		args = append(args, since.UnixNano())
@@ -156,7 +223,7 @@ func (s *RecentLoginStore) Recent(ctx context.Context, subjectID string, since t
 			tsNs int64
 		)
 		if err := rows.Scan(
-			&e.SubjectID, &e.ClientID, &e.Outcome,
+			&e.TenantID, &e.SubjectID, &e.ClientID, &e.Outcome,
 			&e.IPHash, &e.CountryCode, &e.Latitude, &e.Longitude,
 			&e.UAFingerprintHash, &tsNs,
 		); err != nil {

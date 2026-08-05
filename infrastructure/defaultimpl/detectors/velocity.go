@@ -113,7 +113,7 @@ func (d *VelocityDetector) Inspect(ctx context.Context, event *anomaly.LoginEven
 	}
 	// Earliest cutoff = whichever window is in play.
 	dayCutoff := event.Timestamp.Add(-24 * time.Hour)
-	entries, err := d.store.Recent(ctx, event.SubjectID, dayCutoff, d.readLimit)
+	entries, err := d.store.Recent(ctx, event.TenantID, event.SubjectID, dayCutoff, d.readLimit)
 	if err != nil {
 		return nil, fmt.Errorf("anomaly/velocity: lookup: %w", err)
 	}

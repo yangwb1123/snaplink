@@ -13,11 +13,11 @@ func TestMemoryIPFailureCounter_RecordCountRoundtrip(t *testing.T) {
 	c := defaultimpl.NewMemoryIPFailureCounter()
 	ctx := context.Background()
 	now := time.Now()
-	_ = c.Record(ctx, "ip1", "alice", now.Add(-10*time.Second))
-	_ = c.Record(ctx, "ip1", "bob", now.Add(-5*time.Second))
-	_ = c.Record(ctx, "ip1", "alice", now.Add(-3*time.Second))
+	_ = c.Record(ctx, "", "ip1", "alice", now.Add(-10*time.Second))
+	_ = c.Record(ctx, "", "ip1", "bob", now.Add(-5*time.Second))
+	_ = c.Record(ctx, "", "ip1", "alice", now.Add(-3*time.Second))
 
-	total, distinct, err := c.Count(ctx, "ip1", time.Time{})
+	total, distinct, err := c.Count(ctx, "", "ip1", time.Time{})
 	if err != nil {
 		t.Fatalf("Count: %v", err)
 	}
@@ -29,10 +29,10 @@ func TestMemoryIPFailureCounter_RecordCountRoundtrip(t *testing.T) {
 func TestMemoryIPFailureCounter_RecordEmptyIPNoop(t *testing.T) {
 	t.Parallel()
 	c := defaultimpl.NewMemoryIPFailureCounter()
-	if err := c.Record(context.Background(), "", "alice", time.Now()); err != nil {
+	if err := c.Record(context.Background(), "", "", "alice", time.Now()); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
-	total, _, _ := c.Count(context.Background(), "", time.Time{})
+	total, _, _ := c.Count(context.Background(), "", "", time.Time{})
 	if total != 0 {
 		t.Errorf("empty IP total: %d, want 0", total)
 	}
@@ -42,10 +42,10 @@ func TestMemoryIPFailureCounter_CountRespectsSince(t *testing.T) {
 	t.Parallel()
 	c := defaultimpl.NewMemoryIPFailureCounter()
 	now := time.Now()
-	_ = c.Record(context.Background(), "ip1", "alice", now.Add(-1*time.Hour))
-	_ = c.Record(context.Background(), "ip1", "bob", now.Add(-1*time.Minute))
+	_ = c.Record(context.Background(), "", "ip1", "alice", now.Add(-1*time.Hour))
+	_ = c.Record(context.Background(), "", "ip1", "bob", now.Add(-1*time.Minute))
 
-	total, distinct, _ := c.Count(context.Background(), "ip1", now.Add(-10*time.Minute))
+	total, distinct, _ := c.Count(context.Background(), "", "ip1", now.Add(-10*time.Minute))
 	if total != 1 || distinct != 1 {
 		t.Errorf("since filter: total=%d distinct=%d, want 1,1", total, distinct)
 	}
@@ -55,9 +55,9 @@ func TestMemoryIPFailureCounter_EmptySubjectNotInDistinct(t *testing.T) {
 	t.Parallel()
 	c := defaultimpl.NewMemoryIPFailureCounter()
 	now := time.Now()
-	_ = c.Record(context.Background(), "ip1", "", now.Add(-1*time.Minute))
-	_ = c.Record(context.Background(), "ip1", "alice", now)
-	total, distinct, _ := c.Count(context.Background(), "ip1", time.Time{})
+	_ = c.Record(context.Background(), "", "ip1", "", now.Add(-1*time.Minute))
+	_ = c.Record(context.Background(), "", "ip1", "alice", now)
+	total, distinct, _ := c.Count(context.Background(), "", "ip1", time.Time{})
 	if total != 2 {
 		t.Errorf("total = %d, want 2", total)
 	}
@@ -70,9 +70,9 @@ func TestMemoryIPFailureCounter_PruneOlder(t *testing.T) {
 	t.Parallel()
 	c := defaultimpl.NewMemoryIPFailureCounter()
 	now := time.Now()
-	_ = c.Record(context.Background(), "ip1", "alice", now.Add(-2*time.Hour))
-	_ = c.Record(context.Background(), "ip1", "bob", now.Add(-1*time.Minute))
-	_ = c.Record(context.Background(), "ip2", "charlie", now.Add(-3*time.Hour))
+	_ = c.Record(context.Background(), "", "ip1", "alice", now.Add(-2*time.Hour))
+	_ = c.Record(context.Background(), "", "ip1", "bob", now.Add(-1*time.Minute))
+	_ = c.Record(context.Background(), "", "ip2", "charlie", now.Add(-3*time.Hour))
 
 	deleted, err := c.PruneOlder(context.Background(), now.Add(-1*time.Hour))
 	if err != nil {
@@ -81,11 +81,11 @@ func TestMemoryIPFailureCounter_PruneOlder(t *testing.T) {
 	if deleted != 2 {
 		t.Errorf("deleted = %d, want 2", deleted)
 	}
-	total, _, _ := c.Count(context.Background(), "ip1", time.Time{})
+	total, _, _ := c.Count(context.Background(), "", "ip1", time.Time{})
 	if total != 1 {
 		t.Errorf("ip1 post-prune total = %d, want 1", total)
 	}
-	total2, _, _ := c.Count(context.Background(), "ip2", time.Time{})
+	total2, _, _ := c.Count(context.Background(), "", "ip2", time.Time{})
 	if total2 != 0 {
 		t.Errorf("ip2 should be cleaned: %d entries", total2)
 	}
@@ -94,9 +94,40 @@ func TestMemoryIPFailureCounter_PruneOlder(t *testing.T) {
 func TestMemoryIPFailureCounter_PruneZeroNoop(t *testing.T) {
 	t.Parallel()
 	c := defaultimpl.NewMemoryIPFailureCounter()
-	_ = c.Record(context.Background(), "ip1", "alice", time.Now())
+	_ = c.Record(context.Background(), "", "ip1", "alice", time.Now())
 	deleted, _ := c.PruneOlder(context.Background(), time.Time{})
 	if deleted != 0 {
 		t.Errorf("zero cutoff: %d, want 0", deleted)
+	}
+}
+
+// TestMemoryIPFailureCounter_TenantIsolation pins the composite-key
+// contract: the same ipHash across tenants produces independent counts.
+func TestMemoryIPFailureCounter_TenantIsolation(t *testing.T) {
+	c := defaultimpl.NewMemoryIPFailureCounter()
+	ctx := context.Background()
+	now := time.Now()
+	for _, r := range []struct{ tenant, ip, subject string }{
+		{"t1", "hash-a", "alice"},
+		{"t1", "hash-a", "bob"},
+		{"t2", "hash-a", "alice"},
+	} {
+		if err := c.Record(ctx, r.tenant, r.ip, r.subject, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	total, distinct, err := c.Count(ctx, "t1", "hash-a", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || distinct != 2 {
+		t.Errorf("t1 count = (%d, %d), want (2, 2) — no t2 leakage", total, distinct)
+	}
+	total, distinct, err = c.Count(ctx, "t2", "hash-a", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || distinct != 1 {
+		t.Errorf("t2 count = (%d, %d), want (1, 1)", total, distinct)
 	}
 }

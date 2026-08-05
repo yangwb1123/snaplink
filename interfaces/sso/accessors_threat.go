@@ -120,12 +120,33 @@ func WithThreatPolicyStore(store threataction.ThreatPolicyStore) Option {
 // token-anomaly signals into security actions (session suspension, token
 // family revocation, MFA step-up).
 //
+// Threat execution is tenant-scoped by the signal's TenantID: the
+// anomaly.Runner refuses to execute a threat whose signal carries no
+// tenant (warn log + metric), because the executors act on SubjectID
+// with no tenant predicate of their own — a tenant-less signal must
+// never act on an ambiguous subject.
+//
 // When set, the anomaly.Runner (if wired via [WithAnomalyRunner]) and the
 // tokenanomaly.Detector (if wired via [WithTokenAnomalyDetector]) each call
 // executor.Execute for every detected signal/finding. Nil (default) = no-op,
 // byte-identical to current behavior.
 func WithThreatExecutor(exec threataction.ThreatExecutor) Option {
 	return func(s *Server) { s.threatExecutor = exec }
+}
+
+// resolveTenantID resolves a client's tenant for anomaly dispatch.
+// Best-effort: unknown/disabled clients and store errors yield empty
+// tenant (the anomaly still dispatches tenant-less — fail-open,
+// consistent with the runner's non-blocking contract).
+func (s *Server) resolveTenantID(ctx HandlerContext, clientID string) string {
+	if clientID == "" || s.clientStore == nil {
+		return ""
+	}
+	client, err := s.clientStore.Get(ctx.Request().Context(), clientID)
+	if err != nil || client == nil {
+		return ""
+	}
+	return client.TenantID
 }
 
 // --- RFC 8693 token-exchange delegation-chain wiring ---

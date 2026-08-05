@@ -302,7 +302,7 @@ func TestImpossibleTravel_AppendsEvenWhenNoAnomaly(t *testing.T) {
 		Timestamp: now,
 		Geo:       &geo.GeoInfo{Latitude: sfo.lat, Longitude: sfo.lon, CountryCode: "US"},
 	})
-	got, _ := store.Recent(ctx, "alice", time.Time{}, 0)
+	got, _ := store.Recent(ctx, "", "alice", time.Time{}, 0)
 	if len(got) != 1 {
 		t.Errorf("Inspect should append: %d entries, want 1", len(got))
 	}

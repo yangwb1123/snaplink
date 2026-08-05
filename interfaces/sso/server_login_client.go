@@ -326,6 +326,7 @@ func (s *Server) buildTrustSignals(ctx HandlerContext, result *AuthResult, clien
 		hints[trustHintDeviceID] = fp
 	}
 	return trust.TrustSignals{
+		TenantID:    client.TenantID,
 		RemoteIP:    audit.ClientIP(ctx.Request()),
 		Geo:         geoInfo,
 		UserID:      result.UserID,
@@ -337,8 +338,7 @@ func (s *Server) buildTrustSignals(ctx HandlerContext, result *AuthResult, clien
 	}
 }
 
-// trustHintUserAgent / trustHintDeviceID key the free-form
-// trust.TrustSignals.DeviceHints map this login wiring populates.
+// trustHintUserAgent / trustHintDeviceID key TrustSignals.DeviceHints.
 const (
 	trustHintUserAgent = "user_agent"
 	trustHintDeviceID  = "device_id"

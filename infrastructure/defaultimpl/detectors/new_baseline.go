@@ -112,7 +112,7 @@ func (d *NewDeviceDetector) Inspect(ctx context.Context, event *anomaly.LoginEve
 		return nil, nil
 	}
 	since := event.Timestamp.Add(-d.baselineWindow)
-	entries, err := d.store.Recent(ctx, event.SubjectID, since, 0)
+	entries, err := d.store.Recent(ctx, event.TenantID, event.SubjectID, since, 0)
 	if err != nil {
 		return nil, fmt.Errorf("anomaly/new_device: lookup: %w", err)
 	}
@@ -207,7 +207,7 @@ func (d *NewCountryDetector) Inspect(ctx context.Context, event *anomaly.LoginEv
 		return nil, nil
 	}
 	since := event.Timestamp.Add(-d.baselineWindow)
-	entries, err := d.store.Recent(ctx, event.SubjectID, since, 0)
+	entries, err := d.store.Recent(ctx, event.TenantID, event.SubjectID, since, 0)
 	if err != nil {
 		return nil, fmt.Errorf("anomaly/new_country: lookup: %w", err)
 	}

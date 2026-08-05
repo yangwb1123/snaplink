@@ -58,6 +58,11 @@ type Detector interface {
 // Built at /auth/login terminus + handed to the Runner
 // via a bounded queue.
 type LoginEvent struct {
+	// TenantID is the tenant the login attempt belongs to (client's
+	// tenant). Empty = tenant-less/legacy embedder; detectors skip
+	// tenant-scoped checks exactly as they do for empty SubjectID.
+	TenantID string
+
 	// SubjectID is the user resolved by the authenticator on success,
 	// or the attempted identifier (username / phone / email) on
 	// failure. Detectors comparing across success+failure use this
@@ -136,6 +141,11 @@ type Signal struct {
 	// it (e.g. brute-force shadow that recognizes the attacker as
 	// "scanning user X").
 	SubjectID string
+
+	// TenantID is the tenant the anomaly applies to. The runner
+	// backfills it from LoginEvent.TenantID when a detector leaves
+	// it empty; threat execution is tenant-scoped by this value.
+	TenantID string
 }
 
 // Severity ∈ {info, warn, critical}. Wire string.

@@ -25,8 +25,9 @@ const (
 type LoginHistoryLookup interface {
 	// History returns up to limit of subjectID's most recent successful
 	// login timestamps, newest first. An empty (not error) result means "no
-	// history" — a brand-new subject.
-	History(ctx context.Context, subjectID string, limit int) ([]time.Time, error)
+	// history" — a brand-new subject. tenantID scopes the lookup to one
+	// tenant's partition; empty = tenant-less.
+	History(ctx context.Context, tenantID, subjectID string, limit int) ([]time.Time, error)
 }
 
 // BehaviorScorer scores trust from a simple time-of-day baseline: has this
@@ -53,7 +54,7 @@ func (s *BehaviorScorer) Score(ctx context.Context, signals TrustSignals) (Trust
 	if s.History == nil || signals.UserID == "" {
 		return TrustScore{Value: behaviorScoreNoSignal, Reasons: []string{"behavior:no_signal"}}, nil
 	}
-	hist, err := s.History.History(ctx, signals.UserID, s.historyLimit())
+	hist, err := s.History.History(ctx, signals.TenantID, signals.UserID, s.historyLimit())
 	if err != nil {
 		return TrustScore{}, err
 	}
@@ -105,16 +106,22 @@ func NewMemoryLoginHistory() *MemoryLoginHistory {
 
 // Record prepends at to subjectID's history (newest-first).
 func (m *MemoryLoginHistory) Record(subjectID string, at time.Time) {
+	m.RecordTenant("", subjectID, at)
+}
+
+// RecordTenant records a login under (tenantID, subjectID).
+func (m *MemoryLoginHistory) RecordTenant(tenantID, subjectID string, at time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.logs[subjectID] = append([]time.Time{at}, m.logs[subjectID]...)
+	key := tenantID + "\x00" + subjectID
+	m.logs[key] = append([]time.Time{at}, m.logs[key]...)
 }
 
 // History implements LoginHistoryLookup.
-func (m *MemoryLoginHistory) History(_ context.Context, subjectID string, limit int) ([]time.Time, error) {
+func (m *MemoryLoginHistory) History(_ context.Context, tenantID, subjectID string, limit int) ([]time.Time, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	all := m.logs[subjectID]
+	all := m.logs[tenantID+"\x00"+subjectID]
 	if limit > 0 && len(all) > limit {
 		all = all[:limit]
 	}

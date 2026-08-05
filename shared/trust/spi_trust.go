@@ -64,6 +64,11 @@ type TrustSignals struct {
 	// deterministic.
 	Time time.Time
 
+	// TenantID scopes the history/IP lookups to one tenant's partition
+	// (the same partition the anomaly stores write under). Empty =
+	// tenant-less deployment; lookups read the tenant-less partition.
+	TenantID string
+
 	// AMR / ACR mirror the RFC 8176 / RFC 9068 values already computed for
 	// this authentication event (AGENTS.md "RFC 9068 Claims").
 	AMR []string

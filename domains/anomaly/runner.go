@@ -212,6 +212,12 @@ func (r *Runner) inspect(event *LoginEvent) {
 			continue
 		}
 		for _, a := range anomalies {
+			// Tenant backfill: a detector that leaves the signal's
+			// tenant empty inherits the event's (mirror of the
+			// SubjectID fallback the sink performs).
+			if a.TenantID == "" {
+				a.TenantID = event.TenantID
+			}
 			if r.sink != nil {
 				if sinkErr := r.sink.Record(ctx, event, a); sinkErr != nil {
 					r.logger.Error("anomaly sink record failed",
@@ -220,24 +226,7 @@ func (r *Runner) inspect(event *LoginEvent) {
 			}
 			r.recordDetected(a.Type, string(a.Severity))
 
-			// Threat executor: convert Signal → Threat and dispatch
-			// off-path. Fail-open: errors are logged but never
-			// propagate to the login response.
-			if r.threatExec != nil {
-				threat := threataction.Threat{
-					Type:      a.Type,
-					Severity:  string(a.Severity),
-					SubjectID: a.SubjectID,
-					ClientID:  event.ClientID,
-					Evidence:  a.Evidence,
-					TraceID:   event.TraceID,
-				}
-				if _, err := r.threatExec.Execute(ctx, threat, threataction.ThreatPolicy{}); err != nil {
-					r.logger.Error("threat executor failed",
-						"executor", r.threatExec.Name(),
-						"type", a.Type, "subject", a.SubjectID, "error", err)
-				}
-			}
+			r.dispatchThreat(ctx, event, a)
 		}
 	}
 }
@@ -246,10 +235,11 @@ func (r *Runner) inspect(event *LoginEvent) {
 // wires metrics.Metrics via WithAnomalyMetrics. Nil-safe; detectors
 // run regardless.
 type metricsCallbacks struct {
-	dispatched   func()
-	dropped      func(reason string)
-	detected     func(anomalyType, severity string)
-	inspectError func(detector string)
+	dispatched    func()
+	dropped       func(reason string)
+	detected      func(anomalyType, severity string)
+	inspectError  func(detector string)
+	threatRefused func(anomalyType, reason string)
 }
 
 func (r *Runner) recordDispatched() {
@@ -274,5 +264,49 @@ func (r *Runner) recordDetected(anomalyType, severity string) {
 func (r *Runner) recordInspectError(detector string) {
 	if r.metrics != nil && r.metrics.inspectError != nil {
 		r.metrics.inspectError(detector)
+	}
+}
+
+// dispatchThreat converts Signal → Threat and dispatches off-path.
+// Fail-open: errors are logged but never propagate to the login response.
+// Guard truth table (design, SEC-F3): execute ⟺ event.TenantID != ""
+// ∧ a.TenantID == event.TenantID (post-backfill). A refused signal still
+// reaches the sink — the guard gates the RESPONSE, never the report.
+// Executors are subject-scoped with no tenant predicate of their own, so
+// a label-integrity guard is the only tenant control this layer provides.
+func (r *Runner) dispatchThreat(ctx context.Context, event *LoginEvent, a Signal) {
+	if r.threatExec == nil {
+		return
+	}
+	if event.TenantID == "" || a.TenantID != event.TenantID {
+		reason := "tenant_mismatch"
+		if event.TenantID == "" {
+			reason = "empty_tenant"
+		}
+		r.logger.Error("anomaly threat execution refused",
+			"reason", reason, "type", a.Type, "subject", a.SubjectID,
+			"event_tenant", event.TenantID, "signal_tenant", a.TenantID)
+		r.recordThreatRefused(a.Type, reason)
+		return
+	}
+	threat := threataction.Threat{
+		Type:      a.Type,
+		Severity:  string(a.Severity),
+		SubjectID: a.SubjectID,
+		ClientID:  event.ClientID,
+		TenantID:  a.TenantID,
+		Evidence:  a.Evidence,
+		TraceID:   event.TraceID,
+	}
+	if _, err := r.threatExec.Execute(ctx, threat, threataction.ThreatPolicy{}); err != nil {
+		r.logger.Error("threat executor failed",
+			"executor", r.threatExec.Name(),
+			"type", a.Type, "subject", a.SubjectID, "error", err)
+	}
+}
+
+func (r *Runner) recordThreatRefused(anomalyType, reason string) {
+	if r.metrics != nil && r.metrics.threatRefused != nil {
+		r.metrics.threatRefused(anomalyType, reason)
 	}
 }

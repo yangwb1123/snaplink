@@ -340,13 +340,13 @@ func TestIPFailureCounter_RecordCountPruneOlder(t *testing.T) {
 	ctx := context.Background()
 
 	base := time.Now()
-	_ = c.Record(ctx, "iphash", "alice", base.Add(-2*time.Minute))
-	_ = c.Record(ctx, "iphash", "bob", base.Add(-time.Minute))
-	if err := c.Record(ctx, "", "x", base); err != nil { // empty ip = no-op
+	_ = c.Record(ctx, "", "iphash", "alice", base.Add(-2*time.Minute))
+	_ = c.Record(ctx, "", "iphash", "bob", base.Add(-time.Minute))
+	if err := c.Record(ctx, "", "", "x", base); err != nil { // empty ip = no-op
 		t.Errorf("Record empty ip: %v", err)
 	}
 
-	total, distinct, err := c.Count(ctx, "iphash", base.Add(-time.Hour))
+	total, distinct, err := c.Count(ctx, "", "iphash", base.Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("Count: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestIPFailureCounter_RecordCountPruneOlder(t *testing.T) {
 	if n != 2 {
 		t.Errorf("PruneOlder removed %d, want 2", n)
 	}
-	total, _, _ = c.Count(ctx, "iphash", time.Time{})
+	total, _, _ = c.Count(ctx, "", "iphash", time.Time{})
 	if total != 0 {
 		t.Errorf("post-prune total = %d, want 0", total)
 	}

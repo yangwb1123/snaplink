@@ -32,18 +32,20 @@ import (
 //     (no per-subject history needed) or new-device-only (no IP
 //     counter needed). Splitting lets either go unwired.
 type IPFailureCounter interface {
-	// Record persists one failed login attempt for (ipHash, subjectID).
-	// Empty ipHash → no-op (anonymous-IP failures can't be aggregated).
-	// Empty subjectID is permitted (failed authn before user
-	// resolution); the counter still bumps for ipHash, just without
-	// contributing to the distinct-subject count.
-	Record(ctx context.Context, ipHash, subjectID string, ts time.Time) error
+	// Record persists one failed login attempt for
+	// (tenantID, ipHash, subjectID). Empty ipHash → no-op
+	// (anonymous-IP failures can't be aggregated). Empty subjectID
+	// is permitted (failed authn before user resolution); the
+	// counter still bumps for ipHash, just without contributing to
+	// the distinct-subject count. Empty tenantID scopes to the
+	// tenant-less partition.
+	Record(ctx context.Context, tenantID, ipHash, subjectID string, ts time.Time) error
 
 	// Count returns (total failures, distinct subjects) for ipHash
-	// across attempts newer than `since`. Both signals matter:
-	// total = "how loud is this IP"; distinct = "is this targeted
-	// at one user or a sprayed list?"
-	Count(ctx context.Context, ipHash string, since time.Time) (total int, distinct int, err error)
+	// within tenantID across attempts newer than `since`. Both
+	// signals matter: total = "how loud is this IP"; distinct =
+	// "is this targeted at one user or a sprayed list?"
+	Count(ctx context.Context, tenantID, ipHash string, since time.Time) (total int, distinct int, err error)
 
 	// PruneOlder removes entries older than cutoff. Mirrors
 	// RecentLoginStore.PruneOlder; operator wires from a retention

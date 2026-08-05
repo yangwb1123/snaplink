@@ -32,7 +32,7 @@ type IPFailureLookup interface {
 	// (distinct), for attempts at or after since. Implementations own
 	// whatever hashing/normalization they apply to ip before querying their
 	// store — this interface only sees the raw value TrustSignals carries.
-	CountFailures(ctx context.Context, ip string, since time.Time) (total, distinct int, err error)
+	CountFailures(ctx context.Context, tenantID, ip string, since time.Time) (total, distinct int, err error)
 }
 
 // IPReputationScorer scores trust from recent login-failure volume observed
@@ -66,7 +66,7 @@ func (s *IPReputationScorer) Score(ctx context.Context, signals TrustSignals) (T
 		return TrustScore{Value: ipRepScoreNoSignal, Reasons: []string{"ip_reputation:no_signal"}}, nil
 	}
 	since := s.observationStart(signals.Time)
-	total, distinct, err := s.Lookup.CountFailures(ctx, signals.RemoteIP, since)
+	total, distinct, err := s.Lookup.CountFailures(ctx, signals.TenantID, signals.RemoteIP, since)
 	if err != nil {
 		return TrustScore{}, err
 	}
@@ -130,7 +130,7 @@ func (m *MemoryIPFailureLookup) Record(ip, subjectID string, at time.Time) {
 }
 
 // CountFailures implements IPFailureLookup.
-func (m *MemoryIPFailureLookup) CountFailures(_ context.Context, ip string, since time.Time) (int, int, error) {
+func (m *MemoryIPFailureLookup) CountFailures(_ context.Context, tenantID, ip string, since time.Time) (int, int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	seen := map[string]bool{}

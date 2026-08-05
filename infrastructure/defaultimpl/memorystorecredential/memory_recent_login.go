@@ -64,24 +64,25 @@ func (s *MemoryRecentLoginStore) Append(_ context.Context, entry *anomaly.LoginE
 	// Defensive copy so the caller mutating the entry after Append
 	// doesn't reach into the stored buffer.
 	cp := *entry
-	bucket := s.entries[entry.SubjectID]
+	key := recentLoginKey(entry.TenantID, entry.SubjectID)
+	bucket := s.entries[key]
 	bucket = append(bucket, &cp)
 	// Cap the ring — keep the newest perSubjectMaxSize entries.
 	if len(bucket) > s.perSubjectMaxSize {
 		bucket = bucket[len(bucket)-s.perSubjectMaxSize:]
 	}
-	s.entries[entry.SubjectID] = bucket
+	s.entries[key] = bucket
 	return nil
 }
 
-// Recent returns up to limit most-recent entries newer than since,
-// ordered newest-first.
-func (s *MemoryRecentLoginStore) Recent(_ context.Context, subjectID string, since time.Time, limit int) ([]*anomaly.LoginEntry, error) {
+// Recent returns up to limit most-recent entries for subjectID within
+// tenantID, newer than since, ordered newest-first.
+func (s *MemoryRecentLoginStore) Recent(_ context.Context, tenantID, subjectID string, since time.Time, limit int) ([]*anomaly.LoginEntry, error) {
 	if subjectID == "" {
 		return nil, nil
 	}
 	s.mu.Lock()
-	bucket := s.entries[subjectID]
+	bucket := s.entries[recentLoginKey(tenantID, subjectID)]
 	// Copy out under the lock — caller iterating shouldn't see
 	// concurrent Append mutations.
 	cp := make([]*anomaly.LoginEntry, 0, len(bucket))
@@ -101,6 +102,12 @@ func (s *MemoryRecentLoginStore) Recent(_ context.Context, subjectID string, sin
 		cp = cp[:limit]
 	}
 	return cp, nil
+}
+
+// recentLoginKey partitions by (tenant, subject) so same-name
+// subjects in different tenants never share a bucket.
+func recentLoginKey(tenantID, subjectID string) string {
+	return tenantID + "\x00" + subjectID
 }
 
 // PruneOlder removes entries with Timestamp < cutoff across every

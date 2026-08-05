@@ -27,25 +27,28 @@ func NewMemoryIPFailureCounter() *MemoryIPFailureCounter {
 	return &MemoryIPFailureCounter{entries: make(map[string][]ipFailEntry)}
 }
 
-// Record appends a failure entry for ipHash. Empty ipHash → no-op.
-func (m *MemoryIPFailureCounter) Record(_ context.Context, ipHash, subjectID string, ts time.Time) error {
+// Record appends a failure entry for (tenantID, ipHash). Empty ipHash
+// → no-op.
+func (m *MemoryIPFailureCounter) Record(_ context.Context, tenantID, ipHash, subjectID string, ts time.Time) error {
 	if ipHash == "" {
 		return nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.entries[ipHash] = append(m.entries[ipHash], ipFailEntry{subject: subjectID, ts: ts})
+	key := ipFailKey(tenantID, ipHash)
+	m.entries[key] = append(m.entries[key], ipFailEntry{subject: subjectID, ts: ts})
 	return nil
 }
 
-// Count returns (total, distinct subjects) for ipHash after since.
-func (m *MemoryIPFailureCounter) Count(_ context.Context, ipHash string, since time.Time) (int, int, error) {
+// Count returns (total, distinct subjects) for ipHash within tenantID
+// after since.
+func (m *MemoryIPFailureCounter) Count(_ context.Context, tenantID, ipHash string, since time.Time) (int, int, error) {
 	if ipHash == "" {
 		return 0, 0, nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	bucket := m.entries[ipHash]
+	bucket := m.entries[ipFailKey(tenantID, ipHash)]
 	total := 0
 	subjects := make(map[string]struct{}, len(bucket))
 	for _, e := range bucket {
@@ -58,6 +61,12 @@ func (m *MemoryIPFailureCounter) Count(_ context.Context, ipHash string, since t
 		}
 	}
 	return total, len(subjects), nil
+}
+
+// ipFailKey partitions by (tenant, ip) so one tenant's spray cannot
+// raise another tenant's brute-force counters.
+func ipFailKey(tenantID, ipHash string) string {
+	return tenantID + "\x00" + ipHash
 }
 
 // PruneOlder removes entries with ts < cutoff across all IPs.

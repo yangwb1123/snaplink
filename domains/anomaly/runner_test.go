@@ -330,7 +330,9 @@ func (r *recordingThreatExecutor) count() int {
 // TestAsyncAnomalyRunner_ThreatExecutorReceivesDetectedSignal proves the P0
 // wiring gap (WithThreatExecutor configured but never consulted) stays fixed:
 // a detected Signal MUST reach the wired ThreatExecutor.Execute, carrying the
-// event/signal fields the composite executor's policy matching depends on.
+// event/signal fields the composite executor's policy matching depends on —
+// including the tenant, which is required for execution (a tenant-less signal
+// is refused; see TestAsyncAnomalyRunner_TenantlessThreatRefused).
 func TestAsyncAnomalyRunner_ThreatExecutorReceivesDetectedSignal(t *testing.T) {
 	t.Parallel()
 	d := &recordingDetector{name: "d", cannedAnoms: []Signal{
@@ -341,18 +343,45 @@ func TestAsyncAnomalyRunner_ThreatExecutorReceivesDetectedSignal(t *testing.T) {
 	r.Start()
 	defer func() { _ = r.Close(context.Background()) }()
 
-	r.Dispatch(context.Background(), &LoginEvent{SubjectID: "alice", ClientID: "c1", TraceID: "trace-1"})
+	r.Dispatch(context.Background(), &LoginEvent{TenantID: "t1", SubjectID: "alice", ClientID: "c1", TraceID: "trace-1"})
 
 	waitFor(t, time.Second, func() bool { return exec.count() == 1 })
 	got := exec.seen[0]
 	if got.Type != "impossible_travel" || got.Severity != "critical" || got.SubjectID != "alice" {
 		t.Errorf("threat fields mismatch: %+v", got)
 	}
+	if got.TenantID != "t1" {
+		t.Errorf("threat should carry the event's tenant: %+v", got)
+	}
 	if got.ClientID != "c1" || got.TraceID != "trace-1" {
 		t.Errorf("threat should carry the event's ClientID/TraceID: %+v", got)
 	}
 	if got.Evidence["distance_km"] != "9001" {
 		t.Errorf("threat should carry the signal's Evidence: %+v", got)
+	}
+}
+
+// TestAsyncAnomalyRunner_TenantlessThreatRefused pins the tenant guard: a
+// signal with no tenant never reaches the executor (the executors act on
+// SubjectID with no tenant predicate of their own), so a tenant-less or
+// cross-tenant false positive cannot act on an ambiguous subject.
+func TestAsyncAnomalyRunner_TenantlessThreatRefused(t *testing.T) {
+	t.Parallel()
+	d := &recordingDetector{name: "d", cannedAnoms: []Signal{
+		{Type: "impossible_travel", Severity: SeverityWarn, SubjectID: "alice"},
+	}}
+	exec := &recordingThreatExecutor{}
+	r := NewRunner([]Detector{d}, nil, WithThreatExecutor(exec))
+	r.Start()
+	defer func() { _ = r.Close(context.Background()) }()
+
+	// Event without tenant: the signal is backfilled with empty tenant and
+	// execution must be refused (audit-only fallback).
+	r.Dispatch(context.Background(), &LoginEvent{SubjectID: "alice", ClientID: "c1"})
+
+	time.Sleep(100 * time.Millisecond)
+	if exec.count() != 0 {
+		t.Fatalf("tenant-less signal executed %d threats, want 0", exec.count())
 	}
 }
 

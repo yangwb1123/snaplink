@@ -285,7 +285,7 @@ func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reas
 	}
 	s.recordTenantLoginAttempt(ctx, clientID, "failure")
 	s.observeLoginDuration(ctx, provider, "failure")
-	s.dispatchLoginAnomaly(ctx, "", clientID, provider, "failure", reason)
+	s.dispatchLoginAnomaly(ctx, s.resolveTenantID(ctx, clientID), "", clientID, provider, "failure", reason)
 	if s.auditor == nil {
 		return
 	}
@@ -296,13 +296,16 @@ func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reas
 // Nil-safe — no runner = no-op zero overhead. SubjectID is
 // optional on failure paths (the credential validator may not
 // have resolved a user); detectors needing it skip the subject-
-// scoped checks.
-func (s *Server) dispatchLoginAnomaly(ctx HandlerContext, subjectID, clientID, provider, outcome, failureReason string) {
+// scoped checks. tenantID is the resolved client's tenant; empty on
+// tenant-less clients or when resolution failed (anomaly still
+// dispatched — fail-open).
+func (s *Server) dispatchLoginAnomaly(ctx HandlerContext, tenantID, subjectID, clientID, provider, outcome, failureReason string) {
 	if s.anomalyRunner == nil {
 		return
 	}
 	r := ctx.Request()
 	event := &anomaly.LoginEvent{
+		TenantID:      tenantID,
 		SubjectID:     subjectID,
 		ClientID:      clientID,
 		Provider:      provider,
@@ -337,7 +340,7 @@ func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, stra
 	s.recordTenantLoginAttempt(ctx, clientID, "success")
 	s.recordTenantTokenIssued(ctx, clientID, strategy)
 	s.observeLoginDuration(ctx, provider, "success")
-	s.dispatchLoginAnomaly(ctx, userID, clientID, provider, "success", "")
+	s.dispatchLoginAnomaly(ctx, s.resolveTenantID(ctx, clientID), userID, clientID, provider, "success", "")
 	if s.auditor == nil {
 		return
 	}

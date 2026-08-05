@@ -80,7 +80,7 @@ func TestBehaviorScorer_TypicalVsAtypicalHour(t *testing.T) {
 
 type erroringLoginHistory struct{ err error }
 
-func (e erroringLoginHistory) History(context.Context, string, int) ([]time.Time, error) {
+func (e erroringLoginHistory) History(context.Context, string, string, int) ([]time.Time, error) {
 	return nil, e.err
 }
 
@@ -105,7 +105,7 @@ func TestMemoryLoginHistory_LimitCapsResults(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		history.Record("alice", base.Add(time.Duration(i)*time.Hour))
 	}
-	got, err := history.History(context.Background(), "alice", 2)
+	got, err := history.History(context.Background(), "", "alice", 2)
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
