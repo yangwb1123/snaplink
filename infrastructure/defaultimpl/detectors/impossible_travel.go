@@ -25,7 +25,7 @@ import (
 // DetectorTypeImpossibleTravel is the wire-stable [anomaly.Signal.Type]
 // surfaced by [ImpossibleTravelDetector]. Operators alerting on this
 // detector branch on this string in their SIEM rules.
-const DetectorTypeImpossibleTravel = "impossible_travel"
+const DetectorTypeImpossibleTravel = anomaly.SignalTypeImpossibleTravel
 
 // MaxRealisticSpeedKmh is the speed ceiling above which two
 // consecutive logins are considered physically impossible. 800 km/h

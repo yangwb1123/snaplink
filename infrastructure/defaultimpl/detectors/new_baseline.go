@@ -10,11 +10,12 @@ import (
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
-// Wire-stable detector type identifiers. Operators alert on these
+// Wire-stable detector type identifiers, aliasing the domain-owned
+// constants (domains/anomaly/consts.go). Operators alert on these
 // strings in SIEM rules + metric labels.
 const (
-	DetectorTypeNewDevice  = "new_device"
-	DetectorTypeNewCountry = "new_country"
+	DetectorTypeNewDevice  = anomaly.SignalTypeNewDevice
+	DetectorTypeNewCountry = anomaly.SignalTypeNewCountry
 )
 
 // NewDeviceDetector flags a login from a UA fingerprint the subject

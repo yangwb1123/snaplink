@@ -13,7 +13,7 @@ import (
 
 // DetectorTypeBruteForceShadow is the wire-stable [anomaly.Signal.Type]
 // for the brute-force shadow detector.
-const DetectorTypeBruteForceShadow = "brute_force_shadow"
+const DetectorTypeBruteForceShadow = anomaly.SignalTypeBruteForceShadow
 
 // BruteForceShadowDetector catches the failure mode security.AccountLockout
 // CANNOT see by design: an attacker spraying credentials across N

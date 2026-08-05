@@ -258,6 +258,11 @@ func openIPFailureCounter(cfg config.AnomalyStoreConfig) (anomaly.IPFailureCount
 // buildAnomalyDetectors constructs the enabled detectors. Returns
 // empty slice when all detectors are disabled — caller treats this
 // as "subsystem inert" and skips runner creation.
+//
+// Order is load-bearing (see the runner package doc's detector
+// ordering contract): impossible-travel (the write-owner) is appended
+// first, then the read-only history consumers (velocity, new-device,
+// new-country).
 func buildAnomalyDetectors(cfg config.AnomalyDetectorsConfig, recent anomaly.RecentLoginStore, ipCounter anomaly.IPFailureCounter, ipSalt []byte) ([]anomaly.Detector, error) {
 	var built []anomaly.Detector
 	// Each builder returns (nil, nil) when its detector is disabled so the

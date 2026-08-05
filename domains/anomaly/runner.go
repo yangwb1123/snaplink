@@ -10,7 +10,17 @@
 // (success + failure) after the response is built, surface anomalies
 // via audit + metrics + webhook, and NEVER block login.
 //
-// Reference detectors ship in `github.com/yangwb1123/snaplink/infrastructure/defaultimpl/anomaly`.
+// Reference detectors ship in
+// `github.com/yangwb1123/snaplink/infrastructure/defaultimpl/detectors`.
+//
+// Detector ordering contract: detectors are processed in registration
+// order. Exactly one write-owning detector — the impossible-travel
+// detector — must be registered BEFORE any read-only history consumers
+// (velocity, new-baseline): impossible-travel owns the history writes
+// that the read-only consumers depend on. Omitting the write-owner
+// silently disables the read-only consumers (they see no history); this
+// is a documented composition constraint, not a runtime error, and
+// matches the fail-open/async philosophy of the subsystem.
 package anomaly
 
 import (

@@ -12,7 +12,7 @@ import (
 // DetectorTypeVelocity is the wire-stable [anomaly.Signal.Type]
 // surfaced by [VelocityDetector]. Used in SIEM rules + metric
 // labels; renaming silently breaks operator dashboards.
-const DetectorTypeVelocity = "velocity_burst"
+const DetectorTypeVelocity = anomaly.SignalTypeVelocity
 
 // VelocityDetector flags subjects whose login attempt rate in a
 // sliding window exceeds operator-configured thresholds. Catches:
