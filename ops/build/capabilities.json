@@ -156,6 +156,19 @@
       "sources": ["domains/tenant/commerce", "interfaces/commerce", "interfaces/ssoclient/quotaprojection", "infrastructure/postgres/tenantcommerce", "cmd/snaplink-billing"]
     },
     {
+      "id": "embedding.framework-routers",
+      "name": "Framework router embedding (gin/echo)",
+      "summary": "Mount the SSO server onto an embedder-owned gin.Engine or echo.Echo via sso.WithRouter; byte-normalized unmatched responses; contract in docs/adapters.md, reference usage in docs/examples/embed-*.",
+      "availability": ["sdk"],
+      "default_state": "enabled",
+      "feature_gate": null,
+      "required_stores": [],
+      "module_capabilities": [],
+      "config_keys": [],
+      "surfaces": ["Router SPI"],
+      "sources": ["interfaces/adapters"]
+    },
+    {
       "id": "federation.openid",
       "name": "OpenID Federation",
       "summary": "Federation entity, trust-chain resolution and home-realm discovery.",

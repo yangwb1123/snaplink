@@ -25,21 +25,25 @@ and the executable tests agree.
 **What.** Add one option to `test/testkit/testkit.go`:
 
 ```go
-// config gains one field
-type config struct {
-    issuerName   string
-    clientID     string
-    clientSecret string
-    scopes       []string
-    users        map[string]string // username -> password
-    usersAreDefault bool
-    router       sso.Router        // nil => sso default (NewStdRouter)
+// config gains these fields
+router       sso.Router        // nil => sso default (NewStdRouter)
+authCodes    bool              // wire a memory auth-code store
+refreshTokens bool             // wire a memory refresh store
+redirectURIs []string          // seeded on the harness client
 }
 
 func WithRouter(r sso.Router) Option {
     return func(c *config) { c.router = r }
 }
 ```
+
+`NewServer` (testkit.go:105-127) appends `sso.WithRouter(cfg.router)` to the
+option list **only when `cfg.router != nil`**, and wires the in-memory
+`defaultimpl.NewMemoryAuthCodeStore()` / `NewMemoryRefreshTokenStore()` by
+default (R1(b): the harness must run auth-code and refresh flows out of the
+box). `seedClient` sets a demo redirect URI (`http://localhost:9999/callback`,
+overridable via `WithRedirectURI`) so the `requestCode` shapes work verbatim.
+`LoginResult` omits `refresh_token`, so scenario 2 parses the raw login body.
 
 `NewServer` (testkit.go:105-127) appends `sso.WithRouter(cfg.router)` to the
 option list **only when `cfg.router != nil`**. Rationale:
@@ -104,13 +108,16 @@ placement alone: `test-e2e` runs `go test -race -count=1 ./test/...`
 **Scenario set** (one subtest per scenario × per backend, or one test with a
 backend loop — either shape, the per-backend isolation is the invariant):
 
-1. **Authorization code + PKCE full flow**: password login at `/auth/login`,
-   authorize via `/auth/callback`, exchange at `/token` with `code_verifier`;
-   assert `200` + valid tokens + `userinfo` round-trip. Reuse the request
-   shapes from `test/auth_code_test.go` (`requestCode`/`exchangeCode`).
+1. **Authorization code + PKCE full flow**: password login at
+   `/auth/login` issues the code directly (no callback leg), exchange at
+   `/token` with `code_verifier`; assert `200` + valid tokens + `userinfo`
+   round-trip. Reuse the request shapes from `test/auth_code_test.go`
+   (`requestCode`/`exchangeCode`).
 2. **Refresh rotation**: `grant_type=refresh_token` returns a new refresh
-   token; reusing the old one returns `400 invalid_grant` (family kill) —
-   asserted as status + error code equality across backends.
+   token (positive path asserted, W8); the rotated token works; reusing the
+   old one returns `400 invalid_grant` (family kill) — asserted as status +
+   error code equality across backends, with `Cache-Control: no-store` /
+   `Pragma: no-cache` on every backend (W8).
 3. **DPoP-bound token**: the DPoP auth-code shape from
    `test/dpop_authcode_test.go` (bound code + proof-of-possession at
    exchange; wrong-key rejected) driven against each backend's harness.
@@ -155,14 +162,16 @@ matrix enforces:
 **Concurrency subtest (the `-race` acceptance).** `TestRouterBackendMatrix_ConcurrentUse`:
 per backend, register a few routes, then run N goroutines — half issuing
 requests through `rt.ServeHTTP`, half calling `rt.Use(...)` — under `-race`.
-This is the tripwire the adapters' own comments demand ("a regression
-tripwire for reverting to request-time reads"). It is race-free **by
-construction**: adapter `Use` only appends to an adapter-local slice under
-mutex (gin/adapter.go:129-133, echo/adapter.go:153-157) and never mutates the
-engine, while request paths snapshot at registration — no engine route
-registration happens concurrently with serving. The subtest deliberately
-does **not** register routes concurrently (that would race inside gin/echo
-themselves, which is an embedder error, not an adapter contract).
+Every concurrent request is outcome-pinned (200 + expected body), workers
+report through an error channel (`t.Errorf`, never `t.Fatal`), and a
+post-loop assertion confirms a subsequently registered route still works
+(W6); no concurrent route registration (that would race inside gin/echo
+themselves, which is an embedder error, not an adapter contract). It is
+race-free **by construction**: adapter `Use` only appends to an
+adapter-local slice under mutex (gin/adapter.go:129-133,
+echo/adapter.go:153-157) and never mutates the engine, while request paths
+snapshot at registration. The tripwire found and fixed a real defect on the
+std side: `StdRouter.Use` was unsynchronized and now takes an RWMutex.
 
 **Budgets.** New file target ≈ 350-400 lines — under the 500-line gate.
 Crucially, **no new scenarios are added to
@@ -181,11 +190,12 @@ server mounts on it, and embedder business routes coexist on the same engine.
 
 ```go
 // embed-gin/main.go (shape)
-engine := gin.Default()                                  // embedder-owned engine
+engine := gin.New()                                  // embedder-owned engine (W3: NOT gin.Default())
 adapter := ginadapter.NewGinRouter(engine)               // public constructor, default wiring
-engine.GET("/hello", func(c *gin.Context) {              // embedder business route
+engine.GET("/hello", func(c *gin.Context) {          // embedder business route
     c.String(http.StatusOK, "hello from the embedder")
 })
+engine.GET("/boom", ...)                            // panicking route for the smoke (W3)
 srv := sso.NewServer(
     sso.WithRouter(adapter),                             // SSO mounts onto the SAME engine
     // ... minimal protocol wiring: issuer, user provider, client store,
@@ -317,7 +327,12 @@ row is added to the registry:
 ```
 
 then `python cli.py capabilities generate` and verify
-`python cli.py capabilities check` + `sdk-surface check` pass. Precedent for
+`python cli.py capabilities check` + `sdk-surface check` pass immediately
+(F3 — do not defer this to the end of the change). Precedent for an
+SPI-only surface: `storage.production` declares `"storage SPI"`; its
+`module_capabilities` are **non-empty** (`["storage.production.v1"]`), so
+validator strictness for a genuinely empty `[]` row is a real unknown — the
+post-generate `capabilities check` run is the arbiter.
 an SPI-only surface exists: `storage.production` declares `"storage SPI"`
 with empty module capabilities. The spec's "链接该契约文档与两个示例" is
 satisfied by (a) the `summary` naming `docs/adapters.md` content, and (b) a
@@ -348,7 +363,7 @@ updating docs/adapters.md §6 + the check together, which is the desired
 contract-change ceremony. Fail-closed: any parse failure of the scenario
 table (e.g., refactor) fails the check rather than silently passing.
 
-**Registration (all four surfaces):**
+**Registration (all five surfaces):**
 
 1. `cli.py`: `cmd_check_adapters()` + `COMMANDS["adapters"] = cmd_check_adapters`
    (cli.py:323) + the `__doc__` command index line — makes
@@ -360,10 +375,19 @@ table (e.g., refactor) fails the check rather than silently passing.
    (Purpose: adapters contract enforcement; Command: `adapters`,
    `make adapters-check`), a command-group mention, and a scope/limitation
    note (static scans are existence-level; behavior is covered by the
-   invoked Go tests).
+   invoked Go tests; the behavioral runs are `-race`-free — race coverage
+   lives in `make ci`'s `race` target and `make test-e2e`, W9b).
 4. `checks/test_adapters.py`: unit tests for the check's static parsers
    (pattern: `checks/test_route_contract.py`), discovered by
    `python cli.py check-test`.
+5. `.github/workflows/ci.yml`: a `make adapters-check` step after the
+   `go test -race` step (W5/H2) — GitHub Actions goes red on a deleted
+   routertest scenario or a lost testkit pass-through even though the
+   `go test` step cannot see either.
+
+Check (c) additionally asserts `test/router_backend_matrix_test.go`
+≤ 500 lines and each embed example dir ≤ 500 lines (W7), so the matrix
+cannot silently grow past its budget.
 
 **Regression-demo mapping (spec acceptance 3):** deleting `RegisterGated`
 from `gin/adapter.go` breaks `make ci` via `race` (conformance GateOff
@@ -394,7 +418,9 @@ artifact inventory:
   generated table is drift. `docs/adapters.md` is the single source of truth
   for the adapter contract, including the scenario inventory; the check
   (Decision 6) is the enforcement that declared and executable truth never
-  diverge.
+  diverge. The requirements file joins this store: its persisted acceptance
+  criterion was amended (R2/W2) in the same change as the matrix, so the
+  spec and the tests describe the same scoped contract.
 - **Artifact inventory** (what "the contract" durably consists of): the
   routertest suite (executable), the matrix e2e (executable, full-protocol),
   the embed examples + their smoke tests (executable usage), docs/adapters.md
@@ -414,9 +440,10 @@ artifact inventory:
 | 6 | routertest scenario removed or renamed | check (a) pinned-inventory mismatch → CI red | the spec's regression demo; intentional ceremony to change the contract |
 | 7 | Check static scans break on refactor (suite split into multiple files, test renames) | parse failure → check fails loudly (fail-closed) | fail-closed by design; `checks/test_adapters.py` pins parser behavior |
 | 8 | Capability row hand-edited in the generated matrix block | `capabilities check` drift detection | Decision 5: registry-only edits + regenerate |
-| 9 | `capabilities check` rejects an SPI-only row (no endpoints) | `capabilities check` fails at implementation time | follow the `storage.production` precedent exactly; fallback = hand-written row outside the generated block (weaker: no drift protection) — rejected unless the registry blocks SPI rows |
-| 10 | gin `Default()` Logger/Recovery middleware alters responses | — | Recovery writes a framework 500 only if it catches a panic; sso's `wrapPanicRecovery` always wraps outside the router (buildMiddlewareChain), so sso's recovery fires first; documented note in examples |
+| 9 | `capabilities check` rejects an SPI-only row (no endpoints) | `capabilities check` fails at implementation time | `storage.production` is the SPI-surface precedent; its `module_capabilities` are non-empty, so strictness for a `[]` row is a genuine unknown — verify `capabilities check` + `sdk-surface check` immediately after `generate`; fallback = hand-written row outside the generated block (weaker: no drift protection) — rejected unless the registry blocks SPI rows |
+| 10 | gin `Default()` Logger/Recovery middleware alters responses | matrix panic-route smoke (embed-gin, W3) fails | **Corrected (W3):** gin's `Recovery` is a defer INSIDE the engine chain; sso's `wrapPanicRecovery` wraps outermost; defer LIFO ⇒ gin's Recovery catches the panic first and writes a plain-text `500 Internal Server Error` (logging the stack + a request dump with only `Authorization` masked — Cookie/query, which carry `code`/`state`/`iss`, are unredacted). The examples therefore use `gin.New()` so the SDK's outer Recover produces the same normalized JSON as std/echo; `GIN_MODE=release` is documented in the example + docs/adapters.md §3 |
 | 11 | JSON serializer drift across backends (charset/newline changes) | matrix semantic-compare still passes (status/JSON value/prefix) | by design — byte-identity scope is the unmatched surface only; docs/adapters.md states it |
+| 12 | Requirements acceptance text vs tests disagree (byte-identity literal) | W2 amendment in the same change as the matrix; grep for the old literal | the persisted acceptance criterion is amended to the scoped contract (R2) and cross-refs docs/adapters.md §2, so declared spec and executable tests never diverge |
 
 ## What could break the design
 

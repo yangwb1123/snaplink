@@ -52,6 +52,7 @@ Generated from [`ops/build/capabilities.json`](../ops/build/capabilities.json); 
 | OpenID Connect CIBA (`ciba.core`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.ciba` | `CIBAStore` | `/backchannel-authentication`<br>`/token` |
 | Cluster and HA coordination (`cluster.ha`) | `sdk`<br>`stock-binary` | `disabled` | — | `cluster.Bus`<br>`shared durable stores` | `/readyz`<br>`cross-replica bus` |
 | Tenant commerce and billing (`commerce.tenant`) | `sdk`<br>`standalone-binary` | `conditional` | — | `commerce.Store`<br>`commerce.PaymentStore`<br>`commerce.RenewalStore` | `/api/v1/admin/commerce/*`<br>`/api/v1/commerce/*/payments/*`<br>`/readyz`<br>`/metrics` |
+| Framework router embedding (gin/echo) (`embedding.framework-routers`) | `sdk` | `enabled` | — | — | `Router SPI` |
 | OpenID Federation (`federation.openid`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.federation` | `FederationEntity` | `/.well-known/openid-federation*`<br>`/auth/home-realm` |
 | Admin console (`frontend.admin`) | `external-frontend` | `external` | — | — | `/admin/*` |
 | Developer portal (`frontend.developer`) | `external-frontend` | `external` | — | — | `/developer/*` |

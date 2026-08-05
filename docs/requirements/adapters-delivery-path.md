@@ -16,11 +16,11 @@
 
 **预期行为**：
 1. `test/testkit/testkit.go` 新增 `WithRouter(r sso.Router) Option`，`NewServer` 将其透传给 `sso.NewServer`。
-2. 新增 `test/router_backend_matrix_test.go`：抽取核心协议流程断言（authorization code + PKCE 全流程、refresh rotation、DPoP bound token、未知路径 404 字节），对 `StdRouter` / `NewGinRouter()` / `NewEchoRouter()` 三个后端分别构建 harness 执行，断言响应字节一致。
+2. 新增 `test/router_backend_matrix_test.go`：抽取核心协议流程断言（authorization code + PKCE 全流程、refresh rotation、DPoP bound token、未知路径 404 字节），对 `StdRouter` / `NewGinRouter()` / `NewEchoRouter()` 三个后端分别构建 harness 执行，断言绝对结果（200 + 令牌存在），并在未匹配面上断言与 StdRouter 后端逐字节一致；JSON 错误响应体按范围化契约断言语义一致（状态码 + JSON 值 + Content-Type 前缀 + 头集合，含 no-store 头），范围见 `docs/adapters.md` §2。
 3. 矩阵测试挂在 `TestE2E` 同级，纳入 `make test-e2e`（`Makefile:259-260`）。
 
 **验收标准**：
-- `go test ./test/ -run 'TestRouterBackendMatrix' -v` 三后端全绿，且 404/`token` 错误响应字节与 StdRouter 后端逐字节相同。
+- `go test ./test/ -run 'TestRouterBackendMatrix' -v` 三后端全绿；未匹配面（未知路径、错误方法、HEAD、trailing-slash）的 404 响应与 StdRouter 后端逐字节相同；`/token` 错误响应按 `docs/adapters.md` §2 的范围化契约与 StdRouter 后端语义一致（状态码 + JSON 值 + Content-Type 前缀 + 头集合，含 `Cache-Control: no-store` / `Pragma: no-cache`）。
 - `go test ./test/ -race -run 'TestRouterBackendMatrix'` 无数据竞争（含并发 `Use()` 场景）。
 - `make ci` 通过；`testkit.go` 的 `WithRouter` 已有至少一个适配器调用点（矩阵测试本身）。
 

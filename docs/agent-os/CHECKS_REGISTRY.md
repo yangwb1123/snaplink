@@ -9,6 +9,7 @@ Catalog of the Python engineering helpers. Committed Go gates are specified in
 | Module | Purpose | Command |
 |---|---|---|
 | `acceptance.py` | Supplementary U1–U9 report | `accept` |
+| `adapters_check.py` | Adapters delivery contract enforcement: conformance-suite inventory, router-backend matrix, embed examples, line budgets; behaviorally runs suite + matrix | `adapters`, `make adapters-check` |
 | `adr_compliance.py` | Project ADR checks | `adr-compliance` |
 | `architecture.py` | Python dependency-direction check | `architecture` |
 | `build.py` | Configured binary build | `build` |
@@ -40,7 +41,7 @@ Run `python cli.py check-test` for check-module tests and
 |---|---|
 | Fast loop | `check`, `check-filesize` |
 | Composite reports | `harness`, `accept`, `evaluate` |
-| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `capabilities check`, `sdk-surface check`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
+| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `adapters`, `capabilities check`, `sdk-surface check`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
 | Scaffolding | `generate` |
 | Diagnostics | `diagnose`, `trend`, `health-report`, `self-test` |
 | Test execution | `test`, `race`, `bench`, `check-test`, `skill-test` |
@@ -56,6 +57,10 @@ Run `python cli.py check-test` for check-module tests and
 - `route_contract.py` covers statically registered stock-server routes plus
   the out-of-router liveness/readiness probes. Embedder-owned dynamic routes
   added through `Server.Handle` require their own OpenAPI contract.
+- `adapters_check.py` static scans are existence-level; behavior is covered
+  by the Go tests it invokes (conformance suite + matrix), which run without
+  `-race` — race coverage lives in `make ci`'s `race` target and
+  `make test-e2e`.
 - `capability_registry.py` describes product-level capability domains, not
   every protocol row or every profile's resolved dependency closure.
 - `invariants.py` confirms selected markers exist somewhere; it does not prove

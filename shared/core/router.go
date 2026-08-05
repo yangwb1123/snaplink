@@ -184,7 +184,7 @@ type StdRoute struct {
 // visible at the root.
 type StdRouter struct {
 	mux         *http.ServeMux
-	prefix      string // group prefix, prepended to every registered path
+	prefix      string       // group prefix, prepended to every registered path
 	mu          sync.RWMutex // guards middlewares: Use writes, registrations/Group snapshot
 	middlewares []MiddlewareFunc
 	routes      *[]StdRoute // shared across root + groups

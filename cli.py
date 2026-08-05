@@ -22,6 +22,7 @@ Commands:
     self-test              Harness self-test
     check-invariants       Security invariants
     check-routes           Runtime route / OpenAPI drift gate
+    adapters               Adapters delivery contract check (conformance + matrix + examples)
     check-root             Check root directory for business code violations
     adr-compliance         Check ADR compliance (ADR-0003, ADR-0004, ADR-0007)
     check-test             Run checks/ unit tests
@@ -169,6 +170,15 @@ def cmd_check_invariants():
 def cmd_check_routes():
     from checks.route_contract import run as route_run
     return route_run()
+
+
+def cmd_adapters():
+    from checks.adapters_check import run as static_run
+    from checks.adapters_check import run_behavioral as behavioral_run
+    ec = static_run()
+    if ec != 0:
+        return ec
+    return behavioral_run()
 
 
 def cmd_check_root():
@@ -322,6 +332,7 @@ COMMANDS = {
     "self-test": cmd_self_test,
     "check-invariants": cmd_check_invariants,
     "check-routes": cmd_check_routes,
+    "adapters": cmd_adapters,
     "check-root": cmd_check_root,
     "adr-compliance": cmd_adr_compliance,
     "check-test": cmd_check_test,

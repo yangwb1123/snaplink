@@ -116,6 +116,13 @@ jobs:
           SSO_TEST_POSTGRES_DIALECT: postgres
         run: go test -race -count=1 ./...
 
+      - name: adapters contract check
+        # Pins the router-backend delivery contract: conformance-suite
+        # inventory, e2e matrix, embed examples, and line budgets. A deleted
+        # routertest scenario or a lost WithRouter pass-through goes red here
+        # even though `go test` alone cannot see it.
+        run: make adapters-check
+
       - name: config validate (all 7 config.yaml files)
         # Validates every deploy config.yaml against the server binary's
         # --validate-only flag, catching config drift (missing fields,
