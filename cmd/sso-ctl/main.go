@@ -27,6 +27,7 @@ import (
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/generate"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/hashcmd"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/importcmd"
+	"github.com/yangwb1123/snaplink/cmd/sso-ctl/legacysync"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/migratecmd"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/sessionscmd"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/snapshotcmd"
@@ -48,6 +49,7 @@ var subcommands = map[string]func([]string) int{
 	"soc2-report":  soc2report.Run,
 	"clients":      clientscmd.Run,
 	"import":       importcmd.Run,
+	"legacy-sync":  legacysync.Run,
 	"migrate":      migratecmd.Run,
 	"sessions":     sessionscmd.Run,
 	"snapshot":     snapshotcmd.Run,
@@ -93,6 +95,7 @@ Commands:
   soc2-report    Build a SOC2-flavored evidence pack over a verified audit-export bundle.
   clients        List OAuth clients or inspect a specific client.
   import         Bulk-import users from auth0 / keycloak / okta / csv into a user store.
+  legacy-sync    Reconcile sv_sso users and sv_auth roles into a SQLite deployment.
   migrate        Offline schema-migration status for a SQLite store.
   sessions       List active sessions or revoke a specific session.
   snapshot       Inspect and verify sealed state snapshots.

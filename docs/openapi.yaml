@@ -548,8 +548,10 @@ paths:
       responses:
         "200":
           description: |
-            One of three shapes:
+            One of four shapes:
             - `LoginResponse` — credentials accepted, tokens minted.
+            - `AuthorizationCodeResponse` — credentials accepted and an
+              authorization code minted for `response_type=code`.
             - `LoginDiscoveryResponse` — `provider` was omitted; the
               server returns the providers this client may use.
             - `MFARequiredResponse` — credentials accepted but the
@@ -567,6 +569,7 @@ paths:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/LoginResponse"
+                  - $ref: "#/components/schemas/AuthorizationCodeResponse"
                   - $ref: "#/components/schemas/LoginDiscoveryResponse"
                   - $ref: "#/components/schemas/MFARequiredResponse"
         "400":
@@ -656,7 +659,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/LoginResponse"
+                oneOf:
+                  - $ref: "#/components/schemas/LoginResponse"
+                  - $ref: "#/components/schemas/AuthorizationCodeResponse"
         "400":
           description: |
             mfa_invalid. Unknown / expired / consumed challenge,
@@ -3170,11 +3175,11 @@ paths:
       summary: Fetch the user record for the bearer's subject.
       description: |
         OpenID-style `/userinfo` endpoint — validates the bearer,
-        resolves the subject id, and returns the `User` record from
-        the configured `UserProvider`. The shape mirrors the User
-        struct in `types.go`. A signed ID Token is not an access-token
-        credential here and receives the same `401 invalid_token` response as
-        any other invalid bearer.
+        resolves the subject id, and returns the OIDC claim projection for
+        tokens carrying the `openid` scope. Other access tokens receive the
+        sanitized configured `UserProvider` record. A signed ID Token is not
+        an access-token credential here and receives the same `401
+        invalid_token` response as any other invalid bearer.
       operationId: getUserInfo
       security:
         - bearerAuth: []
@@ -3184,7 +3189,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/User"
+                oneOf:
+                  - $ref: "#/components/schemas/UserInfo"
+                  - $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3364,6 +3371,12 @@ paths:
         Client id is taken from the JWT `aud` claim (first element)
         when present.
       operationId: getMyPermissions
+      parameters:
+        - name: client_id
+          in: query
+          required: false
+          description: Explicit APP id; defaults to the first token audience.
+          schema: { type: string }
       security:
         - bearerAuth: []
       responses:
@@ -3372,9 +3385,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Permission"
+                $ref: "#/components/schemas/PermissionListResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -3383,6 +3394,12 @@ paths:
       tags: [me]
       summary: Roles of the bearer's subject for the inferred client.
       operationId: getMyRoles
+      parameters:
+        - name: client_id
+          in: query
+          required: false
+          description: Explicit APP id; defaults to the first token audience.
+          schema: { type: string }
       security:
         - bearerAuth: []
       responses:
@@ -3391,9 +3408,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Role"
+                $ref: "#/components/schemas/RoleListResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -3406,6 +3421,12 @@ paths:
         `permissions.MenuTree` Go type. SPAs render this directly as
         the navigation sidebar.
       operationId: getMyMenus
+      parameters:
+        - name: client_id
+          in: query
+          required: false
+          description: Explicit APP id; defaults to the first token audience.
+          schema: { type: string }
       security:
         - bearerAuth: []
       responses:
@@ -3414,7 +3435,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MenuTree"
+                $ref: "#/components/schemas/MenuTreeResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -10498,6 +10519,17 @@ paths:
       tags: [admin]
       summary: List roles for a client.
       operationId: permissionListRoles
+      parameters:
+        - name: page_size
+          in: query
+          required: false
+          description: Maximum roles returned in one page; server-clamped.
+          schema: { type: integer, format: int32 }
+        - name: page_token
+          in: query
+          required: false
+          description: Opaque nextPageToken from the preceding response.
+          schema: { type: string }
       security:
         - bearerAuth: []
       responses:
@@ -10507,6 +10539,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ListRolesResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
       tags: [admin]
@@ -14202,6 +14235,24 @@ components:
         state:
           type: string
           description: Opaque value echoed back to redirect-based flows.
+        response_type:
+          type: string
+          enum: [code]
+          description: Request an OAuth 2.0 authorization code instead of direct token minting.
+        redirect_uri:
+          type: string
+          format: uri
+          description: Registered redirect URI bound to the authorization code.
+        nonce:
+          type: string
+          description: OIDC nonce bound to a subsequently issued ID token.
+        code_challenge:
+          type: string
+          description: RFC 7636 PKCE code challenge for authorization-code login.
+        code_challenge_method:
+          type: string
+          enum: [plain, S256]
+          description: RFC 7636 PKCE transformation; S256 is recommended and may be required.
         device_token:
           type: string
           description: |
@@ -14213,7 +14264,7 @@ components:
 
     LoginResponse:
       type: object
-      required: [access_token, token_type, expires_in, session_id]
+      required: [access_token, token_type, expires_in, session_id, iss]
       properties:
         access_token:
           type: string
@@ -14226,6 +14277,13 @@ components:
           description: Token lifetime in seconds.
         refresh_token:
           type: string
+        id_token:
+          type: string
+          description: OIDC ID token, present when the granted scope includes openid.
+        iss:
+          type: string
+          format: uri
+          description: RFC 9207 authorization-server issuer identifier.
         scope:
           type: string
           description: Space-delimited scope list.
@@ -14313,6 +14371,21 @@ components:
             `webauthn.passkey_policy.passkey_recovery_allowed` is set, so
             client UI knows whether to also offer a "lost your passkey?"
             affordance.
+
+    AuthorizationCodeResponse:
+      type: object
+      required: [code, iss]
+      properties:
+        code:
+          type: string
+          description: Short-lived, single-use authorization code to exchange at /token.
+        iss:
+          type: string
+          format: uri
+          description: RFC 9207 authorization-server issuer identifier.
+        state:
+          type: string
+          description: Opaque state echoed when it was supplied in LoginRequest.
 
     LoginDiscoveryResponse:
       type: object
@@ -16103,6 +16176,7 @@ components:
 
     LocalUserResponse:
       type: object
+      required: [id, created_at, updated_at]
       description: |
         A LOCAL (password-authenticated) user — distinct from AdminUser
         above, which models the gateway's federated/external-identity
@@ -16138,6 +16212,7 @@ components:
 
     PaginatedLocalUsersResponse:
       type: object
+      required: [users, total, page, limit]
       properties:
         users:
           type: array
@@ -16222,10 +16297,18 @@ components:
 
     ListRolesResponse:
       type: object
+      required: [roles, totalSize, nextPageToken]
       properties:
         roles:
           type: array
           items: { $ref: "#/components/schemas/Role" }
+        totalSize:
+          type: integer
+          format: int32
+          description: Total roles in the client registry.
+        nextPageToken:
+          type: string
+          description: Opaque cursor for the next page; empty on the last page.
 
     AddRoleResponse:
       type: object
@@ -16368,6 +16451,66 @@ components:
           type: string
           format: date-time
 
+    UserInfo:
+      type: object
+      required: [sub]
+      description: OIDC Core UserInfo claim projection for an openid-scoped bearer.
+      properties:
+        sub:
+          type: string
+        name:
+          type: string
+        given_name:
+          type: string
+        family_name:
+          type: string
+        nickname:
+          type: string
+        preferred_username:
+          type: string
+        profile:
+          type: string
+          format: uri
+        picture:
+          type: string
+          format: uri
+        website:
+          type: string
+          format: uri
+        email:
+          type: string
+          format: email
+        email_verified:
+          type: boolean
+        gender:
+          type: string
+        birthdate:
+          type: string
+        zoneinfo:
+          type: string
+        locale:
+          type: string
+        phone_number:
+          type: string
+        phone_number_verified:
+          type: boolean
+        address:
+          oneOf:
+            - type: string
+            - type: object
+              additionalProperties: true
+        updated_at:
+          type: integer
+          format: int64
+        auth_time:
+          type: integer
+          format: int64
+        acr:
+          type: string
+        amr:
+          type: array
+          items: { type: string }
+
     Permission:
       type: object
       required: [code]
@@ -16379,6 +16522,17 @@ components:
           type: string
         description:
           type: string
+
+    PermissionListResponse:
+      type: object
+      required: [client_id, permissions]
+      properties:
+        client_id:
+          type: string
+        permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Permission"
 
     Role:
       type: object
@@ -16398,6 +16552,17 @@ components:
           type: array
           items:
             type: string
+
+    RoleListResponse:
+      type: object
+      required: [client_id, roles]
+      properties:
+        client_id:
+          type: string
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
 
     Button:
       type: object
@@ -16437,6 +16602,15 @@ components:
       type: array
       items:
         $ref: "#/components/schemas/MenuItem"
+
+    MenuTreeResponse:
+      type: object
+      required: [client_id, menus]
+      properties:
+        client_id:
+          type: string
+        menus:
+          $ref: "#/components/schemas/MenuTree"
 
     JWKS:
       type: object

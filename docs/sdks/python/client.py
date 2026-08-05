@@ -67,6 +67,7 @@ class AdminClient(TypedDict, total=False):
     allowed_authenticators: List[str]
     allowed_scopes: List[str]
     id: str
+    login_page_uri: str  # Hosted-login continuation URL for OIDC/SAML federation. HTTPS is
     name: str
     redirect_uris: List[str]
     secret: str  # Write-only. Never echoed on Get/List responses; use
@@ -182,6 +183,12 @@ class AuditFacetsResponse(TypedDict, total=False):
     facets: AuditFacets
 
 
+class AuthorizationCodeResponse(TypedDict, total=False):
+    code: str  # Short-lived, single-use authorization code to exchange at /token.
+    iss: str  # RFC 9207 authorization-server issuer identifier.
+    state: str  # Opaque state echoed when it was supplied in LoginRequest.
+
+
 class AuthorizationDetail(TypedDict, total=False):
     """One element of RFC 9396 Rich Authorization Requests"""
     actions: List[str]  # RFC 9396 §3.3 — action verbs (read, write, transfer).
@@ -263,11 +270,6 @@ class Button(TypedDict, total=False):
     permission: str
 
 
-class CallbackResponse(TypedDict, total=False):
-    session_id: str  # Single-use server-side session handle the SPA exchanges
-    status: str  # Always `authenticated` on the 200 path — the constant lives
-
-
 class CategoryCounts(TypedDict, total=False):
     deleted: int
     inserted: int
@@ -311,6 +313,7 @@ class ClientMetadata(TypedDict, total=False):
     frontchannel_logout_uri: str
     id: str
     jwks: List[Dict[str, Any]]
+    login_page_uri: str  # HTTPS hosted-login URL (HTTP is allowed only for loopback hosts).
     name: str
     post_logout_redirect_uris: List[str]
     redirect_uris: List[str]
@@ -715,7 +718,9 @@ class ListReleasesResponse(TypedDict, total=False):
 
 
 class ListRolesResponse(TypedDict, total=False):
+    nextPageToken: str  # Opaque cursor for the next page; empty on the last page.
     roles: List[Role]
+    totalSize: int  # Total roles in the client registry.
 
 
 class ListSessionsResponse(TypedDict, total=False):
@@ -763,16 +768,22 @@ class LocalUserResponse(TypedDict, total=False):
 
 
 class LoginDiscoveryResponse(TypedDict, total=False):
+    authorization_request_passthrough_supported: bool  # True only when top-level federated GET can preserve the complete
     providers: List[str]  # Authenticator names this client may use.
 
 
 class LoginRequest(TypedDict, total=False):
     authorization_details: List[AuthorizationDetail]  # RFC 9396 Rich Authorization Requests. Each element MUST
     client_id: str  # Registered Client.ID (per cmd/sso-server/config.yaml `clients[]`).
+    code_challenge: str  # RFC 7636 PKCE code challenge for authorization-code login.
+    code_challenge_method: str  # RFC 7636 PKCE transformation; S256 is recommended and may be required.
     credential: Dict[str, str]  # Provider-specific credential map. Standard keys:
     device_token: str  # Opaque "remember this device" grant minted by a prior
+    nonce: str  # OIDC nonce bound to a subsequently issued ID token.
     provider: str  # Authenticator name; omit for discovery.
+    redirect_uri: str  # Registered redirect URI bound to the authorization code.
     resource: List[str]  # RFC 8707 resource indicators. Each value MUST be in the
+    response_type: str  # Request an OAuth 2.0 authorization code instead of direct token minting.
     scope: List[str]
     state: str  # Opaque value echoed back to redirect-based flows.
 
@@ -782,17 +793,23 @@ class LoginResponse(TypedDict, total=False):
     country_code: str  # ISO 3166-1 alpha-2; populated when geo middleware is wired.
     device_token: str  # Present only on a `POST /auth/mfa` completion where the
     expires_in: int  # Token lifetime in seconds.
+    id_token: str  # OIDC ID token, present when the granted scope includes openid.
+    iss: str  # RFC 9207 authorization-server issuer identifier.
     menus: MenuTree  # Present when `permissions.embed_in_login: true`.
     passkey_enrollment_recommended: bool  # Advisory UX nudge — present (`true`) only when
     passkey_recovery_allowed: bool  # Advisory metadata accompanying `passkey_enrollment_recommended`
     permissions: List[Permission]  # Present when `permissions.embed_in_login: true`.
     recommended_language: str  # BCP-47 tag; populated when geo middleware is wired.
+    redirect_uri: str  # Effective post-PAR/JAR authorization response target.
+    redirect_uri_validated: bool  # True only after redirect_uri passed the registered-client checks.
     refresh_token: str
+    response_mode: str  # Effective mode; defaults to query for code and fragment for token responses.
     roles: List[Role]  # Present when `permissions.embed_in_login: true`.
     scope: str  # Space-delimited scope list.
     serving_region: str  # Which regional deployment served this login (e.g. `eu-west-1`).
     session_id: str  # Server-side session handle for logout calls.
     session_state: str  # OpenID Connect Session Management 1.0 §2 `session_state` — present
+    state: str  # Effective server-owned authorization state, when supplied.
     token_strategy: str
     token_type: str
 
@@ -830,6 +847,11 @@ class MenuItem(TypedDict, total=False):
 
 
 MenuTree = List[MenuItem]
+
+
+class MenuTreeResponse(TypedDict, total=False):
+    client_id: str
+    menus: MenuTree
 
 
 class NetPolicy(TypedDict, total=False):
@@ -939,6 +961,11 @@ class Permission(TypedDict, total=False):
     name: str
 
 
+class PermissionListResponse(TypedDict, total=False):
+    client_id: str
+    permissions: List[Permission]
+
+
 class PinReleaseResponse(TypedDict, total=False):
     operation: AdminOperation
     operation_id: str
@@ -1046,6 +1073,11 @@ class RoleBundle(TypedDict, total=False):
     description: str
     name: str
     permissions: List[str]  # Granted permission codes (sorted for a stable canonical form).
+
+
+class RoleListResponse(TypedDict, total=False):
+    client_id: str
+    roles: List[Role]
 
 
 class RollbackReleaseResponse(TypedDict, total=False):
@@ -1291,6 +1323,32 @@ class User(TypedDict, total=False):
     name: str
     provider: str
     updated_at: str
+
+
+class UserInfo(TypedDict, total=False):
+    """OIDC Core UserInfo claim projection for an openid-scoped bearer."""
+    acr: str
+    address: Union[str, Dict[str, Any]]
+    amr: List[str]
+    auth_time: int
+    birthdate: str
+    email: str
+    email_verified: bool
+    family_name: str
+    gender: str
+    given_name: str
+    locale: str
+    name: str
+    nickname: str
+    phone_number: str
+    phone_number_verified: bool
+    picture: str
+    preferred_username: str
+    profile: str
+    sub: str
+    updated_at: int
+    website: str
+    zoneinfo: str
 
 
 class WebAuthnBeginLoginResponse(TypedDict, total=False):
@@ -1737,9 +1795,9 @@ class SSOClient:
         """Set the menu tree for a client. (operationId: permissionSetMenus)"""
         return self._request("PUT", f"/api/v1/admin/permissions/{urllib.parse.quote(client_id)}/menus", body=body, auth=True)
 
-    def permission_list_roles(self, client_id: str) -> ListRolesResponse:
+    def permission_list_roles(self, client_id: str, query: Optional[Dict[str, Any]] = None) -> ListRolesResponse:
         """List roles for a client. (operationId: permissionListRoles)"""
-        return self._request("GET", f"/api/v1/admin/permissions/{urllib.parse.quote(client_id)}/roles", auth=True)
+        return self._request("GET", f"/api/v1/admin/permissions/{urllib.parse.quote(client_id)}/roles", query=query, auth=True)
 
     def permission_add_role(self, client_id: str, body: Role) -> AddRoleResponse:
         """Add a role to the client's role registry. (operationId: permissionAddRole)"""
@@ -2135,7 +2193,7 @@ class SSOClient:
 
     # ---- auth ----
 
-    def get_auth_callback(self, query: Optional[Dict[str, Any]] = None) -> CallbackResponse:
+    def get_auth_callback(self, query: Optional[Dict[str, Any]] = None) -> None:
         """Upstream IdP federation return URL. (operationId: getAuthCallback)"""
         return self._request("GET", "/auth/callback", query=query)
 
@@ -2151,11 +2209,11 @@ class SSOClient:
         """Start a browser-based federated login. (operationId: getLogin)"""
         return self._request("GET", "/auth/login", query=query)
 
-    def post_login(self, body: LoginRequest) -> Union[LoginResponse, LoginDiscoveryResponse, MFARequiredResponse]:
+    def post_login(self, body: LoginRequest) -> Union[LoginResponse, AuthorizationCodeResponse, LoginDiscoveryResponse, MFARequiredResponse]:
         """Authenticate and receive a token. (operationId: postLogin)"""
         return self._request("POST", "/auth/login", body=body)
 
-    def post_mfa_complete(self, body: MFACompleteRequest) -> LoginResponse:
+    def post_mfa_complete(self, body: MFACompleteRequest) -> Union[LoginResponse, AuthorizationCodeResponse]:
         """Complete an MFA step-up challenge. (operationId: postMFAComplete)"""
         return self._request("POST", "/auth/mfa", body=body)
 
@@ -2351,17 +2409,17 @@ class SSOClient:
         """Update the display metadata for one owned device. (operationId: patchMyDevice)"""
         return self._request("PATCH", f"/me/devices/{urllib.parse.quote(id)}", body=body, auth=True)
 
-    def get_my_menus(self) -> MenuTree:
+    def get_my_menus(self, query: Optional[Dict[str, Any]] = None) -> MenuTreeResponse:
         """Menu tree the bearer's subject is authorized to see. (operationId: getMyMenus)"""
-        return self._request("GET", "/menus/me", auth=True)
+        return self._request("GET", "/menus/me", query=query, auth=True)
 
-    def get_my_permissions(self) -> List[Permission]:
+    def get_my_permissions(self, query: Optional[Dict[str, Any]] = None) -> PermissionListResponse:
         """Permissions of the bearer's subject for the inferred client. (operationId: getMyPermissions)"""
-        return self._request("GET", "/permissions/me", auth=True)
+        return self._request("GET", "/permissions/me", query=query, auth=True)
 
-    def get_my_roles(self) -> List[Role]:
+    def get_my_roles(self, query: Optional[Dict[str, Any]] = None) -> RoleListResponse:
         """Roles of the bearer's subject for the inferred client. (operationId: getMyRoles)"""
-        return self._request("GET", "/roles/me", auth=True)
+        return self._request("GET", "/roles/me", query=query, auth=True)
 
     # ---- mesh ----
 
@@ -2675,7 +2733,7 @@ class SSOClient:
 
     # ---- userinfo ----
 
-    def get_user_info(self) -> User:
+    def get_user_info(self) -> Union[UserInfo, User]:
         """Fetch the user record for the bearer's subject. (operationId: getUserInfo)"""
         return self._request("GET", "/userinfo", auth=True)
 

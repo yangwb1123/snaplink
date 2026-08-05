@@ -10,6 +10,9 @@
 `gen/proto/` is: checked in for consumers to use directly, regenerated from
 `docs/openapi.yaml` by a Go program rather than hand-maintained.
 
+The directory is a valid npm package (`@snaplink/sso-client`) and can be
+consumed from a checked-out Snaplink repository with a `file:` dependency.
+
 ```
 go run ./cmd/gensdk --lang=ts
 ```
@@ -29,8 +32,8 @@ claiming complete API coverage.
 
 ## What's covered
 
-The **complete** operation set of `docs/openapi.yaml` — every documented
-operation (312 today) has a generated method, grouped by tag: discovery,
+The **complete** registered operation set of `docs/openapi.yaml` has a
+generated method, grouped by tag: discovery,
 OAuth 2.0/OIDC auth + token lifecycle, self-service (`/me*`), the full
 admin control plane, SCIM, CAEP/SSF, OpenID Federation, FGA/ReBAC,
 WebAuthn, mesh and operational endpoints. The operationId set is declared
@@ -61,7 +64,8 @@ see Usage below.
 - **`oneOf`/`anyOf`** become a TypeScript union of the resolved variants
   (e.g. `IntrospectResponse.aud: string | string[]`, or a whole
   operation's response type like
-  `Promise<LoginResponse | LoginDiscoveryResponse | MFARequiredResponse>`).
+  `Promise<LoginResponse | AuthorizationCodeResponse |
+  LoginDiscoveryResponse | MFARequiredResponse>`).
 - An operation's **form-urlencoded content type is not separately
   modeled** — every curated operation that accepts
   `application/x-www-form-urlencoded` also accepts `application/json`
@@ -95,17 +99,25 @@ await client.logout();
 ```ts
 import { SSOClient, SSOError } from "./client";
 
+let accessToken: string | undefined;
+const clientSecret = process.env.SNAPLINK_CLIENT_SECRET;
+if (!clientSecret) throw new Error("SNAPLINK_CLIENT_SECRET is required");
+
 const client = new SSOClient({
   baseUrl: "https://sso.example.com",
-  getAccessToken: () => localStorage.getItem("access_token") ?? undefined,
+  clientId: "my-confidential-app",
+  clientSecret,
+  requestTimeoutMs: 15_000,
+  getAccessToken: () => accessToken,
 });
 
 const tokens = await client.postToken({
   grant_type: "authorization_code",
   code: "ac_...",
+  code_verifier: "the-original-pkce-verifier",
   redirect_uri: "https://app.example.com/cb",
-  client_id: "my-app",
 });
+accessToken = tokens.access_token;
 
 try {
   const me = await client.getUserInfo();
@@ -116,6 +128,10 @@ try {
   }
 }
 ```
+
+`clientSecret` is for trusted server/BFF runtimes only. The SDK sends it with
+HTTP Basic for token, revocation, introspection, and PAR calls; never bundle a
+confidential client secret into browser code.
 
 `SSOClientOptions.fetch` lets you inject a non-global `fetch`
 implementation (tests, older Node). Any method whose operation requires a

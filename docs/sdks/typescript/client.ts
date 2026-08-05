@@ -8,14 +8,19 @@
 // derived/shortened aliasing — so a call site is grep-able straight back to
 // its docs/openapi.yaml operation.
 
+export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export interface SSOClientOptions {
   /** Base URL of the snaplink/sso deployment, e.g. "https://sso.example.com". */
   baseUrl: string;
-  /** This application's registered client_id. Set it here so login(user, pass)
-   *  needs only credentials. */
+  /** This application's registered client_id. */
   clientId?: string;
+  /** Confidential client secret. Server-side use only; sent with HTTP Basic. */
+  clientSecret?: string;
+  /** Per-request timeout in milliseconds. Omit to use the runtime fetch default. */
+  requestTimeoutMs?: number;
   /** Injectable fetch (tests, non-global runtimes). Defaults to globalThis.fetch. */
-  fetch?: typeof fetch;
+  fetch?: FetchLike;
   /** Returns the bearer token for auth-required calls (getMe, revokeMySessions, ...).
    *  Omit it: after login() the SDK holds the access token and auto-attaches it. */
   getAccessToken?: () => string | undefined | Promise<string | undefined>;
@@ -34,9 +39,25 @@ export class SSOError extends Error {
 }
 
 interface requestOptions {
-  query?: Record<string, string | number | boolean | undefined>;
+  query?: Record<string, string | number | boolean | readonly (string | number | boolean)[] | undefined>;
   body?: unknown;
   auth?: boolean;
+  clientAuth?: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+function encodeBasicCredentials(clientId: string, clientSecret: string): string {
+  const bytes = new TextEncoder().encode(clientId + ":" + clientSecret);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 // ---- Types (generated from components.schemas) ----
@@ -80,6 +101,8 @@ export interface AdminClient {
   allowed_authenticators?: string[];
   allowed_scopes?: string[];
   id?: string;
+  /** Hosted-login continuation URL for OIDC/SAML federation. HTTPS is */
+  login_page_uri?: string;
   name?: string;
   redirect_uris?: string[];
   /** Write-only. Never echoed on Get/List responses; use */
@@ -210,6 +233,15 @@ export interface AuditFacetsResponse {
   facets: AuditFacets;
 }
 
+export interface AuthorizationCodeResponse {
+  /** Short-lived, single-use authorization code to exchange at /token. */
+  code: string;
+  /** RFC 9207 authorization-server issuer identifier. */
+  iss: string;
+  /** Opaque state echoed when it was supplied in LoginRequest. */
+  state?: string;
+}
+
 /** One element of RFC 9396 Rich Authorization Requests */
 export interface AuthorizationDetail {
   /** RFC 9396 §3.3 — action verbs (read, write, transfer). */
@@ -308,13 +340,6 @@ export interface Button {
   permission?: string;
 }
 
-export interface CallbackResponse {
-  /** Single-use server-side session handle the SPA exchanges */
-  session_id: string;
-  /** Always `authenticated` on the 200 path — the constant lives */
-  status: string;
-}
-
 export interface CategoryCounts {
   deleted?: number;
   inserted?: number;
@@ -367,6 +392,8 @@ export interface ClientMetadata {
   frontchannel_logout_uri?: string;
   id: string;
   jwks?: Record<string, unknown>[];
+  /** HTTPS hosted-login URL (HTTP is allowed only for loopback hosts). */
+  login_page_uri?: string;
   name?: string;
   post_logout_redirect_uris?: string[];
   redirect_uris?: string[];
@@ -841,7 +868,11 @@ export interface ListReleasesResponse {
 }
 
 export interface ListRolesResponse {
-  roles?: Role[];
+  /** Opaque cursor for the next page; empty on the last page. */
+  nextPageToken: string;
+  roles: Role[];
+  /** Total roles in the client registry. */
+  totalSize: number;
 }
 
 export interface ListSessionsResponse {
@@ -879,18 +910,20 @@ export interface LivenessResponse {
 /** A LOCAL (password-authenticated) user — distinct from AdminUser */
 export interface LocalUserResponse {
   attributes?: Record<string, string>;
-  created_at?: string;
+  created_at: string;
   display_name?: string;
   email?: string;
   external_id?: string;
-  id?: string;
+  id: string;
   name?: string;
   provider?: string;
-  updated_at?: string;
+  updated_at: string;
   username?: string;
 }
 
 export interface LoginDiscoveryResponse {
+  /** True only when top-level federated GET can preserve the complete */
+  authorization_request_passthrough_supported?: boolean;
   /** Authenticator names this client may use. */
   providers: string[];
 }
@@ -900,14 +933,24 @@ export interface LoginRequest {
   authorization_details?: AuthorizationDetail[];
   /** Registered Client.ID (per cmd/sso-server/config.yaml `clients[]`). */
   client_id: string;
+  /** RFC 7636 PKCE code challenge for authorization-code login. */
+  code_challenge?: string;
+  /** RFC 7636 PKCE transformation; S256 is recommended and may be required. */
+  code_challenge_method?: "plain" | "S256";
   /** Provider-specific credential map. Standard keys: */
   credential?: Record<string, string>;
   /** Opaque "remember this device" grant minted by a prior */
   device_token?: string;
+  /** OIDC nonce bound to a subsequently issued ID token. */
+  nonce?: string;
   /** Authenticator name; omit for discovery. */
   provider?: string;
+  /** Registered redirect URI bound to the authorization code. */
+  redirect_uri?: string;
   /** RFC 8707 resource indicators. Each value MUST be in the */
   resource?: string[];
+  /** Request an OAuth 2.0 authorization code instead of direct token minting. */
+  response_type?: "code";
   scope?: string[];
   /** Opaque value echoed back to redirect-based flows. */
   state?: string;
@@ -922,6 +965,10 @@ export interface LoginResponse {
   device_token?: string;
   /** Token lifetime in seconds. */
   expires_in: number;
+  /** OIDC ID token, present when the granted scope includes openid. */
+  id_token?: string;
+  /** RFC 9207 authorization-server issuer identifier. */
+  iss: string;
   /** Present when `permissions.embed_in_login: true`. */
   menus?: MenuTree;
   /** Advisory UX nudge — present (`true`) only when */
@@ -932,7 +979,13 @@ export interface LoginResponse {
   permissions?: Permission[];
   /** BCP-47 tag; populated when geo middleware is wired. */
   recommended_language?: string;
+  /** Effective post-PAR/JAR authorization response target. */
+  redirect_uri?: string;
+  /** True only after redirect_uri passed the registered-client checks. */
+  redirect_uri_validated?: boolean;
   refresh_token?: string;
+  /** Effective mode; defaults to query for code and fragment for token responses. */
+  response_mode?: string;
   /** Present when `permissions.embed_in_login: true`. */
   roles?: Role[];
   /** Space-delimited scope list. */
@@ -943,6 +996,8 @@ export interface LoginResponse {
   session_id: string;
   /** OpenID Connect Session Management 1.0 §2 `session_state` — present */
   session_state?: string;
+  /** Effective server-owned authorization state, when supplied. */
+  state?: string;
   token_strategy?: "jwt" | "session";
   token_type: string;
 }
@@ -992,6 +1047,11 @@ export interface MenuItem {
 }
 
 export type MenuTree = MenuItem[];
+
+export interface MenuTreeResponse {
+  client_id: string;
+  menus: MenuTree;
+}
 
 export interface NetPolicy {
   advertised_base_url?: string;
@@ -1112,16 +1172,21 @@ export interface PARResponse {
 }
 
 export interface PaginatedLocalUsersResponse {
-  limit?: number;
-  page?: number;
-  total?: number;
-  users?: LocalUserResponse[];
+  limit: number;
+  page: number;
+  total: number;
+  users: LocalUserResponse[];
 }
 
 export interface Permission {
   code: string;
   description?: string;
   name?: string;
+}
+
+export interface PermissionListResponse {
+  client_id: string;
+  permissions: Permission[];
 }
 
 export interface PinReleaseResponse {
@@ -1239,6 +1304,11 @@ export interface RoleBundle {
   name?: string;
   /** Granted permission codes (sorted for a stable canonical form). */
   permissions: string[];
+}
+
+export interface RoleListResponse {
+  client_id: string;
+  roles: Role[];
 }
 
 export interface RollbackReleaseResponse {
@@ -1557,6 +1627,32 @@ export interface User {
   updated_at?: string;
 }
 
+/** OIDC Core UserInfo claim projection for an openid-scoped bearer. */
+export interface UserInfo {
+  acr?: string;
+  address?: string | Record<string, unknown>;
+  amr?: string[];
+  auth_time?: number;
+  birthdate?: string;
+  email?: string;
+  email_verified?: boolean;
+  family_name?: string;
+  gender?: string;
+  given_name?: string;
+  locale?: string;
+  name?: string;
+  nickname?: string;
+  phone_number?: string;
+  phone_number_verified?: boolean;
+  picture?: string;
+  preferred_username?: string;
+  profile?: string;
+  sub: string;
+  updated_at?: number;
+  website?: string;
+  zoneinfo?: string;
+}
+
 export interface WebAuthnBeginLoginResponse {
   /** `PublicKeyCredentialRequestOptions` (challenge, */
   options: Record<string, unknown>;
@@ -1655,15 +1751,22 @@ export interface WildcardSemantics {
 
 export class SSOClient {
   private readonly baseUrl: string;
-  private readonly clientId?: string;
-  private readonly fetchImpl: typeof fetch;
-  private readonly getAccessToken?: () => string | undefined | Promise<string | undefined>;
+  private readonly clientId: string | undefined;
+  private readonly clientSecret: string | undefined;
+  private readonly requestTimeoutMs: number | undefined;
+  private readonly fetchImpl: FetchLike;
+  private readonly getAccessToken: (() => string | undefined | Promise<string | undefined>) | undefined;
   /** Access token captured by login(); auto-attached to auth-required calls. */
-  private token?: string;
+  private token: string | undefined;
 
   constructor(opts: SSOClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.clientId = opts.clientId;
+    this.clientSecret = opts.clientSecret;
+    if (opts.requestTimeoutMs !== undefined && (!Number.isFinite(opts.requestTimeoutMs) || opts.requestTimeoutMs <= 0)) {
+      throw new SSOError(0, "invalid_request", "requestTimeoutMs must be a positive finite number");
+    }
+    this.requestTimeoutMs = opts.requestTimeoutMs;
     this.fetchImpl = opts.fetch ?? fetch;
     // Default token source is the token login() captured, so getUserInfo() etc.
     // work right after login without wiring anything.
@@ -1729,22 +1832,28 @@ export class SSOClient {
     if (opts.query) {
       const qs = new URLSearchParams();
       for (const [k, v] of Object.entries(opts.query)) {
-        if (v !== undefined) qs.set(k, String(v));
+		if (Array.isArray(v)) {
+		  for (const item of v) qs.append(k, String(item));
+		} else if (v !== undefined) {
+		  qs.set(k, String(v));
+		}
       }
       const s = qs.toString();
       if (s) url += "?" + s;
     }
     const headers: Record<string, string> = { Accept: "application/json" };
-    let body: string | undefined;
-    if (opts.body !== undefined) {
+    const authenticatedBody = opts.clientAuth ? this.withClientAuthentication(opts.body, headers) : opts.body;
+    const init: RequestInit = { method, headers };
+    if (this.requestTimeoutMs !== undefined) init.signal = AbortSignal.timeout(this.requestTimeoutMs);
+    if (authenticatedBody !== undefined) {
       headers["Content-Type"] = "application/json";
-      body = JSON.stringify(opts.body);
+      init.body = JSON.stringify(authenticatedBody);
     }
     if (opts.auth && this.getAccessToken) {
       const token = await this.getAccessToken();
       if (token) headers["Authorization"] = `Bearer ${token}`;
     }
-    const res = await this.fetchImpl(url, { method, headers, body });
+    const res = await this.fetchImpl(url, init);
     if (!res.ok) {
       let error: string | undefined;
       let errorDescription: string | undefined;
@@ -1762,6 +1871,20 @@ export class SSOClient {
     return (text ? JSON.parse(text) : undefined) as T;
   }
 
+  private withClientAuthentication(body: unknown, headers: Record<string, string>): unknown {
+    if (!isRecord(body)) return body;
+    const clientId = this.clientId ?? stringValue(body.client_id);
+    const clientSecret = this.clientSecret ?? stringValue(body.client_secret);
+    if (!clientSecret) return body;
+    if (!clientId) {
+      throw new SSOError(0, "invalid_request", "clientId is required when a confidential client secret is configured");
+    }
+    headers["Authorization"] = "Basic " + encodeBasicCredentials(clientId, clientSecret);
+    const withoutCredentials = { ...body };
+    delete withoutCredentials.client_id;
+    delete withoutCredentials.client_secret;
+    return withoutCredentials;
+  }
   // ---- admin ----
 
   /** List the zero-trust conditional-access (CAP) policies (governance view). */
@@ -1781,17 +1904,17 @@ export class SSOClient {
 
   /** Export the role-definition authorization policy bundle. */
   async getAuthzPolicyBundle(query?: { clientId?: string }): Promise<AuthzPolicyBundle> {
-    return this.request<AuthzPolicyBundle>("GET", `/api/v1/admin/authz/policy-bundle`, { query, auth: true });
+    return this.request<AuthzPolicyBundle>("GET", `/api/v1/admin/authz/policy-bundle`, { query: { "client_id": query?.clientId }, auth: true });
   }
 
   /** List exhausted OIDC back-channel logout deliveries. */
   async listBackchannelLogoutFailures(query?: { limit?: number }): Promise<{ failures?: BCLFailure[]; total?: number }> {
-    return this.request<{ failures?: BCLFailure[]; total?: number }>("GET", `/api/v1/admin/backchannel-logout/failures`, { query, auth: true });
+    return this.request<{ failures?: BCLFailure[]; total?: number }>("GET", `/api/v1/admin/backchannel-logout/failures`, { query: { "limit": query?.limit }, auth: true });
   }
 
   /** Replay a batch of due OIDC back-channel logout failures. */
   async replayDueBackchannelLogoutFailures(query?: { limit?: number }): Promise<{ replay?: BCLReplaySummary; status?: "ok" }> {
-    return this.request<{ replay?: BCLReplaySummary; status?: "ok" }>("POST", `/api/v1/admin/backchannel-logout/failures/replay`, { query, auth: true });
+    return this.request<{ replay?: BCLReplaySummary; status?: "ok" }>("POST", `/api/v1/admin/backchannel-logout/failures/replay`, { query: { "limit": query?.limit }, auth: true });
   }
 
   /** Replay one OIDC back-channel logout failure. */
@@ -1806,17 +1929,17 @@ export class SSOClient {
 
   /** Conditionally clear tenant-specific branding. */
   async deleteAdminBranding(query?: { tenantId?: string }): Promise<void> {
-    return this.request<void>("DELETE", `/api/v1/admin/branding`, { query, auth: true });
+    return this.request<void>("DELETE", `/api/v1/admin/branding`, { query: { "tenant_id": query?.tenantId }, auth: true });
   }
 
   /** Get tenant branding. */
   async getAdminBranding(query?: { tenantId?: string }): Promise<TenantBranding> {
-    return this.request<TenantBranding>("GET", `/api/v1/admin/branding`, { query, auth: true });
+    return this.request<TenantBranding>("GET", `/api/v1/admin/branding`, { query: { "tenant_id": query?.tenantId }, auth: true });
   }
 
   /** Conditionally replace tenant branding. */
-  async updateAdminBranding(query?: { tenantId?: string }, body: { branding: Record<string, string> }): Promise<void> {
-    return this.request<void>("PUT", `/api/v1/admin/branding`, { query, body, auth: true });
+  async updateAdminBranding(body: { branding: Record<string, string> }, query?: { tenantId?: string }): Promise<void> {
+    return this.request<void>("PUT", `/api/v1/admin/branding`, { query: { "tenant_id": query?.tenantId }, body, auth: true });
   }
 
   /** List pending + active break-glass admin sessions. */
@@ -1871,7 +1994,7 @@ export class SSOClient {
 
   /** List registered clients. */
   async adminClientList(query?: { pageToken?: string; pageSize?: number; orderBy?: string; filter?: string }): Promise<ListClientsResponse> {
-    return this.request<ListClientsResponse>("GET", `/api/v1/admin/clients`, { query, auth: true });
+    return this.request<ListClientsResponse>("GET", `/api/v1/admin/clients`, { query: { "page_token": query?.pageToken, "page_size": query?.pageSize, "order_by": query?.orderBy, "filter": query?.filter }, auth: true });
   }
 
   /** Create a client. */
@@ -1926,7 +2049,7 @@ export class SSOClient {
 
   /** SOC2 evidence pack — access review, change management, access revocation. */
   async adminSOC2Evidence(query?: { since?: string }): Promise<{ access_review?: Record<string, unknown>[]; access_revocation?: Record<string, unknown>[]; change_management?: Record<string, unknown>[]; errors?: string[]; generated_at?: string; since?: string; skipped?: string[] }> {
-    return this.request<{ access_review?: Record<string, unknown>[]; access_revocation?: Record<string, unknown>[]; change_management?: Record<string, unknown>[]; errors?: string[]; generated_at?: string; since?: string; skipped?: string[] }>("GET", `/api/v1/admin/compliance/soc2-evidence`, { query, auth: true });
+    return this.request<{ access_review?: Record<string, unknown>[]; access_revocation?: Record<string, unknown>[]; change_management?: Record<string, unknown>[]; errors?: string[]; generated_at?: string; since?: string; skipped?: string[] }>("GET", `/api/v1/admin/compliance/soc2-evidence`, { query: { "since": query?.since }, auth: true });
   }
 
   /** Config snapshot as loaded at startup (redacted). */
@@ -1946,7 +2069,7 @@ export class SSOClient {
 
   /** Runtime-configuration change history (config_history). */
   async listConfigHistory(query?: { resource?: string; since?: string; limit?: number }): Promise<ConfigHistoryResponse> {
-    return this.request<ConfigHistoryResponse>("GET", `/api/v1/admin/config/history`, { query, auth: true });
+    return this.request<ConfigHistoryResponse>("GET", `/api/v1/admin/config/history`, { query: { "resource": query?.resource, "since": query?.since, "limit": query?.limit }, auth: true });
   }
 
   /** Current effective config snapshot (redacted). */
@@ -1956,7 +2079,7 @@ export class SSOClient {
 
   /** List a tenant's B2B enterprise connections. */
   async adminListConnections(query?: { tenantId?: string }): Promise<{ connections?: Connection[] }> {
-    return this.request<{ connections?: Connection[] }>("GET", `/api/v1/admin/connections`, { query, auth: true });
+    return this.request<{ connections?: Connection[] }>("GET", `/api/v1/admin/connections`, { query: { "tenant_id": query?.tenantId }, auth: true });
   }
 
   /** Create or replace a B2B enterprise connection. */
@@ -2006,7 +2129,7 @@ export class SSOClient {
 
   /** Cryptographic material inventory (signing keys, JWE keys, KMS-backed keys, trust anchors). */
   async getCryptoKeyInventory(query?: { status?: "active" | "retiring" | "retired" | "compromised"; purpose?: "sign" | "encrypt" | "verify"; algorithm?: string }): Promise<CryptoKeyInventoryResponse> {
-    return this.request<CryptoKeyInventoryResponse>("GET", `/api/v1/admin/crypto/keys`, { query, auth: true });
+    return this.request<CryptoKeyInventoryResponse>("GET", `/api/v1/admin/crypto/keys`, { query: { "status": query?.status, "purpose": query?.purpose, "algorithm": query?.algorithm }, auth: true });
   }
 
   /** Report a catalogued cryptographic key compromised (inventory bookkeeping, not revocation). */
@@ -2051,7 +2174,7 @@ export class SSOClient {
 
   /** List domains (hostname → tenant mappings). */
   async domainList(query?: { tenantId?: string }): Promise<ListDomainsResponse> {
-    return this.request<ListDomainsResponse>("GET", `/api/v1/admin/domains`, { query, auth: true });
+    return this.request<ListDomainsResponse>("GET", `/api/v1/admin/domains`, { query: { "tenant_id": query?.tenantId }, auth: true });
   }
 
   /** Create a domain. */
@@ -2096,7 +2219,7 @@ export class SSOClient {
 
   /** Realtime admin event stream (Server-Sent Events). */
   async streamAdminEvents(query?: { eventTypes?: string; tenantId?: string }): Promise<void> {
-    return this.request<void>("GET", `/api/v1/admin/events/stream`, { query, auth: true });
+    return this.request<void>("GET", `/api/v1/admin/events/stream`, { query: { "event_types": query?.eventTypes, "tenant_id": query?.tenantId }, auth: true });
   }
 
   /** Federation peer metadata-health listing (fetch success/failure + TLS cert expiry). */
@@ -2116,7 +2239,7 @@ export class SSOClient {
 
   /** List LOCAL (password-authenticated) users. */
   async adminLocalUserList(query?: { page?: number; limit?: number }): Promise<PaginatedLocalUsersResponse> {
-    return this.request<PaginatedLocalUsersResponse>("GET", `/api/v1/admin/local-users`, { query, auth: true });
+    return this.request<PaginatedLocalUsersResponse>("GET", `/api/v1/admin/local-users`, { query: { "page": query?.page, "limit": query?.limit }, auth: true });
   }
 
   /** Create a LOCAL (password-authenticated) user. */
@@ -2175,8 +2298,8 @@ export class SSOClient {
   }
 
   /** List roles for a client. */
-  async permissionListRoles(clientId: string): Promise<ListRolesResponse> {
-    return this.request<ListRolesResponse>("GET", `/api/v1/admin/permissions/${encodeURIComponent(clientId)}/roles`, { auth: true });
+  async permissionListRoles(clientId: string, query?: { pageSize?: number; pageToken?: string }): Promise<ListRolesResponse> {
+    return this.request<ListRolesResponse>("GET", `/api/v1/admin/permissions/${encodeURIComponent(clientId)}/roles`, { query: { "page_size": query?.pageSize, "page_token": query?.pageToken }, auth: true });
   }
 
   /** Add a role to the client's role registry. */
@@ -2221,7 +2344,7 @@ export class SSOClient {
 
   /** Evaluate a ReBAC relationship-tuple Check query (operational debugging). */
   async rebacCheck(query?: { object?: string; relation?: string; subject?: string }): Promise<{ allowed?: boolean; object?: string; relation?: string; subject?: string }> {
-    return this.request<{ allowed?: boolean; object?: string; relation?: string; subject?: string }>("GET", `/api/v1/admin/rebac/check`, { query, auth: true });
+    return this.request<{ allowed?: boolean; object?: string; relation?: string; subject?: string }>("GET", `/api/v1/admin/rebac/check`, { query: { "object": query?.object, "relation": query?.relation, "subject": query?.subject }, auth: true });
   }
 
   /** List registered releases. */
@@ -2366,7 +2489,7 @@ export class SSOClient {
 
   /** Per-tenant usage/metering report. */
   async getTenantUsage(id: string, query?: { period?: "day" | "month"; start?: string }): Promise<Record<string, unknown>> {
-    return this.request<Record<string, unknown>>("GET", `/api/v1/admin/tenants/${encodeURIComponent(id)}/usage`, { query, auth: true });
+    return this.request<Record<string, unknown>>("GET", `/api/v1/admin/tenants/${encodeURIComponent(id)}/usage`, { query: { "period": query?.period, "start": query?.start }, auth: true });
   }
 
   /** Flip a tenant's suspension status. */
@@ -2406,7 +2529,7 @@ export class SSOClient {
 
   /** List active admin bearer tokens. */
   async getAdminTokens(query?: { adminId?: string }): Promise<{ status?: string; tokens?: { admin_id?: string; created_at?: string; id?: string; label?: string; scopes?: string[] }[] }> {
-    return this.request<{ status?: string; tokens?: { admin_id?: string; created_at?: string; id?: string; label?: string; scopes?: string[] }[] }>("GET", `/api/v1/admin/tokens`, { query, auth: true });
+    return this.request<{ status?: string; tokens?: { admin_id?: string; created_at?: string; id?: string; label?: string; scopes?: string[] }[] }>("GET", `/api/v1/admin/tokens`, { query: { "admin_id": query?.adminId }, auth: true });
   }
 
   /** Bulk-revoke workflow. */
@@ -2416,12 +2539,12 @@ export class SSOClient {
 
   /** Refresh-token expiry calendar. */
   async getAdminTokenExpiring(query?: { before?: string; limit?: number }): Promise<{ before?: string; count?: number; status?: string; tokens?: { client_id?: string; expires_at?: string; subject?: string; token_thumbprint?: string }[] }> {
-    return this.request<{ before?: string; count?: number; status?: string; tokens?: { client_id?: string; expires_at?: string; subject?: string; token_thumbprint?: string }[] }>("GET", `/api/v1/admin/tokens/expiring`, { query, auth: true });
+    return this.request<{ before?: string; count?: number; status?: string; tokens?: { client_id?: string; expires_at?: string; subject?: string; token_thumbprint?: string }[] }>("GET", `/api/v1/admin/tokens/expiring`, { query: { "before": query?.before, "limit": query?.limit }, auth: true });
   }
 
   /** Token portfolio overview. */
   async getAdminTokenPortfolio(query?: { clientId?: string; since?: string; until?: string }): Promise<{ portfolio?: { by_client?: { client_id?: string; issued?: number }[]; by_kind?: Record<string, number>; introspections?: number; issued_total?: number; total_events?: number; trend?: { issued?: number; minute?: string }[]; userinfo?: number; window?: { since?: string; until?: string } }; status?: string }> {
-    return this.request<{ portfolio?: { by_client?: { client_id?: string; issued?: number }[]; by_kind?: Record<string, number>; introspections?: number; issued_total?: number; total_events?: number; trend?: { issued?: number; minute?: string }[]; userinfo?: number; window?: { since?: string; until?: string } }; status?: string }>("GET", `/api/v1/admin/tokens/portfolio`, { query, auth: true });
+    return this.request<{ portfolio?: { by_client?: { client_id?: string; issued?: number }[]; by_kind?: Record<string, number>; introspections?: number; issued_total?: number; total_events?: number; trend?: { issued?: number; minute?: string }[]; userinfo?: number; window?: { since?: string; until?: string } }; status?: string }>("GET", `/api/v1/admin/tokens/portfolio`, { query: { "client_id": query?.clientId, "since": query?.since, "until": query?.until }, auth: true });
   }
 
   /** Revoke a token or session. */
@@ -2431,17 +2554,17 @@ export class SSOClient {
 
   /** List active session-backed tokens. */
   async adminTokenListSessions(query?: { userId?: string }): Promise<ListSessionsResponse> {
-    return this.request<ListSessionsResponse>("GET", `/api/v1/admin/tokens/sessions`, { query, auth: true });
+    return this.request<ListSessionsResponse>("GET", `/api/v1/admin/tokens/sessions`, { query: { "user_id": query?.userId }, auth: true });
   }
 
   /** Per-subject active-token view. */
   async getAdminTokenSubject(subject: string, query?: { clientId?: string }): Promise<{ active_refresh_tokens?: number; client_id?: string; counted?: boolean; status?: string; subject?: string }> {
-    return this.request<{ active_refresh_tokens?: number; client_id?: string; counted?: boolean; status?: string; subject?: string }>("GET", `/api/v1/admin/tokens/subjects/${encodeURIComponent(subject)}`, { query, auth: true });
+    return this.request<{ active_refresh_tokens?: number; client_id?: string; counted?: boolean; status?: string; subject?: string }>("GET", `/api/v1/admin/tokens/subjects/${encodeURIComponent(subject)}`, { query: { "client_id": query?.clientId }, auth: true });
   }
 
   /** Suspicious-token anomaly list. */
   async getAdminTokenSuspicious(query?: { type?: "multi_geo" | "velocity" | "rate_spike"; severity?: "warn" | "critical"; limit?: number }): Promise<{ findings?: { client_id?: string; count?: number; detail?: string; first_seen?: string; geos?: string[]; last_seen?: string; severity?: "warn" | "critical"; subject_id?: string; token_thumbprint?: string; type?: "multi_geo" | "velocity" | "rate_spike" }[]; status?: string; total?: number }> {
-    return this.request<{ findings?: { client_id?: string; count?: number; detail?: string; first_seen?: string; geos?: string[]; last_seen?: string; severity?: "warn" | "critical"; subject_id?: string; token_thumbprint?: string; type?: "multi_geo" | "velocity" | "rate_spike" }[]; status?: string; total?: number }>("GET", `/api/v1/admin/tokens/suspicious`, { query, auth: true });
+    return this.request<{ findings?: { client_id?: string; count?: number; detail?: string; first_seen?: string; geos?: string[]; last_seen?: string; severity?: "warn" | "critical"; subject_id?: string; token_thumbprint?: string; type?: "multi_geo" | "velocity" | "rate_spike" }[]; status?: string; total?: number }>("GET", `/api/v1/admin/tokens/suspicious`, { query: { "type": query?.type, "severity": query?.severity, "limit": query?.limit }, auth: true });
   }
 
   /** Issue a temp token for a user. */
@@ -2451,7 +2574,7 @@ export class SSOClient {
 
   /** Aggregated token-usage telemetry. */
   async getAdminTokenUsage(query?: { clientId?: string; since?: string; until?: string }): Promise<{ buckets?: { client_id?: string; count?: number; endpoint?: "token" | "introspect"; kind?: "access" | "refresh" | "id"; minute?: string }[]; status?: string; total?: number }> {
-    return this.request<{ buckets?: { client_id?: string; count?: number; endpoint?: "token" | "introspect"; kind?: "access" | "refresh" | "id"; minute?: string }[]; status?: string; total?: number }>("GET", `/api/v1/admin/tokens/usage`, { query, auth: true });
+    return this.request<{ buckets?: { client_id?: string; count?: number; endpoint?: "token" | "introspect"; kind?: "access" | "refresh" | "id"; minute?: string }[]; status?: string; total?: number }>("GET", `/api/v1/admin/tokens/usage`, { query: { "client_id": query?.clientId, "since": query?.since, "until": query?.until }, auth: true });
   }
 
   /** Revoke a single admin bearer token by ID. */
@@ -2461,12 +2584,12 @@ export class SSOClient {
 
   /** Top-tenants usage leaderboard. */
   async getAdminTopTenants(query?: { period?: "day" | "month"; start?: string; limit?: number }): Promise<{ status?: string; tenants?: Record<string, unknown>[]; total?: number }> {
-    return this.request<{ status?: string; tenants?: Record<string, unknown>[]; total?: number }>("GET", `/api/v1/admin/usage/top-tenants`, { query, auth: true });
+    return this.request<{ status?: string; tenants?: Record<string, unknown>[]; total?: number }>("GET", `/api/v1/admin/usage/top-tenants`, { query: { "period": query?.period, "start": query?.start, "limit": query?.limit }, auth: true });
   }
 
   /** List users. */
   async adminUserList(query?: { pageToken?: string; pageSize?: number; orderBy?: string; filter?: string }): Promise<ListUsersResponse> {
-    return this.request<ListUsersResponse>("GET", `/api/v1/admin/users`, { query, auth: true });
+    return this.request<ListUsersResponse>("GET", `/api/v1/admin/users`, { query: { "page_token": query?.pageToken, "page_size": query?.pageSize, "order_by": query?.orderBy, "filter": query?.filter }, auth: true });
   }
 
   /** Create a user. */
@@ -2591,7 +2714,7 @@ export class SSOClient {
 
   /** List dead-lettered webhook deliveries. */
   async webhookListDeadLetters(query?: { subscriptionId?: string }): Promise<{ dead_letters?: WebhookDeadLetterEntry[] }> {
-    return this.request<{ dead_letters?: WebhookDeadLetterEntry[] }>("GET", `/api/v1/admin/webhooks/deadletters`, { query, auth: true });
+    return this.request<{ dead_letters?: WebhookDeadLetterEntry[] }>("GET", `/api/v1/admin/webhooks/deadletters`, { query: { "subscription_id": query?.subscriptionId }, auth: true });
   }
 
   /** Replay a dead-lettered webhook delivery. */
@@ -2616,7 +2739,7 @@ export class SSOClient {
 
   /** Query audit events. */
   async queryAuditEvents(query?: { type?: string; actorId?: string; clientId?: string; tenantId?: string; provider?: string; outcome?: "success" | "failure"; requestId?: string; traceId?: string; since?: string; until?: string; limit?: number; offset?: number }): Promise<AuditEventList> {
-    return this.request<AuditEventList>("GET", `/api/v1/audit/events`, { query, auth: true });
+    return this.request<AuditEventList>("GET", `/api/v1/audit/events`, { query: { "type": query?.type, "actor_id": query?.actorId, "client_id": query?.clientId, "tenant_id": query?.tenantId, "provider": query?.provider, "outcome": query?.outcome, "request_id": query?.requestId, "trace_id": query?.traceId, "since": query?.since, "until": query?.until, "limit": query?.limit, "offset": query?.offset }, auth: true });
   }
 
   /** Fetch one audit event by id. */
@@ -2626,7 +2749,7 @@ export class SSOClient {
 
   /** Aggregate audit-event facet counts. */
   async queryAuditFacets(query?: { type?: string; actorId?: string; clientId?: string; tenantId?: string; provider?: string; outcome?: "success" | "failure"; requestId?: string; traceId?: string; since?: string; until?: string }): Promise<AuditFacetsResponse> {
-    return this.request<AuditFacetsResponse>("GET", `/api/v1/audit/facets`, { query, auth: true });
+    return this.request<AuditFacetsResponse>("GET", `/api/v1/audit/facets`, { query: { "type": query?.type, "actor_id": query?.actorId, "client_id": query?.clientId, "tenant_id": query?.tenantId, "provider": query?.provider, "outcome": query?.outcome, "request_id": query?.requestId, "trace_id": query?.traceId, "since": query?.since, "until": query?.until }, auth: true });
   }
 
   /** Fetch one Client record. */
@@ -2646,7 +2769,7 @@ export class SSOClient {
 
   /** Classify an arbitrary (remote_addr, host) pair. */
   async classifyNetPolicy(query?: { remoteAddr?: string; host?: string }): Promise<ClassifyResponse> {
-    return this.request<ClassifyResponse>("GET", `/api/v1/netpolicy/classify`, { query, auth: true });
+    return this.request<ClassifyResponse>("GET", `/api/v1/netpolicy/classify`, { query: { "remote_addr": query?.remoteAddr, "host": query?.host }, auth: true });
   }
 
   /** List network policies. */
@@ -2672,8 +2795,8 @@ export class SSOClient {
   // ---- auth ----
 
   /** Upstream IdP federation return URL. */
-  async getAuthCallback(query?: { code?: string; state?: string; provider?: string }): Promise<CallbackResponse> {
-    return this.request<CallbackResponse>("GET", `/auth/callback`, { query });
+  async getAuthCallback(query?: { code?: string; state?: string; provider?: string; error?: string }): Promise<void> {
+    return this.request<void>("GET", `/auth/callback`, { query: { "code": query?.code, "state": query?.state, "provider": query?.provider, "error": query?.error } });
   }
 
   /** Begin an unauthenticated password reset. */
@@ -2687,18 +2810,18 @@ export class SSOClient {
   }
 
   /** Start a browser-based federated login. */
-  async getLogin(query?: { provider?: string; clientId?: string; redirectUri?: string; state?: string }): Promise<void> {
-    return this.request<void>("GET", `/auth/login`, { query });
+  async getLogin(query?: { provider?: string; clientId?: string; redirectUri?: string; state?: string; responseType?: string; responseMode?: string; scope?: string; resource?: string[]; requestUri?: string; request?: string; authorizationDetails?: string; claims?: string; idTokenHint?: string; maxAge?: number; nonce?: string; codeChallenge?: string; codeChallengeMethod?: string; prompt?: string; loginHint?: string; acrValues?: string; uiLocales?: string }): Promise<void> {
+    return this.request<void>("GET", `/auth/login`, { query: { "provider": query?.provider, "client_id": query?.clientId, "redirect_uri": query?.redirectUri, "state": query?.state, "response_type": query?.responseType, "response_mode": query?.responseMode, "scope": query?.scope, "resource": query?.resource, "request_uri": query?.requestUri, "request": query?.request, "authorization_details": query?.authorizationDetails, "claims": query?.claims, "id_token_hint": query?.idTokenHint, "max_age": query?.maxAge, "nonce": query?.nonce, "code_challenge": query?.codeChallenge, "code_challenge_method": query?.codeChallengeMethod, "prompt": query?.prompt, "login_hint": query?.loginHint, "acr_values": query?.acrValues, "ui_locales": query?.uiLocales } });
   }
 
   /** Authenticate and receive a token. */
-  async postLogin(body: LoginRequest): Promise<LoginResponse | LoginDiscoveryResponse | MFARequiredResponse> {
-    return this.request<LoginResponse | LoginDiscoveryResponse | MFARequiredResponse>("POST", `/auth/login`, { body });
+  async postLogin(body: LoginRequest): Promise<LoginResponse | AuthorizationCodeResponse | LoginDiscoveryResponse | MFARequiredResponse> {
+    return this.request<LoginResponse | AuthorizationCodeResponse | LoginDiscoveryResponse | MFARequiredResponse>("POST", `/auth/login`, { body });
   }
 
   /** Complete an MFA step-up challenge. */
-  async postMFAComplete(body: MFACompleteRequest): Promise<LoginResponse> {
-    return this.request<LoginResponse>("POST", `/auth/mfa`, { body });
+  async postMFAComplete(body: MFACompleteRequest): Promise<LoginResponse | AuthorizationCodeResponse> {
+    return this.request<LoginResponse | AuthorizationCodeResponse>("POST", `/auth/mfa`, { body });
   }
 
   /** Self-service signup (opt-in, default-off). */
@@ -2738,12 +2861,12 @@ export class SSOClient {
 
   /** OpenID Connect RP-Initiated Logout 1.0. */
   async getEndSession(query?: { idTokenHint?: string; postLogoutRedirectUri?: string; state?: string; clientId?: string }): Promise<void> {
-    return this.request<void>("GET", `/end_session`, { query });
+    return this.request<void>("GET", `/end_session`, { query: { "id_token_hint": query?.idTokenHint, "post_logout_redirect_uri": query?.postLogoutRedirectUri, "state": query?.state, "client_id": query?.clientId } });
   }
 
   /** Return client-specific login UI metadata. */
   async getLoginUIMetadata(query?: { clientId?: string }): Promise<void> {
-    return this.request<void>("GET", `/login-ui/metadata`, { query });
+    return this.request<void>("GET", `/login-ui/metadata`, { query: { "client_id": query?.clientId } });
   }
 
   /** Revoke the current bearer token and / or named session. */
@@ -2753,7 +2876,7 @@ export class SSOClient {
 
   /** Pushed Authorization Request (RFC 9126). */
   async postPAR(body: PARRequest): Promise<PARResponse> {
-    return this.request<PARResponse>("POST", `/par`, { body });
+    return this.request<PARResponse>("POST", `/par`, { body, clientAuth: true });
   }
 
   /** Dynamic Client Registration (RFC 7591). */
@@ -2778,17 +2901,17 @@ export class SSOClient {
 
   /** OAuth 2.0 token endpoint (RFC 6749 §3.2). */
   async postToken(body: TokenRequest): Promise<TokenIssuance> {
-    return this.request<TokenIssuance>("POST", `/token`, { body });
+    return this.request<TokenIssuance>("POST", `/token`, { body, clientAuth: true });
   }
 
   /** OAuth 2.0 token introspection (RFC 7662). */
   async postIntrospect(body: IntrospectRequest): Promise<IntrospectResponse | IntrospectBatchResponse> {
-    return this.request<IntrospectResponse | IntrospectBatchResponse>("POST", `/token/introspect`, { body });
+    return this.request<IntrospectResponse | IntrospectBatchResponse>("POST", `/token/introspect`, { body, clientAuth: true });
   }
 
   /** OAuth 2.0 token revocation (RFC 7009). */
   async postRevoke(body: RevokeRequest): Promise<void> {
-    return this.request<void>("POST", `/token/revoke`, { body });
+    return this.request<void>("POST", `/token/revoke`, { body, clientAuth: true });
   }
 
   /** Bulk revoke every refresh token bound to the bearer's subject. */
@@ -2899,22 +3022,22 @@ export class SSOClient {
 
   /** OpenID Federation 1.0 §8.3 trust-chain resolution. */
   async resolveFederationTrustChain(query?: { sub?: string }): Promise<{ chain: string[] }> {
-    return this.request<{ chain: string[] }>("GET", `/.well-known/openid-federation-resolve`, { query });
+    return this.request<{ chain: string[] }>("GET", `/.well-known/openid-federation-resolve`, { query: { "sub": query?.sub } });
   }
 
   /** Resolve the status of a federation trust mark. */
   async getFederationTrustMarkStatus(query?: { trustMarkId?: string; sub?: string }): Promise<void> {
-    return this.request<void>("GET", `/.well-known/openid-federation-trust-mark-status`, { query });
+    return this.request<void>("GET", `/.well-known/openid-federation-trust-mark-status`, { query: { "trust_mark_id": query?.trustMarkId, "sub": query?.sub } });
   }
 
   /** Discover the home realm for a browser login identifier. */
   async getHomeRealm(query?: { identifier?: string }): Promise<void> {
-    return this.request<void>("GET", `/auth/home-realm`, { query });
+    return this.request<void>("GET", `/auth/home-realm`, { query: { "identifier": query?.identifier } });
   }
 
   /** OpenID Federation 1.0 §8 Federation Fetch endpoint. */
   async getFederationFetch(query?: { sub?: string; iss?: string }): Promise<void> {
-    return this.request<void>("GET", `/fetch`, { query });
+    return this.request<void>("GET", `/fetch`, { query: { "sub": query?.sub, "iss": query?.iss } });
   }
 
   // ---- me ----
@@ -2940,18 +3063,18 @@ export class SSOClient {
   }
 
   /** Menu tree the bearer's subject is authorized to see. */
-  async getMyMenus(): Promise<MenuTree> {
-    return this.request<MenuTree>("GET", `/menus/me`, { auth: true });
+  async getMyMenus(query?: { clientId?: string }): Promise<MenuTreeResponse> {
+    return this.request<MenuTreeResponse>("GET", `/menus/me`, { query: { "client_id": query?.clientId }, auth: true });
   }
 
   /** Permissions of the bearer's subject for the inferred client. */
-  async getMyPermissions(): Promise<Permission[]> {
-    return this.request<Permission[]>("GET", `/permissions/me`, { auth: true });
+  async getMyPermissions(query?: { clientId?: string }): Promise<PermissionListResponse> {
+    return this.request<PermissionListResponse>("GET", `/permissions/me`, { query: { "client_id": query?.clientId }, auth: true });
   }
 
   /** Roles of the bearer's subject for the inferred client. */
-  async getMyRoles(): Promise<Role[]> {
-    return this.request<Role[]>("GET", `/roles/me`, { auth: true });
+  async getMyRoles(query?: { clientId?: string }): Promise<RoleListResponse> {
+    return this.request<RoleListResponse>("GET", `/roles/me`, { query: { "client_id": query?.clientId }, auth: true });
   }
 
   // ---- mesh ----
@@ -2986,8 +3109,8 @@ export class SSOClient {
   }
 
   /** List / search SCIM Groups (RFC 7644 §3.4). */
-  async scimListGroups(query?: { filter?: string; startIndex?: number; count?: number }): Promise<void> {
-    return this.request<void>("GET", `/api/v1/scim/v2/Groups`, { query, auth: true });
+  async scimListGroups(query?: { filter?: string; sortBy?: string; sortOrder?: "ascending" | "descending"; startIndex?: number; count?: number }): Promise<void> {
+    return this.request<void>("GET", `/api/v1/scim/v2/Groups`, { query: { "filter": query?.filter, "sortBy": query?.sortBy, "sortOrder": query?.sortOrder, "startIndex": query?.startIndex, "count": query?.count }, auth: true });
   }
 
   /** Create a SCIM Group (RFC 7643 §4.2). */
@@ -3046,8 +3169,8 @@ export class SSOClient {
   }
 
   /** List / search SCIM Users (RFC 7644 §3.4). */
-  async scimListUsers(query?: { filter?: string; startIndex?: number; count?: number }): Promise<void> {
-    return this.request<void>("GET", `/api/v1/scim/v2/Users`, { query, auth: true });
+  async scimListUsers(query?: { filter?: string; sortBy?: string; sortOrder?: "ascending" | "descending"; startIndex?: number; count?: number }): Promise<void> {
+    return this.request<void>("GET", `/api/v1/scim/v2/Users`, { query: { "filter": query?.filter, "sortBy": query?.sortBy, "sortOrder": query?.sortOrder, "startIndex": query?.startIndex, "count": query?.count }, auth: true });
   }
 
   /** Create a SCIM User (RFC 7644 §3.3). */
@@ -3193,8 +3316,8 @@ export class SSOClient {
   }
 
   /** Finish authenticated self-service passkey registration. */
-  async finishMyPasskeyRegistration(query?: { sessionId?: string }, body: Record<string, unknown>): Promise<{ credential_id?: string }> {
-    return this.request<{ credential_id?: string }>("POST", `/me/mfa/webauthn/finish`, { query, body, auth: true });
+  async finishMyPasskeyRegistration(body: Record<string, unknown>, query?: { sessionId?: string }): Promise<{ credential_id?: string }> {
+    return this.request<{ credential_id?: string }>("POST", `/me/mfa/webauthn/finish`, { query: { "session_id": query?.sessionId }, body, auth: true });
   }
 
   /** Unbind one of the authenticated user's second factors. */
@@ -3289,7 +3412,7 @@ export class SSOClient {
 
   /** Sign out everywhere — revoke the user's sessions in bulk. */
   async revokeMySessions(query?: { all?: boolean }): Promise<{ revoked?: number }> {
-    return this.request<{ revoked?: number }>("DELETE", `/sessions/me`, { query, auth: true });
+    return this.request<{ revoked?: number }>("DELETE", `/sessions/me`, { query: { "all": query?.all }, auth: true });
   }
 
   /** List the authenticated user's own active sessions. */
@@ -3342,8 +3465,8 @@ export class SSOClient {
   // ---- userinfo ----
 
   /** Fetch the user record for the bearer's subject. */
-  async getUserInfo(): Promise<User> {
-    return this.request<User>("GET", `/userinfo`, { auth: true });
+  async getUserInfo(): Promise<UserInfo | User> {
+    return this.request<UserInfo | User>("GET", `/userinfo`, { auth: true });
   }
 
   // ---- webauthn ----
@@ -3354,8 +3477,8 @@ export class SSOClient {
   }
 
   /** Complete a WebAuthn login — optionally mint a token. */
-  async postWebAuthnLoginFinish(query?: { sessionId?: string; clientId?: string }, body: Record<string, unknown>): Promise<WebAuthnFinishLoginResponse> {
-    return this.request<WebAuthnFinishLoginResponse>("POST", `/webauthn/login/finish`, { query, body });
+  async postWebAuthnLoginFinish(body: Record<string, unknown>, query?: { sessionId?: string; clientId?: string }): Promise<WebAuthnFinishLoginResponse> {
+    return this.request<WebAuthnFinishLoginResponse>("POST", `/webauthn/login/finish`, { query: { "session_id": query?.sessionId, "client_id": query?.clientId }, body });
   }
 
   /** Start a WebAuthn registration ceremony. */
@@ -3364,8 +3487,8 @@ export class SSOClient {
   }
 
   /** Complete a WebAuthn registration ceremony. */
-  async postWebAuthnRegistrationFinish(query?: { sessionId?: string }, body: Record<string, unknown>): Promise<WebAuthnFinishRegistrationResponse> {
-    return this.request<WebAuthnFinishRegistrationResponse>("POST", `/webauthn/registration/finish`, { query, body });
+  async postWebAuthnRegistrationFinish(body: Record<string, unknown>, query?: { sessionId?: string }): Promise<WebAuthnFinishRegistrationResponse> {
+    return this.request<WebAuthnFinishRegistrationResponse>("POST", `/webauthn/registration/finish`, { query: { "session_id": query?.sessionId }, body });
   }
 
 }

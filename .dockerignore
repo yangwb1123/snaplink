@@ -12,6 +12,8 @@
 *.cover
 *.prof
 *.test
+*.out
+coverage.*
 /coverage.out
 /coverage.html
 /snaplink-billing
