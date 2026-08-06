@@ -1,0 +1,43 @@
+All five axes verified against the tree. Findings, with exact anchors:
+
+## 1. Fail-open Roles outage vs oracle-safety rows — defensible, but the table leans on two precedents it never cites
+
+**Mechanics verified.** All three causes (store error, `ErrUserNotFound`, genuinely no roles) produce the same wire: claim omitted, mint succeeds. `conditionalAccessGroups` (`accessors_handlers.go:100-115`) is the cited precedent; a *stronger* one exists at the mint path itself — `enforceTokenPolicy` (`server_helpers.go:78-83`) fails open on policy-store lookup "matching the tenant-suspension / risk-scorer stance", and AGENTS.md's sanctioned fail-open set includes tenant-suspension lookup outage. The oracle rows govern *error responses*; this row produces a success-with-omitted-claim, and the only distinguishing signal (the log line) is server-side — the exact pattern the table sanctions ("byte-identical … details only in audit"). No oracle row is violated, including the introspection surface (no-echo is preserved, so no third party can observe the truncation).
+
+**Three gaps in the row:**
+- **AGENTS.md's fail-open enumeration does not list roles issuance.** The design extends the sanctioned set silently. The row should explicitly argue: roles are advisory claim enrichment on an already scope-authorized mint (the trust-scoring rule's "advisory input" branch), and cite `enforceTokenPolicy` + the suspension row.
+- **"Downstream RS role-denials fail closed there" is an assumption about third-party policy, not an invariant.** If any downstream consumer is allow-on-empty, an attacker DoSes the permissions store → tokens minted without roles → escalation. One sentence in the claim docs must pin the contract: *missing roles is deny-eligible, never allow*. (The fail-closed alternative is rightly rejected — it would create a worse store-health oracle across requests and a new mint availability coupling.)
+- Name the audit channel/metric so the "fail open **with audit/logging**" half of the AGENTS.md contract is checkable, and note the fail-open + exchange combination (axis 3) as the case most likely to be misread downstream.
+
+## 2. Fail-loud allowlist misconfig — no downgrade path, but one coverage hole and one footgun
+
+**Verified:** the gate is strictly additive — boot gate (effective issuer ∈ list) and mint gate (signer name ∈ list). The sentinel can only be minted when explicitly listed or no list is set; `config_load.go:183-184` sentinel rejection is untouched. Misconfig → panic/load error, never a silent weaker state. Notably, today an embedder wanting base-URL issuance without `WithIssuer` gets *silent* divergence (sentinel-minted tokens, base-URL discovery); post-change, `WithIssuerAllowlist{baseURL}` without `WithIssuer` panics at boot — the silent failure becomes loud. Strictly better than today.
+
+**Two real problems:**
+- **The mint gate covers access tokens only.** It sits in `issuerForClient` (`server_helpers.go:37`); `idTokenIssuerForClient` (:178) and `jarmSignerForClient` (:209) resolve the same per-tenant/strategy names *without* the check, and ID payloads stamp `Iss: j.issuer` (`ed25519_issue.go:92`, `ecdsa_issue.go:68`, `rsa_issue.go:59`). With a non-empty allowlist, an unlisted tenant strategy refuses access tokens (500) but still mints ID tokens and JARM responses bearing the unlisted `iss`. The row "Signer name outside allowlist → mint refuses" **overstates coverage**. Either extend the gate to the ID/JARM selectors (fail-closed-by-omission matches their existing discipline) or amend the row.
+- **Empty-but-present list silently disables the gate.** `WithIssuerAllowlist()` / `server.issuer_allowlist: []` = no gate, byte-identical to absent. That mirrors scoperegistry's nil-no-op (`protocols/oauth/scoperegistry/reject.go`) — but scoperegistry's *malformed* registries fail boot loudly (`errFrozen`/`errEmptyScope`/`errBareWildcard`). The design inherits only the permissive half of that precedent; a YAML typo (wrong key name) is indistinguishable from an intentional empty list. Present-but-empty should fail loud; absent stays off.
+
+## 3. Cross-tenant exchange namespace semantics — coherent, but the table pins roles and omits `tenant_id`
+
+**Verified:** `localSub` = server-wide local user ID via `ResolveLocalSubject` (`token_exchange_stages.go:366`); `Provider.Roles` is clientID-scoped with no tenant parameter (`domains/permissions/provider.go:38`) — so "exchanging client's namespace" is well-defined: role rows under the target clientID for the home-tenant subject. `tokExSubject` binds `TenantID: client.TenantID` (:399) — the *exchanging* tenant. The lookup is oracle-safe by construction: foreign subject with no local rows → `ErrUserNotFound` → nil → omitted, indistinguishable from no-roles (dummy-hash pattern). The row should say so.
+
+**Two omissions:**
+- **No `tenant_id` namespace row.** Post-change, `tenant_id` is an observable first-class claim for the first time; on an exchanged/guest token it names the *exchanging* tenant while the subject is home-tenant. `tenantHintFromClaims` feeds quota accounting (advisory, fine), but the claim doc must pin: *`tenant_id` = issuing client's tenant (issuer attribute), never the subject's home tenant*. One sentence in the row.
+- **Entitlement-vs-claim split:** the guest hop is *entitled* on home-tenant guest roles (scope narrowing, `token_exchange.go:446`) but the claim reflects local-client rows (possibly empty). The token cannot reconstruct why the hop succeeded. Not a hole (authorization stays scope-bound, fail-closed trust), but pin it.
+- Missing falsifiable test: §6 has no exchange-path roles test. Add `TestRcov_TokenExchange_RolesLocalNamespace` (local rows → present; guest hop without local rows → absent) to close axes 1+3 together.
+
+## 4. "Zero security gain" — true for single-tenant, **false for multi-tenant**; the carve-out is a security property, not just compat
+
+**Verified:** expected aud today = `s.resolveIssuer(ctx)` = base URL in SDK-default (`server_token_clientauth.go:135`, `server_jar.go:365`); `middleware.BaseURL` is XFH-aware (`interfaces/middleware/request_url.go:22-42`), and per-tenant domain routing via XFH is a documented deployment shape (`docs/config-reference.md:71`). jti replay for both surfaces is **opt-in** (no-op without a wired `JTIReplayStore`).
+
+- Single-tenant/cmd: expected aud is a per-deployment constant either way; flipping changes only its value → zero gain, compat break. **Claim correct.**
+- **Multi-tenant (per-tenant Host): the aud check is the only request-independent thing binding a captured assertion/JAR to one tenant.** `iss` = `client.ID` is identical across tenants; with replay stores unwired (the default), flipping aud to the shared sentinel would let a captured assertion validate at any tenant's token endpoint. The carve-out *preserves a cross-tenant replay binding*; the row's "zero security gain" undersells it in exactly the wrong direction — flipping A/B would be an active downgrade, not a no-op.
+- Worth one line: after the flip, SDK-default has `iss` stamps = sentinel while aud-expected = base URL — a *new* divergence (today they agree). Not a vulnerability, but the congruence rhetoric should name aud-expected as deliberately outside the congruence set.
+
+## 5. Default state — posture preserved or improved; one observability loss
+
+**Verified:** unset allowlist → no boot gate, no mint gate (scoperegistry nil-no-op precedent); SDK-default minted `iss` unchanged (sentinel both today and after); cmd zero-delta (`server.issuer` non-sentinel, sentinel rejection retained). Today's SDK-default is *already* inconsistent (discovery = base URL, minted = sentinel), so any strict RP validating iss-vs-discovery already fails; post-change it passes — the flip is a consistency fix, and the re-pointed trusted-proxy trio (`test/trusted_proxy_gate_test.go:267-311`) preserves trust-gate coverage via the endpoint-field assertions.
+
+**One caveat:** the flip deletes an *observability probe*. Today discovery `issuer` is a trust-state oracle (XFH honored vs not — `_UnsetKnobHonorsForwardedHost` documents "legacy first-hop trust" this way); post-change it is constant, so operators who detect "my edge isn't stripping XFH" by watching discovery lose that signal. The design's A3-6 re-pointing must keep the endpoint-based assertion (it does) — add one doc line: the trust-state probe moves to `authorization_endpoint`/`token_endpoint`.
+
+**Bottom line:** rows 1, 3, 5 hold up with pins; row 2 overstates gate coverage (ID/JARM escape) and has an empty-list footgun; row 4's justification is wrong for multi-tenant deployments — the carve-out is load-bearing security there, not "zero gain". No `.go` changes; analysis only.

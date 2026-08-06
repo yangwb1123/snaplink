@@ -1,0 +1,17 @@
+Validation complete. Report saved to `docs/architect-analysis/auto/runs/emit-tenant-id-roles-in-buildaccesspayload-and-r-bbad8fa5/artifacts/config-surface-review-0f5c0ef3/audit.md`.
+
+## Verdict: 4 of 5 axes confirmed; the axis-2 requirement **fails the design as written**, but is implementable in-budget
+
+**1. Schema and defaults — CONFIRMED.** Field lands in `ServerConfig` (`config/config_server.go:16`); `applyDefaults` (`config_load.go:70-72`) runs before `validate()`, so the check sees the effective issuer (`"sso-server"` when unset). Schema is reflection-generated (`config/source.go:232`) — `sso-ctl config schema` and config-reference.md's JSON Schema section need zero manual work.
+
+**2. Present-but-empty vs absent — the headline finding.** The design pins "Empty / absent → no gate" (§4 row 5), contradicting the axis-2 requirement. But I proved empirically against the repo's exact YAML stack (goccy/go-yaml v1.19.2): **absent → `nil`, `issuer_allowlist: []` → non-nil `[]string{}`** — the distinction is detectable, so fail-loud is a one nil-check in the helper. ENV edges verified too: `SSO_SERVER__ISSUER_ALLOWLIST=""` → hard load error, `"[]"` → detectable, `null` → absent-like. One trap the design misses: `WithIssuerAllowlist()` implemented as `append([]string(nil), issuers...)` collapses zero-arg to `nil` — the option must seed `append([]string{}, issuers...)` or the SDK can't tell present-but-empty from absent.
+
+**3. Sentinel interplay — CONFIRMED.** `config_load.go:183-185` untouched; allowlist check runs after it (deterministic precedence). Config never needs sentinel special-casing (post-rejection the effective issuer can't be the sentinel), and sentinel *entries* in the list must stay legal (legitimate at SDK level, A3-2).
+
+**4. Boot/mint gates — CONFIRMED with one caveat.** Boot gate post-options at `sso.go:105` (499→500, option-order independent); mint gate error rides the verified `500 ErrNoTokenStrategy` path (`token_authcode.go:122-123`). cmd zero-delta proven: signer name = `cfg.Server.Issuer` (`build_signing_issuers.go:43`), same value the config gate checks. Caveat (re-verified): the mint gate covers `issuerForClient` only — `idTokenIssuerForClient`/`jarmSignerForClient` resolve tenant names without it, so unlisted tenant strategies still mint ID/JARM with the unlisted `iss`.
+
+**5. Error codes + docs — CONFIRMED with one truthfulness amendment.** No new wire code needed (config errors aren't listed in error-codes.md by convention — the sentinel error isn't either). But `no_token_strategy`'s "Emitted when" (error-codes.md:796) gains a trigger clause per AGENTS.md §5.6 — the design's blanket "no error-codes.md change" overstates. config-reference.md row goes in the OIDC table after `server.issuer` (line 48).
+
+**6. Line budget — exactly 498→500.** The two lines: one validation call after :185, one single-line conditional wiring after :308 (in-file precedent at :327-328). Both axis-2 checks absorb into the `config/config.go` helper (236→~250) — zero extra config_load.go lines. The 500/500 trio stays untouched; no new files anywhere (config/ fan-out frozen, interfaces/sso at 60-file ceiling).
+
+Six amendments are itemized in §7 of the report before this design can pass the gate — the empty-fail-loud flip, the SDK non-nil seed, the third config test (`issuer_allowlist: []` → load error), the ID/JARM coverage decision, and the error-codes.md clause.
