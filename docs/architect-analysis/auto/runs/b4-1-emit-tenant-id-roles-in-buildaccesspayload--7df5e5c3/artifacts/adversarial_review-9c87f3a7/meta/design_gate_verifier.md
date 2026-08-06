@@ -1,0 +1,17 @@
+Gate report written to `docs/architect-analysis/auto/runs/b4-1-emit-tenant-id-roles-in-buildaccesspayload--7df5e5c3/artifacts/design_gate-6a76b0dd/task-1-design-gate.md`.
+
+**Provenance pin:** the design artifact (mtime 12:01:22) predates all three reviews (12:08–12:11); `pipeline.yaml` has no patch stage and no run-dir file changed after the reviews — there is no revised design to verify. I re-derived every finding against the tree at HEAD `c676f974` instead:
+
+- **F-1** — `issuerForClient` (server_helpers.go:37) funnels to the existing `ErrNoTokenStrategy` 500 shape (server_login.go:104, server_native_sso.go:184); the design never pins that the IssuerNamer refusal reuses it, nor the allowlist-vs-signer-name comparison.
+- **F-2** — all four classes confirmed live on the resolved issuer: private_key_jwt at handle_par.go:170 / handle_ciba.go:195 / handle_introspect.go:213 / handle_revoke.go:132; bearer challenges at mesh_authz.go:179/217/253; RFC 8414 `authorization_servers` at server_resource.go:182; SSF `JWKSURI = iss + "/.well-known/jwks.json"` at caep/receiver.go:258-264. Zero exclusion language in the design.
+- **F-3** — sentinel `"snaplink-sso"` (consts_oauth.go:139) is non-URL; discovery truthing advertises it in SDK-default state. Unpinned.
+- **F-4** — trusted_proxy_gate_test.go:269-270, :283-285, :299-301 confirmed: two tests assert the exact behavior being removed; "re-pointed" only.
+- **F-5** — sso.go 499/500, options_security.go **500/500**, options.go 490, server_discovery.go 483, server_discovery_config.go 487, config_load.go 495. Zero steps enumerated, no rollback order.
+- **F-6** — quickstart main.go:196-200 comment ("that value is request-base-derived … would mismatch") becomes false; absent from the sweep.
+- **S1** — DCRRequest has `TenantID` (handle_register.go:72), field-enumerating builders (handle_register_helpers.go:170,287); no Roles exclusion or wire test.
+- **S2** — `Extra: subject.Claims` unscrubbed (issue_payload.go:36); ID-token path `Extra: req.Claims` (ed25519_issue.go:88-91) leaks provider-attribute `roles`/`tenant_id` — no shared scrub.
+- **S3/S4** — "empty = byte-identical legacy" vs "sentinel (never Host)" contradiction on record; matrix never stated.
+- **S5** — introspect_body.go:51-57 echoes `serving_region`, never `Extra`; asymmetry unpinned.
+- **Falsifiability** — zero named tests; counts drift 3+1 vs 3+2; no handler-plumbing, mint-gate-negative, or precedence tests; cross-repo 422 gate has no stated condition (mint-token.sh absent, fullstack.sh bypasses HTTP, `AUDIT_ALLOW_DEV_AUTH: "true"` at docker-compose.verify.yml:12).
+
+VERDICT: FAIL - no revised design exists (artifact mtime 12:01:22 predates all reviews; no patch stage, no amended file), and all eleven blocking findings — F-1 unpinned /token mint-gate refusal surface, F-2 zero exclusion classes for private_key_jwt/JAR/bearer-challenge/RFC 8414/SSF, F-3 unpinned non-URL sentinel vs discovery consumers, F-4 no trust-gate coverage plan beyond re-pointing three inverting tests at trusted_proxy_gate_test.go:265-313, F-5 unenumerated migration steps with options_security.go at 500/500 and config_load.go 495, F-6 missing quickstart main.go:196-200 sweep, S1 missing DCR Roles exclusion + wire test, S2 missing ID-token ext scrub, S3/S4 contradictory allowlist state matrix, S5 unpinned serving_region echo asymmetry, and the unnamed/drifting test counts with no cross-repo 422 gate condition — are confirmed in code at HEAD and absent from the design, so the design is not ready for implementation.
