@@ -1,12 +1,29 @@
 {
   "name": "@snaplink/sso-client",
-  "version": "0.2.0",
-  "description": "Generated TypeScript client for the snaplink/sso HTTP API. See README.md for scope; regenerate with `go run ./cmd/gensdk --lang=ts` from the repo root.",
+  "version": "0.3.0",
+  "description": "TypeScript SDK for the snaplink/sso HTTP API and hosted-login redirects.",
   "license": "Apache-2.0",
-  "main": "client.ts",
-  "types": "client.ts",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "bun test *.test.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prepack": "npm run build"
+  },
   "sideEffects": false,
   "files": [
-    "client.ts"
+    "dist",
+    "client.ts",
+    "hosted-login.ts",
+    "index.ts"
   ]
 }

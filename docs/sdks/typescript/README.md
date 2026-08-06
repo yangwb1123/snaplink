@@ -1,14 +1,16 @@
-# snaplink/sso — TypeScript client (generated)
+# snaplink/sso — TypeScript SDK
 
 > **Scope:** generated client for the full documented API surface of
-> `docs/openapi.yaml`. It is not an npm package, and does not ship a login
-> page, self-service portal, setup UI, developer portal, or admin console.
-> `sso-server` is a pure API backend; those browser experiences are separate
-> frontend projects.
+> `docs/openapi.yaml`, plus a hand-written hosted-login URL helper. It is not
+> published to an npm registry and does not ship a login page, self-service
+> portal, setup UI, developer portal, or admin console. `sso-server` is a pure
+> API backend; those browser experiences are separate frontend projects.
 
 `client.ts` is **generated output**, committed the same way generated Go under
 `gen/proto/` is: checked in for consumers to use directly, regenerated from
 `docs/openapi.yaml` by a Go program rather than hand-maintained.
+`hosted-login.ts` is the small hand-written browser-navigation companion; it
+is exported through `index.ts` and is not overwritten by API generation.
 
 The directory is a valid npm package (`@snaplink/sso-client`) and can be
 consumed from a checked-out Snaplink repository with a `file:` dependency.
@@ -45,10 +47,10 @@ its own, so the two language clients cannot drift apart in scope.
 Every generated method name is the operation's `operationId` **verbatim**
 (e.g. `client.postToken(...)`, `client.getUserInfo()`) — no derived/shortened
 aliasing — so a call site is grep-able straight back to its
-`docs/openapi.yaml` operation. The one exception is `login()`/`logout()`
-(plus the `isLoggedIn`/`accessToken` getters): hand-written convenience
-wrappers around `postLogin`/`postLogout`, not generated from an operationId —
-see Usage below.
+`docs/openapi.yaml` operation. The generated client's method exceptions are
+`login()`/`logout()` (plus the `isLoggedIn`/`accessToken` getters): hand-written
+convenience wrappers around `postLogin`/`postLogout`, not generated from an
+operationId — see Usage below.
 
 ## Known simplifications in the generator
 
@@ -73,13 +75,51 @@ see Usage below.
 
 ## Usage
 
+### Hosted login: redirect without collecting credentials in the RP
+
+For an application that must use a separately deployed Snaplink login page,
+generate state plus an RFC 7636 verifier/challenge in the trusted RP/BFF,
+persist the state and verifier, then redirect the browser to the URL returned
+by `buildHostedLoginURL`. The verifier and confidential client secret stay in
+the BFF and are never accepted by the URL helper.
+
+```ts
+import { buildHostedLoginURL } from "@snaplink/sso-client";
+
+const location = buildHostedLoginURL({
+  loginPageUrl: "https://sso.example.com/login/",
+  clientId: "my-app",
+  redirectUri: "https://app.example.com/api/auth/callback",
+  responseType: "code",
+  scope: ["openid", "profile", "email"],
+  state: persistedState,
+  codeChallenge: sha256Base64URL(persistedVerifier),
+  codeChallengeMethod: "S256",
+  nonce: persistedNonce,
+});
+
+return Response.redirect(location, 302);
+```
+
+The login page calls `postLogin` / `postMFAComplete` from this SDK and returns
+the resulting authorization code to `redirectUri`. The BFF validates `state`
+and `iss`, then exchanges the code with `postToken` using the original verifier.
+
+Both login-page and callback URLs must use HTTPS. Loopback HTTP is accepted for
+local development. A trusted LAN can opt in explicitly with
+`allowInsecureHttpForDevelopment: true`; this must never be enabled in a
+production configuration. Existing query parameters such as a theme selector
+are preserved, while OAuth parameters are set from the validated arguments.
+The helper rejects URL fragments, embedded credentials, `client_secret`,
+`code_verifier`, PKCE downgrade to `plain`, and non-code response types.
+
 ### Simplest integration: direct password login, no redirect
 
 For a frontend that owns its own login form and just wants tokens back —
 set `clientId` once, call `login(username, password)`:
 
 ```ts
-import { SSOClient } from "./client";
+import { SSOClient } from "@snaplink/sso-client";
 
 const client = new SSOClient({ baseUrl: "https://sso.example.com", clientId: "my-app" });
 
@@ -97,7 +137,7 @@ await client.logout();
 ### Authorization-code exchange + manual token storage
 
 ```ts
-import { SSOClient, SSOError } from "./client";
+import { SSOClient, SSOError } from "@snaplink/sso-client";
 
 let accessToken: string | undefined;
 const clientSecret = process.env.SNAPLINK_CLIENT_SECRET;
