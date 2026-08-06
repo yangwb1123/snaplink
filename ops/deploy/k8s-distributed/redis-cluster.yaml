@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  namespace: sv-sso
+spec:
+  serviceName: redis-cluster
+  replicas: 3
+  selector:
+    matchLabels: { app: redis-cluster }
+  template:
+    metadata:
+      labels: { app: redis-cluster }
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: u1-faex9
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command:
+            - redis-server
+            - --port
+            - "6379"
+            - --cluster-enabled
+            - "yes"
+            - --cluster-config-file
+            - /data/nodes.conf
+            - --cluster-node-timeout
+            - "5000"
+            - --appendonly
+            - "no"
+            - --maxmemory-policy
+            - noeviction
+            # noeviction is an operator hard requirement: evicting a live
+            # refresh-family ledger, jti key, or revocation entry is a
+            # security regression, not a cache miss. Add --cluster-replicas 1
+            # for shard HA (6-node layout).
+            - --dir
+            - /data
+          ports:
+            - { containerPort: 6379, name: client }
+            - { containerPort: 16379, name: bus }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - { name: data, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster
+  namespace: sv-sso
+spec:
+  clusterIP: None
+  selector: { app: redis-cluster }
+  ports:
+    - { name: client, port: 6379, targetPort: 6379 }

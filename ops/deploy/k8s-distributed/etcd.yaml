@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: etcd
+  namespace: sv-sso
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: etcd }
+  template:
+    metadata:
+      labels: { app: etcd }
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: u1-faex9
+      containers:
+        - name: etcd
+          image: quay.io/coreos/etcd:v3.5.21
+          args:
+            - etcd
+            - --listen-client-urls=http://0.0.0.0:2379
+            - --advertise-client-urls=http://etcd.sv-sso.svc:2379
+            - --listen-peer-urls=http://0.0.0.0:2380
+            - --initial-advertise-peer-urls=http://etcd.sv-sso.svc:2380
+            - --initial-cluster=default=http://etcd.sv-sso.svc:2380
+            - --initial-cluster-state=new
+            # 3-member HA: give each member its own Deployment/StatefulSet and
+            # list all three advertised peer URLs in --initial-cluster.
+            - --data-dir=/var/lib/etcd
+          ports:
+            - { containerPort: 2379, name: client }
+            - { containerPort: 2380, name: peer }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/etcd }
+      volumes:
+        - { name: data, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: etcd
+  namespace: sv-sso
+spec:
+  selector: { app: etcd }
+  ports:
+    - { name: client, port: 2379, targetPort: 2379 }

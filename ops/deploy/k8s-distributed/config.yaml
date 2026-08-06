@@ -1,0 +1,244 @@
+server:
+  listen: :8080
+  issuer: https://sso.ywbsd.site
+  topology:
+    mode: multi
+  pairwise_subjects:
+    backend: postgres
+bootstrap:
+  disabled: true
+setup_wizard:
+  enabled: true
+redis:
+  mode: cluster
+  addrs:
+  - redis-cluster-0.redis-cluster.sv-sso.svc:6379
+  - redis-cluster-1.redis-cluster.sv-sso.svc:6379
+  - redis-cluster-2.redis-cluster.sv-sso.svc:6379
+  db: 0
+  pool_size: 100
+  read_timeout: 300ms
+  write_timeout: 300ms
+postgres:
+  dialect: postgres
+identity:
+  backend: postgres
+  session_backend: redis
+permissions:
+  enabled: true
+  backend: postgres
+  apps:
+  - client_id: sso-admin-console
+    roles:
+    - code: sso-admin
+      name: SSO Administrator
+      permissions:
+      - admin:*
+  user_roles:
+  - user_id: admin
+    client_id: sso-admin-console
+    roles:
+    - sso-admin
+audit:
+  enabled: true
+  backend: postgres
+  hash_chain: true
+tenant:
+  enabled: true
+  backend: postgres
+  suspension_check:
+    enabled: true
+    cache_ttl: 5s
+self_service:
+  password:
+    backend: postgres
+  signup: true
+admin:
+  enabled: true
+  api_rest_enabled: true
+hosted_login:
+  enabled: true
+client_registration:
+  enabled: true
+oauth:
+  backend: redis
+  auth_code:
+    enabled: true
+    ttl: 10m
+  refresh_token:
+    enabled: true
+    ttl: 720h
+security:
+  jti_replay:
+    backend: redis
+  rate_limit:
+    backend: redis
+    default_per_sec: 200
+    default_burst: 400
+  trusted_proxies:
+    cidrs:
+    - 127.0.0.0/8
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  cors:
+    enabled: true
+    allowed_origins:
+    - https://sso.ywbsd.site
+    - http://192.168.31.198:30101
+    - http://192.168.31.198:30090
+    - https://ssodemo.ywbsd.site
+    - http://192.168.31.198:8090
+    - http://192.168.31.198:8093
+    - https://webapp.ywbsd.site
+    - https://im.ywbsd.site
+    - http://192.168.31.198:8091
+    allowed_methods:
+    - GET
+    - POST
+    - OPTIONS
+    allowed_headers:
+    - Authorization
+    - Content-Type
+webauthn:
+  enabled: true
+  rp_id: sso.ywbsd.site
+  rp_display_name: SV SSO
+  rp_origins:
+  - https://sso.ywbsd.site
+  session_ttl: 5m
+  storage:
+    users:
+      backend: postgres
+    sessions:
+      backend: redis
+authenticators:
+  password:
+    enabled: true
+    health:
+      enabled: false
+connections:
+  enabled: true
+  connections:
+  - id: google
+    type: oidc
+    display_name: Google
+    enabled: true
+    config:
+      oidc_authorization_endpoint: https://accounts.google.com/o/oauth2/v2/auth
+      oidc_token_endpoint: https://oauth2.googleapis.com/token
+      oidc_userinfo_endpoint: https://openidconnect.googleapis.com/v1/userinfo
+      oidc_redirect_uri: https://sso.ywbsd.site/auth/callback
+      oidc_scopes: openid profile email
+      oidc_client_id: CHANGEME
+      oidc_client_secret: CHANGEME
+  - id: github
+    type: oidc
+    display_name: GitHub
+    enabled: true
+    config:
+      oidc_authorization_endpoint: https://github.com/login/oauth/authorize
+      oidc_token_endpoint: https://github.com/login/oauth/access_token
+      oidc_userinfo_endpoint: https://api.github.com/user
+      oidc_redirect_uri: https://sso.ywbsd.site/auth/callback
+      oidc_scopes: read:user user:email
+      oidc_subject_field: id
+      oidc_client_id: CHANGEME
+      oidc_client_secret: CHANGEME
+clients:
+- id: im-demo
+  secret: CHANGEME-from-sso-config-sensitive
+  name: IM Demo
+  redirect_uris:
+  - http://192.168.31.198:8091/callback
+  - https://im.ywbsd.site/callback
+  allowed_scopes:
+  - openid
+  - profile
+  - email
+  allowed_authenticators:
+  - password
+  token_strategy: jwt
+  active: true
+- id: source-demo
+  secret: CHANGEME-from-sso-config-sensitive
+  name: Source Demo
+  redirect_uris:
+  - http://192.168.31.198:8092/callback
+  - https://source.ywbsd.site/callback
+  allowed_scopes:
+  - openid
+  - profile
+  - email
+  allowed_authenticators:
+  - password
+  token_strategy: jwt
+  active: true
+- id: webapp-demo
+  name: Webapp SDK Demo
+  allowed_scopes:
+  - openid
+  - profile
+  - email
+  allowed_authenticators:
+  - password
+  token_strategy: jwt
+  active: true
+- id: acme-app-demo
+  name: Acme App Demo
+  tenant_id: acme
+  allowed_scopes:
+  - openid
+  - profile
+  - email
+  allowed_authenticators:
+  - password
+  token_strategy: jwt
+  active: true
+- id: sso-admin-console
+  name: SSO Console
+  redirect_uris:
+  - https://sso.ywbsd.site/admin/
+  - https://sso.ywbsd.site/login/
+  - http://192.168.31.198:30101/admin/
+  - http://192.168.31.198:30101/login/
+  allowed_scopes:
+  - openid
+  - profile
+  - admin:read
+  - admin:write
+  allowed_authenticators:
+  - password
+  - google
+  - github
+  token_strategy: jwt
+  require_pkce: true
+  active: true
+- id: aero-vault
+  name: Aero Vault
+  redirect_uris:
+  - https://source.ywbsd.site/auth/oidc/callback
+  post_logout_redirect_uris:
+  - https://source.ywbsd.site/ui
+  allowed_scopes:
+  - openid
+  - profile
+  - email
+  allowed_authenticators:
+  - password
+  token_strategy: jwt
+  require_pkce: true
+  active: true
+cluster:
+  bus:
+    backend: etcd
+    etcd_endpoints:
+    - etcd.sv-sso.svc:2379
+  cross_replica_revocation: true
+keys:
+  signing:
+    revocation_backend: redis
+  signing_key_registry:
+    backend: etcd
+    etcd_endpoints:
+    - etcd.sv-sso.svc:2379
