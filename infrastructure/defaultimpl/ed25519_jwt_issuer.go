@@ -4,8 +4,12 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -201,6 +205,67 @@ func WithEd25519Key(priv ed25519.PrivateKey) Ed25519Option {
 		j.privateKey = priv
 		j.publicKey = priv.Public().(ed25519.PublicKey)
 	}
+}
+
+// WithEd25519KeyFile persists the Ed25519 signing key to a PEM file
+// (PKCS#8) so a process restart reuses the same key (kid stable across
+// restarts — the deployed `rotation.enabled=false` profile otherwise
+// regenerates the key on every boot and silently invalidates every
+// issued token). First run: generate + write (0600, atomic rename).
+// Subsequent runs: load. External signer wins when both are set.
+func WithEd25519KeyFile(path string) Ed25519Option {
+	return func(j *Ed25519JWTIssuer) {
+		if j.signer != nil || path == "" {
+			return
+		}
+		priv, err := loadOrGenerateEd25519Key(path)
+		if err != nil {
+			panic(fmt.Sprintf("ed25519: key file %s: %v", path, err))
+		}
+		j.privateKey = priv
+		j.publicKey = priv.Public().(ed25519.PublicKey)
+	}
+}
+
+func loadOrGenerateEd25519Key(path string) (ed25519.PrivateKey, error) {
+	if data, err := os.ReadFile(path); err == nil {
+		block, _ := pem.Decode(data)
+		if block == nil {
+			return nil, fmt.Errorf("decode PEM")
+		}
+		der, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse PKCS8: %w", err)
+		}
+		priv, ok := der.(ed25519.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("not an Ed25519 key")
+		}
+		return priv, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return nil, err
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, pemBytes, 0o600); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return nil, err
+	}
+	return priv, nil
 }
 
 // WithEd25519KeyID overrides the auto-derived kid.
