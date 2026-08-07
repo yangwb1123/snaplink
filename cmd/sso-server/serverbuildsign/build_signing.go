@@ -74,7 +74,7 @@ func BuildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, rdb go
 
 	switch alg {
 	case "", "eddsa", "ed25519":
-		return buildEd25519SigningIssuer(srv, extSigner, extKID, revStore, m)
+		return buildEd25519SigningIssuer(sc, srv, extSigner, extKID, revStore, m)
 	case "es256", "ecdsa":
 		return buildECDSASigningIssuer(srv, extSigner, extKID, revStore, m)
 	case "rs256", "ps256", "rsa":

@@ -66,6 +66,11 @@ type SigningConfig struct {
 	// scheduled loop (manual RotateKey/RetireKey still work).
 	Alg string `yaml:"alg"`
 
+	// KeyFile persists the in-process signing key to a PEM file so a
+	// restart reuses the same key (kid stable). Empty (default) =
+	// in-process generated key (regenerated on every boot).
+	KeyFile string `yaml:"key_file"`
+
 	// External names a KMS/HSM signer factory registered via the cmd
 	// RegisterExternalSigner hook (in an operator's forked binary).
 	// When set, the signing key lives outside this process — the

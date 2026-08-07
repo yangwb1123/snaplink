@@ -38,7 +38,7 @@ func resolveExternalSigner(sc config.SigningConfig, m *metrics.Metrics, logger s
 	return extSigner, kid, nil
 }
 
-func buildEd25519SigningIssuer(srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore, m *metrics.Metrics) (SigningIssuer, string, crypto.Signer, error) {
+func buildEd25519SigningIssuer(sc config.SigningConfig, srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore, m *metrics.Metrics) (SigningIssuer, string, crypto.Signer, error) {
 	opts := []defaultimpl.Ed25519Option{
 		defaultimpl.WithEd25519Issuer(srv.Issuer),
 		defaultimpl.WithEd25519TokenTTL(srv.TokenTTL),
@@ -54,6 +54,9 @@ func buildEd25519SigningIssuer(srv config.ServerConfig, extSigner crypto.Signer,
 	}
 	if revStore != nil {
 		opts = append(opts, defaultimpl.WithEd25519RevocationStore(revStore))
+	}
+	if sc.KeyFile != "" {
+		opts = append(opts, defaultimpl.WithEd25519KeyFile(sc.KeyFile))
 	}
 	iss := defaultimpl.NewEd25519JWTIssuer(opts...)
 	if serr := seedRevocations(iss, revStore); serr != nil {
