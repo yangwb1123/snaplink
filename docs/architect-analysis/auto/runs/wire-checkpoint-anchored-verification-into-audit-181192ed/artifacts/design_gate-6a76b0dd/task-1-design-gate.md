@@ -1,0 +1,19 @@
+All blocking findings verified against the design and HEAD. Summary of independent checks:
+
+**Blocker 1 — os.Exit kills in-process AC tests (testing_reviewer §5).** Confirmed real: `usageErr`/`errorf` in `auditverify/main.go` call `os.Exit(2)`/`os.Exit(1)` (lines 233/239), and `cmd/sso-ctl/main.go:72` is `os.Exit(run(args))`. Design §3.1 now routes every new failure path (F1/F2/F3/F4/F5/F6/F12) as `return 1|2` from `Run`, with AC-7a/AC-12/AC-13/AC-9 explicitly asserting in-process testability; binary behavior preserved via the HEAD dispatcher. **Resolved.**
+
+**Blocker 2 — empty-chain print panic (testing_reviewer §3).** Design §3.1 guards with `head := audit.GenesisHash` and `if len(events) > 0` before `events[len(events)-1].Hash`, and locks the format `chain verified: %d event(s), head=%s, checkpoint seq=%d\n`. **Resolved.**
+
+**Blocker 3 — F1/F2/F12 had no ACs.** AC-12 (`read checkpoint <path>:`), AC-13 (`parse checkpoint <path>:`, mirrors auditexport/main.go:273 `read anchor %s: %w` — verified), AC-9 (truncation fail-fast) now exist; §7.1 matrix maps all F1–F12. **Resolved.**
+
+**Blocker 4 — halves-locked lines.** AC-6b exact-locks the full deterministic line `chain BROKEN: audit notary: empty chain head "", checkpoint attests "<fixture head>"`. Verified chainer.go:481/487 produce exactly that text. **Resolved.**
+
+**Blocker 5 — AC-8 locks didn't exist.** Verified: `TestRun_VerifyHappyPath` (coverage_test.go:135) is a `strings.Contains` check (line 149), `TestVerifyDetectsTamper` (main_test.go:159) never calls `Run`. AC-8 now defines three new `Run`-level golden tests plus the AC-6a/6b ordering canary, with legacy `os.Exit` paths scoped out explicitly. **Resolved.**
+
+**Ops blockers Q1–Q4.** Verified `NewNotary`/`StartNotary` have zero production call sites (only auditexport/main_test.go:514), and the TOFU-bootstrap risk is real. Design §6 step 1 states the stable-notary-key hard prerequisite; step 2 forbids server-fetched bootstrap (provisioning record only); step 5 defines match-any pin-set rotation with runbook; F12 is a mandatory fail-fast with exact detection (`len(collected) > limit || (== limit && probe non-empty)`) gated on `--checkpoint`; Phase A is interim-only with AC-10 stderr notice and expanded rollback. **Resolved.**
+
+**Implementation-readiness blockers.** Kernel doubly blocked confirmed: `chainer.go` = exactly 500 lines (`maxFileLines`), `platform/audit` = 16 non-test files (frozen ceiling), `cmd/sso-ctl` = 16/16 subdirs (`maxSubdirsPerDir=16` at directory_fanout_test.go:35). Design places pinning entirely in `auditverify/main.go` (240 lines now, ~335 target < 500), zero new symbols. The `_`-consumption carve-out for the loaders' new `truncated` return keeps the 17 existing tests intact (17 `func Test` confirmed). The auditexport-uncommitted caveat is honestly carried in the §1 table (verified: worktree `M` diff of +172 lines; HEAD is 294 lines with 4 `os.Exit`; the hard dependency `main.go:72` is in HEAD). **Resolved.**
+
+No blocking finding was silently dropped; the only exclusions (legacy `os.Exit` paths, legacy URL truncation, helper-process re-exec) are explicit scoped decisions with rationale. Non-blocking line drift: `checkpoint signature invalid` is at chainer.go:458 vs the design's 452 (all AC assertions are substrings, so unaffected). Documentation-only change — no Go gates required, and the pre-existing environmental gate failures are properly reported separately.
+
+VERDICT: PASS - every blocking review finding (os.Exit routing, empty-chain panic, F1/F2/F12 AC gaps, AC-6b exact lock, AC-8 golden tests, TOFU bootstrap, pin rotation, --limit fail-fast, Phase-A interim labeling, URL probe and _-carve-out) is resolved in design.md with HEAD-verified evidence, and the design stays within all frozen gate budgets with zero kernel changes.
