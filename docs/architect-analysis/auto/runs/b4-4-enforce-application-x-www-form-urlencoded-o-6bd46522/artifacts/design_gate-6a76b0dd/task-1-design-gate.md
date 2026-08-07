@@ -1,0 +1,12 @@
+Independent re-verification complete at HEAD `fc3448a9`. I re-derived each of the six blocking findings directly from the tree and checked the design document (`docs/architect-analysis/cmd-gensdk-tokenfamily-form-design.md`, mtime 09:56:44 — predating all six reviews; no patch stage in `pipeline.yaml`; no run-dir files modified after the 10:14:40 gate) for resolution or explicit rejection:
+
+1. **PAR RawMessage silent drop** — `parRequestForm.AuthorizationDetails/Claims` are `json.RawMessage` (`handle_par.go:100,105`); `setFormField` (`bind.go:112-134`) silently skips non-string slices; design has zero RawMessage mentions. UNRESOLVED.
+2. **36th migration site** — `test/introspection_jwt_test.go:61-75` `postIntrospectAccept` posts JSON to `/token/introspect` (3 uses at :89/:162/:180); design enumerates 35 sites/14 files, never naming this file. UNRESOLVED.
+3. **rcovPostJSON surface** — 67 JSON posts to the four seam endpoints (58 `/token`, 5 introspect, 2 revoke, 2 `/par`) via `rootcov_flow_test.go:154-172`; M4 covers only `test/` and the design's own `go test ./interfaces/sso/...` command would fail post-enforcement. UNRESOLVED.
+4. **quickstart** — `docs/examples/quickstart/main.go:163-169` → `postJSON` (`:214-222`) posts `application/json` to `/token`; zero design mentions. UNRESOLVED.
+5. **No Python emission test** — only `TestGenerateTS_*` exist in `emit_test.go`; AC-2's Python side has no testable location and no new test is designed. UNRESOLVED.
+6. **Nullish encoding** — the design's `urlencode(doseq=True)`/URLSearchParams paths emit literal `"None"`/`"undefined"` for nullish optional fields with no nullish-skip handling; current JSON path emits `null`. UNRESOLVED.
+
+Confirmed-good items (no-store-before-bind on all four sites, C4 openapi dual-media declarations, budget ceilings) do not cure the six. No explicit rejection language exists anywhere in the design.
+
+VERDICT: FAIL - all six blocking findings (PAR json.RawMessage silent drop with no binder path or documented exclusion, the 36th migration site at test/introspection_jwt_test.go:61-75, ~67 rcovPostJSON seam posts in interfaces/sso/ uncovered by M4, unmigrated docs/examples/quickstart/main.go, missing Python emission test for AC-2, and unspecified nullish-encoding in the SDK form emitters) are confirmed in code at HEAD and absent from the unamended design, with neither resolution nor explicit rejection, so the design is not ready for implementation.
