@@ -1,0 +1,37 @@
+Audit complete. All claims re-verified against the working tree (no edits made; read-only review). Verdicts per dimension, then findings.
+
+## Audit verdict
+
+| Dimension | Verdict |
+|---|---|
+| Oracle safety / byte-identical error surfaces | **PASS** — all 10 sites collapse every bind error to the same pre-existing body; sentinel is unexported and never distinguished (`errors.Is` absent at all 10 sites); error bodies never embed binder text |
+| Media-type/charset/parameter parsing | **PASS** — refactor is byte-identical; parameter tolerance preserved; one latent divergence noted (§2) |
+| Constant-time compare + no-store on 10 sites | **FAIL, one row** — constant-time compare untouched and in-path ✓; no-store stamped at 9/10 sites; `handleDeviceVerify` has **no** stamp (Finding 4) |
+| T-9 precedence | **PASS** — body-parse-before-auth verified at `server_token.go:30→35` and `handle_introspect.go:120→134`; R4 resolution is the only satisfiable reading of the original T-9 wording; form-wire 401 regression surface is correct |
+| MFA shape drift | **PARTIAL** — envelope byte-identical (`authzErrorBody(ErrMFAInvalid)`, no audit, server_mfa.go:250-258); `params` map wire loss unaddressed (Finding 3) |
+| RFC 6749/6750 | **PASS for direction, one wrinkle** — form-only aligns with §3.2/§2.3.1, RFC 7009 §2.1, 7662 §2.1, 8628 §3.1-3.2, 9126, CIBA; `invalid_request` 400 is §5.2-conformant; RFC 6750 untouched. Wrinkle: RFC 9396 §7.2 PAR parameters become inexpressible (Finding 1) |
+
+## Findings (ordered by severity)
+
+**F1 — HIGH: PAR `authorization_details`/`claims` (`json.RawMessage`) are inexpressible on the form wire; the mandated sweep cannot pass and RAR-over-PAR becomes non-compliant.** `formIntoStruct` handles only string/bool/int/*int/[]string; the `json.RawMessage` fields of `parRequestForm` are silently skipped, and `ValidateAuthorizationDetails(nil)` returns `(nil, nil)` — no error, silent drop (verified `protocols/oauth/oauthvalidate/rar.go:153-157`). In-repo proof: `TestPAR_AuthorizationDetailsSurvivesIntoAccessToken` (handle_par_test.go:398) posts `/par` JSON with `authorization_details` and asserts the claim lands in the token. Under the design's form migration that test goes red with no remediation path. Fix options: (a) extend the form decoder for `RawMessage` fields (JSON-string form value — the only form encoding RFC 9396 §7.2 defines for this parameter), or (b) fail loud (`invalid_request`) on form requests carrying these fields and convert the test to a negative + CHANGELOG/OpenAPI note. Silent drop must not survive; it lets a client's RAR intent vanish from the minted token.
+
+**F2 — HIGH: SDK emission gap — `postDeviceCode`, `postDeviceVerify`, `postMFAComplete` will 400 after the change.** The design converts only the four `tsUsesClientAuth` ops; the generic `request()` JSON-serializes everything else (gen_ts_runtime.go:158-159). Verified in `docs/sdks/typescript/client.ts`: `postDeviceCode` (:2848, `/device/code`), `postDeviceVerify` (:2858, `/device/verify`), `postMFAComplete` (:2823, `/auth/mfa`) all target credential endpoints. F6's "JSON for all other ops" encodes the breakage. The predicate must be credential-endpoint-based (7 ops: the four + these three; `postRevokeAll` is body-less). Note `MFACompleteRequest.params` is itself unformable (F3) — the SDK emission must flatten or drop it explicitly.
+
+**F3 — MEDIUM: MFA `params` map drift beyond the envelope.** `mfaCompleteRequest.Params map[string]string` cannot be expressed on the form wire (dropped silently today and after); JSON callers who used it go from working → 400. No in-repo test uses it, so it's latent, but the design's F5 covers only the error envelope. Same class as F1: document the wire loss and fail loud rather than silent-drop.
+
+**F4 — MEDIUM: no-store headers — the design's "already present — no work" claim is wrong for 1 of 10 sites.** `handleDeviceVerify` (server_device.go:228-267) never calls `tokenNoStoreHeaders`; the only stamp in server_device.go is :42 (`handleDeviceCode`), and no global no-store middleware exists (router `Use` = Tracing/Tenant/Geo/region only). The design's own acceptance case 14 (no-store on credential 400/401s at all ten sites) will fail on `/device/verify`. Add `tokenNoStoreHeaders(ctx)` at the top of `handleDeviceVerify` in the same change — also closes a pre-existing AGENTS.md §3 gap on a bearer surface. (`test/token_no_store_test.go` doesn't cover device paths today, so nothing else pins this.)
+
+**F5 — MEDIUM: sweep inventory incomplete (18 files actual vs 16 listed) and the F1 grep audit is evadable.** Two confirmed omissions: `test/introspection_jwt_test.go` (`postIntrospectAccept` posts JSON to `/token/introspect` at :89/:162/:180) and `test/frontend_contract_test.go` (`fcPost` posts JSON to `/token` at :207/:325 via a path variable). Both go red post-change. The audit command `grep -rn '"application/json"' test/ | grep -E '/(token|…)'` misses header-set posts (`req.Header.Set("Content-Type", "application/json")`) and variable-path posts. Strengthen to `grep -rn -A2 -B2 '"application/json"' test/` and inspect `Header.Set` lines; the authoritative completeness check remains `go test ./test/` reds.
+
+**F6 — LOW: call-site count drift.** 46 BindParams-family call sites measured (37 `oauth.BindParams(` + 4 package-local in `protocols/oauth` + 5 `bindOAuthParams(` calls) vs the design's 44. Non-material to the scoped approach (the default branch is untouched either way), but the boundary description should carry the true count.
+
+## Confirmed-correct details worth pinning
+
+- **Oracle safety mechanics**: all ten sites use a bare `if err := bind…; err != nil { <400> }` with no `errors.Is` — the sentinel, `ParseForm` errors, and field-set errors are indistinguishable on the wire. The 400(JSON)/401(form) split on unauthenticated `/token` + `/token/introspect` is wire-format-determined, never state-determined — no new internal oracle.
+- **T-8(c) cases 5–6 are behaviorally identical before/after** (missing CT already 400s today via JSON-decode failure) — they pin the mechanism, not a visible change; only cases 1/7 (valid JSON body) change observable behavior. Worth a comment in the new test file so nobody "fixes" them later.
+- **Media-type note**: `normalizedMediaType` is the naive `;`-strip + lowercase, not `mime.ParseMediaType` (which `payment_ingest`'s `normalizedJSON` uses). Keep the shared helper naive — it is byte-identical with today's `bind.go:31-35`; a future "cleanup" to `mime.ParseMediaType` would change parameter edge-case behavior (e.g. quoted-semicolon params).
+- **Budgets verified**: `interfaces/sso` at exactly 60 non-test files (design correctly adds no file there); `oauthwire` 6 → 7 non-test files; `bind.go` 158 lines.
+- **CLI boundary verified**: `sso-ctl` posts only `/api/v1/admin/{tenants,users,tokens}/*` (gateway-served); the two admin compromise handlers are direct HTTP routes with no CLI callers.
+- **CIBA**: all in-repo CIBA tests already form-encoded; `/backchannel-authentication` is the only "backchannel" credential path.
+
+Bottom line: the binder design itself (sentinel, shared helpers, site switching, T-9 resolution) is sound and oracle-safe; the design must be amended for F1 (PAR RawMessage — blocks a mandated test), F2 (three more SDK ops), F4 (device/verify no-store stamp), and F5 (two more sweep files + stronger audit grep) before implementation.
