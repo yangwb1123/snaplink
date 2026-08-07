@@ -1,0 +1,16 @@
+Review complete. Written to `docs/architect-analysis/auto/runs/encode-b4-token-claims-and-scope-registry-invari-dddba3e2/artifacts/adversarial_review-9c87f3a7/meta/teaching_artifact_reviewer.md`.
+
+## Verdict: PASS — no blocking defects, 3 cheap hardening requirements + 1 process gap
+
+**D1–D3 pedagogical accuracy — VERIFIED against real code.** Re-checked every anchor the artifact teaches at HEAD `fc8ec2c7`: the gate branch is byte-faithful to `handle_ciba.go:300-308` and `token_client_credentials.go:38-40`; the registry-seam note's every claim holds (`rejectUnregisteredScopes` at `server_token.go:132` runs before `dispatchCustomGrant` at `:144`, gates request-borne scopes only, and "effective set before issuance" is the literal `scoperegistry/reject.go` contract — the CC branch even does it post-rule-4-default); `permissions.Provider.Roles` (provider.go:38) and `Subject.TenantID` (types_token.go:231) are real; the stale `options_saml2_bearer.go` citation fix is correct (file nonexistent; real handler `server_setup.go:271/283`). One completeness requirement: the note must teach *why the `GrantedScopes` gate survives the seam* (registry = scope-name registration; seam does not apply the per-client `AllowedScopes` allowlist) — otherwise learners delete the gate, which is exactly the A1 regression.
+
+**D6 `}, grantedScopes)` — load-bearing and unambiguous.** Mechanical simulation of the rendered generated file across 12 drift scenarios: A1+A3 alone pass while issuance passes raw `req.Scope` or `scopes` — D6 is the *only* assertion pinning R1's "never raw req.Scope", and it behaves correctly everywhere (count stays exactly 1; the `}, ` prefix disambiguates from `len(grantedScopes)`; survives both B4-1 handoff shapes).
+
+**Three hardening requirements** (all cheap):
+1. **F4/F5**: markers must be quoted literals — `strings.Index(core.ErrInvalidScope)` would search for `"invalid_scope"`, which does *not* exist in the generated file (always -1); order-only checks are vacuously true on absence (-1 < n), so presence+order per marker is load-bearing. Add a `count("issuer.Issue(") == 1` guard: any future comment containing that literal above the gate flips A1/A3 on a correct artifact.
+2. **F7**: step-2 must explicitly defer the roles claim surface to B4-1 — `Subject.Claims` is `map[string]string` emitted as `ext` today, so a Claims-map handoff shown in the template would mis-teach the T-8(a) `roles` claim.
+3. **F1**: the note text needs the "two gates" beat.
+
+**R4 residual risk — correctly framed, proportionate.** The risk is real (comment text can't be compile-gated, and markers deliberately pass both B4-1 shapes), ALT-1 rejection is sound (active example code would change generated behavior), and the only mitigation is the §5.6 contract-sync duty. Recommended: the B4-1 module spec should carry a cross-reference re-test duty so the trigger is visible from that side.
+
+**Process gap (F3)**: the design artifact preserves only the 26-line summary — the D1–D6 detail text, FM table, and exact note wording are unrecoverable (session body not stored). Non-blocking since `requirements.md` is the binding spec, but the implementer must re-derive the note text and re-run the marker simulation against the final template text.
