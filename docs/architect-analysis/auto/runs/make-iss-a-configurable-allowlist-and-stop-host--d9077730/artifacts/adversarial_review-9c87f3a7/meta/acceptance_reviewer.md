@@ -1,0 +1,15 @@
+Validation complete. Full report: `docs/architect-analysis/auto/runs/make-iss-a-configurable-allowlist-and-stop-host--d9077730/artifacts/validation/acceptance-mapping-validation.md`
+
+## Verdict: PASS with mandatory corrections
+
+**1. The mapping is not in the deliverable.** Both artifacts are 20-line summaries — the A-1..A-16 table with test-file homes is claimed but absent. I recovered the adopted prior spec (bbdb82eb, from batch memory) whose §7 table grounds it; note the numbering drifted (prior A8 = form_post; current A-8 = billing dev leg). The implementation report must materialize the renumbered table or the acceptance stage has nothing deterministic to check.
+
+**2. G1-G4 map to real handlers and named test files.** Verified: G1 `handleOIDCDiscovery` (server_discovery_config.go:61, before the body-cache lookup), G2 `handleLogin` (server_login.go:19), G3 `handleMFAComplete` (server_mfa.go:181 — the missed MFA continuation entry is real: `:221 → resumeLoginAfterMFA → finishLogin` without handleLogin), G4 `handleToken` (server_token.go:17). Every RFC 9207 `iss` producer is reachable only from these four entries. Homes: create `interfaces/sso/issuer_allowlist_test.go` + `test/issuer_allowlist_test.go` (both named), extend `test/oidc_discovery_test.go` and `config/security_test.go` (pins "exactly 4/2/1" verified at :83-121). Test files don't count toward the ceiling.
+
+**3. "Fallback untested" is refuted as stated.** `rootcov_flow_test.go:235-236` (`TestRcov_DirectMintLogin`, server built without `WithIssuer`) already asserts `iss == s.http.URL` — the exact Host-derived value, for the login-success path. The genuine gaps are discovery-doc `issuer` == base URL and login error-body `iss` == base URL (currently non-empty-only assertions). New coverage = A14 + one error-path assertion, not a blanket new test.
+
+**4. A-8 and byte-identity are assertable today.** Billing dev leg: `config_test.go:30-45` + `:118-125` (127.0.0.1:8080 + flag) and `app_test.go` (full mint→validate→200 over loopback http, green). Mode-off: option-count pins + conditional emission keep behavior byte-identical.
+
+**5. Budgets re-measured with in-flight diffs — all hold, two are razor-thin.** `sso.go` 499 (Δ0, +1 → exactly 500 legal, second line fails); `server_finish_login.go` 500 (Δ0, **zero** edits allowed — in-flight diff is net-zero); `server_token.go` 495 (Δ+35, only 5 headroom); `interfaces/sso` at exactly 60 non-test files — no new file permitted. **Pre-existing failures the design missed**: `TestMaintainability_FileSizeBudget` fails at HEAD (`ed25519_jwt_issuer.go` 539 lines, committed before this batch) and `TestArchitecture_*` fails on the pipeline's own `docs/architect-analysis/auto/runs` tree — report separately, don't "fix".
+
+**One real migration hazard**: ops/deploy dev configs carry `issuer_allowlist: [http://sso-server.snaplink-sso.svc.cluster.local:8080]` (non-loopback http) — under a loopback-only-http validity rule, flipping the switch panics the dev boot. The design's R5 doesn't cover this entry; decide and document before landing.
