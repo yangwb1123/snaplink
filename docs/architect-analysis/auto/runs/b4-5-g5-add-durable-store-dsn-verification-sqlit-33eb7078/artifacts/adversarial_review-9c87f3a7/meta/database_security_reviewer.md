@@ -1,0 +1,17 @@
+Review complete. Artifact: `docs/architect-analysis/auto/runs/b4-5-g5-add-durable-store-dsn-verification-sqlit-33eb7078/artifacts/adversarial_review-9c87f3a7/postgres-openauditreadonly-failclosed-review.md` (doc-only; no `.go` edits, no gates triggered).
+
+## Verdicts on the four invariants
+
+**1. Equality check fail-closed, zero DDL — CONFIRMED.** `Open` (pool.go:53-73) is dial/ping/size only; `CurrentVersion` (migrate.go:198-218) is two SELECTs; equality (`live == MaxVersion(auditMigrations) == 2`) fails on stale (1), too-new (3+), and absent-table (0) alike, closing before any query. The design correctly avoids `CheckSchema` (migrate.go:222-233), which only rejects too-new. Under DSN-planted `search_path`, the EXISTS probe (`current_schema()`) and the unqualified MAX/`audit_events` reads resolve through the same path — divergent schemas fail the check or fail the query (`server_version` missing on v1); there is no pass-check/read-wrong-schema combination. Residual trust (planted version row) requires DB-write privileges — identical to the sqlite peer and the server's own boot.
+
+**2. Never-migrate unbypassable — CONFIRMED.** `Run` order puts all new `--dsn` misuse rows in `checkMisuse` before any open; the only reachable constructors are `OpenReadOnly` and the new `OpenAuditReadOnly`. I verified in the pgx source that unrecognized conn-string keys become session `RuntimeParams` (pgconn/config.go:434-437) — `search_path=`, `options=-c…`, `fallback_application_name` are honored GUCs, but the contract is enforced by statement inventory (SELECTs + ping only), so GUCs can redirect reads within the DB but cannot conjure the migration runner. `default_transaction_read_only=off` can't enable writes that don't exist.
+
+**3. Classification fail-closed — CONFIRMED, with two FM-table corrections.** Scheme-less postgres strings never reach pgx. **Empirically proven** (modernc v1.50.1, the repo's exact driver): the sqlite branch *creates* a missing/junk file, then fails `checkSchemaCurrent` → exit 1. So FM-2's "missing file → open error, nothing written" is wrong on both counts, and FM-3's guidance must attach to the version-mismatch diagnostic, not the open error. `importcmd`'s writable postgres opener is unreachable (separate subcommand, explicit `--backend postgres`, no shared opener).
+
+**4. Privileged-role read-only — CONFIRMED by construction.** Full statement inventory of the DSN path is SELECT-only; the design's "operators should additionally use a read-only role" is accurately framed as defense-in-depth, matching the sqlite peer posture.
+
+## Required design edits before implementation
+- **F1**: fix FM-2/FM-3 (empirically wrong diagnostics; empty sqlite file *is* left behind — zero DDL, but "nothing written" is false).
+- **F2**: the `readFromURL` exact-fill probe re-fetches the *same* offset (code contradicts its own comment) → exact `--limit` fills are always "truncated" (fail-closed). `ReadChain` mirrors it; A1's clean test must avoid exact-pageSize-multiple chains, and the quirk should be documented.
+- **F3a**: `TrimSpace` before `ClassifyDSN` prefix match (importcmd precedent). F3b–d (empty `--dsn` misuse, narrow the `*AuditSink` return type, optional `SET search_path`/read-only session pinning) are recommendations, not blockers.
+- **F4**: evidence base is a dirty worktree (+317/+196 uncommitted lines in the two mains); the verbatim move and T-9 proof must run against that same state.
