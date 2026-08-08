@@ -1,0 +1,12 @@
+I independently re-verified every load-bearing claim against the working tree rather than trusting the evidence summaries.
+
+**Findings inventory:** The adversarial_review stage for this campaign produced no findings (orchestrator PASSED, empty `meta/` dir — no roles selected). The only findings in scope are those the design stage surfaced, all documented with evidence and confirmed by me:
+
+1. **Pipeline artifact overwritten** — verified `fdf2d9fd` shrank the 404-line requirements artifact to a 26-line summary; the canonical spec lives in the mirror. Documented with evidence; design itself is present in both artifact and mirror (byte-identical).
+2. **Citation drift** — `TestClaimsMatrix_FailureDiagnostics` at 993, not 1008; substantive claim (no roles row) verified true.
+3. **F10 residual gap** — absence tolerance cannot detect total roles-emission loss; explicitly rejected as acceptable with evidence (T-8(a) mandates tolerance; stricter semantics would recreate the landmine; `TestTenantRoles_ClaimsPerIssuer` is the real guard).
+4. **B4-1 divergence** — verified scope guard at B4-1 spec line 41 and design-doc row 16 at line 365; divergence is deliberate, CLI-only, documented in §7/§3.7.
+
+**Independent claim verification (all exact):** `check.go:78` bool flag, usage at 169, wiring at 117; `sweep.go:60`; `verifyClaims` = 175-229 (55 lines, over budget — extraction mandate correct); roles branch 225-229 with the quoted diagnostic; test at 921 with live-cc-fails exit-1 subtest (the only landmine assertion — REQ-6 satisfiable); `goldenGreenStdout` at 32, asserted at 433/453/475/534; cc Subject without Roles at `token_client_credentials.go:50-58`; non-empty guard at `issue_payload.go:83-88`; wire shape `ed25519_types.go:57`; `TestExitCodes` row at 335 (exit-2 + "Usage:" path verified); `stringList` at 174-182; budgets 413/277/284; exactly 11 top-level pre-existing failures matching §1.8's names; `go build ./cmd/sso-ctl/...` passes. Two minor non-blocking notes (empty-set presence tracking, `token_refresh.go` path imprecision) do not affect readiness.
+
+VERDICT: PASS - no blocking review findings exist (adversarial review selected no roles) and the design stage's discrepancies — artifact overwrite, citation drift, F10 residual gap, B4-1 divergence — are each resolved or explicitly rejected with independently verified evidence; all load-bearing code/wire/budget claims re-confirmed against the tree and the A1-A6 acceptance mapping is complete and testable.
