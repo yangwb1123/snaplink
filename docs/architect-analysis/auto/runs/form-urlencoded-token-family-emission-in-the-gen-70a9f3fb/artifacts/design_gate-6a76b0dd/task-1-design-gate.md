@@ -1,0 +1,18 @@
+All verification complete. Here is my independent assessment.
+
+## Verification of blocking findings
+
+**F-A (security review, explicitly BLOCKING — credential-review.md:90) — RESOLVED with evidence.**
+- Tree confirms the bug: `parRequestForm` binds `AuthorizationDetails`/`Claims` as `json.RawMessage` (handle_par.go:100/:105); `setFormField`'s Slice case (bind.go:131-134) only handles `Elem().Kind() == String` — `[]byte` falls through, binds nil, PAR silently issues without RAR/claims. Openapi contract at :15049-15051 already documents the single-JSON-string-element semantics (drift).
+- Design resolution covers all three required parts: client-side JSON-string special-case (§3.3/§3.4, shape-driven, verified against both runtime templates), server-side `json.RawMessage` case with exact code (§6 step 8a), and a form-PAR RAR/claims test that fails today (§6 step 8b, T-9(g)). Server-binding reviewer independently reproduced the nil-binding and validated the fix via scratch-implement + revert. Sequencing (server fix before regenerated clients release) closes the silent-drop window.
+
+**client.test.mjs breakage — RESOLVED.** Confirmed `JSON.parse(seen.body)` at client.test.mjs:53; design §3.7 replaces it with `URLSearchParams` + Content-Type assertions and adds F1 (stripped body), F3 (no `"undefined"`), F-A (single JSON-string elements) behavioral pins.
+
+**F1/F3 T-9(a) coverage gaps — RESOLVED.** §3.6 pins the encode input (`Object.entries(authenticatedBody)`, catching `opts.body` bugs) and the skip predicate; whole-output `form: true`/`form=True` == 4 counts close the F7 boundary gap. All citation corrections (`extractOne` :116-138, `pyEmitMethod` :151-174, `tsUsesClientAuth` :99-106) verified against the tree, as were operations.go:58-70, gen_ts_runtime.go:35-44/:154/:157-160/:183, gen_py.go:85-105, tsEmitRequestOpts:68-88, emit_test.go:214-232, oauth_bind_test.go:272.
+
+**Consumer-surface findings (sdk_docs_consumer_reviewer) — NOT RESOLVED, NOT EXPLICITLY REJECTED, ALLOCATED NOWHERE.**
+- Zero mentions of quickstart, `dist/`, k8s-distributed, openresty, or the READMEs in the revised design, the requirements, **or** the B4-4 server module docs (design/decisions/requirements) — the finding is silently dropped, and §8's out-of-scope list does not cover it.
+- The gaps are real, verified against the tree: `package.json` `main: ./dist/index.js` with `files: ["dist", ...]`; committed `dist/client.js:130-131` is JSON-only; the design's step 6 commits only `client.ts`/`client.py` — so the actual npm consumable artifact keeps sending JSON and breaks at the flip, violating the design's own F8 sequencing gate. `docs/examples/quickstart/main.go:163-173`/`:216` posts JSON to `/token` (`log.Fatalf("token exchange failed")` post-flip) — executable consumer code, the reviewer's highest-priority item. Root README.md:219-223, k8s-distributed/README.md:98-99, TS README.md:71-74 ("client always sends JSON"), and the served OpenResty snapshot (`??`) remain wrong.
+- The design's claim "No SDK-consumer migration is required at any step" (§6) is contradicted by the dist/ artifact. The consumer reviewer explicitly located the dist/ rebuild in this module's regeneration step ("design step 7 currently omits it"); the revision engineer's "all findings integrated" claim is demonstrably false for this review.
+
+VERDICT: FAIL - F-A and the maintainability findings are resolved with verified evidence, but the consumer-surface findings (committed `dist/` npm artifact, executable quickstart example, three README surfaces, OpenResty snapshot) are silently dropped — neither resolved nor explicitly rejected with evidence — leaving the flip sequencing incomplete for packaged and example consumers.
