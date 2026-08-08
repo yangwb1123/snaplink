@@ -75,6 +75,17 @@ func newBuildableModule(t *testing.T, dir, root string) {
 // above) and shells out to a real `go build ./...` (os/exec, not a mock or a
 // text/template dry-run), asserting success.
 //
+// The gate has three layers, in order:
+//  1. contract assertions on the generated artifact (scaffold_contract_test.go):
+//     every ErrorBody code must be registered in docs/error-codes.md, no legacy
+//     path/port patterns or inline path literals may appear, every core.Path*
+//     reference must exist in shared/core/consts.go, and the handler kind must
+//     teach the form-urlencoded Content-Type guard before any ctx.Bind.
+//  2. `go build ./...` — compiles in COMPLETE isolation from the real repo
+//     tree.
+//  3. `go vet ./...` — static analysis on the same isolated module (a
+//     template can regress into output that compiles but still fails vet).
+//
 // This is the regression the prior templates would have failed: they parsed
 // and executed fine while producing output with unused imports, a return
 // value of the wrong type (a string error-code constant where an `error` was
@@ -110,12 +121,25 @@ func TestGeneratedScaffoldsCompile(t *testing.T) {
 				t.Fatalf("Generate(%s): %v", tc.kind, err)
 			}
 
-			cmd := exec.Command("go", "build", "./...")
-			cmd.Dir = dir
-			cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOPROXY=off")
-			out, err := cmd.CombinedOutput()
+			generated, err := os.ReadFile(generatedFile(tc.kind, tc.name, outputDir))
 			if err != nil {
-				t.Fatalf("generated %s scaffold does not compile:\n%s", tc.kind, out)
+				t.Fatalf("read generated %s scaffold: %v", tc.kind, err)
+			}
+			assertRegisteredErrorCodes(t, tc.kind, generated, root)
+			assertNoLegacyPathPort(t, tc.kind, generated)
+			assertNoPathLiterals(t, tc.kind, generated, root)
+			if tc.kind == "handler" {
+				assertFormContentTypeGuard(t, tc.kind, generated)
+			}
+
+			for _, tool := range []string{"build", "vet"} {
+				cmd := exec.Command("go", tool, "./...")
+				cmd.Dir = dir
+				cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOPROXY=off")
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("generated %s scaffold does not pass go %s:\n%s", tc.kind, tool, out)
+				}
 			}
 		})
 	}

@@ -12,6 +12,8 @@ const handlerTemplate = `package {{.Package}}
 
 import (
 	"net/http"
+	// "strings" is needed only by the Content-Type guard example in
+	// handle{{.Name}}Post — uncomment both together when you activate it.
 
 	"github.com/yangwb1123/snaplink/shared/core"
 )
@@ -27,10 +29,12 @@ type {{.Name}}Deps interface {
 }
 
 // Handle{{.Name}} handles {{.Description}} requests. Wire it into a
-// core.Router with router.GET("/path", func(ctx core.HandlerContext) {
-// Handle{{.Name}}(deps, ctx) }), or delegate to it from a thin one-line
-// (*sso.Server) method the same way domains/federation/health/handler.go's
-// HandleListPeerHealth is wired from server_federation.go.
+// core.Router with router.GET(core.PathUserInfo, func(ctx core.HandlerContext) {
+// Handle{{.Name}}(deps, ctx) }) — endpoint paths are the core.Path*
+// constants in shared/core/consts.go, never inline literal strings — or
+// delegate to it from a thin one-line (*sso.Server) method the same way
+// domains/federation/health/handler.go's HandleListPeerHealth is wired from
+// server_federation.go.
 func Handle{{.Name}}(deps {{.Name}}Deps, ctx core.HandlerContext) {
 	switch ctx.Request().Method {
 	case http.MethodGet:
@@ -42,7 +46,7 @@ func Handle{{.Name}}(deps {{.Name}}Deps, ctx core.HandlerContext) {
 	case http.MethodDelete:
 		handle{{.Name}}Delete(deps, ctx)
 	default:
-		ctx.JSON(http.StatusMethodNotAllowed, core.ErrorBody("method_not_allowed"))
+		ctx.JSON(http.StatusMethodNotAllowed, core.ErrorBody(core.ErrInvalidRequest))
 	}
 }
 
@@ -61,7 +65,7 @@ func handle{{.Name}}Get(deps {{.Name}}Deps, ctx core.HandlerContext) {
 	//
 	// After filling in your logic, remove this marker.
 
-	ctx.JSON(http.StatusNotImplemented, core.ErrorBody("not_implemented"))
+	ctx.JSON(http.StatusNotImplemented, core.ErrorBody(core.ErrNotSupported))
 }
 
 // handle{{.Name}}Post processes POST requests.
@@ -70,20 +74,27 @@ func handle{{.Name}}Post(deps {{.Name}}Deps, ctx core.HandlerContext) {
 	// TODO: Replace with your POST logic, e.g.:
 	//
 	// var req CreateRequest
+	// // Credential-adjacent routes bind form bodies only; reject other
+	// // Content-Types (including JSON) before binding, per the B4-4
+	// // server posture. HasPrefix tolerates ";charset=UTF-8" suffixes.
+	// if !strings.HasPrefix(ctx.Request().Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+	// 	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+	// 	return
+	// }
 	// if err := ctx.Bind(&req); err != nil {
-	// 	ctx.JSON(http.StatusBadRequest, core.ErrorBody("invalid_request"))
+	// 	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 	// 	return
 	// }
 	// entity, err := deps.Create(ctx.Request().Context(), req)
 	// if err != nil {
-	// 	ctx.JSON(http.StatusInternalServerError, core.ErrorBody("create_failed"))
+	// 	ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 	// 	return
 	// }
 	// ctx.JSON(http.StatusCreated, entity)
 	//
 	// After filling in your logic, remove this marker.
 
-	ctx.JSON(http.StatusNotImplemented, core.ErrorBody("not_implemented"))
+	ctx.JSON(http.StatusNotImplemented, core.ErrorBody(core.ErrNotSupported))
 }
 
 // handle{{.Name}}Put processes PUT requests.
@@ -92,7 +103,7 @@ func handle{{.Name}}Put(deps {{.Name}}Deps, ctx core.HandlerContext) {
 	// TODO: Replace with your PUT logic.
 	// After filling in your logic, remove this marker.
 
-	ctx.JSON(http.StatusNotImplemented, core.ErrorBody("not_implemented"))
+	ctx.JSON(http.StatusNotImplemented, core.ErrorBody(core.ErrNotSupported))
 }
 
 // handle{{.Name}}Delete processes DELETE requests.
@@ -101,7 +112,7 @@ func handle{{.Name}}Delete(deps {{.Name}}Deps, ctx core.HandlerContext) {
 	// TODO: Replace with your DELETE logic.
 	// After filling in your logic, remove this marker.
 
-	ctx.JSON(http.StatusNotImplemented, core.ErrorBody("not_implemented"))
+	ctx.JSON(http.StatusNotImplemented, core.ErrorBody(core.ErrNotSupported))
 }
 
 // Example request/response types (uncomment and customize as needed):

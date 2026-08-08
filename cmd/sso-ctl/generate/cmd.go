@@ -59,7 +59,7 @@ func runGenerate(compType string, args []string) int {
 	desc := fs.String("desc", "", "Brief description of the component")
 	output := fs.String("output", "", "Output directory (default: inferred from package)")
 	skipBuildCheck := fs.Bool("skip-build-check", false,
-		"Skip running 'go build' on the generated output (on by default: a scaffold that doesn't compile defeats the point of scaffolding)")
+		"Skip running 'go build' and 'go vet' on the generated output (on by default: a scaffold that doesn't compile defeats the point of scaffolding)")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", progName, err)
@@ -86,7 +86,7 @@ func runGenerate(compType string, args []string) int {
 
 	if !*skipBuildCheck {
 		if err := verifyGeneratedBuild(*output); err != nil {
-			fmt.Fprintf(os.Stderr, "\n%s: generated output does not compile:\n%v\n", progName, err)
+			fmt.Fprintf(os.Stderr, "\n%s: generated output does not build or pass vet:\n%v\n", progName, err)
 			fmt.Fprintln(os.Stderr, "(this is a template bug, not something you wrote yet — re-run with --skip-build-check to keep the files anyway)")
 			return 1
 		}
