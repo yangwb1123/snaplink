@@ -191,6 +191,72 @@ func assertFormContentTypeGuard(t *testing.T, kind string, content []byte) {
 	}
 }
 
+var rolesClaimRE = regexp.MustCompile(`Roles:\s+roles`)
+
+// assertGrantScopeGateClaims (grant kind only) pins the B4-2 per-client
+// scope gate and the B4-1 claim sources in the generated grant scaffold:
+// the allowlist branch (GrantedScopes/SplitScope/invalid_scope), the roles
+// source, and the tenant binding must all appear textually before
+// issuance, and issuance must hand Issue the validated grantedScopes set —
+// never the raw request-scope tail (}, scopes)). Each marker is asserted
+// separately so a regression names the exact invariant dropped/reordered.
+// Note: grantedScopes) is the Issue-call argument tail, so it is checked
+// for presence only; the before-issuance ordering applies to the branch
+// and roles markers. The roles ordering marker is h.Roles( — the example
+// call, not the permissions.Provider.Roles citation — and the Subject
+// projection is pinned separately via Roles:\s+roles (gofmt aligns the
+// struct literal, so a plain contains check would false-positive).
+func assertGrantScopeGateClaims(t *testing.T, kind string, content []byte) {
+	t.Helper()
+	text := string(content)
+	issueIdx := strings.Index(text, "issuer.Issue(")
+	if issueIdx < 0 {
+		t.Errorf("%s scaffold: no issuer.Issue( in the generated grant — the issuance example was dropped", kind)
+		return
+	}
+	for _, m := range []struct{ name, marker string }{
+		{"per-client scope gate", "GrantedScopes("},
+		{"scope split", "SplitScope("},
+		{"invalid_scope error", "core.ErrInvalidScope"},
+		{"roles source", "h.Roles("},
+	} {
+		idx := strings.Index(text, m.marker)
+		if idx < 0 {
+			t.Errorf("%s scaffold: missing %s marker %q — the B4-2/B4-1 teaching was dropped", kind, m.name, m.marker)
+			continue
+		}
+		if idx > issueIdx {
+			t.Errorf("%s scaffold: %s marker %q at %d must precede issuer.Issue( at %d — ordering regressed", kind, m.name, m.marker, idx, issueIdx)
+		}
+	}
+	if !strings.Contains(text, "grantedScopes)") {
+		t.Errorf("%s scaffold: issuance does not pass the validated grantedScopes set — raw request scopes would bypass the per-client gate", kind)
+	}
+	if strings.Contains(text, "}, scopes)") {
+		t.Errorf("%s scaffold: issuance passes raw request scopes (}, scopes)) — the B4-2 bypass pattern is back", kind)
+	}
+	if !strings.Contains(text, "TenantID: client.TenantID") {
+		t.Errorf("%s scaffold: tenant binding TenantID: client.TenantID missing from the Subject literal", kind)
+	}
+	if !rolesClaimRE.MatchString(text) {
+		t.Errorf("%s scaffold: the Subject literal does not project the resolved roles (Roles: roles) — the B4-1 roles handoff was dropped", kind)
+	}
+}
+
+// assertKindInvariants dispatches the kind-specific contract assertions on
+// the generated artifact. Handler scaffolds must teach the form-urlencoded
+// Content-Type guard before binding; grant scaffolds must teach the
+// per-client scope gate and the B4-1 claim sources (B4-2/B4-1).
+func assertKindInvariants(t *testing.T, kind string, content []byte) {
+	t.Helper()
+	switch kind {
+	case "handler":
+		assertFormContentTypeGuard(t, kind, content)
+	case "grant":
+		assertGrantScopeGateClaims(t, kind, content)
+	}
+}
+
 // TestVerifyGeneratedBuildVet proves the generation-time gate runs `go vet`
 // in addition to `go build`: a package that compiles but fails vet must be
 // rejected with a vet-naming error. The test chdirs into the buildable

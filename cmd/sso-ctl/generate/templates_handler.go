@@ -163,7 +163,11 @@ import (
 type {{.Name}}GrantHandler struct {
 	// TODO: Add whatever dependencies this grant needs, e.g. a
 	// func(client *core.Client) (string, core.TokenIssuer, error) accessor to
-	// mint tokens, a core.ClientStore, or a domain-specific validator.
+	// mint tokens, a core.ClientStore, a domain-specific validator, or a
+	// Roles(ctx context.Context, userID, clientID string) ([]string, error)
+	// accessor mirroring permissions.Provider.Roles (domains/permissions/
+	// provider.go; wiring pattern at interfaces/sso/accessors_handlers.go)
+	// for the B4-1 roles claim.
 }
 
 // GrantType returns the grant_type value clients send at /token.
@@ -194,7 +198,54 @@ func (h *{{.Name}}GrantHandler) Handle(ctx core.HandlerContext, client *core.Cli
 	//    	return
 	//    }
 	//
-	// 2. Mint a token via the same path every built-in grant uses:
+	// 2. Authorize the requested scopes against the client's AllowedScopes
+	//    allowlist (RFC 6749 §3.3) via oauth.GrantedScopes — the SAME gate
+	//    every built-in issuance entry applies (CIBA at
+	//    protocols/oauth/handle_ciba.go, client_credentials at
+	//    internal/handler/tokengrant/token_client_credentials.go), so a
+	//    custom grant must not mint tokens past the per-client gate. The
+	//    dispatch-level registry seam (rejectUnregisteredScopes →
+	//    scoperegistry.RejectUnregistered, wired via sso.WithScopeRegistry /
+	//    oauth.scope_registry.enabled) already rejected unregistered
+	//    REQUEST-borne scopes before this handler ran. This example covers
+	//    only request-borne scopes; the internal-mint registry check is
+	//    intentionally not shown — a handler that composes scopes beyond
+	//    the request MUST run scoperegistry.RejectUnregistered on the
+	//    effective set before issuance, exactly as token_client_credentials.go
+	//    does (the dispatch seam cannot see them).
+	//
+	//    grantedScopes, err := oauth.GrantedScopes(oauth.SplitScope(req.Scope), client)
+	//    if err != nil {
+	//    	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidScope))
+	//    	return
+	//    }
+	//
+	// 3. Resolve the resource owner's role codes before issuance: the B4-1
+	//    roles claim source is the dedicated Subject.Roles field ([]string,
+	//    emitted as a top-level roles claim only when non-empty — same
+	//    guard discipline as the AMR claim, see
+	//    infrastructure/defaultimpl/issue_payload.go), populated from an
+	//    accessor mirroring permissions.Provider.Roles(ctx, userID, clientID)
+	//    (domains/permissions/provider.go; wiring pattern at
+	//    interfaces/sso/accessors_handlers.go). That call site feeds
+	//    conditional-access groups and fails open; the server's own mint
+	//    path instead resolves codes from the TenantUserStore roster
+	//    (subjectRoles in interfaces/sso/server_oauth.go). A custom grant
+	//    with no roster access may mirror the (ctx, userID, clientID)
+	//    accessor shape, projecting each role.Code into the []string this
+	//    field takes. The 500 on accessor failure is deliberate: minting
+	//    without roles would silently under-claim the token, so unlike the
+	//    fail-open advisory path this example fails closed.
+	//
+	//    roles, err := h.Roles(ctx.Request().Context(), resourceOwnerID, client.ID)
+	//    if err != nil {
+	//    	ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+	//    	return
+	//    }
+	//
+	// 4. Mint a token via the same path every built-in grant uses, passing
+	//    the VALIDATED grantedScopes (never the raw request scope string)
+	//    and the resolved roles:
 	//
 	//    strategy, issuer, err := h.issuerForClient(client)
 	//    if err != nil {
@@ -205,7 +256,8 @@ func (h *{{.Name}}GrantHandler) Handle(ctx core.HandlerContext, client *core.Cli
 	//    	ID:       resourceOwnerID, // if applicable
 	//    	ClientID: client.ID,
 	//    	TenantID: client.TenantID,
-	//    }, scopes)
+	//    	Roles:    roles,
+	//    }, grantedScopes)
 	//    if err != nil {
 	//    	ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 	//    	return
