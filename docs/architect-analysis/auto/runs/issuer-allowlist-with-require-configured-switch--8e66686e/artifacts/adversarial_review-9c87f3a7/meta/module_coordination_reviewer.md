@@ -1,0 +1,18 @@
+Both deliverables are complete. Here's the summary of the reconciliation.
+
+## Deliverables
+
+1. **`docs/architect-analysis/auto/runs/issuer-allowlist-eliminate-the-host-derived-fall-bbdb82eb/artifacts/design-a77de8a6/task-1-reconciliation.md`** — the reconciliation, with every fact re-verified against HEAD `32596d23` + worktree
+2. **Amendments applied to `task-1-design.md`** — field doc (A4), `ServerOptions()` helper relocation, `core.ValidateIssuerConfig` boot check with entry-validity, migration step-2 caveat, A12 fix, revised budget table, Files section
+
+## The four questions, resolved
+
+**R1 — "never read at boot" / "ServerOptions() unchanged" / "server itself untouched" vs conditional emission + boot-time validation.** Not a design conflict — the sibling's claims are point-in-time scope statements of its own change. Proofs: the sibling's own §9 says the "runtime allowlist check" remains the server module's follow-on (self-contradictory with R1 unless read as "by this change"); §7's "Do not modify `interfaces/sso/*`" shows "untouched" is a scope claim — and the design touches no `cmd/sso-server` file either; the design's conditional emission preserves the byte-identity R3 actually protects (pins verified). Fix: the sibling spec gets point-in-time wording amendments (A1–A3); design substance unchanged.
+
+**R2 — Duplicate `config_server.go` field.** Both specs list the same field with different mandated doc comments. Resolution: one field added exactly once with a final two-purpose doc comment (A4); second landing updates, never re-adds; recommended order sibling-first (its gate + deploy-tree migration precondition any canary). Also fixed the design's budget failure the reviewers caught: conditional appends move to an `issuerStrictnessOptions()` helper in `config/config_server.go` (`config_load.go` 498→499), logic moves to `shared/core/consts_oauth.go` (`sso_wiring.go` 456→~481, `sso.go` 499→500 exactly).
+
+**R3 — Migration step 2 executability.** **Not executable today** — `configcmd/main.go` is `config.Load` → print only, and the sibling's own design gate FAILs (HIGH-3 gate-before-print, HIGH-1/2/MED-5, check-order contradiction). Step 2 is re-sequenced into a 5-phase dependency chain: sibling blockers closed → sibling lands with deploy-tree migration → this design lands (switch off) → `sso-ctl config validate` per deployment (now real) → canary. Until phase 1, the substitute is load-only and proves nothing about membership.
+
+**R4 — Entry-validity placement.** Confirmed the F4 hole by trace (`[sso-server]` + unset issuer boots and serves the non-URL literal). Enforcement is placed in the strict-mode boot check itself: `core.ValidateIssuerConfig` (in `shared/core/consts_oauth.go`, a legal import home for `config`, `interfaces/sso`, and `configcmd`) validates every entry with `core.IsAbsoluteIssuerURL` (http/https, non-empty host, no userinfo/query/fragment/empty-port) → panic. Both cmd and SDK paths converge on the one `NewServer` check, and membership now implies the issuer is itself an absolute URL — strict mode cannot boot with garbage entries. `config.validate()` is deliberately excluded (respects the sibling's non-goal and acceptance 11), and the sibling's HIGH-1/2/MED-5 fail-open gaps close by construction by adopting the same predicate. A12 corrected: normalization is comparison-only; wire values keep the trailing slash.
+
+No `.go` files were touched, so no mandatory gate run was triggered. Pre-existing conditions (configcmd fan-out flag, uncommitted deploy-tree/B4-2 diffs, sibling design-gate FAIL) are reported separately in the document.
