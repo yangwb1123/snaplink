@@ -161,6 +161,10 @@ func adminGatewayResourcePaths() []string {
 		"/api/v1/admin/clients/{id}/approve",
 		"/api/v1/admin/clients/{id}/reject",
 		"/api/v1/admin/clients/{id}/rotate-secret",
+		// ListExpiring — proto/admin/v1/clients.proto (P3-1 audit: generated
+		// gateway pattern was missing from this list, so the request fell to
+		// the SSO-router catch-all and 404'd).
+		"/api/v1/admin/clients/expiring",
 		// domains — proto/admin/v1/tenants.proto
 		"/api/v1/admin/domains",
 		"/api/v1/admin/domains/{hostname}",
