@@ -1,0 +1,18 @@
+Closure verification written to `docs/architect-analysis/auto/runs/replace-host-derived-issuer-fallback-with-a-conf-ed324fea/artifacts/closure-verification/task-1-closure-matrix.md`.
+
+## Verdict: NOT CLOSED in the design document — but every finding is resolvable and I verified the resolutions against HEAD
+
+The persisted `task-1-design.md` is still the 15-line summary; the revised design was never written. All B1–B4 resolutions, the corrected placement, empty-allowlist semantics, and the T-2.3 decision are absent from it. The closure matrix (§2–§4 of the deliverable) specifies exactly what the revised design must state, each with verified file:line anchors and test homes.
+
+**Key verified results:**
+
+- **B1** — guards confirmed dormant at `server_jar.go:248` / `server_pairwise.go:343`, both fed by `resolveIssuer` (`server_jar.go:394`); fix is reject-on-empty (model: `workload_identity.go:235-237`), mode-off byte-identical since mode-off `asIssuer` is never `""`. Homes: `rootcov2_jar_test.go` / `rootcov2_assertion_test.go`.
+- **B2** — unconditional override verified feasible via a ctx-free `resolveIssuerForBase(base)` shared with `resolveIssuer`; cache is base-keyed so a pure `(base, state)` derivation stays coherent. Homes: `test/oidc_discovery_test.go`, new `interfaces/sso/issuer_allowlist_test.go`, `rootcov2_extensions_test.go`, `domains/federation/handler_test.go`.
+- **B3** — `peertrust/request.go:38-41` confirmed (absent middleware ⇒ first-hop trust ⇒ Host/XFH/XFP attacker-controlled); exact-match emits the entry byte-for-byte; attack matrix in the new test file.
+- **B4** — mode gate = call presence, with a **nil-vs-non-nil normalization** that reconciles the two reviewers' conflicting wording (never-called ⇒ legacy; explicit empty ⇒ deny-all + cmd boot error).
+- **File budgets — one correction to the audit:** `config_load.go` needs +1 (ServerOptions wiring) **and** +3 (validate hook) = 501 ✗. The revised design must fold the membership check into the existing sentinel-rejection block (`config_load.go:183-186`, net −7) for a ~491 total. All other homes verified: `options_passwd.go` (464 — the *only* options file with real margin; all others 491–500), `sso_wiring.go` (462, `Server` embeds `wiringState` at `sso.go:34`), `config_server.go` (225); `server_discovery*.go` land ~491–493; new non-test files blocked (60/60, 26/26) but new `_test.go` files are free (`directory_fanout_test.go:106`).
+- **Empty allowlist** — nil ⇒ legacy (required for mode-off byte-identity); explicit non-nil empty ⇒ deny-all + boot error.
+- **T-2.3 decision** — forced: **cmd-path-only**. `NewServer` fail-closed is impossible (breaks the byte-identity hard gate); fail-closedness comes from config `validate()` (incl. SIGHUP reload, which reuses `LoadFromSources`) plus strict-branch `""`.
+- **New conflict flagged:** audit Q3 says absent config key fails boot — but **all 7 `config-validate-all` files set `issuer` and none carry the key** (`Makefile:403-412`), so absent-key must be legacy or `make ci` breaks. The design must pin this explicitly.
+
+**Left unresolved (flagged):** the revised design document itself; H1 log-flood rate limiting; H3 `authorization_servers: [""]` choice; strict-branch order for `WithIssuer`∉allowlist; sentinel-in-config pin (`issuer: sso-server` + `[sso-server]`); F7 entry-shape validation; H2 raw-seam scoping; H4 contract docs (`issuer_allowlist` absent from `docs/config-reference.md` — verified); and the **pre-existing gate failure** `ed25519_jwt_issuer.go` (539 lines, commit 7586c6b3) which blocks `make ci` at handoff and must be reported separately per AGENTS.md §5.
