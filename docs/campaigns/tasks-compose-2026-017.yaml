@@ -1,0 +1,10 @@
+tasks:
+- prompt: "已批准的组合变更 COMPOSE-2026-017（管理员删除文件 → 通知所有者 → 审计）。\n本仓库（snaplink）的协作职责：\n\
+    1. permission-catalog 注册 vault.file.delete（<domain>.<resource>.<action>\n   命名规范，domain\
+    \ 白名单含 vault）\n2. authorization-check 支持该 action 的 fail_closed 判定（无权限 403，\n \
+    \  返回 decision_id 供审计关联）\n3. 审计：删除操作的授权决策事件（decision_id/policy_id/decision）通过\n\
+    \   AuditSink 端口异步入 snaplink-audit-governance（durable_async，\n   不阻塞主流程；L0/L1/L2\
+    \ 分级，不硬编码）\n输出提案文档：API/权限变更、审计事件类型、兼容性分析、部署顺序。\n不修改代码。\n"
+  output: docs/proposals/compose-2026-017-snaplink.md
+  validate: python3 /home/u1/ai-batch-runner/examples/snaplink-platform/scripts/check-no-refusal.py
+    {output}

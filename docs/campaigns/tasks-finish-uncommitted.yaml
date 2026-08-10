@@ -1,0 +1,148 @@
+# Finish-uncommitted implementation batch: drive the in-flight working-tree
+# changes (B4 batch + auxiliary tooling) to green.
+#
+# Baseline (measured on 2026-08-09, working tree at 069b1158+uncommitted):
+#   go build ./... && go vet ./...  -> green
+#   root archgate/maintainability tests -> green (after hygiene)
+#   RED: cmd/sso-ctl/apiclient (11 subtests), cmd/sso-server (flaky nil-DB
+#   panic in rotation.StartClientSecretScan), test/TestSdkForm_PARClaimsThreaded
+#   (G5b interlock: sibling F1 decoder not landed).
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-finish-uncommitted.yaml
+#
+# Rules for every task:
+#   - Read @implementation-gate.md for the B4 contract; the
+#     acceptance assertions (T-2/T-8a/T-8b/T-8d/T-9) are authoritative.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report. Never claim a test
+#     passed that you did not run.
+#   - Commit your changes with a conventional imperative message + AI
+#     co-author trailer (per AGENTS.md). Never commit binaries or generated
+#     run artifacts (docs/architect-analysis/auto/runs|analyses are
+#     gitignored).
+tasks:
+- prompt: |
+    你在 snaplink 仓库（OAuth2/OIDC SSO SDK + sso-server）。任务：修复
+    `cmd/sso-ctl/apiclient` 包中 `check`/`sweep`/`mint` 探测工具的 11 个失败
+    子测试（全部位于 cmd/sso-ctl/apiclient/check_test.go，属于 B4-3 的 T-2
+    真值化 sweep 与 T-8a/T-8d/T-9 探测工具，需求见
+    @implementation-gate.md 与 cmd/sso-ctl/apiclient/check.go
+    顶部的工具契约注释）。
+
+    当前失败清单（go test ./cmd/sso-ctl/apiclient/... -count=1 实测）：
+    1. TestCheck_AddrValidation/{no-scheme,empty-host}：期望 exit=2、
+       stderr 不得回显原始 addr、stub 零请求；当前 stderr 回显了原始值
+       （错误信息里出现了 "8443"/"http://"）。
+    2. TestSweep_GreenPath / TestStdoutDeterministic：mint 探测报
+       `claims: iss "snaplink-sso" != discovery issuer "http://127.0.0.1:PORT"`。
+       newLiveServer fixture 用 sso.WithIssuer(addr) 配置了 issuer，但
+       `defaultimpl.NewEd25519JWTIssuer()` 的默认 issuer 是
+       sso.DefaultIssuer("snaplink-sso")——fixture 未把签发 issuer 配置为
+       与 discovery 一致（真实部署由 cmd/sso-server 配 WithEd25519Issuer）。
+    3. TestSweep_TokenEndpointSuffix：discovery 广告了 /oauth2/token 而
+       服务未挂载 → 404；工具应在其诊断中给出 token_endpoint 路径后缀
+       不匹配 "/token" 的判定（测试期望 suffix 诊断）。
+    4. TestSweep_AdvertisedURLRejection/{file-scheme,userinfo,relative,
+       empty-host}：sweep 对广告 URL 的逐行拒绝诊断与期望不符。
+    5. TestMint_ClaimsMatrix / TestMint_ScopeContainsRequested /
+       TestMint_AudContainsResource/live-array-form /
+       TestMint_RolesConditional/live-cc-absence-tolerated /
+       TestMint_ExpectNoRoles/live-cc-passes / TestMint_ResponseFail/
+       status-400 / TestRevoke_RoundTrip：iss 不一致导致的连锁失败
+       （修复 2 后应转绿）+ ResponseFail 的诊断文本核对。
+    6. TestIntrospect_Non401Fails/wrong-bytes：401 body 字节比对
+       （"{\"error\":\"invalid_client\"}"）与工具实际输出的 body
+       （带 trace_id）不一致。
+
+    约束：
+    - 工具契约（check.go 顶部注释与 --help 文本）是权威；测试必须与工具
+      契约一致，不得放宽工具行为去迁就测试；也不得 skip/删除任何测试。
+    - 修复方向优先选择 fixture/测试与工具的契约对齐（如 newLiveServer 的
+      issuer 配置、stub discovery 只广告真实挂载的端点），工具本身的 bug
+      （如回显原始 addr、suffix 诊断缺失）也要修。
+    - 保持 oracle-safe：错误信息不得泄露凭据/原始 URL 中的 userinfo。
+    - 完成后必须实际运行：go test ./cmd/sso-ctl/apiclient/... -count=1
+      与 go test ./cmd/sso-ctl/... -count=1，全部绿。
+    - 用 conventional commit 提交（imperative 现在时 + AI co-author
+      trailer），提交信息说明为什么（fixture 对齐 vs 工具修复）。
+  output: docs/campaigns/reports/fix-apiclient-check.md
+  timeout: 1800
+  validate: |
+    go test ./cmd/sso-ctl/apiclient/... -count=1 && go test ./cmd/sso-ctl/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：修复 cmd/sso-server 测试中的 flaky panic——
+    `rotation.StartClientSecretScan` 的首次 sweep 立即执行，调用
+    `sqlite.(*ClientStore).List` 时 `db == nil`（nil *sql.DB），在
+    `go test ./...` 全量运行时偶发
+    `panic: runtime error: invalid memory address or nil pointer dereference`
+    （栈：platform/lifecycle/rotation/client_secret_scan.go:102 sweep →
+    infrastructure/defaultimpl/sqlite/clients.go:202 List）。单独运行
+    ./cmd/sso-server/ 时未必复现（时序相关）。
+
+    排查方向（已核实）：
+    - 接线点：cmd/sso-server/build_app_security.go:421
+      startGovernanceWorkers → rotation.StartClientSecretScan(ctx,
+      b.clientStore, ...)，b.clientStore 来自 build_app_core.go:42
+      wireIdentitySigning → serverbuildstore.BuildClientStore。
+    - 某些测试配置下 b.clientStore 是 *sqlite.ClientStore 但 DB 未打开
+      （nil），startGovernanceWorkers 只判了 != nil。
+    - scanner 的文档契约是 fail-open：store 故障时记日志并中止本次 sweep，
+      绝不 panic、绝不阻塞服务。nil-DB store 就是一种 store 故障形态。
+
+    修复要求：
+    1. 根因修复（接线或 guard 二选一，选更符合契约的）：
+       - 若 wiring 本不该把未打开的 store 交给 scanner，修 build 侧；
+       - 否则在 scanner/sweep 侧对不可用的 store 做 fail-open 防护
+         （记录 "client secret expiry scan failed" 并返回，与现有错误路径
+         一致），并考虑给 sqlite.ClientStore.List 做 nil-DB 防护是否合理。
+    2. 加回归测试：构造 nil-DB/未打开 store 场景，断言 scanner 不 panic
+       且 fail-open（有日志、无崩溃）。
+    3. 实际验证：go test ./cmd/sso-server/ -count=5 全绿，且
+       go test ./platform/lifecycle/rotation/... -count=1 全绿。
+    4. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/fix-sso-server-scan-panic.md
+  timeout: 1800
+  validate: |
+    go test ./cmd/sso-server/ -count=3 && go test ./platform/lifecycle/rotation/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：实现 B4-4 的 sibling F1 decoder——让表单编码
+    （application/x-www-form-urlencoded）的 PAR 请求中的 `claims` 字段
+    （json.RawMessage，RFC 9396 §3 / OIDC Core §5.5）真正进入授权请求，
+    使 test/credential_sdk_form_test.go 的 TestSdkForm_PARClaimsThreaded
+    转绿（该测试当前红，注释明确：'Deliberately red until the sibling F1
+    decoder lands'，绝不 skip；它是 G5b 机械回退门，见
+    @implementation-gate.md G5b）。
+
+    现状（已核实）：
+    - protocols/oauth/oauthwire/bind.go（已修改）与 bind_strict.go（新增）
+      是共享表单/JSON 绑定器；表单分支的 setFormField 对 `claims` 键目前
+      静默丢弃值（无 json.RawMessage 分支），导致 PAR 存入的 authorization
+      请求缺 claims，登录时断言不到。
+    - PAR 路径：POST /par → PAR store → /auth/login 用 request_uri 取回 →
+      授权请求快照。
+    - cmd/gensdk 的 form-emission 侧（TestSdkForm_PARClaimsThreaded 就是
+      gensdk 工作流的回归钉）已就位；本任务只做 binder 侧，不触碰
+      cmd/gensdk/* 与 docs/sdks/*。
+
+    修复要求：
+    1. 在共享表单解码路径为 `claims`（以及同类的复杂 JSON 表单字段，若
+       绑定器存在同类静默丢弃模式）实现 json.RawMessage 解析分支，值与
+       JSON body 解析路径保持一致；保持 oracle-safe 与 Content-Type 严格
+       性（bind_strict 语义不变）。
+    2. 确认 claims 经 PAR store 线程化到授权请求（TestSdkForm_PARClaimsThreaded
+       断言 userinfo/id_token 分支存在）。
+    3. 实际验证（全绿才算完成）：
+       go test ./test/ -run 'TestSdkForm' -count=1
+       go test ./test/ -run 'TestCredential' -count=1
+       go test ./protocols/oauth/... -count=1
+       go test ./interfaces/sso/ -run 'Claims|PAR' -count=1
+    4. conventional commit（imperative + AI co-author trailer）。若实现
+       过程发现契约需要文档更新（docs/openapi.yaml / config-reference /
+       error-codes），在同一提交内完成并说明。
+  output: docs/campaigns/reports/f1-form-par-claims-decoder.md
+  timeout: 1800
+  validate: |
+    go test ./test/ -run 'TestSdkForm_PARClaimsThreaded' -count=1 && go test ./protocols/oauth/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
