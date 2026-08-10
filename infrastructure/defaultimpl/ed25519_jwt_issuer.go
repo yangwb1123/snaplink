@@ -4,12 +4,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -155,170 +151,6 @@ func (j *Ed25519JWTIssuer) currentKey() (Ed25519Signer, string) {
 	return j.signer, j.keyID
 }
 
-// Ed25519Signer abstracts the raw EdDSA signing operation so the
-// process-held private key can be swapped for a KMS/HSM-backed signer
-// without touching JWT assembly. Sign receives the JWS signing input
-// (the "header.payload" bytes) and returns the 64-byte Ed25519
-// signature. It MAY return an error (e.g. a KMS round-trip failure);
-// every call site propagates it, so token issuance fails closed rather
-// than emitting an unsigned token.
-type Ed25519Signer interface {
-	Sign(ctx context.Context, message []byte) ([]byte, error)
-}
-
-// softwareEd25519Signer is the default in-process signer.
-type softwareEd25519Signer struct{ priv ed25519.PrivateKey }
-
-func (s softwareEd25519Signer) Sign(_ context.Context, message []byte) ([]byte, error) {
-	return ed25519.Sign(s.priv, message), nil
-}
-
-type Ed25519Option func(*Ed25519JWTIssuer)
-
-func WithEd25519Issuer(name string) Ed25519Option {
-	return func(j *Ed25519JWTIssuer) { j.issuer = name }
-}
-
-func WithEd25519TokenTTL(ttl time.Duration) Ed25519Option {
-	return func(j *Ed25519JWTIssuer) { j.tokenTTL = ttl }
-}
-
-// WithEd25519MaxClockSkew widens the inbound exp/nbf validation
-// window per RFC 7519 §4.1.4-5. Useful when AS and resource server
-// clocks drift (NTP-managed clocks routinely drift 100ms-1s; a
-// well-managed pair drifts under 5s). Default 0 = exact comparison.
-// Recommended production value: 30s-2min. Going much higher widens
-// the window an attacker has to replay an expired token.
-func WithEd25519MaxClockSkew(skew time.Duration) Ed25519Option {
-	return func(j *Ed25519JWTIssuer) {
-		if skew > 0 {
-			j.maxClockSkew = skew
-		}
-	}
-}
-
-// WithEd25519Key uses the supplied keypair instead of generating one.
-// Useful for tests and for long-lived deployments where the key must persist
-// across process restarts.
-func WithEd25519Key(priv ed25519.PrivateKey) Ed25519Option {
-	return func(j *Ed25519JWTIssuer) {
-		j.privateKey = priv
-		j.publicKey = priv.Public().(ed25519.PublicKey)
-	}
-}
-
-// WithEd25519KeyFile persists the Ed25519 signing key to a PEM file
-// (PKCS#8) so a process restart reuses the same key (kid stable across
-// restarts — the deployed `rotation.enabled=false` profile otherwise
-// regenerates the key on every boot and silently invalidates every
-// issued token). First run: generate + write (0600, atomic rename).
-// Subsequent runs: load. External signer wins when both are set.
-func WithEd25519KeyFile(path string) Ed25519Option {
-	return func(j *Ed25519JWTIssuer) {
-		if j.signer != nil || path == "" {
-			return
-		}
-		priv, err := loadOrGenerateEd25519Key(path)
-		if err != nil {
-			panic(fmt.Sprintf("ed25519: key file %s: %v", path, err))
-		}
-		j.privateKey = priv
-		j.publicKey = priv.Public().(ed25519.PublicKey)
-	}
-}
-
-func loadOrGenerateEd25519Key(path string) (ed25519.PrivateKey, error) {
-	if data, err := os.ReadFile(path); err == nil {
-		block, _ := pem.Decode(data)
-		if block == nil {
-			return nil, fmt.Errorf("decode PEM")
-		}
-		der, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("parse PKCS8: %w", err)
-		}
-		priv, ok := der.(ed25519.PrivateKey)
-		if !ok {
-			return nil, fmt.Errorf("not an Ed25519 key")
-		}
-		return priv, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	der, err := x509.MarshalPKCS8PrivateKey(priv)
-	if err != nil {
-		return nil, err
-	}
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, pemBytes, 0o600); err != nil {
-		return nil, err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return nil, err
-	}
-	return priv, nil
-}
-
-// WithEd25519KeyID overrides the auto-derived kid.
-func WithEd25519KeyID(kid string) Ed25519Option {
-	return func(j *Ed25519JWTIssuer) { j.keyID = kid }
-}
-
-// WithEd25519Clock overrides the wall clock Issue/IssueIDToken/
-// IssueLogoutToken read for iat/nbf/exp. Test-only knob: nil (the
-// default every issuer starts with) means every call reads the real
-// time.Now(), byte-identical to the code before Clock existed. Wiring a
-// fixed or steppable Clock lets a test assert exact claim values without
-// sleeping or tolerating a timing window.
-func WithEd25519Clock(c Clock) Ed25519Option {
-	return func(j *Ed25519JWTIssuer) { j.clock = c }
-}
-
-// WithEd25519Metrics wires per-(alg,kid) signing-usage observability
-// (sso_signing_key_usage_total). Optional — a nil or omitted Metrics keeps
-// every Sign call a no-op observation, byte-identical to a build without it.
-func WithEd25519Metrics(m *metrics.Metrics) Ed25519Option {
-	return func(j *Ed25519JWTIssuer) { j.metrics = m }
-}
-
-// recordSigningUsage bumps the signing-usage counter for a successful
-// in-process sign. Nil-safe; called from every Issue*/SignJWT method right
-// after their sgn.Sign succeeds, never from JWKS/lookup paths that don't
-// actually sign.
-func (j *Ed25519JWTIssuer) recordSigningUsage(kid string) {
-	j.metrics.ObserveSigningUsage(metricsAlgEdDSA, kid)
-}
-
-// WithEd25519VerifyKey adds a public key the issuer will accept on
-// Validate but will NOT use to sign new tokens — the retired-signer
-// half of a rotation. Operators add the OUTGOING key here for the
-// duration of the access-token TTL after a key swap, so tokens
-// minted before the swap stay verifiable until they expire
-// naturally. Once the TTL window has passed, remove the option on
-// the next deployment and the retired key disappears from JWKS.
-//
-// kid MUST be distinct from the primary signing key's kid and from
-// every other verify-only key (key lookup is by kid in Validate).
-// Idempotent: registering the same kid twice updates the public
-// key without erroring — useful for testing rotations.
-func WithEd25519VerifyKey(kid string, pub ed25519.PublicKey) Ed25519Option {
-	return func(j *Ed25519JWTIssuer) {
-		if j.verifyKeys == nil {
-			j.verifyKeys = make(map[string]ed25519.PublicKey, 2)
-		}
-		j.verifyKeys[kid] = pub
-	}
-}
-
 func NewEd25519JWTIssuer(opts ...Ed25519Option) *Ed25519JWTIssuer {
 	j := &Ed25519JWTIssuer{
 		issuer:   sso.DefaultIssuer,
@@ -409,33 +241,6 @@ func (j *Ed25519JWTIssuer) DropVerifyKey(kid string) {
 	j.peerKeysMu.Lock()
 	defer j.peerKeysMu.Unlock()
 	delete(j.peerVerifyKeys, kid)
-}
-
-// WithEd25519ExternalSigner injects a signer whose private key lives
-// outside this process (AWS KMS, GCP KMS, an HSM via PKCS#11). pub is
-// the corresponding Ed25519 public key — published in JWKS and used by
-// Validate — and kid names it in issued tokens' headers. The issuer
-// never generates or holds a private key in this mode.
-//
-// pub MUST be the public half of the key the signer signs with;
-// otherwise every issued token fails verification. kid SHOULD be stable
-// across replicas sharing the same external key so JWKS lookups agree.
-func WithEd25519ExternalSigner(signer Ed25519Signer, pub ed25519.PublicKey, kid string) Ed25519Option {
-	return func(j *Ed25519JWTIssuer) {
-		j.signer = signer
-		j.publicKey = pub
-		if kid != "" {
-			j.keyID = kid
-		}
-	}
-}
-
-// WithEd25519KeyOrigin sets the key origin attestation for this issuer's
-// signing key. Defaults to OriginUnattested (software). Callers that wire
-// a KMS/HSM-backed external signer SHOULD set this to the appropriate
-// value so the JWKS endpoint publishes the origin for compliance audits.
-func WithEd25519KeyOrigin(origin core.KeyOrigin) Ed25519Option {
-	return func(j *Ed25519JWTIssuer) { j.keyOrigin = origin }
 }
 
 // KeyOrigin returns the key origin attestation for this issuer's signing
