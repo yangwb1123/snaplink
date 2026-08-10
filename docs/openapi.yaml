@@ -3281,6 +3281,13 @@ paths:
         authentication. Non-enumerable: an unknown host or a domain with no
         branding returns the same `200` with an empty `branding` object.
         Mounted only when a tenant store is wired.
+
+        Reserved key `languages`: comma-separated BCP-47 tags (e.g.
+        `"en,zh,ja"`) advertising the languages the hosted login and
+        post-login settings may select for this client/tenant. Absent or
+        unparsable values mean the console falls back to its built-in
+        `en,zh` set; unknown keys are preserved verbatim by the admin
+        branding editor.
       operationId: getBranding
       responses:
         "200":
@@ -11804,6 +11811,11 @@ paths:
     put:
       tags: [admin]
       summary: Conditionally replace tenant branding.
+      description: |
+        Replaces the tenant branding map. Reserved key `languages`
+        (comma-separated BCP-47 tags, e.g. `"en,zh,ja"`) drives the hosted
+        login and post-login language selectors; unknown keys are preserved
+        verbatim. The console editor validates BCP-47 tags before writing.
       operationId: updateAdminBranding
       security:
         - bearerAuth: []
