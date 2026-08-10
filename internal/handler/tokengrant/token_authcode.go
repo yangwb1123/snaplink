@@ -10,6 +10,7 @@ import (
 	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -39,6 +40,9 @@ type AuthCodeGrantDeps interface {
 	RecordIDTokenIssued(ctx core.HandlerContext, clientID, subjectID string)
 	LogErrorCtx(ctx core.HandlerContext, msg string, kv ...any)
 	SrvLogger() spi.Logger
+	// ScopeRegistry returns the wired global scope registry (nil = unwired
+	// no-op, the default-off byte-compat baseline).
+	ScopeRegistry() scoperegistry.Registry
 }
 
 // servingRegionFrom returns the serving region the region middleware
@@ -75,6 +79,13 @@ func HandleAuthCodeGrant(d AuthCodeGrantDeps, ctx core.HandlerContext, client *c
 	}
 	info, ok := authCodeValidate(d, ctx, client, req, dpopJKT)
 	if !ok {
+		return
+	}
+	// Global scope registry (opt-in): info.Scopes is the code-bound effective
+	// set (the request never carries it — a pre-enablement authcode minted
+	// with an unregistered scope must fail closed here, not rotate it
+	// forever). Post-resolution, pre-issuance.
+	if scoperegistry.RejectUnregistered(ctx, d.ScopeRegistry(), info.Scopes) {
 		return
 	}
 	if lifecycleGrantBlocked(d, ctx, info.UserID) {

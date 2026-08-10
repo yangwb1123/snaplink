@@ -36,7 +36,11 @@ Stripe raw webhook ──HMAC + ±5 minute window──> durable minimal-fact in
 
 For machine tokens, `sub` must equal `client_id`, the desired-state binding file
 maps that client to exactly one tenant, and an optional request `tenant_id` must
-match. User-shaped tokens (including tokens without `client_id`) require exact
+match; both flows also require the token's `tenant_id` claim to equal the tenant
+the request resolves to (the client's bound tenant for machine tokens, the
+request `tenant_id` for user-shaped tokens), and a contradiction or a missing
+claim rejects the request. User-shaped tokens (including
+tokens without `client_id`) require exact
 `admin:write`, an explicit `tenant_id`, and an existing server-owned tenant
 binding. Each tenant has a dedicated Billing OAuth client. Billing separately
 binds that client to the same tenant and `payment:stripe` source with no allowed

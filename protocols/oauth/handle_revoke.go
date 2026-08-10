@@ -40,6 +40,13 @@ type RevokeDeps interface {
 	// disables both the cache and this eviction, byte-identical to a build
 	// without caching.
 	IntrospectionCache() IntrospectionCache
+	// RequireFormContentType reports whether the strict credential wire is
+	// enabled (B4-4, server.require_form_content_type): /token/revoke then
+	// accepts ONLY application/x-www-form-urlencoded and answers 415 for a
+	// JSON body, a missing Content-Type, or any other media type, before
+	// the body is read. False (the default) keeps the dual-mode binder
+	// byte-identical to a build without the feature.
+	RequireFormContentType() bool
 }
 
 // revokeRequest is the parsed body/form for HandleRevoke (RFC 7009),
@@ -72,8 +79,7 @@ func HandleRevoke(d RevokeDeps, ctx core.HandlerContext) {
 	}
 
 	var req revokeRequest
-	if err := BindParams(ctx, &req); err != nil {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+	if bindCredentialRequest(d, ctx, &req) {
 		return
 	}
 	if id, secret, ok := BasicClientCreds(ctx.Request()); ok {

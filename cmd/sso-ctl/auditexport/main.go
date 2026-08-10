@@ -26,8 +26,21 @@
 // v1 supports the direct --dsn mode only; a --from-url mode against the
 // live /api/v1/audit/events API is a planned follow-up.
 //
+// A bundle can be anchored to a signed notary checkpoint (--anchor): the
+// export embeds the attestation only when the bundle ends exactly at the
+// attested chain head (fail-closed — checkpoints attest chain heads
+// only), and --verify enforces the checkpoint signature plus exact head
+// equality. An explicit --anchor file wins over the bundle's embedded
+// copy; without either, verification is legacy (the self-referential
+// head check only — the residual risk this anchor closes). The embedded
+// copy alone is a self-contained convenience record, not enforcement:
+// a bundle writer can forge it, so evidence-grade verification requires
+// the flag.
+//
 // Exit codes: 0 wrote / verified a clean bundle (including an empty
-// window), 1 load / verify error (incl. a tampered bundle), 2 CLI misuse.
+// window), 1 load / verify error (incl. a tampered bundle, and an
+// invalid or mismatched --anchor), 2 CLI misuse (incl. an unrecognized
+// --outcome value).
 package auditexport
 
 import (
@@ -42,6 +55,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/audit/auditexport"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
 	auditsqlite "github.com/yangwb1123/snaplink/platform/audit/sqlite"
 )
 
@@ -65,6 +79,7 @@ const (
 	flagSince     = "since"
 	flagUntil     = "until"
 	flagLimit     = "limit"
+	flagAnchor    = "anchor"
 )
 
 // options holds the resolved CLI inputs. run takes it by value so tests
@@ -74,6 +89,7 @@ type options struct {
 	typ, outcome, actorID, clientID, tenantID, provider string
 	requestID, traceID, since, until                    string
 	limit                                               int
+	anchor                                              string
 }
 
 // usageFlags is the FlagSet built in Run, referenced by the standalone
@@ -81,7 +97,10 @@ type options struct {
 var usageFlags *flag.FlagSet
 
 // Run executes the audit-export subcommand over args (without the leading
-// program name) and returns the process exit code.
+// program name) and returns the process exit code; the caller
+// (cmd/sso-ctl main) exits with it. It is the single exit-code decision
+// point: misuse errors print the usage banner (code 2), runtime errors
+// print the message only (code 1), and neither path calls os.Exit.
 func Run(args []string) int {
 	var o options
 	fs := flag.NewFlagSet(progName, flag.ExitOnError)
@@ -91,7 +110,10 @@ func Run(args []string) int {
 	_ = fs.Parse(args)
 	code, err := dispatch(o)
 	if err != nil {
-		errorf("%v", err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", progName, err)
+		if code == 2 {
+			usage()
+		}
 	}
 	return code
 }
@@ -99,16 +121,22 @@ func Run(args []string) int {
 // dispatch routes to offline-verify (--verify) or export (--dsn). The two
 // modes are mutually exclusive: --verify reads a finished bundle file and
 // needs no store, so pairing it with --dsn is a usage error; exactly one
-// of the two must be given.
+// of the two must be given. CLI misuse returns (2, err) so Run is the
+// single exit decision point — os.Exit here would be untestable in
+// process. validateOutcome runs before every mode branch so both --dsn
+// and --verify runs reject an unknown --outcome.
 func dispatch(o options) (int, error) {
+	if err := validateOutcome(o.outcome); err != nil {
+		return 2, err
+	}
 	if o.verify != "" {
 		if o.dsn != "" {
-			usageErr("--%s and --%s are mutually exclusive", flagVerify, flagDSN)
+			return 2, usageErrorf("--%s and --%s are mutually exclusive", flagVerify, flagDSN)
 		}
-		return runVerify(o.verify)
+		return runVerify(o.verify, o.anchor)
 	}
 	if o.dsn == "" {
-		usageErr("--%s (export) or --%s <bundle> (offline verify) is required", flagDSN, flagVerify)
+		return 2, usageErrorf("--%s (export) or --%s <bundle> (offline verify) is required", flagDSN, flagVerify)
 	}
 	return run(o)
 }
@@ -117,8 +145,8 @@ func bindFlags(fs *flag.FlagSet, o *options) {
 	fs.StringVar(&o.dsn, flagDSN, "", "SQLite DSN to export from (required for export; opened read-only, append ?mode=ro for a live DB)")
 	fs.StringVar(&o.verify, flagVerify, "", "offline-verify a bundle file instead of exporting (no --dsn); non-zero exit on tamper")
 	fs.StringVar(&o.out, flagOut, "", "output file for the JSON bundle (default: stdout)")
-	fs.StringVar(&o.typ, flagType, "", "filter: event type")
-	fs.StringVar(&o.outcome, flagOutcome, "", "filter: outcome (success|failure)")
+	fs.StringVar(&o.typ, flagType, "", "filter: event type (unrecognized values warn; custom types allowed)")
+	fs.StringVar(&o.outcome, flagOutcome, "", "filter: outcome (success|failure; unrecognized value is a usage error)")
 	fs.StringVar(&o.actorID, flagActorID, "", "filter: actor id")
 	fs.StringVar(&o.clientID, flagClientID, "", "filter: client id")
 	fs.StringVar(&o.tenantID, flagTenantID, "", "filter: tenant id")
@@ -128,15 +156,28 @@ func bindFlags(fs *flag.FlagSet, o *options) {
 	fs.StringVar(&o.since, flagSince, "", "filter: start of window (RFC3339 or unix seconds; inclusive)")
 	fs.StringVar(&o.until, flagUntil, "", "filter: end of window (RFC3339 or unix seconds; exclusive)")
 	fs.IntVar(&o.limit, flagLimit, 0, "max events to export (0 = all matching)")
+	fs.StringVar(&o.anchor, flagAnchor, "", "signed notary checkpoint (JSON) to bind this evidence to (export: embedded into the bundle; verify: checked against the bundle head)")
 }
 
 // run is the testable core: it opens the store read-only, builds the
 // self-verified bundle, and writes it. Returns (exitCode, error) and
-// never calls os.Exit.
+// never calls os.Exit. With --anchor the checkpoint is loaded and
+// signature-checked BEFORE the store opens (fail-fast, mirroring the
+// validateOutcome-first discipline), and head equality is enforced
+// before the bundle is written, so a mismatched anchor never leaves a
+// bundle file behind.
 func run(o options) (int, error) {
 	q, err := buildQuery(o)
 	if err != nil {
 		return 1, err
+	}
+	warnUnknownType(o.typ)
+	var cp *audit.SignedCheckpoint
+	if o.anchor != "" {
+		cp, err = loadCheckpoint(o.anchor)
+		if err != nil {
+			return 1, err
+		}
 	}
 	// OpenReadOnly never migrates: a read-only DSN works and a live
 	// read-write store is never write-locked or schema-mutated by an
@@ -152,6 +193,12 @@ func run(o options) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	if cp != nil {
+		if err := enforceAnchorHead(bundle.HeadHash, cp); err != nil {
+			return 1, err
+		}
+		bundle.Anchor = cp
+	}
 	if err := writeBundle(o.out, bundle); err != nil {
 		return 1, err
 	}
@@ -164,7 +211,14 @@ func run(o options) (int, error) {
 // confirm it is untampered. Returns (0,nil) on a clean bundle and (1,err)
 // on any load / parse failure or verification break so the process exits
 // non-zero on tamper.
-func runVerify(path string) (int, error) {
+//
+// Anchor resolution: VerifyExportBundle runs FIRST (a byte-tampered
+// bundle fails at the chain check regardless of any anchor); then an
+// explicit --anchor file wins over the bundle's embedded Anchor; both
+// present and byte-different is a conflicting-anchors error; a resolved
+// checkpoint is signature-checked (the flag path already did so during
+// load) and its attested head must equal the bundle head exactly.
+func runVerify(path, anchorPath string) (int, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return 1, fmt.Errorf("read bundle: %w", err)
@@ -176,8 +230,69 @@ func runVerify(path string) (int, error) {
 	if err := auditexport.VerifyExportBundle(&b); err != nil {
 		return 1, fmt.Errorf("bundle FAILED verification: %w", err)
 	}
-	printVerifyOK(&b)
+	var cp *audit.SignedCheckpoint
+	fromFlag := false
+	if anchorPath != "" {
+		cp, err = loadCheckpoint(anchorPath)
+		if err != nil {
+			return 1, err
+		}
+		fromFlag = true
+	} else if b.Anchor != nil {
+		cp = b.Anchor
+	}
+	if cp == nil {
+		printVerifyOK(&b, nil, false)
+		return 0, nil
+	}
+	if fromFlag && b.Anchor != nil && !audit.CheckpointEqual(cp, b.Anchor) {
+		return 1, fmt.Errorf("conflicting anchors: --%s file and embedded bundle anchor differ", flagAnchor)
+	}
+	if !fromFlag {
+		// The embedded copy is forgeable by a bundle writer (no key
+		// registry), so this is the single enforcement point for it.
+		if err := audit.VerifyCheckpointSignature(cp); err != nil {
+			return 1, fmt.Errorf("embedded anchor FAILED signature check: %w", err)
+		}
+	}
+	if err := enforceAnchorHead(b.HeadHash, cp); err != nil {
+		return 1, err
+	}
+	printVerifyOK(&b, cp, fromFlag)
 	return 0, nil
+}
+
+// loadCheckpoint reads a SignedCheckpoint JSON file exactly once and
+// returns the in-memory struct, so the signature check and head equality
+// run over the same bytes (no re-read, no TOCTOU). The signature is
+// enforced here for the flag path: a checkpoint a store tamperer could
+// not re-sign is the only enforcement-grade anchor.
+func loadCheckpoint(path string) (*audit.SignedCheckpoint, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read anchor %s: %w", path, err)
+	}
+	var cp audit.SignedCheckpoint
+	if err := json.Unmarshal(raw, &cp); err != nil {
+		return nil, fmt.Errorf("parse anchor %s: %w", path, err)
+	}
+	if err := audit.VerifyCheckpointSignature(&cp); err != nil {
+		return nil, fmt.Errorf("anchor %s FAILED signature check: %w", path, err)
+	}
+	return &cp, nil
+}
+
+// enforceAnchorHead is the single head-equality check for both modes:
+// checkpoints attest chain heads only, so exact equality is the only
+// sound offline relation (an empty bundle's "" equals GenesisHash, the
+// notary's empty-chain convention). Failing closed on mismatch is what
+// makes an anchored bundle evidence rather than a re-attestable claim.
+func enforceAnchorHead(head string, cp *audit.SignedCheckpoint) error {
+	if head != cp.Checkpoint.HeadHash {
+		return fmt.Errorf("anchor head mismatch: bundle head_hash %q, checkpoint attestation %q (checkpoints attest chain heads only)",
+			head, cp.Checkpoint.HeadHash)
+	}
+	return nil
 }
 
 func buildQuery(o options) (audit.Query, error) {
@@ -250,10 +365,21 @@ func printSummary(b *auditexport.ExportBundle, out string) {
 }
 
 // printVerifyOK writes the offline-verify pass summary to STDERR with only
-// non-sensitive counts — no event contents.
-func printVerifyOK(b *auditexport.ExportBundle) {
-	fmt.Fprintf(os.Stderr, "bundle verified: %d event(s) (contiguous=%t, boundary_prev_hash=%s, head_hash=%s)\n",
+// non-sensitive counts — no event contents. When an anchor was enforced,
+// the line names its attested head; when that anchor came from the
+// bundle's embedded copy (no --anchor flag), the line also warns that the
+// embedded path is convenience, not enforcement-grade (a bundle writer
+// can forge it).
+func printVerifyOK(b *auditexport.ExportBundle, cp *audit.SignedCheckpoint, fromFlag bool) {
+	line := fmt.Sprintf("bundle verified: %d event(s) (contiguous=%t, boundary_prev_hash=%s, head_hash=%s)",
 		b.EventCount, b.Contiguous, anchorLabel(b), b.HeadHash)
+	if cp != nil {
+		line += fmt.Sprintf(", anchor_head=%s", cp.Checkpoint.HeadHash)
+		if !fromFlag {
+			line += ", warning=embedded-anchor-not-enforcement-grade"
+		}
+	}
+	fmt.Fprintln(os.Stderr, line)
 }
 
 // anchorLabel renders the boundary anchor for a summary line, naming the
@@ -280,15 +406,37 @@ Flags:
 	}
 }
 
-// usageErr prints "<prog>: <msg>", the usage banner, and exits 2 (CLI misuse).
-func usageErr(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, progName+": "+format+"\n", args...)
-	usage()
-	os.Exit(2)
+// validateOutcome enforces the closed --outcome vocabulary. Empty is the
+// wildcard; values are compared against the audit constants, never
+// literals, because the vocabulary is closed (no custom outcomes exist).
+func validateOutcome(v string) error {
+	if v == "" || audit.Outcome(v) == audit.OutcomeSuccess || audit.Outcome(v) == audit.OutcomeFailure {
+		return nil
+	}
+	return fmt.Errorf("--%s: %q is not a valid outcome (allowed: %s|%s)",
+		flagOutcome, v, audit.OutcomeSuccess, audit.OutcomeFailure)
 }
 
-// errorf prints "<prog>: <msg>" and exits 1 (runtime error).
-func errorf(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, progName+": "+format+"\n", args...)
-	os.Exit(1)
+// warnUnknownType surfaces a likely --type typo on stderr. Custom event
+// types are legal (auditspi.EventType doc), so this warns only, mirroring
+// serverbuildauthn.warnUnknownAuditEventTypes (build_audit_webhook.go) —
+// the registry is a filter/UX aid, never a record-path gate.
+func warnUnknownType(typ string) {
+	if typ == "" {
+		return
+	}
+	if _, known := auditspi.KnownEventTypes[auditspi.EventType(typ)]; known {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s: warning: --%s %q is not a registered sso event type (custom event types are allowed; check spelling)\n",
+		progName, flagType, typ)
+}
+
+// usageErrorf formats a CLI-misuse diagnostic. The progName prefix is NOT
+// embedded — Run adds exactly one when it prints, reproducing the old
+// usageErr output; embedding it here would double-print it. Returns the
+// error so misuse flows back through dispatch as exit code 2 instead of
+// an in-process os.Exit.
+func usageErrorf(format string, args ...any) error {
+	return fmt.Errorf(format, args...)
 }

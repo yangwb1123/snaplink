@@ -20,9 +20,15 @@ paths:
       description: |
         A machine token (`sub == client_id`) requires the exact
         `billing:checkout:create` scope; its client id selects one server-owned
-        tenant binding and `tenant_id`, when present, must match. A user-shaped
+        tenant binding and the token's `tenant_id` claim must equal that
+        binding (a missing or contradicting claim rejects the request,
+        indistinguishable from a scope denial). A user-shaped
         token requires exact `admin:write`, an explicit `tenant_id`, and a
-        matching server-owned tenant binding. Amount, currency, and provider
+        matching server-owned tenant binding; the token's `tenant_id` claim
+        must equal the request `tenant_id`, and a contradiction — or a token
+        carrying no `tenant_id` claim — returns `tenant_mismatch` (constant
+        body, no scope attribute) even when the
+        request tenant is itself bound. Amount, currency, and provider
         are always read from Snaplink Billing.
       operationId: createStripeCheckoutSession
       x-required-scopes:
@@ -167,7 +173,7 @@ components:
           type: string
           minLength: 1
           maxLength: 256
-          description: Required for user-shaped tokens; omitted or equal to the bound tenant for machine tokens.
+          description: Required for user-shaped tokens; omitted or equal to the bound tenant for machine tokens. A user-shaped token whose `tenant_id` claim contradicts the request tenant, or that carries no `tenant_id` claim, is rejected with `tenant_mismatch` even when the request tenant is itself bound.
         order_id: { type: string, minLength: 1, maxLength: 256 }
         success_url: { type: string, format: uri, maxLength: 4096 }
         cancel_url: { type: string, format: uri, maxLength: 4096 }
@@ -208,7 +214,15 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     Forbidden:
-      description: Missing exact scope, unbound tenant/client, or cross-tenant request.
+      description: |
+        Missing exact scope, unbound tenant/client, or cross-tenant request.
+        A user-shaped token whose request `tenant_id` is missing, unbound, or
+        contradicts the token's `tenant_id` claim — or that carries no
+        `tenant_id` claim — returns `tenant_mismatch` (challenge carries no
+        `scope` attribute). A machine token whose
+        `tenant_id` claim is missing or contradicts its client's bound tenant
+        folds into the same `insufficient_scope` response; those causes are
+        indistinguishable.
       headers:
         Cache-Control: { $ref: "#/components/headers/NoStore" }
         Pragma: { $ref: "#/components/headers/NoCache" }

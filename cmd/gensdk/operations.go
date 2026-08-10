@@ -53,6 +53,13 @@ type Param struct {
 	Doc      string
 }
 
+// formContentType is the wire content type of the OAuth credential
+// family (RFC 6749 §3.2 and the token/introspection/revocation/PAR/
+// device/MFA siblings). The generator prefers it over JSON for request
+// bodies whenever the spec declares both, so generated clients survive
+// Content-Type enforcement (B4-4) without server changes.
+const formContentType = "application/x-www-form-urlencoded"
+
 // Operation is one curated, extracted endpoint — everything a language
 // emitter needs to generate one client method.
 type Operation struct {
@@ -68,6 +75,19 @@ type Operation struct {
 	BodyType     *TypeSpec
 	ResultType   *TypeSpec // nil => no response body (void/None)
 	RequiresAuth bool
+	// ContentType is the request-body content type to emit:
+	// formContentType for the credential family, empty = JSON (the
+	// status quo for every JSON-only operation). Schema-driven via the
+	// declared request-body content map — deliberately NOT the
+	// tsUsesClientAuth hard-coded list, which omits postDeviceCode/
+	// postDeviceVerify/postMFAComplete.
+	ContentType string
+	// FormBlockedFields names request-body fields that have no form
+	// representation (resolved schema Kind == KindMap: e.g.
+	// MFACompleteRequest.params). No RFC defines a form encoding for
+	// maps, so generated clients fail loud client-side on their
+	// presence instead of attempting a wire the server rejects.
+	FormBlockedFields []string
 }
 
 // coreSurface is the operationId allowlist this generator emits clients
@@ -132,7 +152,18 @@ func extractOne(path, method string, item map[string]interface{}, itemParams []i
 	}
 	allParams := append(append([]interface{}{}, itemParams...), asSlice(rawOp["parameters"])...)
 	splitParams(&op, allParams, reg)
-	op.BodyType, op.BodyRequired, op.HasBody = extractRequestBody(rawOp, reg)
+	op.BodyType, op.BodyRequired, op.HasBody, op.ContentType = extractRequestBody(rawOp, reg)
+	// ContentType is empty for the JSON wire (the design's zero value);
+	// only the form variant is recorded.
+	if op.ContentType == "application/json" {
+		op.ContentType = ""
+	}
+	// FormBlockedFields is only meaningful on the form wire: a map field
+	// is expressible in JSON, so JSON-only operations keep nil (the
+	// design pins "empty for every other op").
+	if op.ContentType == formContentType {
+		op.FormBlockedFields = formBlockedFields(op.BodyType, reg)
+	}
 	op.ResultType = extractResult(rawOp, reg)
 	return op, true
 }
@@ -185,33 +216,86 @@ func splitParams(op *Operation, raw []interface{}, reg *Registry) {
 	}
 }
 
-// contentSchema picks a requestBody/response's schema, preferring
-// application/json (every curated operation's JSON variant is either the
-// only content type or byte-identical to its form-urlencoded sibling —
-// see docs/sdks/*/README.md) over any other declared content type.
-func contentSchema(content map[string]interface{}) map[string]interface{} {
-	for _, ct := range [...]string{"application/json", "application/x-www-form-urlencoded"} {
+// contentTypeOf returns the content type to emit for a request
+// body/response content map: form-urlencoded first (the RFC-mandated
+// wire for the OAuth credential family), application/json as the
+// fallback. Safe because every dual-content operation's variants are
+// byte-identical $refs — the preference only decides which wire the
+// generated client emits, never which schema is resolved.
+func contentTypeOf(content map[string]interface{}) string {
+	for _, ct := range [...]string{formContentType, "application/json"} {
 		if entry, ok := content[ct].(map[string]interface{}); ok {
-			if schema, ok := entry["schema"].(map[string]interface{}); ok {
-				return schema
+			if _, ok := entry["schema"].(map[string]interface{}); ok {
+				return ct
 			}
 		}
 	}
-	return nil
+	return ""
 }
 
-func extractRequestBody(op map[string]interface{}, reg *Registry) (*TypeSpec, bool, bool) {
+// contentSchema picks a requestBody/response's schema, preferring
+// form-urlencoded (see contentTypeOf) over any other declared content
+// type. Zero responses in the spec declare the form variant, so
+// response resolution is provably unaffected by the preference.
+func contentSchema(content map[string]interface{}) map[string]interface{} {
+	ct := contentTypeOf(content)
+	if ct == "" {
+		return nil
+	}
+	entry, _ := content[ct].(map[string]interface{})
+	schema, _ := entry["schema"].(map[string]interface{})
+	return schema
+}
+
+func extractRequestBody(op map[string]interface{}, reg *Registry) (*TypeSpec, bool, bool, string) {
 	rb, ok := op["requestBody"].(map[string]interface{})
 	if !ok {
-		return nil, false, false
+		return nil, false, false, ""
 	}
 	required, _ := rb["required"].(bool)
 	content, _ := rb["content"].(map[string]interface{})
+	ct := contentTypeOf(content)
 	schema := contentSchema(content)
 	if schema == nil {
-		return nil, required, true
+		return nil, required, true, ct
 	}
-	return reg.Resolve(schema), required, true
+	return reg.Resolve(schema), required, true, ct
+}
+
+// formBlockedFields returns the request-body field names that have no
+// form-urlencoded representation: fields whose resolved schema is a
+// KindMap (additionalProperties-only). Schema-driven, so a future map
+// field is picked up here with no emitter change; today exactly
+// MFACompleteRequest.params matches (KindMap — a bare `type: object`
+// like PARRequest.claims is KindObject and stays form-expressible as a
+// JSON-string key, per RFC 9396 §3 / OIDC Core §5.5).
+func formBlockedFields(t *TypeSpec, reg *Registry) []string {
+	if t == nil {
+		return nil
+	}
+	obj := derefNamed(t, reg)
+	if obj.Kind != KindObject {
+		return nil
+	}
+	var out []string
+	for _, f := range obj.Fields {
+		if derefNamed(f.Type, reg).Kind == KindMap {
+			out = append(out, f.Name)
+		}
+	}
+	return out
+}
+
+// derefNamed resolves a KindRef to its named body, falling back to the
+// ref stub itself when the name is unknown (dangling $ref).
+func derefNamed(t *TypeSpec, reg *Registry) *TypeSpec {
+	if t.Kind != KindRef {
+		return t
+	}
+	if named := reg.NamedType(t.Name); named != nil {
+		return named
+	}
+	return t
 }
 
 // extractResult resolves the first (lowest-numbered) 2xx response that

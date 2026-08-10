@@ -27,6 +27,14 @@ type Claims struct {
 	// gates on it; HasServingRegion reports presence.
 	ServingRegion string
 
+	// TenantID is the SnapLink extension `tenant_id` claim: the mint-time
+	// tenant binding of the client the token was issued to (echoed by
+	// introspection). Empty when the AS didn't bind the client, in which
+	// case no claim was minted. HasTenantID reports presence; there is no
+	// Config gate — the tenant expectation is per-binding adapter config,
+	// not a shared RS static set.
+	TenantID string
+
 	// RenewAfter is the unix time an introspected token needs renewal, per
 	// the AS's opt-in token-policy governance (WithTokenPolicy's
 	// RequireRenewAfter) — an early warning ahead of the AS eventually
@@ -72,6 +80,14 @@ func (c *Claims) HasServingRegion() bool {
 	return c != nil && c.ServingRegion != ""
 }
 
+// HasTenantID reports whether the token carries a non-empty tenant_id
+// claim. Tenant IDs are non-empty by construction (binding identity
+// validation), so presence == non-empty — same discipline as the
+// serving-region precedent.
+func (c *Claims) HasTenantID() bool {
+	return c != nil && c.TenantID != ""
+}
+
 // HasServingRegionIn reports whether the token's serving_region is in
 // regions. Exact match — region IDs are opaque, case-sensitive. A token
 // without the claim is never in the set (fail-closed callers use this with
@@ -102,7 +118,10 @@ type wireClaims struct {
 	Scope    string `json:"scope"`
 	// ServingRegion is the SnapLink extension claim (mint-region evidence).
 	ServingRegion string `json:"serving_region"`
-	Cnf           struct {
+	// TenantID is the SnapLink extension claim (mint-time client binding).
+	// No omitempty: decode treats absence as the zero value.
+	TenantID string `json:"tenant_id"`
+	Cnf      struct {
 		JKT string `json:"jkt"`
 	} `json:"cnf"`
 }
@@ -131,6 +150,7 @@ func parseClaims(payload []byte) (*Claims, error) {
 		IssuedAt:      w.Iat,
 		CnfJKT:        w.Cnf.JKT,
 		ServingRegion: w.ServingRegion,
+		TenantID:      w.TenantID,
 		Raw:           raw,
 	}, nil
 }

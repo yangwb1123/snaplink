@@ -244,6 +244,16 @@ const (
 	// openid it is a protocol trigger, not a resource scope — it bypasses the
 	// per-client AllowedScopes gate.
 	ScopeDeviceSSO = "device_sso"
+	// ScopeProfile / ScopeEmail / ScopeAddress / ScopePhone / ScopeOfflineAccess
+	// are the OIDC Core §5.4 standard scopes. They are protocol scopes in the
+	// same category as openid/device_sso — not tenant resource scopes — so the
+	// scope registry (protocols/oauth/scoperegistry) pre-registers them by
+	// construction and they are never required in scope_registry.extra_scopes.
+	ScopeProfile       = "profile"
+	ScopeEmail         = "email"
+	ScopeAddress       = "address"
+	ScopePhone         = "phone"
+	ScopeOfflineAccess = "offline_access"
 )
 
 // Status strings returned in successful responses.
@@ -261,7 +271,7 @@ const (
 	KeyNetPolicy   = "policy"
 )
 
-// Permission endpoint response keys + errors.
+// Permission endpoint response keys + errors. KeyRoles' value doubles as the RFC 9068 access-token claim name (tag-vs-const coupling guard in defaultimpl tenant_roles_test.go).
 const (
 	KeyPermissions                     = "permissions"
 	KeyRoles                           = "roles"

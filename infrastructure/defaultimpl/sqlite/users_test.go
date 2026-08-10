@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/tenant/commerce"
+	"github.com/yangwb1123/snaplink/infrastructure/auditoutbox"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
@@ -233,5 +236,163 @@ func TestUserProvider_NilAttributes_RoundtripsAsNilOrEmpty(t *testing.T) {
 	got, _ := p.GetByID(ctx, "u")
 	if len(got.Attributes) != 0 {
 		t.Errorf("nil attributes roundtrip = %v, want empty/nil", got.Attributes)
+	}
+}
+
+// ---- import governance pair-write (R1/R2 of the import spec) ----
+
+// TestUserProvider_CreateOrUpdateTx_ParityAndRollback pins R1: the
+// transaction-scoped upsert matches CreateOrUpdate semantics; a rolled-back
+// tx leaves no row; a committed tx persists (with CreatedAt preserved on
+// the conflict path).
+func TestUserProvider_CreateOrUpdateTx_ParityAndRollback(t *testing.T) {
+	t.Parallel()
+	p := newTestProvider(t)
+	ctx := context.Background()
+
+	// Parity: same validation and upsert semantics as CreateOrUpdate.
+	tx, err := p.DB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CreateOrUpdateTx(ctx, tx, &sso.User{ID: "tx:1", Email: "a@x.z"}); err != nil {
+		t.Fatalf("CreateOrUpdateTx: %v", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.GetByID(ctx, "tx:1"); !errors.Is(err, sso.ErrNoSuchUser) {
+		t.Errorf("rolled-back tx left a row: %v", err)
+	}
+
+	tx, err = p.DB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CreateOrUpdateTx(ctx, tx, &sso.User{ID: "tx:2", Email: "b@x.z"}); err != nil {
+		t.Fatalf("CreateOrUpdateTx: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.GetByID(ctx, "tx:2")
+	if err != nil || got.Email != "b@x.z" {
+		t.Fatalf("committed tx row missing: %v %+v", err, got)
+	}
+
+	// Empty ID rejected inside the tx too.
+	tx, err = p.DB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := p.CreateOrUpdateTx(ctx, tx, &sso.User{}); err == nil {
+		t.Error("empty ID must be rejected in tx path")
+	}
+}
+
+// TestUserProvider_ImportUser_CommitsPairAndRollsBackTogether covers the
+// sqlite pair-write (the exact function the import CLI calls): a commit
+// persists user + event; an event that fails validation after the user
+// upsert rolls BOTH back (no orphan on either side); a same-fact re-import
+// is a no-op (deterministic ID).
+func TestUserProvider_ImportUser_CommitsPairAndRollsBackTogether(t *testing.T) {
+	t.Parallel()
+	p := newTestProvider(t)
+	if err := auditoutbox.Migrate(context.Background(), p.DB()); err != nil {
+		t.Fatalf("migrate audit_outbox: %v", err)
+	}
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	event := func(tenantID, userID string) *commerce.OutboxEvent {
+		key := "import:" + tenantID + ":" + userID
+		return &commerce.OutboxEvent{
+			ID: key, TenantID: tenantID, Type: "snaplink.audit.user.import",
+			AggregateType: "user", AggregateID: userID, AggregateVersion: 1,
+			IdempotencyKey: key, OccurredAt: now,
+			Payload:       map[string]string{"user_id": userID, "provider": "csv"},
+			PayloadDigest: "digest", Status: commerce.OutboxPending, CreatedAt: now,
+		}
+	}
+
+	// Commit path: both rows land.
+	if err := p.ImportUser(ctx, &sso.User{ID: "u1", Email: "a@x.z"}, event("tenant-a", "u1")); err != nil {
+		t.Fatalf("ImportUser: %v", err)
+	}
+	if _, err := p.GetByID(ctx, "u1"); err != nil {
+		t.Errorf("user row missing after commit: %v", err)
+	}
+	var events int
+	if err := p.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_outbox WHERE tenant_id='tenant-a'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if events != 1 {
+		t.Errorf("event rows = %d, want 1", events)
+	}
+
+	// Rollback path: an event failing Validate() after the user upsert
+	// undoes the user row too.
+	bad := event("tenant-b", "u2")
+	bad.TenantID = "" // Validate() requires TenantID
+	if err := p.ImportUser(ctx, &sso.User{ID: "u2", Email: "b@x.z"}, bad); err == nil {
+		t.Fatal("ImportUser with invalid event must error")
+	}
+	if _, err := p.GetByID(ctx, "u2"); !errors.Is(err, sso.ErrNoSuchUser) {
+		t.Errorf("user row survived the failed pair: %v", err)
+	}
+	if err := p.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_outbox WHERE tenant_id='tenant-b'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if events != 0 {
+		t.Errorf("event rows for rolled-back pair = %d, want 0", events)
+	}
+
+	// Idempotent re-import: same deterministic ID → no-op, no error.
+	if err := p.ImportUser(ctx, &sso.User{ID: "u1", Email: "a@x.z"}, event("tenant-a", "u1")); err != nil {
+		t.Fatalf("re-import: %v", err)
+	}
+	if err := p.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_outbox WHERE tenant_id='tenant-a'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if events != 1 {
+		t.Errorf("event rows after re-import = %d, want 1 (no duplicate)", events)
+	}
+}
+
+// TestUserProvider_ImportUser_ChangedFactCollisionKeepsOldRow pins the
+// documented sqlite asymmetry: ON CONFLICT(id) DO NOTHING is primary-key
+// targeted, so a changed-fact collision (payload spec change across CLI
+// versions) silently keeps the OLD row instead of erroring (postgres
+// surfaces ErrIdempotencyConflict for the same case).
+func TestUserProvider_ImportUser_ChangedFactCollisionKeepsOldRow(t *testing.T) {
+	t.Parallel()
+	p := newTestProvider(t)
+	if err := auditoutbox.Migrate(context.Background(), p.DB()); err != nil {
+		t.Fatalf("migrate audit_outbox: %v", err)
+	}
+	ctx := context.Background()
+	now := time.Now().UTC()
+	fact := func(payload map[string]string) *commerce.OutboxEvent {
+		return &commerce.OutboxEvent{
+			ID: "import:t:u1", TenantID: "t", Type: "snaplink.audit.user.import",
+			AggregateType: "user", AggregateID: "u1", AggregateVersion: 1,
+			IdempotencyKey: "import:t:u1", OccurredAt: now, Payload: payload,
+			PayloadDigest: "d1", Status: commerce.OutboxPending, CreatedAt: now,
+		}
+	}
+	if err := p.ImportUser(ctx, &sso.User{ID: "u1"}, fact(map[string]string{"user_id": "u1", "provider": "csv"})); err != nil {
+		t.Fatal(err)
+	}
+	changed := fact(map[string]string{"user_id": "u1", "provider": "csv", "extra": "spec-v2"})
+	if err := p.ImportUser(ctx, &sso.User{ID: "u1"}, changed); err != nil {
+		t.Fatalf("sqlite changed-fact collision must no-op, not error: %v", err)
+	}
+	var payload string
+	if err := p.DB().QueryRowContext(ctx, `SELECT payload FROM audit_outbox WHERE id='import:t:u1'`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(payload, "spec-v2") {
+		t.Errorf("changed fact overwrote the old row: %s", payload)
 	}
 }

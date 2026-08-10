@@ -77,6 +77,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cache-Control: no-store and WWW-Authenticate presence verified across 9+ files
 
 ### Security
+- Opt-in strict OAuth credential-wire Content-Type enforcement
+  (`server.require_form_content_type: true` / `sso.WithCredentialFormOnly(true)`,
+  default off): the four credential endpoints (`/token`, `/token/introspect`,
+  `/token/revoke`, `/par`) reject a JSON body, a missing Content-Type, or any
+  other media type with `415` and the plain `invalid_request` envelope before
+  the body is read — nothing is minted, revoked, introspected, or stored, and
+  every response carries `Cache-Control: no-store` + `Pragma: no-cache`.
+  Default-off keeps the JSON acceptance and the wire byte-identical.
+- `sso-ctl` no longer follows HTTP redirects from the admin API (`tenants`,
+  `users`, `clients`, `tokens`, `sessions`, `tui`, and `audit-verify
+  --from-url`). A 3xx response now fails the command (exit 1) instead of
+  forwarding the bearer token — and, for 307/308 writes, the request body —
+  to the redirect target. Operators must point `SSO_ADMIN_ADDR` at the
+  canonical admin origin (for `audit-verify`, `--from-url`); redirecting
+  admin gateways are no longer followed. The 3xx diagnostic names the
+  redacted redirect target and the remediation hint on stderr.
 - Security invariant checker reports repository-wide presence/absence patterns
   for no-store headers, bearer challenges, oracle-safe responses, and
   constant-time comparisons; behavioral tests remain the enforcement evidence.

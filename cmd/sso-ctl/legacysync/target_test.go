@@ -39,7 +39,7 @@ func TestBuildReportRejectsNativeUserCollision(t *testing.T) {
 	target := targetSnapshot{
 		Users:       map[string]targetUser{"native": {ID: "native", Provider: "password"}},
 		ExternalIDs: map[string]string{}, Roles: map[string]struct{}{},
-		Assignments: map[assignmentKey][]string{}, Clients: map[string]struct{}{},
+		Assignments: map[assignmentKey][]string{}, Clients: map[string]string{},
 	}
 	if _, err := buildReport(plan, target, "dry-run"); err == nil {
 		t.Fatal("buildReport succeeded, want collision error")
@@ -48,6 +48,11 @@ func TestBuildReportRejectsNativeUserCollision(t *testing.T) {
 
 func openTestTarget(t *testing.T) *sql.DB {
 	t.Helper()
+	return openTestTargetWithSchema(t, testTargetSchema)
+}
+
+func openTestTargetWithSchema(t *testing.T, schema string) *sql.DB {
+	t.Helper()
 	dsn := "file:" + filepath.Join(t.TempDir(), "target.db")
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -55,7 +60,7 @@ func openTestTarget(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(testTargetSchema); err != nil {
+	if _, err := db.Exec(schema); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
 	return db
@@ -64,7 +69,7 @@ func openTestTarget(t *testing.T) *sql.DB {
 func seedTarget(t *testing.T, db *sql.DB) {
 	t.Helper()
 	statements := []string{
-		`INSERT INTO clients(id,active) VALUES ('sverp-web',1)`,
+		`INSERT INTO clients(id,active,tenant_id) VALUES ('sverp-web',1,'tenant-acme')`,
 		`INSERT INTO users(id,provider,attributes,created_at,updated_at)
          VALUES ('native','password','{}',1,1),('retired','sv_sso','{"scim:active":"true"}',1,1)`,
 		`INSERT INTO permissions_roles(client_id,role_code,name,description,permissions_json)
@@ -143,6 +148,38 @@ func assertMenuUnchanged(t *testing.T, db *sql.DB) {
 }
 
 const testTargetSchema = `
+CREATE TABLE users(id TEXT PRIMARY KEY,external_id TEXT,provider TEXT,email TEXT,name TEXT,
+ attributes TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+CREATE TABLE password_credentials(user_id TEXT PRIMARY KEY,hash TEXT NOT NULL,updated_at INTEGER);
+CREATE TABLE clients(id TEXT PRIMARY KEY,active INTEGER NOT NULL DEFAULT 1,tenant_id TEXT NOT NULL DEFAULT '');
+CREATE TABLE permissions_roles(client_id TEXT NOT NULL,role_code TEXT NOT NULL,name TEXT NOT NULL DEFAULT '',
+ description TEXT NOT NULL DEFAULT '',permissions_json TEXT NOT NULL DEFAULT '[]',PRIMARY KEY(client_id,role_code));
+CREATE TABLE permissions_assignments(user_id TEXT NOT NULL,client_id TEXT NOT NULL,roles_json TEXT NOT NULL DEFAULT '[]',
+ PRIMARY KEY(user_id,client_id));
+CREATE TABLE permissions_menus(client_id TEXT PRIMARY KEY,menu_json TEXT NOT NULL DEFAULT '[]');
+`
+
+// testTargetSchemaNullableClients is the parity schema with a nullable
+// clients.tenant_id (no NOT NULL) — the only fixture in which SQL NULL
+// bindings are insertable. Used only by the NULL-binding unit tests; real
+// deployments cannot hold NULL (v1 migration: NOT NULL DEFAULT ”).
+const testTargetSchemaNullableClients = `
+CREATE TABLE users(id TEXT PRIMARY KEY,external_id TEXT,provider TEXT,email TEXT,name TEXT,
+ attributes TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+CREATE TABLE password_credentials(user_id TEXT PRIMARY KEY,hash TEXT NOT NULL,updated_at INTEGER);
+CREATE TABLE clients(id TEXT PRIMARY KEY,active INTEGER NOT NULL DEFAULT 1,tenant_id TEXT);
+CREATE TABLE permissions_roles(client_id TEXT NOT NULL,role_code TEXT NOT NULL,name TEXT NOT NULL DEFAULT '',
+ description TEXT NOT NULL DEFAULT '',permissions_json TEXT NOT NULL DEFAULT '[]',PRIMARY KEY(client_id,role_code));
+CREATE TABLE permissions_assignments(user_id TEXT NOT NULL,client_id TEXT NOT NULL,roles_json TEXT NOT NULL DEFAULT '[]',
+ PRIMARY KEY(user_id,client_id));
+CREATE TABLE permissions_menus(client_id TEXT PRIMARY KEY,menu_json TEXT NOT NULL DEFAULT '[]');
+`
+
+// testTargetSchemaNoTenantColumn is the pre-gate fixture shape: a clients
+// table without tenant_id. Only the missing-column failure test uses it —
+// every server-created target has the column (v1 migration), so a table
+// without it must fail loudly, not scan blindly.
+const testTargetSchemaNoTenantColumn = `
 CREATE TABLE users(id TEXT PRIMARY KEY,external_id TEXT,provider TEXT,email TEXT,name TEXT,
  attributes TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
 CREATE TABLE password_credentials(user_id TEXT PRIMARY KEY,hash TEXT NOT NULL,updated_at INTEGER);

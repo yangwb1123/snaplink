@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -26,7 +27,9 @@ type targetSnapshot struct {
 	ExternalIDs map[string]string
 	Roles       map[string]struct{}
 	Assignments map[assignmentKey][]string
-	Clients     map[string]struct{}
+	// Clients carries each active client's tenant binding (id → tenant_id);
+	// "" means unbound (SQL NULL collapses to "" via COALESCE).
+	Clients map[string]string
 }
 
 func openTarget(ctx context.Context, dsn string, readonly bool) (*sql.DB, error) {
@@ -62,7 +65,7 @@ func inspectTarget(ctx context.Context, db *sql.DB) (targetSnapshot, error) {
 		return targetSnapshot{}, err
 	}
 	s := targetSnapshot{Users: map[string]targetUser{}, ExternalIDs: map[string]string{},
-		Roles: map[string]struct{}{}, Assignments: map[assignmentKey][]string{}, Clients: map[string]struct{}{}}
+		Roles: map[string]struct{}{}, Assignments: map[assignmentKey][]string{}, Clients: map[string]string{}}
 	if err := loadTargetUsers(ctx, db, &s); err != nil {
 		return targetSnapshot{}, err
 	}
@@ -164,28 +167,57 @@ func loadTargetAssignments(ctx context.Context, db *sql.DB, s *targetSnapshot) e
 }
 
 func loadTargetClients(ctx context.Context, db *sql.DB, s *targetSnapshot) error {
-	rows, err := db.QueryContext(ctx, `SELECT id FROM clients WHERE active=1`)
+	// COALESCE collapses SQL NULL to '' so both unbound spellings read the
+	// same; the real schema is NOT NULL DEFAULT '' (NULL only occurs in
+	// hand-made schemas).
+	rows, err := db.QueryContext(ctx, `SELECT id,COALESCE(tenant_id,'') FROM clients WHERE active=1`)
 	if err != nil {
 		return fmt.Errorf("target clients query: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var id, tenantID string
+		if err := rows.Scan(&id, &tenantID); err != nil {
 			return fmt.Errorf("target client scan: %w", err)
 		}
-		s.Clients[id] = struct{}{}
+		s.Clients[id] = tenantID
 	}
 	return rows.Err()
+}
+
+// validateMappedClientBindings fails the plan when a mapped client is
+// missing/inactive or carries an empty tenant binding. An unbound mapped
+// client would silently mint tokens lacking the mandatory tenant_id claim
+// (issue_payload.go stamps client.TenantID unconditionally), so every
+// offending client is named — one per line, deterministic sorted order —
+// and the gate runs before any write in both modes.
+func validateMappedClientBindings(plan syncPlan, target targetSnapshot) error {
+	var unbound []string
+	for clientID := range plan.MappedClients {
+		tenantID, ok := target.Clients[clientID]
+		if !ok {
+			return fmt.Errorf("mapped target client %q does not exist or is inactive", clientID)
+		}
+		if tenantID == "" {
+			unbound = append(unbound, clientID)
+		}
+	}
+	if len(unbound) == 0 {
+		return nil
+	}
+	sort.Strings(unbound)
+	errs := make([]error, 0, len(unbound))
+	for _, id := range unbound {
+		errs = append(errs, fmt.Errorf("mapped target client %q has no tenant binding (tenant_id empty)", id))
+	}
+	return errors.Join(errs...)
 }
 
 func buildReport(plan syncPlan, target targetSnapshot, mode string) (syncReport, error) {
 	report := syncReport{Source: plan.Source, Credentials: len(plan.Users), Roles: len(plan.Roles),
 		Assignments: len(plan.Assignments), Mode: mode}
-	for clientID := range plan.MappedClients {
-		if _, ok := target.Clients[clientID]; !ok {
-			return syncReport{}, fmt.Errorf("mapped target client %q does not exist or is inactive", clientID)
-		}
+	if err := validateMappedClientBindings(plan, target); err != nil {
+		return syncReport{}, err
 	}
 	for _, user := range plan.Users {
 		existing, ok := target.Users[user.ID]

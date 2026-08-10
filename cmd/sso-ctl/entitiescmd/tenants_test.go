@@ -2,8 +2,12 @@ package entitiescmd
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/apiclient"
@@ -17,6 +21,196 @@ func withMockAdmin(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	t.Cleanup(srv.Close)
 	t.Setenv(apiclient.EnvAddr, srv.URL)
 	return srv
+}
+
+// captureStderr redirects os.Stderr for the duration of fn and returns
+// everything written to it. The no-redirect tests swap stderr to pin the
+// redirect diagnostic, so they must NOT call t.Parallel.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	done := make(chan []byte)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- b
+	}()
+	defer func() { os.Stderr = orig }()
+	fn()
+	_ = w.Close()
+	os.Stderr = orig
+	return string(<-done)
+}
+
+// captureStdout redirects os.Stdout for the duration of fn and returns
+// everything written to it.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	done := make(chan []byte)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- b
+	}()
+	defer func() { os.Stdout = orig }()
+	fn()
+	_ = w.Close()
+	os.Stdout = orig
+	return string(<-done)
+}
+
+// noRedirectRig is the two-server 307 rig every no-redirect test uses: a
+// redirector answers every admin path with 307 + Location pointing at a
+// target that counts requests and would serve the given valid body (so a
+// pre-fix run completes instead of failing on a later parse step). Post-fix
+// the target must observe ZERO requests — no forwarded bearer, no
+// 307/308-replayed body. The redirector sends an oversized HTML body so the
+// truncation marker shows up in the pinned stderr diagnostic.
+func noRedirectRig(t *testing.T, targetBody string) (redirectorURL string, hits func() int) {
+	t.Helper()
+	var mu sync.Mutex
+	n := 0
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(targetBody))
+	}))
+	t.Cleanup(target.Close)
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", target.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+		// Single-line oversized HTML body: the echo must stay one stderr
+		// line, truncated at bodyEchoLimit with the "..." marker.
+		_, _ = w.Write([]byte(strings.Repeat("<html>gateway moved</html>", 30)))
+	}))
+	t.Cleanup(redirector.Close)
+	return redirector.URL, func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return n
+	}
+}
+
+// assertRedirectDiagnostic pins the A3 stderr contract on the 3xx path:
+// exactly one line, the redirect wording, the SSO_ADMIN_ADDR hint, the
+// truncation marker, and never the bearer token.
+func assertRedirectDiagnostic(t *testing.T, stderr, verb, bearer string) {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(stderr, "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected exactly one stderr line, got %d: %q", len(lines), stderr)
+	}
+	for _, want := range []string{verb + " failed", "redirect", apiclient.RedirectHintAdmin, "..."} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("stderr missing %q: %q", want, lines[0])
+		}
+	}
+	if strings.Contains(stderr, bearer) {
+		t.Errorf("bearer token leaked to stderr: %q", stderr)
+	}
+}
+
+// TestRunTenants_List_NoRedirect pins sites 1 (fetchList): a 307 from the
+// admin API must fail the command with the redirect diagnostic; the target
+// never sees the bearer.
+func TestRunTenants_List_NoRedirect(t *testing.T) {
+	url, hits := noRedirectRig(t, `{"tenants":[]}`)
+	t.Setenv(apiclient.EnvAddr, url)
+	t.Setenv(apiclient.EnvToken, "tok-list-noredirect")
+
+	var stderr string
+	stdout := captureStdout(t, func() {
+		stderr = captureStderr(t, func() {
+			if code := RunTenants([]string{"list"}); code != 1 {
+				t.Fatalf("RunTenants(list) = %d, want 1", code)
+			}
+		})
+	})
+	if got := hits(); got != 0 {
+		t.Errorf("redirect target received %d requests, want 0 (bearer would have been forwarded)", got)
+	}
+	assertRedirectDiagnostic(t, stderr, "list", "tok-list-noredirect")
+	if stdout != "" {
+		t.Errorf("stdout not empty on the 3xx path: %q", stdout)
+	}
+}
+
+// TestRunTenants_Get_NoRedirect pins site 2 (fetchOne).
+func TestRunTenants_Get_NoRedirect(t *testing.T) {
+	url, hits := noRedirectRig(t, `{"tenant":{"id":"acme"}}`)
+	t.Setenv(apiclient.EnvAddr, url)
+	t.Setenv(apiclient.EnvToken, "tok-get-noredirect")
+
+	var stderr string
+	stdout := captureStdout(t, func() {
+		stderr = captureStderr(t, func() {
+			if code := RunTenants([]string{"get", "acme"}); code != 1 {
+				t.Fatalf("RunTenants(get) = %d, want 1", code)
+			}
+		})
+	})
+	if got := hits(); got != 0 {
+		t.Errorf("redirect target received %d requests, want 0", got)
+	}
+	assertRedirectDiagnostic(t, stderr, "get", "tok-get-noredirect")
+	if stdout != "" {
+		t.Errorf("stdout not empty on the 3xx path: %q", stdout)
+	}
+}
+
+// TestRunTenants_SetStatus_NoRedirect pins site 3 (doWrite) with a 307
+// WRITE: pre-fix Go replays method + body to the target, so this is the full
+// F1 vector (bearer AND body forwarding).
+func TestRunTenants_SetStatus_NoRedirect(t *testing.T) {
+	url, hits := noRedirectRig(t, `{"tenant":{"id":"acme","status":"suspended"}}`)
+	t.Setenv(apiclient.EnvAddr, url)
+	t.Setenv(apiclient.EnvToken, "tok-write-noredirect")
+
+	var stderr string
+	stdout := captureStdout(t, func() {
+		stderr = captureStderr(t, func() {
+			if code := RunTenants([]string{"set-status", "acme", "suspended"}); code != 1 {
+				t.Fatalf("RunTenants(set-status) = %d, want 1", code)
+			}
+		})
+	})
+	if got := hits(); got != 0 {
+		t.Errorf("redirect target received %d requests, want 0 (bearer and body would have been forwarded)", got)
+	}
+	assertRedirectDiagnostic(t, stderr, "set-status", "tok-write-noredirect")
+	if stdout != "" {
+		t.Errorf("stdout not empty on the 3xx path: %q", stdout)
+	}
+}
+
+// TestRunUsers_List_NoRedirect pins the users boundary: users.go constructs
+// no client of its own, so a regression that reintroduces a following client
+// in the shared helpers fails here.
+func TestRunUsers_List_NoRedirect(t *testing.T) {
+	url, hits := noRedirectRig(t, `{"users":[]}`)
+	t.Setenv(apiclient.EnvAddr, url)
+	t.Setenv(apiclient.EnvToken, "tok-users-noredirect")
+
+	stderr := captureStderr(t, func() {
+		if code := RunUsers([]string{"list"}); code != 1 {
+			t.Fatalf("RunUsers(list) = %d, want 1", code)
+		}
+	})
+	if got := hits(); got != 0 {
+		t.Errorf("redirect target received %d requests, want 0", got)
+	}
+	assertRedirectDiagnostic(t, stderr, "list", "tok-users-noredirect")
 }
 
 func TestRunTenants_ListSuccess(t *testing.T) {

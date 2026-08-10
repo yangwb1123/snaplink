@@ -39,7 +39,7 @@ func fetchItems(client *apiclient.Client, d entityDescriptor) ([]genericItem, er
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s", apiErrorMessage(resp.StatusCode, body))
+		return nil, fmt.Errorf("%s", apiErrorMessage("fetch", resp, body))
 	}
 	var envelope map[string]any
 	if err := json.Unmarshal(body, &envelope); err != nil {
@@ -63,7 +63,7 @@ func createItem(client *apiclient.Client, d entityDescriptor, payload map[string
 	if err != nil {
 		return "", err
 	}
-	return decodeItemResponse(resp, d, "Created")
+	return decodeItemResponse(resp, d, "Created", "create")
 }
 
 // updateItem uses client.Do directly — apiclient has no Put() convenience
@@ -73,7 +73,7 @@ func updateItem(client *apiclient.Client, d entityDescriptor, id string, payload
 	if err != nil {
 		return "", err
 	}
-	return decodeItemResponse(resp, d, "Updated")
+	return decodeItemResponse(resp, d, "Updated", "update")
 }
 
 func deleteItem(client *apiclient.Client, d entityDescriptor, id, title string) (string, error) {
@@ -86,7 +86,7 @@ func deleteItem(client *apiclient.Client, d entityDescriptor, id, title string) 
 		return "", err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s", apiErrorMessage(resp.StatusCode, body))
+		return "", fmt.Errorf("%s", apiErrorMessage("delete", resp, body))
 	}
 	return fmt.Sprintf("Deleted %s %s", singular(d.Label), title), nil
 }
@@ -94,8 +94,9 @@ func deleteItem(client *apiclient.Client, d entityDescriptor, id, title string) 
 // decodeItemResponse unwraps the admin API's single-object envelope (e.g.
 // {"tenant": {...}}) and builds the status-line label from the entity's own
 // Row func, so "Created tenant acme" always reflects what the server
-// actually stored, not just what the form submitted.
-func decodeItemResponse(resp *http.Response, d entityDescriptor, verb string) (string, error) {
+// actually stored, not just what the form submitted. errVerb labels the
+// action in the 3xx redirect diagnostic ("create"/"update").
+func decodeItemResponse(resp *http.Response, d entityDescriptor, verb, errVerb string) (string, error) {
 	body, err := apiclient.ReadBody(resp)
 	if err != nil {
 		return "", err
@@ -103,7 +104,7 @@ func decodeItemResponse(resp *http.Response, d entityDescriptor, verb string) (s
 	// The admin API's write endpoints report success as plain HTTP 200
 	// (see entitiescmd's doWrite), not 201.
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s", apiErrorMessage(resp.StatusCode, body))
+		return "", fmt.Errorf("%s", apiErrorMessage(errVerb, resp, body))
 	}
 	var envelope map[string]any
 	if err := json.Unmarshal(body, &envelope); err != nil {
@@ -120,8 +121,13 @@ func singular(label string) string {
 
 // apiErrorMessage prefers a decoded error/message field (grpc-gateway's
 // google.rpc.Status shape) and falls back to the raw body so a malformed or
-// unexpected error payload is never silently swallowed.
-func apiErrorMessage(status int, body []byte) string {
+// unexpected error payload is never silently swallowed. A 3xx response
+// (observed, never followed) renders the shared redirect diagnostic instead.
+func apiErrorMessage(verb string, resp *http.Response, body []byte) string {
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return apiclient.StatusMessage(progName, verb, apiclient.RedirectHintAdmin, resp, body)
+	}
+	status := resp.StatusCode
 	var parsed struct {
 		Message string `json:"message"`
 		Error   string `json:"error"`

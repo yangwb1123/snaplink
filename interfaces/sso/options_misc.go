@@ -3,7 +3,6 @@ package sso
 import (
 	"github.com/yangwb1123/snaplink/domains/anomaly"
 	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
-	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/domains/tenant"
@@ -13,6 +12,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/geo"
 	"github.com/yangwb1123/snaplink/platform/metrics"
 	"github.com/yangwb1123/snaplink/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/shared/spi"
 	"github.com/yangwb1123/snaplink/shared/trust"
 	"time"
@@ -242,22 +242,6 @@ func WithMFAProvider(p spi.MFAProvider) Option {
 // first event arrives.
 func WithAnomalyRunner(r *anomaly.Runner) Option {
 	return func(s *Server) { s.anomalyRunner = r }
-}
-
-// WithTokenUsageRecorder wires a [metering.Recorder] — the bounded-buffer
-// telemetry sink that Offers a usage event on every successful token
-// issuance and introspection, off the request hot path. When BOTH this
-// option AND [WithMetrics] are set, NewServer arms the recorder's Prometheus
-// hooks (sso_token_usage_events_total / _dropped_total /
-// _tracked_buckets) and mounts the admin read API GET
-// /api/v1/admin/tokens/usage; without a recorder, none of that exists —
-// behavior is byte-identical to a build without the feature.
-//
-// nil recorder → every Offer is a safe no-op (mirrors WithAnomalyRunner).
-// Pre-call recorder.Start() before passing here so the drainer is alive
-// when the first event arrives.
-func WithTokenUsageRecorder(r *metering.Recorder) Option {
-	return func(s *Server) { s.tokenUsageRecorder = r }
 }
 
 // WithTokenPolicy wires the token-policy engine (Phase 2 of token
@@ -493,4 +477,20 @@ func WithTrustScoreSerialization(cfg trust.SerializationConfig) Option {
 // never denies.
 func WithDeviceFingerprint(fp conditionalaccess.DeviceFingerprint) Option {
 	return func(s *Server) { s.deviceFingerprint = fp }
+}
+
+// WithScopeRegistry wires the global scope registry (scope-matrix-v2,
+// campaign B4-2) — a [scoperegistry.Registry] that gates /token issuance:
+// when wired, every grant branch rejects an effective scope the registry
+// does not register with the standard 400 invalid_scope (plain core.ErrorBody
+// — the byte-identical oracle-safe shape, never the trace-wrapped errorBody).
+// The shipped [scoperegistry.Memory] pre-registers the OIDC protocol scopes
+// and the nine-scope tenant matrix (interfaces/scopecontract); pass nil (the
+// default, never call this option) for the unwired byte-compatible baseline.
+//
+// The registry is build-once server config: no hot-reload, no per-replica
+// toggling — enablement is one coordinated fleet-wide config change, and
+// rollback is flipping it off (no data migration, no token invalidation).
+func WithScopeRegistry(reg scoperegistry.Registry) Option {
+	return func(s *Server) { s.scopeRegistry = reg }
 }

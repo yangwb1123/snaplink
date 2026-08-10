@@ -23,6 +23,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/lifecycle/admingovernance"
 	"github.com/yangwb1123/snaplink/protocols/lifecyclereactions"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
@@ -261,7 +262,9 @@ func (b *appBuilder) wireEdge() error {
 	if err := b.wireBodyAndRateLimit(); err != nil {
 		return err
 	}
-	b.wireInputLimits()
+	if err := b.wireInputLimits(); err != nil {
+		return err
+	}
 	if err := b.wireJTIReplaySPIFFE(); err != nil {
 		return err
 	}
@@ -276,13 +279,13 @@ func (b *appBuilder) wireEdge() error {
 }
 
 // wireInputLimits wires the RFC 9396 authorization_details shape caps, the
-// scope-count cap, and the bearer-token byte-length cap — the remaining
-// input-limit-hardening knobs alongside wireBodyAndRateLimit's generic
-// whole-request body cap. Each is independently opt-in; an absent or
-// all-zero config section leaves the corresponding Option unset, so a
-// deployment without this section in its YAML is byte-identical to one
-// built before these knobs existed.
-func (b *appBuilder) wireInputLimits() {
+// scope-count cap, the global scope registry (scope-matrix-v2, B4-2), and the
+// bearer-token byte-length cap — the remaining input-limit-hardening knobs
+// alongside wireBodyAndRateLimit's generic whole-request body cap. Each is
+// independently opt-in; an absent or all-zero config section leaves the
+// corresponding Option unset, so a deployment without this section in its YAML
+// is byte-identical to one built before these knobs existed.
+func (b *appBuilder) wireInputLimits() error {
 	cfg, logger := b.cfg, b.logger
 	if rl := cfg.Security.RARLimits; rl.MaxBytes > 0 || rl.MaxElements > 0 || rl.MaxDepth > 0 {
 		b.opts = append(b.opts, sso.WithAuthorizationDetailsLimits(rl.MaxBytes, rl.MaxElements, rl.MaxDepth))
@@ -293,10 +296,26 @@ func (b *appBuilder) wireInputLimits() {
 		b.opts = append(b.opts, sso.WithMaxScopeCount(n))
 		logger.Info("security: scope count cap enabled", "max_count", n)
 	}
+	// Global scope registry (scope-matrix-v2, B4-2): enabled=false (the
+	// default) passes nil — no option, byte-identical server. The flip is a
+	// deployment-wide config change, never a per-replica toggle; construction
+	// is a pure function of the config snapshot. matrix and extra_scopes were
+	// validated at boot (fail-closed even when disabled); a construction
+	// failure here fails boot loudly rather than running a broken gate.
+	if cfg.OAuth.ScopeRegistry.Enabled {
+		reg, err := scoperegistry.NewMemory(cfg.OAuth.ScopeRegistry.MatrixOrDefault(), cfg.OAuth.ScopeRegistry.ExtraScopes)
+		if err != nil {
+			return fmt.Errorf("oauth.scope_registry: %w", err)
+		}
+		b.opts = append(b.opts, sso.WithScopeRegistry(reg))
+		logger.Info("oauth: scope registry enabled (scope-matrix-v2)",
+			"extra_scopes", len(cfg.OAuth.ScopeRegistry.ExtraScopes))
+	}
 	if n := cfg.Security.MaxTokenBytes; n > 0 {
 		b.opts = append(b.opts, sso.WithMaxTokenBytes(n))
 		logger.Info("security: max token bytes enabled", "max_bytes", n)
 	}
+	return nil
 }
 
 // wireBreakGlass wires the in-memory break-glass store enabling the

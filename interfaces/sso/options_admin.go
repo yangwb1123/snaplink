@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/domains/userlifecycle"
 	"github.com/yangwb1123/snaplink/interfaces/admin"
 	"github.com/yangwb1123/snaplink/platform/audit"
@@ -471,4 +472,20 @@ func WithChangeApprovalStore(store admingovernance.ApprovalStore, registry *admi
 		s.changeRegistry = registry
 		s.approvalActionTypes = admingovernance.NewRequiredActionTypes(actionTypes)
 	}
+}
+
+// WithTokenUsageRecorder wires a [metering.Recorder] — the bounded-buffer
+// telemetry sink that Offers a usage event on every successful token
+// issuance and introspection, off the request hot path. When BOTH this
+// option AND [WithMetrics] are set, NewServer arms the recorder's Prometheus
+// hooks (sso_token_usage_events_total / _dropped_total /
+// _tracked_buckets) and mounts the admin read API GET
+// /api/v1/admin/tokens/usage; without a recorder, none of that exists —
+// behavior is byte-identical to a build without the feature.
+//
+// nil recorder → every Offer is a safe no-op (mirrors WithAnomalyRunner).
+// Pre-call recorder.Start() before passing here so the drainer is alive
+// when the first event arrives.
+func WithTokenUsageRecorder(r *metering.Recorder) Option {
+	return func(s *Server) { s.tokenUsageRecorder = r }
 }

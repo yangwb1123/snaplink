@@ -90,6 +90,14 @@ const (
 	EventTenantQuotaProjectionApplied EventType = "tenant_quota_projection_applied"
 )
 
+// EventRoleResolutionFailed fires when a tenant-roster lookup fails during
+// access-token minting. FAIL-OPEN: the token is still issued with the roles
+// claim omitted; the outage is observable only through this event, the
+// logged error, and the role-resolution metric — never on the wire.
+const (
+	EventRoleResolutionFailed EventType = "role_resolution_failed"
+)
+
 // Cluster invalidation bus events.
 const (
 	EventInvalidationBusDegraded    EventType = "invalidation_bus_degraded"

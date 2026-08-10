@@ -12,6 +12,16 @@ func TestSubcommands_GenerateIsWired(t *testing.T) {
 	}
 }
 
+// TestSubcommands_CheckIsWired is the registration guard for the deploy-tree
+// live sweep subcommand (cmd/sso-ctl/apiclient.CheckRun): a sweep that is
+// implemented but never wired into the dispatch table is unreachable and
+// gates nothing.
+func TestSubcommands_CheckIsWired(t *testing.T) {
+	if _, ok := subcommands["check"]; !ok {
+		t.Fatal(`subcommands["check"] is not registered — "sso-ctl check ..." is unreachable`)
+	}
+}
+
 // TestSubcommands_EveryEntryHasARunFunc is a broad sanity guard: every
 // registered subcommand must have a non-nil Run function, so a future
 // refactor can't silently register a nil entry.

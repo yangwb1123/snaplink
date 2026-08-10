@@ -128,7 +128,7 @@ func TestGeneratedScaffoldsCompile(t *testing.T) {
 			assertRegisteredErrorCodes(t, tc.kind, generated, root)
 			assertNoLegacyPathPort(t, tc.kind, generated)
 			assertNoPathLiterals(t, tc.kind, generated, root)
-			assertKindInvariants(t, tc.kind, generated)
+			assertKindInvariants(t, tc.kind, generated, root)
 
 			for _, tool := range []string{"build", "vet"} {
 				cmd := exec.Command("go", tool, "./...")

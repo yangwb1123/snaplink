@@ -170,6 +170,7 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventRefreshTokenReuse,
 			audit.EventRefreshRotationVelocityExceeded,
 			audit.EventFAPIComplianceViolation,
+			audit.EventRoleResolutionFailed,
 		},
 	},
 	{

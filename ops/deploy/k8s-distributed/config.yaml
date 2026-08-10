@@ -1,6 +1,7 @@
 server:
   listen: :8080
   issuer: https://sso.ywbsd.site
+  issuer_allowlist: [https://sso.ywbsd.site]
   topology:
     mode: multi
   pairwise_subjects:
@@ -53,6 +54,8 @@ self_service:
   password:
     backend: postgres
   signup: true
+  consent:
+    backend: postgres
 admin:
   enabled: true
   api_rest_enabled: true

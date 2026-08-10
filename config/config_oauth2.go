@@ -1,6 +1,69 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"time"
+
+	"github.com/yangwb1123/snaplink/interfaces/scopecontract"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
+)
+
+// validateScopeRegistry validates the scope_registry block ALWAYS — even
+// when enabled is false — so a malformed snapshot fails boot loudly instead
+// of silently diverging when the fleet flip later turns the block on
+// (fail-closed, never runtime fail-open). Steps run in deterministic order
+// so error precedence is testable:
+//
+//  1. matrix row grammar (always) — the registry's own pattern grammar
+//     (exact or "domain:*" only);
+//  2. exact-string matrix duplicates (always) — NewMemory silently dedupes
+//     (set semantics), so the duplicate check must be explicit here: the
+//     semantic check the reflection schema cannot express;
+//  3. extra_scopes grammar (always) — mirrors step 1;
+//  4. client.allowed_scopes membership (ONLY when enabled: true) — every
+//     entry must be Registered by the exact registry the server would build
+//     (MatrixOrDefault + extra_scopes), so the config gate can never
+//     disagree with /token. When disabled, no membership check runs: the
+//     runtime 400 this gate prevents pre-deploy only exists under an
+//     enabled registry, and an unconditional check would break every
+//     existing deploy config (byte-compat pin).
+func (c *Config) validateScopeRegistry() error {
+	regCfg := &c.OAuth.ScopeRegistry
+	for _, s := range regCfg.Matrix {
+		if err := scoperegistry.ValidatePattern(s); err != nil {
+			return fmt.Errorf("config: oauth.scope_registry.matrix %q invalid: %w", s, err)
+		}
+	}
+	seen := make(map[string]struct{}, len(regCfg.Matrix))
+	for _, s := range regCfg.Matrix {
+		if _, dup := seen[s]; dup {
+			return fmt.Errorf("config: oauth.scope_registry.matrix lists duplicate scope %q", s)
+		}
+		seen[s] = struct{}{}
+	}
+	for _, s := range regCfg.ExtraScopes {
+		if err := scoperegistry.ValidatePattern(s); err != nil {
+			return fmt.Errorf("config: oauth.scope_registry.extra_scopes %q invalid: %w", s, err)
+		}
+	}
+	if !regCfg.Enabled {
+		return nil
+	}
+	reg, err := scoperegistry.NewMemory(regCfg.MatrixOrDefault(), regCfg.ExtraScopes)
+	if err != nil {
+		// Unreachable after the grammar steps above; defense in depth —
+		// never run a gate that could disagree with the runtime registry.
+		return fmt.Errorf("config: oauth.scope_registry: %w", err)
+	}
+	for _, client := range c.Clients {
+		for _, s := range client.AllowedScopes {
+			if !reg.Registered(s) {
+				return fmt.Errorf("config: client %q allowed_scopes %q is not registered by oauth.scope_registry (matrix + protocol scopes + extra_scopes)", client.ID, s)
+			}
+		}
+	}
+	return nil
+}
 
 type OAuthConfig struct {
 	// Backend selects the storage substrate for auth_code,
@@ -25,6 +88,58 @@ type OAuthConfig struct {
 	Compliance    OAuthComplianceConfig    `yaml:"compliance"`
 	Introspection OAuthIntrospectionConfig `yaml:"introspection"`
 	TokenExchange OAuthTokenExchangeConfig `yaml:"token_exchange"`
+	ScopeRegistry ScopeRegistryConfig      `yaml:"scope_registry"`
+}
+
+// ScopeRegistryConfig opts into the global scope registry (scope-matrix-v2,
+// campaign B4-2): when Enabled, /token grants may only mint registered
+// scopes — the nine-scope matrix (interfaces/scopecontract) plus the OIDC
+// protocol set (pre-seeded by construction) plus ExtraScopes — and an
+// unregistered scope is rejected with the standard 400 invalid_scope.
+//
+// Default-off: with no block (or enabled: false) the server is byte-identical
+// to a build without the feature. The flip is a deployment-wide config
+// change, never a per-replica toggle: two replicas built from the same
+// snapshot answer identically, and rollback is flipping enabled back to
+// false (no data migration, no token invalidation).
+//
+// ExtraScopes feeds the registry ONLY — it is never merged into discovery's
+// scopes_supported and never expands any grant. It is restricted to tenant
+// RESOURCE scopes: the seven protocol scopes (openid, device_sso, profile,
+// email, address, phone, offline_access) are pre-registered and listing them
+// here is a harmless no-op. There is no hot-reload of this block — boot-time
+// only (the registry is build-once).
+//
+// Matrix provisions the scope-matrix-v2 table from config. Absent or empty:
+// the built-in nine-scope table (interfaces/scopecontract) is used —
+// byte-identical to a config without the key. Present: the provisioned table
+// REPLACES the built-in at the registry construction site, so provisioning is
+// explicit and complete-table CI-verifiable. Rows follow the registry's own
+// pattern grammar (exact scope or "domain:*" only); row grammar and
+// exact-string duplicates are validated ALWAYS (fail-closed, mirroring
+// extra_scopes). A row equal to a pre-seeded protocol scope (e.g. openid) is
+// an idempotent no-op, not an error; cross-list duplication with extra_scopes
+// is likewise idempotent (registry set semantics).
+type ScopeRegistryConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// ExtraScopes registers additional tenant resource scopes; a bare "*" or
+	// any non-"domain:*" wildcard is rejected at boot even when Enabled is
+	// false (fail-closed, so a stale/malformed snapshot fails loudly at the
+	// next restart instead of silently diverging).
+	ExtraScopes []string `yaml:"extra_scopes"`
+	Matrix      []string `yaml:"matrix"`
+}
+
+// MatrixOrDefault returns the provisioned matrix when non-empty, else the
+// built-in nine-scope table (interfaces/scopecontract.Matrix). The registry
+// construction site (cmd/sso-server) and the config gate both consult this,
+// so the validator can never disagree with the runtime registry. Callers
+// must not mutate the returned slice.
+func (c ScopeRegistryConfig) MatrixOrDefault() []string {
+	if len(c.Matrix) > 0 {
+		return c.Matrix
+	}
+	return scopecontract.Matrix()
 }
 
 // OAuthTokenExchangeConfig groups RFC 8693 token-exchange governance knobs.

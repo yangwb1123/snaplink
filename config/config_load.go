@@ -217,6 +217,9 @@ func (c *Config) validateFeatureConfig() error {
 	if err := c.validateBCLFailureQueue(); err != nil {
 		return err
 	}
+	if err := c.validateScopeRegistry(); err != nil {
+		return err
+	}
 	return c.validateNotifications()
 }
 
@@ -307,7 +310,6 @@ func (c *Config) ServerOptions() []sso.Option {
 	if c.Server.DefaultTokenStrategy != "" {
 		opts = append(opts, sso.WithDefaultTokenStrategy(c.Server.DefaultTokenStrategy))
 	}
-
 	// Security middleware — body limit + rate limit + CORS. Each
 	// opt-in via its own block; absent / disabled blocks omit the
 	// corresponding sso.WithX call so the middleware is not wired.
@@ -343,7 +345,7 @@ func (c *Config) ServerOptions() []sso.Option {
 		opts = append(opts, sso.WithFeatureGates(c.FeatureGates.toSSOGates()))
 	}
 	opts = append(opts, c.authPipelineOptions()...)
-	return opts
+	return append(opts, c.credentialFormOnlyOptions()...)
 }
 
 func (c *Config) validateAuthPipeline() error {

@@ -11,6 +11,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/fapi"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/protocols/oauth/txntoken"
 )
 
@@ -26,8 +27,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	}
 
 	var req oauth.TokenRequest
-	if err := bindOAuthParams(ctx, &req); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
+	if s.bindCredentialParams(ctx, &req) {
 		return
 	}
 
@@ -124,6 +124,14 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 		scopes = strings.Split(req.Scope, " ")
 	}
 
+	// Global scope registry (opt-in): reject request-borne unregistered
+	// scopes BEFORE denyTokenScopeCombo (ordering pin — see
+	// rejectUnregisteredScopes). Empty request = skip (rule-4 defaults
+	// resolve per-branch).
+	if s.rejectUnregisteredScopes(ctx, scopes) {
+		return
+	}
+
 	// Token-policy engine (opt-in): block dangerous scope combos (no-op unwired).
 	if s.denyTokenScopeCombo(ctx, client.ID, client.TenantID, scopes) {
 		return
@@ -142,6 +150,14 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 		return
 	}
 
+	s.dispatchGrantBranch(ctx, client, req, scopes, dpopJKT, mtlsX5T)
+}
+
+// dispatchGrantBranch runs the per-grant switch. Extracted from
+// dispatchTokenGrant to hold that function within the line budget; the
+// ordering of the dispatch-level gates (registry seam → token-policy →
+// custom grants → rate limit) is pinned in dispatchTokenGrant itself.
+func (s *Server) dispatchGrantBranch(ctx HandlerContext, client *Client, req oauth.TokenRequest, scopes []string, dpopJKT, mtlsX5T string) {
 	switch req.GrantType {
 	case GrantAuthorizationCode:
 		s.handleAuthCodeTokenGrant(ctx, client, req, scopes, dpopJKT, mtlsX5T)
@@ -167,6 +183,24 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 			KeySupportedGrants: SupportedGrants,
 		})
 	}
+}
+
+// rejectUnregisteredScopes is the dispatch-level scope-registry seam: it
+// rejects request-borne scopes the wired registry does not register, writing
+// the plain invalid_scope body (core.ErrorBody — never errorBody, whose
+// trace_id would drift the byte-compat baseline) and returning true. Nil
+// registry (unwired default) = no-op. Store-bound grants (authcode/device/
+// CIBA/refresh) mint scopes the request never carries and are covered by the
+// per-branch effective-scope checks in internal/handler/tokengrant instead.
+//
+// Ordering pin: the seam runs BEFORE denyTokenScopeCombo because tokenpolicy's
+// deny verdict emits the trace-wrapped errorBody while this rejection must
+// stay the plain invalid_scope body every grant-branch rejection emits (one
+// deterministic shape, no registry-state oracle). saml2_bearer is NOT a
+// switch case — it rides customGrantHandlers (server_setup.go) which runs
+// after this seam, so its request-borne scopes are still covered here.
+func (s *Server) rejectUnregisteredScopes(ctx HandlerContext, scopes []string) bool {
+	return scoperegistry.RejectUnregistered(ctx, s.scopeRegistry, scopes)
 }
 
 // dispatchTokenExchangeOrTxnToken routes a grant_type=token-exchange request

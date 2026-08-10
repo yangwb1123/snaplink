@@ -22,7 +22,8 @@ Commands:
     self-test              Harness self-test
     check-invariants       Security invariants
     check-routes           Runtime route / OpenAPI drift gate
-    adapters               Adapters delivery contract check (conformance + matrix + examples)
+    check-proto-openapi-parity  Proto field / OpenAPI schema parity gate
+    adapters               Adapters delivery contract check (conformance + matrix + examples + nested OpenAPI + error-codes pairing)
     check-root             Check root directory for business code violations
     adr-compliance         Check ADR compliance (ADR-0003, ADR-0004, ADR-0007)
     check-test             Run checks/ unit tests
@@ -170,6 +171,11 @@ def cmd_check_invariants():
 def cmd_check_routes():
     from checks.route_contract import run as route_run
     return route_run()
+
+
+def cmd_check_proto_openapi_parity():
+    from checks.proto_openapi_parity import run as parity_run
+    return parity_run()
 
 
 def cmd_adapters():
@@ -332,6 +338,7 @@ COMMANDS = {
     "self-test": cmd_self_test,
     "check-invariants": cmd_check_invariants,
     "check-routes": cmd_check_routes,
+    "check-proto-openapi-parity": cmd_check_proto_openapi_parity,
     "adapters": cmd_adapters,
     "check-root": cmd_check_root,
     "adr-compliance": cmd_adr_compliance,

@@ -318,6 +318,7 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventIdempotencyCaptureMissing:          {}, EventTenantQuotaStoreFailure: {},
 	EventClientSecretExpiring: {}, EventAuditChainCheckpoint: {},
 	EventTenantQuotaProjectionApplied: {},
+	EventRoleResolutionFailed:         {},
 	// agent delegation + identity linking + cross-tenant exchange + DR
 	EventAgentDelegationTokenIssued: {}, EventAgentSessionRevoked: {},
 	EventIdentityUnlinked: {}, EventIdentityMerged: {}, EventIdentityMergeRejected: {},

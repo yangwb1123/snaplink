@@ -97,6 +97,11 @@ func assertRetentionTokenRequest(t *testing.T, request *http.Request) {
 	if !ok || clientID != "billing-retention-relay" || secret != "retention-secret" {
 		t.Errorf("retention basic auth=%q %q %v", clientID, secret, ok)
 	}
+	// R7.1: exact wire header, no parameters. Go's parsePostForm tolerates a
+	// ; charset=UTF-8 suffix, so the PostForm assert alone cannot detect it.
+	if ct := request.Header.Get("Content-Type"); ct != "application/x-www-form-urlencoded" {
+		t.Errorf("retention Content-Type = %q, want application/x-www-form-urlencoded", ct)
+	}
 	if err := request.ParseForm(); err != nil {
 		t.Fatal(err)
 	}
@@ -151,6 +156,11 @@ func assertQuotaTokenRequest(t *testing.T, request *http.Request) {
 	clientID, secret, ok := request.BasicAuth()
 	if !ok || clientID != "billing-quota-relay" || secret != "quota-secret" {
 		t.Errorf("token basic auth = %q, %q, %v", clientID, secret, ok)
+	}
+	// R7.1: exact wire header, no parameters. Go's parsePostForm tolerates a
+	// ; charset=UTF-8 suffix, so the PostForm assert alone cannot detect it.
+	if ct := request.Header.Get("Content-Type"); ct != "application/x-www-form-urlencoded" {
+		t.Errorf("token Content-Type = %q, want application/x-www-form-urlencoded", ct)
 	}
 	if err := request.ParseForm(); err != nil {
 		t.Errorf("parse token form: %v", err)

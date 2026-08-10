@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -21,6 +22,9 @@ type JWTBearerGrantDeps interface {
 	// JWTBearerAssertionValidator returns the configured JWT assertion
 	// validator for RFC 7523; nil means the grant is not supported.
 	JWTBearerAssertionValidator() JWTAssertionValidator
+	// ScopeRegistry returns the wired global scope registry (nil = unwired
+	// no-op, the default-off byte-compat baseline).
+	ScopeRegistry() scoperegistry.Registry
 }
 
 // JWTAssertionValidator validates an RFC 7523 JWT bearer assertion.
@@ -49,6 +53,12 @@ func HandleJWTBearerGrant(d JWTBearerGrantDeps, ctx core.HandlerContext, client 
 	}
 	grantScopes, ok := authorizeJWTBearerScopes(ctx, scopes, client)
 	if !ok {
+		return
+	}
+	// Global scope registry (opt-in): the GrantedScopes result (incl. the
+	// rule-4 default for an empty request) is the effective set for this
+	// branch — post-resolution, pre-issuance.
+	if scoperegistry.RejectUnregistered(ctx, d.ScopeRegistry(), grantScopes) {
 		return
 	}
 	issueJWTBearerToken(d, ctx, client, subject, strategy, ti, grantScopes, resources, dpopJKT, mtlsX5T)

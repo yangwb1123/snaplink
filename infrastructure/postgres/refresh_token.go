@@ -90,7 +90,7 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 	if token == "" || info == nil {
 		return oauthspi.ErrRefreshTokenNotFound
 	}
-	scopes, attrs, resources, amr, err := marshalRefreshJSONCols(info)
+	scopes, attrs, resources, amr, roles, err := marshalRefreshJSONCols(info)
 	if err != nil {
 		return err
 	}
@@ -103,15 +103,15 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
         INSERT INTO refresh_tokens (token, user_id, client_id, provider,
             scopes, attributes, issued_at, expires_at, family_id, jti, resources,
             authorization_details, sid, amr, acr, auth_time, confirmation_jkt,
-            generation, family_created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+            generation, family_created_at, roles)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
 			lookup, info.UserID, info.ClientID, info.Provider,
 			string(scopes), string(attrs),
 			info.IssuedAt.UnixNano(), info.ExpiresAt.UnixNano(),
 			info.FamilyID, info.JTI, string(resources),
 			string(info.AuthorizationDetails), info.SID,
 			string(amr), info.Acr, unixNanoOrZero(info.AuthTime), info.ConfirmationJKT,
-			info.Generation, unixNanoOrZero(info.FamilyCreatedAt),
+			info.Generation, unixNanoOrZero(info.FamilyCreatedAt), string(roles),
 		); err != nil {
 			return fmt.Errorf("postgres: insert refresh_token: %w", err)
 		}
@@ -125,20 +125,23 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 
 // marshalRefreshJSONCols JSON-encodes the slice/map columns of a RefreshToken
 // for storage. Extracted from Issue for the function-length budget.
-func marshalRefreshJSONCols(info *oauthspi.RefreshToken) (scopes, attrs, resources, amr []byte, err error) {
+func marshalRefreshJSONCols(info *oauthspi.RefreshToken) (scopes, attrs, resources, amr, roles []byte, err error) {
 	if scopes, err = json.Marshal(info.Scopes); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("postgres: marshal scopes: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("postgres: marshal scopes: %w", err)
 	}
 	if attrs, err = json.Marshal(info.Attributes); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("postgres: marshal attributes: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("postgres: marshal attributes: %w", err)
 	}
 	if resources, err = json.Marshal(info.Resources); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("postgres: marshal resources: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("postgres: marshal resources: %w", err)
 	}
 	if amr, err = json.Marshal(info.Amr); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("postgres: marshal amr: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("postgres: marshal amr: %w", err)
 	}
-	return scopes, attrs, resources, amr, nil
+	if roles, err = json.Marshal(info.Roles); err != nil {
+		return nil, nil, nil, nil, nil, fmt.Errorf("postgres: marshal roles: %w", err)
+	}
+	return scopes, attrs, resources, amr, roles, nil
 }
 
 // mirrorRefreshFamilyTx mirrors the (token, family_id) reuse-ledger row with
@@ -181,7 +184,7 @@ func (s *RefreshTokenStore) consume(ctx context.Context, lookup string) (*oauths
         RETURNING user_id, client_id, provider, scopes, attributes,
                   issued_at, expires_at, family_id, jti, resources,
                   authorization_details, sid, amr, acr, auth_time,
-                  confirmation_jkt, generation, family_created_at`, lookup)
+                  confirmation_jkt, generation, family_created_at, roles`, lookup)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Reuse-detection path: DELETE-then-SELECT needs no transaction (token
@@ -225,7 +228,7 @@ func (s *RefreshTokenStore) inspect(ctx context.Context, lookup string) (*oauths
         SELECT user_id, client_id, provider, scopes, attributes,
                issued_at, expires_at, family_id, jti, resources,
                authorization_details, sid, amr, acr, auth_time,
-               confirmation_jkt, generation, family_created_at
+               confirmation_jkt, generation, family_created_at, roles
         FROM refresh_tokens WHERE token = $1`, lookup)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -408,15 +411,12 @@ func (s *RefreshTokenStore) ListExpiring(ctx context.Context, before time.Time, 
 
 func scanRefreshToken(s scanner) (*oauthspi.RefreshToken, error) {
 	var (
-		out                                        oauthspi.RefreshToken
-		provider, scopesJSON, attrsJSON, resources string
-		familyID, jti, authDetails, sid            string
-		amrJSON, acr                               string
-		issuedAtUnixNs, expiresAtUnixNs            int64
-		authTimeUnixNs                             int64
-		confirmationJKT                            string
-		generation                                 int64
-		familyCreatedAtUnixNs                      int64
+		out                                                      oauthspi.RefreshToken
+		provider, scopesJSON, attrsJSON, resources               string
+		familyID, jti, authDetails, sid, amrJSON, acr, rolesJSON string
+		confirmationJKT                                          string
+		issuedAtUnixNs, expiresAtUnixNs, authTimeUnixNs          int64
+		generation, familyCreatedAtUnixNs                        int64
 	)
 	if err := s.Scan(
 		&out.UserID, &out.ClientID, &provider,
@@ -425,7 +425,7 @@ func scanRefreshToken(s scanner) (*oauthspi.RefreshToken, error) {
 		&familyID, &jti, &resources,
 		&authDetails, &sid,
 		&amrJSON, &acr, &authTimeUnixNs,
-		&confirmationJKT, &generation, &familyCreatedAtUnixNs,
+		&confirmationJKT, &generation, &familyCreatedAtUnixNs, &rolesJSON,
 	); err != nil {
 		return nil, err
 	}
@@ -451,7 +451,7 @@ func scanRefreshToken(s scanner) (*oauthspi.RefreshToken, error) {
 	}
 	out.IssuedAt = time.Unix(0, issuedAtUnixNs).UTC()
 	out.ExpiresAt = time.Unix(0, expiresAtUnixNs).UTC()
-	if err := decodeRefreshJSONCols(&out, scopesJSON, attrsJSON, resources, amrJSON); err != nil {
+	if err := decodeRefreshJSONCols(&out, scopesJSON, attrsJSON, resources, amrJSON, rolesJSON); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -459,7 +459,7 @@ func scanRefreshToken(s scanner) (*oauthspi.RefreshToken, error) {
 
 // decodeRefreshJSONCols unmarshals the JSON-encoded columns onto out. The
 // empty / empty-collection sentinels stay the zero value.
-func decodeRefreshJSONCols(out *oauthspi.RefreshToken, scopesJSON, attrsJSON, resources, amrJSON string) error {
+func decodeRefreshJSONCols(out *oauthspi.RefreshToken, scopesJSON, attrsJSON, resources, amrJSON, rolesJSON string) error {
 	if scopesJSON != "" && scopesJSON != "[]" {
 		if err := json.Unmarshal([]byte(scopesJSON), &out.Scopes); err != nil {
 			return fmt.Errorf("postgres: unmarshal scopes: %w", err)
@@ -478,6 +478,11 @@ func decodeRefreshJSONCols(out *oauthspi.RefreshToken, scopesJSON, attrsJSON, re
 	if amrJSON != "" && amrJSON != "[]" {
 		if err := json.Unmarshal([]byte(amrJSON), &out.Amr); err != nil {
 			return fmt.Errorf("postgres: unmarshal amr: %w", err)
+		}
+	}
+	if rolesJSON != "" && rolesJSON != "[]" {
+		if err := json.Unmarshal([]byte(rolesJSON), &out.Roles); err != nil {
+			return fmt.Errorf("postgres: unmarshal roles: %w", err)
 		}
 	}
 	return nil

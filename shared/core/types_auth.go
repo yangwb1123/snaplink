@@ -236,6 +236,14 @@ type AuthResult struct {
 	// step-up path re-threads it explicitly through mfaResumeState so the
 	// post-step-up audit still fires; nothing else carries it.
 	CredentialHealth *CredentialHealth `json:"-"`
+
+	// Roles is the mint-time tenant-membership role carrier for the
+	// direct-mint branch: mintAccessToken resolves it (fail-open, keyed on
+	// UserID) and the refresh-record site re-reads it so the server-managed
+	// refresh token persists the SAME roles vector for rotation re-stamping.
+	// json:"-" keeps it off generic AuthResult serialization (id_token
+	// claims projection, MFA resume blobs) — it is never a user attribute.
+	Roles []string `json:"-"`
 }
 
 // LoginPhase identifies one extension point in the authentication lifecycle.

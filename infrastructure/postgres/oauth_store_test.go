@@ -54,12 +54,13 @@ func TestOAuthStores_MigrateIdempotentAndMaxVersions(t *testing.T) {
 		name  string
 		migs  []migrate.Migration
 		maxFn func() int
+		want  int
 	}{
-		{"auth_codes", authCodeMigrations, AuthCodesMaxVersion},
-		{"refresh_tokens", refreshTokenMigrations, RefreshTokensMaxVersion},
-		{"device_codes", deviceCodeMigrations, DeviceCodesMaxVersion},
-		{"par", parMigrations, PARMaxVersion},
-		{"refresh_grace", refreshGraceMigrations, RefreshGraceMaxVersion},
+		{"auth_codes", authCodeMigrations, AuthCodesMaxVersion, 1},
+		{"refresh_tokens", refreshTokenMigrations, RefreshTokensMaxVersion, 2},
+		{"device_codes", deviceCodeMigrations, DeviceCodesMaxVersion, 1},
+		{"par", parMigrations, PARMaxVersion, 1},
+		{"refresh_grace", refreshGraceMigrations, RefreshGraceMaxVersion, 1},
 	} {
 		if err := Run(ctx, db, ns.name, ns.migs, dialect); err != nil {
 			t.Fatalf("first Run(%s): %v", ns.name, err)
@@ -67,8 +68,8 @@ func TestOAuthStores_MigrateIdempotentAndMaxVersions(t *testing.T) {
 		if err := Run(ctx, db, ns.name, ns.migs, dialect); err != nil {
 			t.Fatalf("second Run(%s): %v", ns.name, err)
 		}
-		if v := ns.maxFn(); v != 1 {
-			t.Fatalf("%s MaxVersion = %d, want 1", ns.name, v)
+		if v := ns.maxFn(); v != ns.want {
+			t.Fatalf("%s MaxVersion = %d, want %d", ns.name, v, ns.want)
 		}
 		if err := CheckSchema(ctx, db, ns.name, ns.maxFn()); err != nil {
 			t.Fatalf("CheckSchema(%s) at binary max: %v", ns.name, err)

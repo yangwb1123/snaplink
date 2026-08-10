@@ -1062,8 +1062,24 @@ paths:
 
         **Form + JSON** — both `application/x-www-form-urlencoded`
         (RFC 6749 mandatory) and `application/json` are accepted via
-        the dispatcher in `oauth_bind.go`. Repeated form keys form
+        the dispatcher in `oauthwire/bind.go`. Repeated form keys form
         the `resource` / `audience` lists; the JSON shape uses arrays.
+
+        **Content-Type strictness (opt-in)** — with
+        `server.require_form_content_type: true` (`sso.WithCredentialFormOnly(true)`),
+        this endpoint accepts ONLY `application/x-www-form-urlencoded`
+        (RFC 6749 §3.2): a JSON body, a missing Content-Type, or any
+        other media type returns `415 Unsupported Media Type` with the
+        plain `{"error":"invalid_request"}` envelope BEFORE the body is
+        read — nothing is minted. The envelope is byte-identical across
+        the four credential endpoints (`/token`, `/token/introspect`,
+        `/token/revoke`, `/par`) and every response carries
+        `Cache-Control: no-store` + `Pragma: no-cache`. The 415 fires
+        before client authentication, so it never distinguishes
+        credential state. Form-urlencoded requests are byte-identical
+        to the default mode; malformed percent-encoding under a form
+        Content-Type still takes the existing `400 invalid_request`
+        bind-error path.
 
         Successful responses ALWAYS carry `Cache-Control: no-store`
         and `Pragma: no-cache` per RFC 6749 §5.1 — apply on the
@@ -1185,6 +1201,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: |
+            Strict wire mode only (`server.require_form_content_type` /
+            `sso.WithCredentialFormOnly`): the body is not
+            `application/x-www-form-urlencoded` (JSON body, missing
+            Content-Type, or any other media type). Nothing is minted — the
+            envelope fires before the body is read and before client
+            authentication. The default mode never returns this response.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+            Pragma:
+              schema: { type: string, example: no-cache }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlainInvalidRequestError"
         "429":
           description: |
             The authenticated tenant exhausted its configured rolling token
@@ -1264,6 +1297,20 @@ paths:
 
         Optional batch mode: see `IntrospectRequest.tokens` /
         `IntrospectBatchResponse`.
+
+        **Content-Type strictness (opt-in)** — with
+        `server.require_form_content_type: true` (`sso.WithCredentialFormOnly(true)`),
+        this endpoint accepts ONLY `application/x-www-form-urlencoded`
+        (RFC 7662 §2.1): a JSON body, a missing Content-Type, or any
+        other media type returns `415 Unsupported Media Type` with the
+        plain `{"error":"invalid_request"}` envelope BEFORE the body is
+        read — nothing is introspected. The envelope is byte-identical
+        across the four credential endpoints (`/token`, `/token/introspect`,
+        `/token/revoke`, `/par`) and every response carries
+        `Cache-Control: no-store` + `Pragma: no-cache`. The 415 fires
+        before client authentication, so it never distinguishes
+        credential state. Form-urlencoded requests are byte-identical
+        to the default mode.
       operationId: postIntrospect
       parameters:
         - name: Accept
@@ -1323,6 +1370,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: |
+            Strict wire mode only (`server.require_form_content_type` /
+            `sso.WithCredentialFormOnly`): the body is not
+            `application/x-www-form-urlencoded` (JSON body, missing
+            Content-Type, or any other media type). Nothing is introspected —
+            the envelope fires before the body is read and before client
+            authentication. The default mode never returns this response.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+            Pragma:
+              schema: { type: string, example: no-cache }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlainInvalidRequestError"
 
   /token/revoke:
     post:
@@ -1340,6 +1404,20 @@ paths:
         when `RefreshTokenFamilyTracker` is wired (OAuth Security
         BCP §4.14): every prior + future refresh derived from the
         same auth event is invalidated atomically.
+
+        **Content-Type strictness (opt-in)** — with
+        `server.require_form_content_type: true` (`sso.WithCredentialFormOnly(true)`),
+        this endpoint accepts ONLY `application/x-www-form-urlencoded`
+        (RFC 7009 §2.1): a JSON body, a missing Content-Type, or any
+        other media type returns `415 Unsupported Media Type` with the
+        plain `{"error":"invalid_request"}` envelope BEFORE the body is
+        read — nothing is revoked. The envelope is byte-identical
+        across the four credential endpoints (`/token`, `/token/introspect`,
+        `/token/revoke`, `/par`) and every response carries
+        `Cache-Control: no-store` + `Pragma: no-cache`. The 415 fires
+        before client authentication, so it never distinguishes
+        credential state. Form-urlencoded requests are byte-identical
+        to the default mode.
       operationId: postRevoke
       requestBody:
         required: true
@@ -1362,6 +1440,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: |
+            Strict wire mode only (`server.require_form_content_type` /
+            `sso.WithCredentialFormOnly`): the body is not
+            `application/x-www-form-urlencoded` (JSON body, missing
+            Content-Type, or any other media type). Nothing is revoked — the
+            envelope fires before the body is read and before client
+            authentication. The default mode never returns this response.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+            Pragma:
+              schema: { type: string, example: no-cache }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlainInvalidRequestError"
 
   /token/revoke-all:
     post:
@@ -1470,6 +1565,20 @@ paths:
         /auth/login calls without request_uri are rejected with
         `invalid_request`. Combine with private_key_jwt for FAPI
         2.0-grade confidentiality.
+
+        **Content-Type strictness (opt-in)** — with
+        `server.require_form_content_type: true` (`sso.WithCredentialFormOnly(true)`),
+        this endpoint accepts ONLY `application/x-www-form-urlencoded`
+        (RFC 9126 §4.1): a JSON body, a missing Content-Type, or any
+        other media type returns `415 Unsupported Media Type` with the
+        plain `{"error":"invalid_request"}` envelope BEFORE the body is
+        read — no PAR is stored. The envelope is byte-identical across
+        the four credential endpoints (`/token`, `/token/introspect`,
+        `/token/revoke`, `/par`) and every response carries
+        `Cache-Control: no-store` + `Pragma: no-cache`. The 415 fires
+        before client authentication, so it never distinguishes
+        credential state. Form-urlencoded requests are byte-identical
+        to the default mode.
       operationId: postPAR
       requestBody:
         required: true
@@ -1511,6 +1620,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: |
+            Strict wire mode only (`server.require_form_content_type` /
+            `sso.WithCredentialFormOnly`): the body is not
+            `application/x-www-form-urlencoded` (JSON body, missing
+            Content-Type, or any other media type). Nothing is stored — the
+            envelope fires before the body is read and before client
+            authentication. The default mode never returns this response.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+            Pragma:
+              schema: { type: string, example: no-cache }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlainInvalidRequestError"
         "501":
           description: |
             PAR store not wired — operator hasn't called
@@ -16004,6 +16130,25 @@ components:
           type: string
           enum: [jwt, session]
         active: { type: boolean }
+        client_secret_expires_at:
+          type: integer
+          format: int64
+          description: |
+            Unix timestamp. 0 means the secret never expires (legacy/public
+            client).
+        tenant_id:
+          type: string
+          description: |
+            Read-only over the admin API: surfaced for operator verification
+            of the client's tenant binding. Mutations never consume this
+            field — binding is established at registration time (YAML/DCR/
+            federation).
+        grant_types:
+          type: array
+          items: { type: string }
+          description: |
+            Read-only grant-type allowlist, enforced at /token
+            (unauthorized_client). Mutations never consume this field.
 
     ListClientsResponse:
       type: object
@@ -16643,6 +16788,26 @@ components:
         kid:
           type: string
           description: First 8 bytes of sha256(pubkey), base64url-encoded.
+
+    PlainInvalidRequestError:
+      type: object
+      description: |
+        Byte-identical plain envelope emitted ONLY in strict wire mode
+        (`server.require_form_content_type: true` /
+        `sso.WithCredentialFormOnly(true)`) by the four credential endpoints
+        (`/token`, `/token/introspect`, `/token/revoke`, `/par`) when the
+        body is not `application/x-www-form-urlencoded`:
+        `{"error":"invalid_request"}` with no `error_description`, no
+        `trace_id`, and no `WWW-Authenticate`. Emitted before the body is
+        read and before client authentication, so it never distinguishes
+        credential state; every response carries
+        `Cache-Control: no-store` + `Pragma: no-cache`. The default mode
+        never emits this shape.
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_request]
 
     ErrorResponse:
       type: object

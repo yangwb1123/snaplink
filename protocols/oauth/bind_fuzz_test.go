@@ -3,8 +3,10 @@ package oauth
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -71,5 +73,63 @@ func FuzzBindParams(f *testing.F) {
 		// The contract under test: this MUST NOT panic for any input. An
 		// error return is fine and expected for malformed bodies.
 		_ = BindParams(ctx, &v)
+	})
+}
+
+// FuzzBindParamsFormOnly throws arbitrary Content-Type + body bytes at
+// the strict binder (B4-4) and asserts the dispatch contract never
+// breaks: a non-form Content-Type ALWAYS returns ErrFormOnly with the
+// target struct left untouched (never partially bound), and a form
+// Content-Type never panics. BindParamsFormOnly sits on the four
+// credential endpoints under the opt-in strict mode, parsing fully
+// attacker-controlled bodies.
+func FuzzBindParamsFormOnly(f *testing.F) {
+	f.Add(uint8(0), []byte(`client_id=abc&scope=openid%20profile&allow_refresh=true&resource=a&resource=b`))
+	f.Add(uint8(0), []byte(`scope=a,b,c`))
+	f.Add(uint8(0), []byte(`client_id=%ZZ`)) // bad percent-encoding → ParseForm error
+	f.Add(uint8(0), []byte(``))
+	f.Add(uint8(1), []byte(`{"client_id":"abc","scope":["openid"]}`))
+	f.Add(uint8(2), []byte(`anything at all`))
+	f.Add(uint8(2), []byte("\x00\x01\xff"))
+	f.Add(uint8(3), []byte(`client_id=abc`))
+
+	f.Fuzz(func(t *testing.T, ctSelector uint8, body []byte) {
+		var ct string
+		switch ctSelector % 4 {
+		case 0:
+			ct = "application/x-www-form-urlencoded"
+		case 1:
+			ct = "application/json; charset=utf-8"
+		case 2:
+			ct = "text/plain" // unexpected CT
+		default:
+			ct = "" // missing CT
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/token", bytes.NewReader(body))
+		if ct != "" {
+			req.Header.Set(core.HeaderContentType, ct)
+		} else {
+			req.Header.Del(core.HeaderContentType)
+		}
+		ctx := core.NewContext(httptest.NewRecorder(), req)
+
+		var v fuzzBindTarget
+		err := BindParamsFormOnly(ctx, &v)
+		if ct == "application/x-www-form-urlencoded" {
+			// Form CT: never panics; ErrFormOnly must never leak out of the
+			// form path (a ParseForm error is fine).
+			if errors.Is(err, ErrFormOnly) {
+				t.Fatalf("form Content-Type returned ErrFormOnly: %v", err)
+			}
+			return
+		}
+		// Non-form CT: ErrFormOnly AND the target struct untouched.
+		if !errors.Is(err, ErrFormOnly) {
+			t.Fatalf("non-form CT %q: err=%v, want ErrFormOnly", ct, err)
+		}
+		if !reflect.DeepEqual(v, fuzzBindTarget{}) {
+			t.Fatalf("target struct partially bound on 415 path: %+v", v)
+		}
 	})
 }

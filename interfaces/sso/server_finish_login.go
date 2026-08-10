@@ -220,7 +220,7 @@ func (s *Server) augmentDirectMintResponse(ctx HandlerContext, result *AuthResul
 			// later refresh rotation re-stamps the SAME authentication context
 			// (mirrors the access token's Subject above) instead of collapsing
 			// amr to the provider and dropping acr/auth_time.
-			oauth.RefreshAuthContext{AMR: handler.AmrForResult(result), ACR: result.AchievedACR, AuthTime: time.Now()},
+			oauth.RefreshAuthContext{AMR: handler.AmrForResult(result), ACR: result.AchievedACR, AuthTime: time.Now(), Roles: result.Roles},
 			client.RefreshTokenTTL, "") // login flow: no DPoP at /auth/login; refresh token unbound
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", result.UserID)

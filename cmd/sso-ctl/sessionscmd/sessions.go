@@ -129,7 +129,7 @@ func printSessions(format string, sessions []sessionListItem) {
 // ok=false means the error was already printed to stderr (exit 1), exactly
 // as the ladder ran inline in runList.
 func fetchList(path string) ([]byte, bool) {
-	client := apiclient.New()
+	client := apiclient.New(apiclient.WithNoRedirect())
 	resp, err := client.Get(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: list failed: %v\n", progName, err)
@@ -141,7 +141,7 @@ func fetchList(path string) ([]byte, bool) {
 		return nil, false
 	}
 	if resp.StatusCode != 200 {
-		fmt.Fprintf(os.Stderr, "%s: list failed (HTTP %d): %s\n", progName, resp.StatusCode, string(body))
+		fmt.Fprintln(os.Stderr, apiclient.StatusMessage(progName, "list", apiclient.RedirectHintAdmin, resp, body))
 		return nil, false
 	}
 	return body, true
@@ -155,7 +155,7 @@ func runRevoke(args []string) int {
 	}
 	sessionID := args[0]
 
-	client := apiclient.New()
+	client := apiclient.New(apiclient.WithNoRedirect())
 	resp, err := client.Post("/api/v1/admin/tokens/revoke", map[string]string{
 		"session_id": sessionID,
 	})
@@ -169,7 +169,7 @@ func runRevoke(args []string) int {
 		return 1
 	}
 	if resp.StatusCode != 200 {
-		fmt.Fprintf(os.Stderr, "%s: revoke failed (HTTP %d): %s\n", progName, resp.StatusCode, string(body))
+		fmt.Fprintln(os.Stderr, apiclient.StatusMessage(progName, "revoke", apiclient.RedirectHintAdmin, resp, body))
 		return 1
 	}
 	fmt.Printf("session %q revoked\n", sessionID)

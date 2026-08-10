@@ -9,6 +9,7 @@
 //	sso-ctl migrate ...        # offline schema-migration status
 //	sso-ctl snapshot ...       # inspect / verify sealed state snapshots
 //	sso-ctl generate ...       # scaffold a new authenticator / store / handler / grant
+//	sso-ctl check ...          # deploy-tree live sweep (T-2/T-8a/T-8d/T-9 probes)
 //
 // Each subcommand's process exit code is whatever its Run returns (or a direct
 // os.Exit from a flag/usage error), byte-identical to the former standalone
@@ -19,6 +20,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/yangwb1123/snaplink/cmd/sso-ctl/apiclient"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/auditexport"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/auditverify"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/clientscmd"
@@ -60,6 +62,7 @@ var subcommands = map[string]func([]string) int{
 	"tenants":      entitiescmd.RunTenants,
 	"users":        entitiescmd.RunUsers,
 	"tui":          tui.Run,
+	"check":        apiclient.CheckRun,
 }
 
 func main() {
@@ -106,6 +109,7 @@ Commands:
   tenants        Manage tenants (list/get/create/update/delete/set-status).
   users          Manage admin users (list/get/create/update/delete).
   tui            Launch the interactive terminal UI (clients/users/tenants).
+  check          Run the deploy-tree live sweep (T-2/T-8a/T-8d/T-9 probes).
   version        Print the toolbelt version and build revision.
 
 Run "%s <command> -h" for command-specific flags.

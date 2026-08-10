@@ -231,6 +231,14 @@ type IssueRefreshTokenParams struct {
 	// lifetime cap then simply never fires for that family (additive-
 	// migration default, see oauthspi.RefreshToken.FamilyCreatedAt).
 	FamilyCreatedAt time.Time
+
+	// Roles is the tenant-membership role-code vector from the original
+	// direct-mint login, persisted so refresh rotation re-stamps the same
+	// `roles` access-token claim (propagate-unchanged lineage, see
+	// oauthspi.RefreshToken.Roles). Empty = the issuing grant had no roster
+	// access (every token-endpoint grant) — the claim stays absent across
+	// that family's rotations.
+	Roles []string
 }
 
 // IssueRefreshToken generates and stores a refresh token.
@@ -308,5 +316,6 @@ func buildRefreshTokenEntry(p IssueRefreshTokenParams, ttl time.Duration, freshF
 		ConfirmationJKT:      p.ConfirmationJKT,
 		Generation:           p.Generation,
 		FamilyCreatedAt:      familyCreatedAt,
+		Roles:                append([]string(nil), p.Roles...),
 	}
 }

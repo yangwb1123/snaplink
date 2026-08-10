@@ -243,17 +243,70 @@ func assertGrantScopeGateClaims(t *testing.T, kind string, content []byte) {
 	}
 }
 
+// assertGrantIssuerDiscipline (grant kind only) pins the B4-1
+// issuer-allowlist teaching in the generated artifact: the example must
+// teach the configured-issuer path (WithIssuer wins, DefaultIssuer
+// sentinel falls back to the request base URL, mirrored from
+// (*sso.Server).ResolveIssuer) and must contain no Host-derived issuer
+// expression. Each marker is asserted separately so a regression names
+// the exact violated invariant (T-2-mirror style, the same blunt
+// contains-checks assertNoLegacyPathPort applies to /authenticate and
+// 8080 shapes).
+func assertGrantIssuerDiscipline(t *testing.T, kind string, content []byte) {
+	t.Helper()
+	text := string(content)
+	for _, m := range []struct{ name, marker string }{
+		{"WithIssuer option", "WithIssuer"},
+		{"ResolveIssuer accessor", "ResolveIssuer("},
+		{"DefaultIssuer sentinel", "DefaultIssuer"},
+		{"corrected citation target", "server_setup.go"},
+		{"real production example", "saml2BearerHandler"},
+	} {
+		if !strings.Contains(text, m.marker) {
+			t.Errorf("%s scaffold: missing %s marker %q — the B4-1 issuer-allowlist teaching was dropped", kind, m.name, m.marker)
+		}
+	}
+	for _, m := range []struct{ name, marker string }{
+		{"requestBaseURL call shape", "requestBaseURL("},
+		{"request-Host derivation", "Request().Host"},
+		{"proxy-forwarded Host carrier", "X-Forwarded-Host"},
+		{"ghost saml2-bearer citation", "options_saml2_bearer"},
+	} {
+		if strings.Contains(text, m.marker) {
+			t.Errorf("%s scaffold: banned %s marker %q — iss must come from the configured-issuer path, never Host-derived", kind, m.name, m.marker)
+		}
+	}
+}
+
+// assertGrantTemplateIssuerDiscipline applies the same required/banned
+// pairs to the template SOURCE (templates_handler.go): the ghost-citation
+// fix at line 144 lives in the Go doc comment above the raw-string const
+// and never reaches generated artifacts, so the source read is what gates
+// it. Same read pattern as pathConsts/resolveErrCode already use for
+// shared/core.
+func assertGrantTemplateIssuerDiscipline(t *testing.T, root string) {
+	t.Helper()
+	src, err := os.ReadFile(filepath.Join(root, "cmd", "sso-ctl", "generate", "templates_handler.go"))
+	if err != nil {
+		t.Fatalf("read templates_handler.go: %v", err)
+	}
+	assertGrantIssuerDiscipline(t, "template source", src)
+}
+
 // assertKindInvariants dispatches the kind-specific contract assertions on
 // the generated artifact. Handler scaffolds must teach the form-urlencoded
 // Content-Type guard before binding; grant scaffolds must teach the
-// per-client scope gate and the B4-1 claim sources (B4-2/B4-1).
-func assertKindInvariants(t *testing.T, kind string, content []byte) {
+// per-client scope gate and the B4-1 claim sources (B4-2/B4-1). root is
+// the module root, used by the grant branch's template-source read.
+func assertKindInvariants(t *testing.T, kind string, content []byte, root string) {
 	t.Helper()
 	switch kind {
 	case "handler":
 		assertFormContentTypeGuard(t, kind, content)
 	case "grant":
 		assertGrantScopeGateClaims(t, kind, content)
+		assertGrantIssuerDiscipline(t, kind, content)
+		assertGrantTemplateIssuerDiscipline(t, root)
 	}
 }
 

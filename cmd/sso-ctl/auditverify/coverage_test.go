@@ -14,7 +14,7 @@ import (
 // TestReadFromFile_MissingFile — a path that doesn't exist surfaces the
 // os.ReadFile error rather than a panic or empty result.
 func TestReadFromFile_MissingFile(t *testing.T) {
-	if _, err := readFromFile(filepath.Join(t.TempDir(), "nope.json"), 0); err == nil {
+	if _, _, err := readFromFile(filepath.Join(t.TempDir(), "nope.json"), 0); err == nil {
 		t.Fatal("expected error reading a missing file")
 	}
 }
@@ -26,7 +26,7 @@ func TestReadFromFile_BadJSON(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"not_events": 1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readFromFile(path, 0); err == nil {
+	if _, _, err := readFromFile(path, 0); err == nil {
 		t.Fatal("expected parse error for non-array/non-envelope JSON")
 	}
 }
@@ -40,7 +40,7 @@ func TestReadFromFile_LimitTruncates(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readFromFile(path, 2)
+	got, _, err := readFromFile(path, 2)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestReadFromFile_LimitTruncates(t *testing.T) {
 // TestReadFromURL_BadBaseURL — an unparseable base URL is rejected up
 // front.
 func TestReadFromURL_BadBaseURL(t *testing.T) {
-	if _, err := readFromURL("://not a url", "t", 0, 10, time.Second); err == nil {
+	if _, _, err := readFromURL("://not a url", "t", 0, 10, time.Second); err == nil {
 		t.Fatal("expected parse error for malformed base URL")
 	}
 }
@@ -64,7 +64,7 @@ func TestReadFromURL_HTTPError(t *testing.T) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	if _, err := readFromURL(srv.URL, "t", 0, 10, time.Second); err == nil {
+	if _, _, err := readFromURL(srv.URL, "t", 0, 10, time.Second); err == nil {
 		t.Fatal("expected error for 500 response")
 	}
 }
@@ -76,7 +76,7 @@ func TestReadFromURL_BadPageBody(t *testing.T) {
 		_, _ = w.Write([]byte(`{"garbage": true}`))
 	}))
 	defer srv.Close()
-	if _, err := readFromURL(srv.URL, "t", 0, 10, time.Second); err == nil {
+	if _, _, err := readFromURL(srv.URL, "t", 0, 10, time.Second); err == nil {
 		t.Fatal("expected parse error for non-event-list body")
 	}
 }
@@ -87,7 +87,7 @@ func TestReadFromURL_RequestError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	url := srv.URL
 	srv.Close() // close immediately so the next request fails to connect
-	if _, err := readFromURL(url, "t", 0, 10, 200*time.Millisecond); err == nil {
+	if _, _, err := readFromURL(url, "t", 0, 10, 200*time.Millisecond); err == nil {
 		t.Fatal("expected transport error against a closed server")
 	}
 }
@@ -103,7 +103,7 @@ func TestReadFromURL_PageSizeClamped(t *testing.T) {
 	}))
 	defer srv.Close()
 	// Pass an absurd page size; the tool must clamp to MaxQueryLimit (1000).
-	if _, err := readFromURL(srv.URL, "t", 0, 999999, time.Second); err != nil {
+	if _, _, err := readFromURL(srv.URL, "t", 0, 999999, time.Second); err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	if seenLimit != "1000" {
@@ -120,7 +120,7 @@ func TestReadFromURL_NonPositivePageSizeDefaults(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"events": []any{}})
 	}))
 	defer srv.Close()
-	if _, err := readFromURL(srv.URL, "t", 0, 0, time.Second); err != nil {
+	if _, _, err := readFromURL(srv.URL, "t", 0, 0, time.Second); err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	if seenLimit != "500" {

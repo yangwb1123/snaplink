@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -634,4 +635,154 @@ func sliceEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// ---------------------------------------------------------------------------
+// TxAppender seam (B4-5 in-tx governance connector).
+// ---------------------------------------------------------------------------
+
+// recordingAppender records every (eventID, tenantID) pair it saw, keyed
+// by event ID, and optionally fails the next append — the fail-open
+// degradation probe. A nil tx is an immediate test failure (the seam
+// must hand over the live transaction).
+type recordingAppender struct {
+	mu        sync.Mutex
+	appended  map[string]string // event ID -> tenant ID
+	failNext  error
+	calls     int
+	txNilSeen bool
+}
+
+func (a *recordingAppender) AppendInTx(_ context.Context, tx *sql.Tx, e *audit.Event) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.calls++
+	if tx == nil {
+		a.txNilSeen = true
+	}
+	if a.failNext != nil {
+		err := a.failNext
+		a.failNext = nil
+		return err
+	}
+	a.appended[e.ID] = e.TenantID
+	return nil
+}
+
+// TestSink_TxAppenderCommitsAtomically proves the B4-5 in-tx contract at
+// the seam: one transaction commits the audit row AND the appender row
+// (simulating the auditoutbox fact), so a governance consumer that opens
+// its own connection immediately observes both.
+func TestSink_TxAppenderCommitsAtomically(t *testing.T) {
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "audit.db")
+	s, err := New(dsn, WithTxAppender(&recordingAppender{appended: map[string]string{}}))
+	if err != nil {
+		t.Fatalf("new sink: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	now := time.Now().UTC()
+	if err := s.Record(context.Background(), &audit.Event{
+		ID: "evt-1", Type: audit.EventLoginFailure, Outcome: audit.OutcomeFailure,
+		Timestamp: now, TenantID: "tenant-1",
+	}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	// A second connection (fresh pool) sees both rows — nothing is held
+	// in an uncommitted transaction.
+	reader, err := New(dsn)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() { _ = reader.Close() }()
+	got, err := reader.Get(context.Background(), "evt-1")
+	if err != nil {
+		t.Fatalf("get audit row: %v", err)
+	}
+	if got.TenantID != "tenant-1" {
+		t.Errorf("audit row tenant: got %q", got.TenantID)
+	}
+}
+
+// TestSink_TxAppenderFailOpenDegrades proves the fail-open contract: an
+// appender error rolls the transaction back, re-inserts the audit row
+// ALONE, and surfaces the error — governance never loses an audit record
+// to a connector failure.
+func TestSink_TxAppenderFailOpenDegrades(t *testing.T) {
+	s := newTestSink(t)
+	appender := &recordingAppender{appended: map[string]string{}}
+	appender.failNext = errors.New("outbox unavailable")
+	s.appender = appender
+
+	now := time.Now().UTC()
+	err := s.Record(context.Background(), &audit.Event{
+		ID: "evt-1", Type: audit.EventLoginFailure, Outcome: audit.OutcomeFailure,
+		Timestamp: now, TenantID: "tenant-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "tx appender") {
+		t.Fatalf("expected surfaced appender error, got %v", err)
+	}
+	// The audit row survived despite the appender failure.
+	got, getErr := s.Get(context.Background(), "evt-1")
+	if getErr != nil || got == nil {
+		t.Fatalf("audit record lost: get err=%v", getErr)
+	}
+	if got.TenantID != "tenant-1" {
+		t.Errorf("audit row tenant: got %q", got.TenantID)
+	}
+	if _, present := appender.appended["evt-1"]; present {
+		t.Error("appender row must not survive the rollback")
+	}
+}
+
+// TestSink_TxAppenderBatchFailOpen proves the batch path applies the same
+// fail-open degradation: an appender error aborts the batch and every
+// audit row is preserved alone.
+func TestSink_TxAppenderBatchFailOpen(t *testing.T) {
+	s := newTestSink(t)
+	appender := &recordingAppender{appended: map[string]string{}}
+	appender.failNext = errors.New("outbox unavailable")
+	s.appender = appender
+
+	now := time.Now().UTC()
+	events := []*audit.Event{
+		{ID: "b1", Type: audit.EventLoginFailure, Outcome: audit.OutcomeFailure, Timestamp: now, TenantID: "t-1"},
+		{ID: "b2", Type: audit.EventLoginFailure, Outcome: audit.OutcomeFailure, Timestamp: now, TenantID: "t-1"},
+	}
+	err := s.RecordBatch(context.Background(), events)
+	if err == nil || !strings.Contains(err.Error(), "batch appender") {
+		t.Fatalf("expected surfaced batch appender error, got %v", err)
+	}
+	for _, id := range []string{"b1", "b2"} {
+		got, getErr := s.Get(context.Background(), id)
+		if getErr != nil || got == nil {
+			t.Errorf("audit record %s lost after batch fail-open: %v", id, getErr)
+		}
+	}
+}
+
+// TestSink_TxAppenderSeesChainedEvent proves the appender observes the
+// FINAL chain-stamped event (the Recorder hashes before the sink runs):
+// the fact's audit_hash linkage depends on this ordering.
+func TestSink_TxAppenderSeesChainedEvent(t *testing.T) {
+	s := newTestSink(t)
+	appender := &recordingAppender{appended: map[string]string{}}
+	s.appender = appender
+	rec := audit.New(s, audit.WithHashChain())
+	rec.Record(context.Background(), &audit.Event{
+		ID: "c1", Type: audit.EventLoginFailure, Outcome: audit.OutcomeFailure,
+		Timestamp: time.Now().UTC(), TenantID: "tenant-1",
+	})
+	if appender.calls != 1 {
+		t.Fatalf("appender calls: got %d want 1", appender.calls)
+	}
+	got, err := s.Get(context.Background(), "c1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Hash == "" {
+		t.Fatal("recorder did not chain-stamp the event")
+	}
 }

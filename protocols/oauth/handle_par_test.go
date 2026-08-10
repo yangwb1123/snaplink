@@ -35,6 +35,11 @@ func (d *parDeps) SrvLogger() spi.Logger { return spi.NopLogger{} }
 func (d *parDeps) RARLimits() RARLimits  { return d.rarLimits }
 func (d *parDeps) MaxScopeCount() int    { return d.maxScopeCount }
 
+// RequireFormContentType returns false — the legacy dual-mode posture —
+// so every existing JSON-post unit test in this file stays on the
+// byte-identical binder path.
+func (d *parDeps) RequireFormContentType() bool { return false }
+
 var _ PARDeps = (*parDeps)(nil)
 
 func newPARDeps(cs core.ClientStore, ps PARStore) *parDeps {

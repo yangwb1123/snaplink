@@ -10,6 +10,7 @@ server:
   listen: ":8080"
   # issuer MUST be the externally-reachable URL the edge terminates TLS on.
   issuer: "https://sso.example.com"
+  issuer_allowlist: ["https://sso.example.com"]
   required_capabilities: [core.runtime.v1, server.stock.v1]
   topology:
     mode: multi

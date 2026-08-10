@@ -47,11 +47,12 @@ func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	// including the v3 RFC 9068 auth-context columns (amr/acr/auth_time), the
 	// v4 RFC 9449 DPoP key-binding column (confirmation_jkt), the v5
 	// token-policy max_refresh_depth column (generation), the v6
-	// absolute-max-lifetime column (family_created_at), and the v8
-	// refresh-introspect thumbprint column (jti). v7 also adds an expiry
+	// absolute-max-lifetime column (family_created_at), the v8
+	// refresh-introspect thumbprint column (jti), and the v9
+	// tenant-membership roles column. v7 also adds an expiry
 	// to the consumed-token family ledger.
 	if _, err := db.Exec(`SELECT family_id, resources, authorization_details, sid,
-		amr, acr, auth_time, confirmation_jkt, generation, family_created_at, jti FROM refresh_tokens`); err != nil {
+		amr, acr, auth_time, confirmation_jkt, generation, family_created_at, jti, roles FROM refresh_tokens`); err != nil {
 		t.Errorf("legacy columns not backfilled: %v", err)
 	}
 	if _, err := db.Exec(`SELECT expires_at FROM refresh_token_families`); err != nil {
@@ -78,8 +79,16 @@ func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	if err := db.QueryRow(`SELECT token FROM refresh_tokens WHERE token='old'`).Scan(&token); err != nil {
 		t.Errorf("legacy row lost: %v", err)
 	}
-	if v, _ := migrate.CurrentVersion(ctx, db, "refresh_tokens"); v != 8 {
-		t.Errorf("version = %d, want 8", v)
+	// The backfilled roles column defaults to '[]' on the pre-existing row — a
+	// token issued before the feature rotates without a roles claim.
+	var roles string
+	if err := db.QueryRow(`SELECT roles FROM refresh_tokens WHERE token='old'`).Scan(&roles); err != nil {
+		t.Errorf("roles not readable: %v", err)
+	} else if roles != "[]" {
+		t.Errorf("legacy row roles = %q, want '[]'", roles)
+	}
+	if v, _ := migrate.CurrentVersion(ctx, db, "refresh_tokens"); v != 9 {
+		t.Errorf("version = %d, want 9", v)
 	}
 }
 

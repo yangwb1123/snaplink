@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ func TestReadFromFile_PlainArray(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readFromFile(path, 0)
+	got, _, err := readFromFile(path, 0)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -49,7 +50,7 @@ func TestReadFromFile_EventsEnvelope(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readFromFile(path, 0)
+	got, _, err := readFromFile(path, 0)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -77,7 +78,7 @@ func TestReadFromFile_NewestFirstAutoReversed(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readFromFile(path, 0)
+	got, _, err := readFromFile(path, 0)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -116,7 +117,7 @@ func TestReadFromURL_PagesAndReverses(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"events": page, "count": len(page)})
 	}))
 	defer srv.Close()
-	got, err := readFromURL(srv.URL, "t", 0, 3, time.Second)
+	got, _, err := readFromURL(srv.URL, "t", 0, 3, time.Second)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -144,12 +145,85 @@ func TestReadFromURL_LimitStopsPagination(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"events": newestFirst[off:end]})
 	}))
 	defer srv.Close()
-	got, err := readFromURL(srv.URL, "t", 4, 3, time.Second)
+	got, _, err := readFromURL(srv.URL, "t", 4, 3, time.Second)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	if len(got) != 4 {
 		t.Errorf("got %d events; want 4 (limit cap)", len(got))
+	}
+}
+
+// TestReadFromURL_NoRedirect pins the audit-verify raw-client construction
+// (main.go readFromURL): the --from-url client must stop at a 307 so the
+// bearer is never forwarded to the redirect target. Exercises the client
+// built by readFromURL itself — a regression that drops the CheckRedirect
+// pin fails here. Not parallel: keeps deterministic ordering with the
+// existing stderr-adjacent tests.
+func TestReadFromURL_NoRedirect(t *testing.T) {
+	events := chainedEvents(t, 7)
+	newestFirst := make([]*audit.Event, len(events))
+	for i, e := range events {
+		newestFirst[len(events)-1-i] = e
+	}
+	var mu sync.Mutex
+	targetHits := 0
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		targetHits++
+		mu.Unlock()
+		off, _ := atoi(r.URL.Query().Get("offset"))
+		lim, _ := atoi(r.URL.Query().Get("limit"))
+		end := min(off+lim, len(newestFirst))
+		_ = json.NewEncoder(w).Encode(map[string]any{"events": newestFirst[off:end]})
+	}))
+	defer target.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", target.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+		_, _ = w.Write([]byte(strings.Repeat("<html>gateway moved</html>", 30)))
+	}))
+	defer redirector.Close()
+
+	if _, _, err := readFromURL(redirector.URL, "tok-audit-verify", 0, 3, time.Second); err == nil {
+		t.Fatal("readFromURL: expected error on 307, got nil")
+	}
+	mu.Lock()
+	hits := targetHits
+	mu.Unlock()
+	if hits != 0 {
+		t.Errorf("redirect target received %d requests, want 0 (bearer would have been forwarded)", hits)
+	}
+}
+
+// TestReadFromURL_RedirectMessage pins the audit-verify 3xx error string:
+// redirect wording, the --from-url hint, a userinfo-redacted Location, and
+// the truncated-body marker. readFromURL returns the error, so no stderr
+// capture is needed.
+func TestReadFromURL_RedirectMessage(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"events": []any{}})
+	}))
+	defer target.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Location with userinfo: the diagnostic must redact it.
+		w.Header().Set("Location", "http://user:sekret@"+strings.TrimPrefix(target.URL, "http://"))
+		w.WriteHeader(http.StatusTemporaryRedirect)
+		_, _ = w.Write([]byte(strings.Repeat("<html>gateway moved</html>", 30)))
+	}))
+	defer redirector.Close()
+
+	_, _, err := readFromURL(redirector.URL, "tok-audit-verify", 0, 3, time.Second)
+	if err == nil {
+		t.Fatal("readFromURL: expected error on 307, got nil")
+	}
+	for _, want := range []string{"fetch page (offset=0) failed", "redirect", auditRedirectHint, "..."} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "sekret") || strings.Contains(err.Error(), "tok-audit-verify") {
+		t.Errorf("error leaks userinfo or bearer: %v", err)
 	}
 }
 

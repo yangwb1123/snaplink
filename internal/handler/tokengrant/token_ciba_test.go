@@ -10,6 +10,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/domains/userlifecycle"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -86,6 +87,8 @@ func (f *fakeCIBAGrantDeps) RecordSubjectClientAccess(context.Context, string, s
 func (f *fakeCIBAGrantDeps) RecordCIBADecision(core.HandlerContext, string, string, bool)       {}
 
 func (f *fakeCIBAGrantDeps) SrvLogger() spi.Logger { return &recordingLogger{dst: &f.loggedErrors} }
+
+func (f *fakeCIBAGrantDeps) ScopeRegistry() scoperegistry.Registry { return nil }
 
 var _ CIBAGrantDeps = (*fakeCIBAGrantDeps)(nil)
 

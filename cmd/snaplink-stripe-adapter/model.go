@@ -4,13 +4,15 @@ import (
 	"errors"
 	"sync/atomic"
 	"time"
+
+	commercehttp "github.com/yangwb1123/snaplink/interfaces/commerce"
 )
 
 const (
 	programName           = "snaplink-stripe-adapter"
 	providerStripe        = "stripe"
 	paymentSourceStripe   = "payment:stripe"
-	scopeCheckoutCreate   = "billing:checkout:create"
+	scopeCheckoutCreate   = commercehttp.ScopeCheckoutCreate
 	scopeAdminWrite       = "admin:write"
 	scopePaymentOrderRead = "billing:payment:order:read"
 	scopePaymentWrite     = "billing:payment:write"
@@ -50,6 +52,7 @@ const (
 	ErrInvalidEvent        = "invalid_event"
 	ErrEventConflict       = "event_conflict"
 	ErrUnavailable         = "unavailable"
+	ErrTenantMismatch      = "tenant_mismatch"
 )
 
 var (

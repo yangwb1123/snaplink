@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -31,6 +32,9 @@ type CIBAGrantDeps interface {
 	RecordSubjectClientAccess(ctx context.Context, subject, clientID string)
 	RecordCIBADecision(ctx core.HandlerContext, clientID, subjectID string, approved bool)
 	SrvLogger() spi.Logger
+	// ScopeRegistry returns the wired global scope registry (nil = unwired
+	// no-op, the default-off byte-compat baseline).
+	ScopeRegistry() scoperegistry.Registry
 }
 
 // HandleCIBAGrant processes the OIDC CIBA poll/ping token grant (grant_type
@@ -61,6 +65,16 @@ func HandleCIBAGrant(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Clie
 	}
 
 	cibaMintAndRespond(d, ctx, client, r, now, dpopJKT, mtlsX5T)
+}
+
+// cibaProvider resolves the CIBA request's AMR provider, falling back to the
+// protocol-standard constant for approvals that never recorded one. Extracted
+// to hold buildCIBATokenResponse within the function-length budget.
+func cibaProvider(r *oauth.CIBARequest) string {
+	if r.Provider != "" {
+		return r.Provider
+	}
+	return core.CIBAAMR
 }
 
 // cibaMintAndRespond issues the access/refresh/id tokens for an already-claimed
@@ -94,11 +108,14 @@ func buildCIBATokenResponse(d CIBAGrantDeps, ctx core.HandlerContext, client *co
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrNoTokenStrategy))
 		return nil, false
 	}
-	provider := r.Provider
-	if provider == "" {
-		provider = core.CIBAAMR
-	}
+	provider := cibaProvider(r)
 	issuedSub := d.ApplyPairwiseSubject(ctx.Request().Context(), client, r.SubjectID)
+	// Global scope registry (opt-in): the stored entry's scopes are the
+	// effective set; one check covers poll AND push (MintCIBATokensForPush
+	// shares this builder).
+	if scoperegistry.RejectUnregistered(ctx, d.ScopeRegistry(), r.Scopes) {
+		return nil, false
+	}
 	token, err := ti.Issue(ctx.Request().Context(), &core.Subject{
 		ID:                  issuedSub,
 		Provider:            provider,

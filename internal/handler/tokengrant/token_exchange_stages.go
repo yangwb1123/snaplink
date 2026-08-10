@@ -7,6 +7,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
@@ -296,7 +297,7 @@ func tokExResolveTargetsAndScopes(d TokenExchangeDeps, ctx core.HandlerContext, 
 		return true
 	}
 
-	if tokExResolveScope(ctx, client, req, st) {
+	if tokExResolveScope(d, ctx, client, req, st) {
 		return true
 	}
 
@@ -313,7 +314,7 @@ func tokExResolveTargetsAndScopes(d TokenExchangeDeps, ctx core.HandlerContext, 
 // tokExResolveScope narrows the exchanged scope to the subject and bounds it by
 // the downstream client's allowlist. Returns true when it has written an error
 // response (invalid_scope) and the caller must stop.
-func tokExResolveScope(ctx core.HandlerContext, client *core.Client, req TokenExchangeRequest, st *tokExState) bool {
+func tokExResolveScope(d TokenExchangeDeps, ctx core.HandlerContext, client *core.Client, req TokenExchangeRequest, st *tokExState) bool {
 	// Scope narrowing per RFC 8693 §2.1: when `scope` is supplied it MUST be a
 	// subset of the subject_token's scopes; expansion is forbidden. Empty scope =
 	// keep the subject's scopes.
@@ -346,7 +347,10 @@ func tokExResolveScope(ctx core.HandlerContext, client *core.Client, req TokenEx
 		return true
 	}
 	st.scopes = boundScopes
-	return false
+	// Global scope registry (opt-in): the bounded scope is the effective set
+	// for the direct exchange path — post-resolution (subject ∩ client
+	// allowlist), pre-issuance.
+	return scoperegistry.RejectUnregistered(ctx, d.ScopeRegistry(), st.scopes)
 }
 
 // tokExResolveSubjectAndIssue runs the OIDC §8 pairwise resolution and issues

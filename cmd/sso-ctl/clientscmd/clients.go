@@ -67,9 +67,10 @@ Examples:
 // gateway's actual wire shape, not the .proto's snake_case field names: the
 // gateway marshals with protojson defaults (camelCase, no UseProtoNames —
 // see grpc-gateway's defaultMarshaler), so "redirect_uris" never matches and
-// silently stays empty. There is also no tenant_id/grant_types field on the
-// Client message at all (see proto/admin/v1/clients.proto) — the closest
-// equivalent the server exposes is token_strategy.
+// silently stays empty. TenantID/GrantTypes are read-only over the admin
+// API (surfaced from the stored binding for operator verification; the
+// gateway emits them as "tenantId"/"grantTypes"), and omitempty keeps
+// unbound clients' "" / [] from polluting JSON output.
 type clientListItem struct {
 	ID            string   `json:"id"`
 	Name          string   `json:"name,omitempty"`
@@ -77,6 +78,8 @@ type clientListItem struct {
 	TokenStrategy string   `json:"tokenStrategy,omitempty"`
 	RedirectURIs  []string `json:"redirectUris,omitempty"`
 	AllowedScopes []string `json:"allowedScopes,omitempty"`
+	TenantID      string   `json:"tenantId,omitempty"`
+	GrantTypes    []string `json:"grantTypes,omitempty"`
 	Active        bool     `json:"active"`
 }
 
@@ -109,11 +112,12 @@ func printClients(format string, clients []clientListItem) {
 		apiclient.WriteJSON(clients)
 		return
 	}
-	header := []string{"ID", "Name", "TokenStrategy", "RedirectURIs", "Active"}
+	header := []string{"ID", "Name", "TokenStrategy", "TenantID", "GrantTypes", "RedirectURIs", "Active"}
 	rows := make([][]string, 0, len(clients))
 	for _, c := range clients {
 		rows = append(rows, []string{
-			c.ID, c.Name, c.TokenStrategy,
+			c.ID, c.Name, c.TokenStrategy, c.TenantID,
+			strings.Join(c.GrantTypes, ","),
 			strings.Join(c.RedirectURIs, ","),
 			strconv.FormatBool(c.Active),
 		})
@@ -125,7 +129,7 @@ func printClients(format string, clients []clientListItem) {
 // ok=false means the error was already printed to stderr (exit 1), exactly
 // as the ladder ran inline in runList.
 func fetchList(path string) ([]byte, bool) {
-	client := apiclient.New()
+	client := apiclient.New(apiclient.WithNoRedirect())
 	resp, err := client.Get(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: list failed: %v\n", progName, err)
@@ -137,7 +141,7 @@ func fetchList(path string) ([]byte, bool) {
 		return nil, false
 	}
 	if resp.StatusCode != 200 {
-		fmt.Fprintf(os.Stderr, "%s: list failed (HTTP %d): %s\n", progName, resp.StatusCode, string(body))
+		fmt.Fprintln(os.Stderr, apiclient.StatusMessage(progName, "list", apiclient.RedirectHintAdmin, resp, body))
 		return nil, false
 	}
 	return body, true
@@ -151,7 +155,7 @@ func runGet(args []string) int {
 	}
 	clientID := args[0]
 
-	client := apiclient.New()
+	client := apiclient.New(apiclient.WithNoRedirect())
 	resp, err := client.Get("/api/v1/admin/clients/" + clientID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: get failed: %v\n", progName, err)
@@ -163,7 +167,7 @@ func runGet(args []string) int {
 		return 1
 	}
 	if resp.StatusCode != 200 {
-		fmt.Fprintf(os.Stderr, "%s: get failed (HTTP %d): %s\n", progName, resp.StatusCode, string(body))
+		fmt.Fprintln(os.Stderr, apiclient.StatusMessage(progName, "get", apiclient.RedirectHintAdmin, resp, body))
 		return 1
 	}
 	var result map[string]any

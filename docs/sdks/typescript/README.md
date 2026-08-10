@@ -68,10 +68,19 @@ operationId — see Usage below.
   operation's response type like
   `Promise<LoginResponse | AuthorizationCodeResponse |
   LoginDiscoveryResponse | MFARequiredResponse>`).
-- An operation's **form-urlencoded content type is not separately
-  modeled** — every curated operation that accepts
-  `application/x-www-form-urlencoded` also accepts `application/json`
-  with an identical schema, and the client always sends JSON.
+- An operation's **form-urlencoded content type is modeled as the
+  preferred wire for the OAuth credential family**: the seven
+  credential-endpoint operations (`postToken`, `postIntrospect`,
+  `postRevoke`, `postPAR`, `postDeviceCode`, `postDeviceVerify`,
+  `postMFAComplete`) send `application/x-www-form-urlencoded` bodies;
+  every other operation keeps sending JSON. Form values follow the
+  server binder's contract: booleans are lowercase `true`/`false`,
+  string arrays (`resource`/`audience`/`tokens`) become repeated keys,
+  objects and arrays of objects (`claims`, `authorization_details`)
+  become a single key holding the JSON text (RFC 9396 §3 / OIDC Core
+  §5.5), and `MFACompleteRequest.params` has no form encoding — the
+  client rejects it with an `invalid_request` error rather than
+  sending it (use the flat `code`/`assertion` fields instead).
 
 ## Usage
 

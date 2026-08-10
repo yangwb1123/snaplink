@@ -105,6 +105,7 @@ func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *lo
 		return "", nil, "", err
 	}
 	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, result.UserID)
+	roles := s.mintRoles(ctx, client, result)
 	ttl := client.AccessTokenTTL
 	if dc := deviceCtxFrom(ctx); dc != nil {
 		ttl = deviceAwareTTL(ttl, dc, 0)
@@ -116,6 +117,7 @@ func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *lo
 		Resources:            append([]string(nil), req.Resource...),
 		ClientID:             client.ID,
 		TenantID:             client.TenantID,
+		Roles:                roles,
 		AuthTime:             time.Now(),
 		AMR:                  handler.AmrForResult(result),
 		ACR:                  result.AchievedACR,
@@ -135,6 +137,23 @@ func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *lo
 		return "", nil, "", err
 	}
 	return strategy, token, issuedSub, nil
+}
+
+// mintRoles resolves the tenant-membership roles for the direct-mint token
+// (fail-open, see subjectRoles) and records the role_resolution_failed audit
+// event on an outage. Keyed on the LOCAL subject — never the pairwise
+// pseudonym, which would fail open to empty (the store is keyed (TenantID,
+// UserID)). The same vector is carried on AuthResult so the server-managed
+// refresh token persists it for rotation re-stamping.
+func (s *Server) mintRoles(ctx HandlerContext, client *Client, result *AuthResult) []string {
+	roles, err := s.subjectRoles(ctx.Request().Context(),
+		"access-token role resolution failed — roles claim omitted (fail-open)",
+		client.TenantID, result.UserID)
+	if err != nil {
+		s.recordRoleResolutionFailure(ctx, client, result.UserID)
+	}
+	result.Roles = roles
+	return roles
 }
 
 // rejectNonJSONLogin is the /auth/login CSRF gate: the login SPA sends

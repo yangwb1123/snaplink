@@ -95,6 +95,8 @@ var (
 	ErrCIBAUserCodeRequired      = oauthspi.ErrCIBAUserCodeRequired
 	ErrCIBAUserCodeInvalid       = oauthspi.ErrCIBAUserCodeInvalid
 	BindParams                   = oauthwire.BindParams
+	BindParamsFormOnly           = oauthwire.BindParamsFormOnly
+	ErrFormOnly                  = oauthwire.ErrFormOnly
 	BearerToken                  = oauthwire.BearerToken
 	BasicClientCreds             = oauthwire.BasicClientCreds
 	IsSecureRedirectURI          = oauthwire.IsSecureRedirectURI

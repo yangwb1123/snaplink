@@ -295,7 +295,7 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 |------------------------------|------|-----------------------------------------------------------------------------------------|-----------------------------------------------------|
 | `access_denied`              | 400  | RFC 6749 §4.1.2.1 — the resource owner / AS refused the authorization request           | Surface to the user; do not auto-retry              |
 | `invalid_redirect_uri`       | 400  | `redirect_uri` parameter doesn't match any of the client's registered values            | Operator fixes the client config or RP             |
-| `invalid_scope`              | 400  | Requested scope set is not a subset of the client's `AllowedScopes`; OR (when `security.scope_limit.max_count` is configured) the `scope` parameter carries more space/array-separated tokens than the configured cap | Drop the disallowed scopes (or reduce the scope count), retry |
+| `invalid_scope`              | 400  | Requested scope set is not a subset of the client's `AllowedScopes`; OR (when `security.scope_limit.max_count` is configured) the `scope` parameter carries more space/array-separated tokens than the configured cap; OR (when `oauth.scope_registry.enabled` is set) an effective `/token` scope is not registered by the global scope registry — same plain body `{"error":"invalid_scope"}`, no new error surface, oracle-safe | Drop the disallowed scopes (or reduce the scope count), retry |
 | `unsupported_response_type`  | 400  | `response_type` not in the AS-supported set (or implicit blocked by OAuth 2.1 strict)   | Use a supported value (`code`)                      |
 | `invalid_pkce_method`        | 400  | `code_challenge_method` not in `S256` or `plain` (or blocked by strict mode)            | Use S256                                            |
 | `pkce_required`              | 400  | Client has `RequirePKCE` set (or OAuth 2.1 strict) and the request omitted PKCE         | Add `code_challenge` + `code_challenge_method`      |
@@ -328,6 +328,17 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 | `device_code_not_configured`  | 501  | `grant_type=urn:ietf:params:oauth:grant-type:device_code` hit but no `WithDeviceCodeStore` wired | Operator wires the store              |
 | `device_secret_not_configured`| 501  | `device_sso` scope requested on `/token` but no `WithDeviceSecretStore` wired (OpenID Native SSO 1.0) | Operator wires the store              |
 | `ciba_not_configured`         | 501  | `/backchannel-authentication` or `grant_type=urn:openid:params:grant-type:ciba` hit but no `WithCIBA` wired | Operator wires the store              |
+
+**Content-Type strictness (opt-in)** — with `server.require_form_content_type: true`
+(or `sso.WithCredentialFormOnly(true)`), `/token`, `/token/introspect`,
+`/token/revoke`, and `/par` reject a JSON body, a missing Content-Type, or
+any other media type with **415** and the SAME `invalid_request` code above
+(plain `{"error":"invalid_request"}` envelope, byte-identical on all four
+endpoints, `Cache-Control: no-store` + `Pragma: no-cache` on every response).
+The 415 fires before the body is read and before client authentication, so it
+never distinguishes credential state; malformed percent-encoding under a form
+Content-Type still returns `400 invalid_request` via the normal bind path. No
+new error code is introduced.
 
 ### AI-agent identity + delegation grant (`/token` `grant_type=urn:snaplink:params:oauth:grant-type:delegation`)
 
@@ -1036,13 +1047,20 @@ transaction `FOR SHARE` revalidation; callers cannot distinguish those causes.
 This optional process has a separate OpenAPI contract at
 `cmd/snaplink-stripe-adapter/openapi.yaml`. Checkout authentication first uses
 the shared resource-server middleware; its missing/invalid token response is
-`invalid_token` (401). A valid token without the exact
-`billing:checkout:create` scope, or whose `client_id` has no unique tenant
-binding, returns `insufficient_scope` (403). Checkout responses are always
-`no-store`/`no-cache`.
+`invalid_token` (401). A valid machine token without the exact
+`billing:checkout:create` scope, whose `client_id` has no unique tenant
+binding, or whose `tenant_id` claim is missing or contradicts the client's
+bound tenant returns `insufficient_scope` (403); the binding and
+claim-consistency causes stay indistinguishable. On the user flow, a missing
+exact `admin:write` scope keeps `insufficient_scope`, while a request
+`tenant_id` that is missing, unbound, or contradicts the token's `tenant_id`
+claim — or a user token carrying no `tenant_id` claim — returns
+`tenant_mismatch` (403) with no `scope` attribute. Checkout
+responses are always `no-store`/`no-cache`.
 
 | Code | HTTP | Emitted when | Client should |
 |------|------|--------------|---------------|
+| `tenant_mismatch` | 403 | A user-shaped token's `tenant_id` claim contradicts the request `tenant_id`, the request `tenant_id` is missing or names an unbound tenant, or the token carries no `tenant_id` claim | Retry with the correct tenant context; the response never discloses the token's or request's tenant |
 | `invalid_request` | 400 | Checkout JSON is malformed/overspecified, identity is invalid, or a return URL is outside the exact origin allowlist | Correct only `order_id`, `success_url`, and `cancel_url`; never add tenant/amount/provider fields |
 | `billing_unavailable` | 502 | The authoritative Billing order cannot be read or validated | Retry with backoff; inspect Billing/token dependency health |
 | `provider_unavailable` | 502 | Stripe checkout creation fails or returns an invalid response | Retry the exact request; the stable provider idempotency key prevents a second session |

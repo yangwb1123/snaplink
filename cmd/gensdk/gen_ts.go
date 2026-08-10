@@ -58,6 +58,21 @@ func tsEmitMethod(b *strings.Builder, op Operation) {
 		retType = tsType(op.ResultType)
 	}
 	fmt.Fprintf(b, "  async %s(%s): Promise<%s> {\n", op.ID, tsMethodSignature(op), retType)
+	// The guard exists because the form serializer cannot express a map;
+	// JSON-only operations keep their map fields working, so only form-wire
+	// operations get it (today exactly postMFAComplete.params).
+	if op.ContentType == formContentType {
+		for _, f := range op.FormBlockedFields {
+			// Presence-based guard (fires for params: {} too), mirroring the
+			// binder's PostForm.Has semantics: a map has no form encoding, so
+			// fail loud client-side instead of attempting a wire the server
+			// rejects (400 mfa_invalid on /auth/mfa once the strict binder
+			// lands; a silent drop today).
+			fmt.Fprintf(b, "    if (body.%s !== undefined && body.%s !== null) {\n", f, f)
+			fmt.Fprintf(b, "      throw new SSOError(0, \"invalid_request\", %s);\n", strconv.Quote(f+" has no application/x-www-form-urlencoded encoding; use code/assertion"))
+			fmt.Fprintf(b, "    }\n")
+		}
+	}
 	fmt.Fprintf(b, "    return this.request<%s>(%q, %s, {", retType, strings.ToUpper(op.Method), tsPathExpr(op.Path))
 	tsEmitRequestOpts(b, op)
 	b.WriteString(");\n  }\n\n")
@@ -78,6 +93,16 @@ func tsEmitRequestOpts(b *strings.Builder, op Operation) {
 	}
 	if tsUsesClientAuth(op.ID) {
 		parts = append(parts, "clientAuth: true")
+	}
+	if op.ContentType == formContentType {
+		parts = append(parts, "form: true")
+		if len(op.FormBlockedFields) > 0 {
+			quoted := make([]string, len(op.FormBlockedFields))
+			for i, f := range op.FormBlockedFields {
+				quoted[i] = strconv.Quote(f)
+			}
+			parts = append(parts, "formBlockedFields: ["+strings.Join(quoted, ", ")+"]")
+		}
 	}
 	if len(parts) == 0 {
 		b.WriteString("}")

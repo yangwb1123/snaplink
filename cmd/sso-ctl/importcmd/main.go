@@ -15,13 +15,19 @@
 //
 // Usage:
 //
-//	sso-ctl import --dsn file:/var/lib/sso/sso.db --format auth0 --file export.json
-//	sso-ctl import --dsn file:/var/lib/sso/sso.db --format csv  --file users.csv --dry-run
-//	cat export.json | sso-ctl import --dsn ./sso.db --format keycloak --file -
-//	sso-ctl import --backend postgres --dsn 'postgres://sso@db:5432/sso?sslmode=disable' --format keycloak --file realm.json
+//	sso-ctl import --tenant acme --dsn file:/var/lib/sso/sso.db --format auth0 --file export.json
+//	sso-ctl import --tenant acme --dsn file:/var/lib/sso/sso.db --format csv  --file users.csv --dry-run
+//	cat export.json | sso-ctl import --tenant acme --dsn ./sso.db --format keycloak --file -
+//	sso-ctl import --backend postgres --tenant acme --dsn 'postgres://sso@db:5432/sso?sslmode=disable' --format keycloak --file realm.json
 //
 // The tool writes one user per row into the "users" table via an upsert
-// (CREATE OR UPDATE semantics). Password hashes are stored in the
+// (CREATE OR UPDATE semantics), and — in the same per-row transaction — one
+// governance outbox event (type snaplink.audit.user.import, tenant-tied via
+// the required --tenant flag) into audit_outbox (sqlite) or
+// tenant_commerce_outbox (postgres). Existing relay workers drain those
+// rows with zero config change; a re-import of the same file is a no-op for
+// already-imported users (deterministic event IDs) while user rows still
+// upsert. Password hashes are stored in the
 // Attributes map under the key "password_hash" (the hash string) and
 // "password_hash_format" (the format tag). To let these users authenticate,
 // enable `authenticators.password.imported_hash_login: true` in the server
@@ -37,11 +43,13 @@ package importcmd
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"unicode"
 
 	_ "modernc.org/sqlite"
 )
@@ -75,6 +83,7 @@ type importFlags struct {
 	dialect   string
 	format    string
 	file      string
+	tenant    string
 	dryRun    bool
 	batchSize int
 }
@@ -109,7 +118,7 @@ func Run(args []string) int {
 	}
 	defer func() { _ = db.Close() }()
 
-	if err := runImport(context.Background(), db, users, cfg.batchSize); err != nil {
+	if err := runImport(context.Background(), db, cfg.tenant, users, cfg.batchSize); err != nil {
 		fatalf("import: %v", err)
 	}
 	return 0
@@ -125,6 +134,7 @@ func parseFlags(args []string) importFlags {
 	dialect := fs.String("dialect", "", "postgres dialect: postgres | cockroach (only with --backend postgres)")
 	format := fs.String("format", "", "input format: auth0 | keycloak | okta | csv (required)")
 	file := fs.String("file", "-", "path to the import file, or - for stdin")
+	tenant := fs.String("tenant", "", "tenant ID attributed to the governance events (required unless --dry-run; <=128 chars, no control characters)")
 	dryRun := fs.Bool("dry-run", false, "print what would be imported without writing")
 	batchSize := fs.Int("batch-size", 100, "rows per batch (ignored for dry-run)")
 	fs.Usage = usageFunc(fs)
@@ -142,15 +152,51 @@ func parseFlags(args []string) importFlags {
 		fs.Usage()
 		os.Exit(2)
 	}
+	if !*dryRun && *tenant == "" {
+		fmt.Fprintln(os.Stderr, progName+": --tenant is required (or pass --dry-run to skip writing)")
+		fs.Usage()
+		os.Exit(2)
+	}
+	if !*dryRun {
+		if err := validateTenantID(*tenant); err != nil {
+			fmt.Fprintln(os.Stderr, progName+": "+err.Error())
+			fs.Usage()
+			os.Exit(2)
+		}
+	}
 	return importFlags{
 		dsn:       *dsn,
 		backend:   *backend,
 		dialect:   *dialect,
 		format:    *format,
 		file:      *file,
+		tenant:    *tenant,
 		dryRun:    *dryRun,
 		batchSize: *batchSize,
 	}
+}
+
+// maxTenantLen bounds the --tenant value. The users table has no tenant
+// column; the value is only attributed to governance events, so the bound
+// is a sanity cap, not a schema constraint.
+const maxTenantLen = 128
+
+// validateTenantID rejects empty, over-long, or control-character tenant
+// IDs (a control character in the value would corrupt event payloads and
+// log lines downstream).
+func validateTenantID(tenant string) error {
+	if tenant == "" {
+		return errors.New("--tenant must not be empty")
+	}
+	if len(tenant) > maxTenantLen {
+		return fmt.Errorf("--tenant exceeds %d characters", maxTenantLen)
+	}
+	for _, r := range tenant {
+		if unicode.IsControl(r) {
+			return errors.New("--tenant contains control characters")
+		}
+	}
+	return nil
 }
 
 // usageFunc returns the flag-set usage printer for the CLI.
@@ -159,7 +205,7 @@ func usageFunc(fs *flag.FlagSet) func() {
 		fmt.Fprintf(os.Stderr, `%s — bulk user import from Auth0 / Keycloak / Okta / CSV into the SSO user store.
 
 Usage:
-  %s --dsn <dsn> --format <fmt> [--backend sqlite|postgres] [--file <path>] [--dry-run]
+  %s --dsn <dsn> --tenant <tenant> --format <fmt> [--backend sqlite|postgres] [--file <path>] [--dry-run]
 
 Flags:
 `, progName, progName)
@@ -172,9 +218,9 @@ Formats:
   csv       Header row: username,email,name,password_hash,hash_format
 
 Examples:
-  %s --dsn file:/var/lib/sso/sso.db --format auth0 --file users.json
-  cat realm.json | %s --dsn ./sso.db --format keycloak --file -
-  %s --backend postgres --dsn 'postgres://sso@db:5432/sso?sslmode=disable' --format keycloak --file realm.json
+  %s --tenant acme --dsn file:/var/lib/sso/sso.db --format auth0 --file users.json
+  cat realm.json | %s --tenant acme --dsn ./sso.db --format keycloak --file -
+  %s --backend postgres --tenant acme --dsn 'postgres://sso@db:5432/sso?sslmode=disable' --format keycloak --file realm.json
 `, progName, progName, progName)
 	}
 }

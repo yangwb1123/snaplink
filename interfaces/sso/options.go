@@ -104,6 +104,15 @@ func WithMaxTokenBytes(n int) Option {
 	return func(s *Server) { s.maxTokenBytes = n }
 }
 
+// WithCredentialFormOnly opts the server into the strict credential wire
+// (B4-4): the four credential endpoints accept ONLY form-urlencoded and
+// answer 415 {"error":"invalid_request"} for JSON, missing, or any other
+// Content-Type — before the body is read. Default false (or never
+// calling this option) is byte-identical to a build without it.
+func WithCredentialFormOnly(v bool) Option {
+	return func(s *Server) { s.credentialFormOnly = v }
+}
+
 // WithAuthorizationDetailsLimits bounds an RFC 9396 authorization_details
 // payload's SHAPE (see oauth.RARLimits) before /auth/login and /par
 // unmarshal it into typed values: maxBytes caps the raw serialized size,
