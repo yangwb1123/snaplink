@@ -76,6 +76,26 @@ func WithAddr(addr string) Option {
 	return func(c *Client) { c.baseURL = addr }
 }
 
+// WithNoRedirect disables redirect following: CheckRedirect returns
+// http.ErrUseLastResponse so the 3xx response is observed, never followed.
+// Sweep probes use it so credentials can never be forwarded to a redirect
+// target (307/308 bodies, same-host/subdomain Authorization). Opt-in:
+// existing callers keep the default follow behavior.
+func WithNoRedirect() Option {
+	return func(c *Client) {
+		c.http.CheckRedirect = RejectRedirect
+	}
+}
+
+// RejectRedirect is the shared CheckRedirect policy behind WithNoRedirect,
+// the check sweep's bare/probe clients, and audit-verify's raw --from-url
+// client: unconditionally stop at the first 3xx response (no same-host or
+// scheme carve-out), so a credential-bearing request is observed, never
+// forwarded.
+func RejectRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
 // Do sends an authenticated HTTP request and returns the response.
 // The caller must close resp.Body.
 func (c *Client) Do(method, path string, body any) (*http.Response, error) {
