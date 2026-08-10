@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# post-commit — after every successful commit, sync the branch upstream:
+#   git pull  (merge semantics, --no-edit, non-interactive)
+#   git push  (after a successful pull)
+#
+# Design notes:
+# - Never prompts: GIT_TERMINAL_PROMPT=0 and --no-edit keep the hook safe in
+#   non-interactive (agent/CI) shells. A missing credential fails the push
+#   loudly instead of hanging the commit.
+# - Recursion guard: git pull may create a merge commit, which would re-fire
+#   this hook. POST_COMMIT_SYNC_IN_PROGRESS is exported into the git child
+#   process, so the nested invocation exits immediately; the outer invocation
+#   continues to push (which is what carries the merge commit upstream).
+# - A failed pull (e.g. conflicts) aborts the push: the branch is not
+#   up-to-date locally, so pushing would be wrong. Output tells the user to
+#   resolve and push manually. post-commit failure does not undo the commit.
+# - Detached HEAD or a branch without an upstream: nothing to sync, exit 0.
+
+set -u
+
+if [ "${POST_COMMIT_SYNC_IN_PROGRESS:-}" = "1" ]; then
+    exit 0
+fi
+
+export GIT_TERMINAL_PROMPT=0
+export GIT_MERGE_AUTOEDIT=no
+export POST_COMMIT_SYNC_IN_PROGRESS=1
+
+branch=$(git symbolic-ref --short -q HEAD 2>/dev/null) || exit 0
+[ -n "$branch" ] || exit 0
+
+upstream=$(git rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" 2>/dev/null) || exit 0
+[ -n "$upstream" ] || exit 0
+
+echo "[post-commit] syncing $branch -> $upstream"
+
+if ! out=$(git pull --no-edit 2>&1); then
+    echo "$out" | sed 's/^/[post-commit] pull: /' >&2
+    echo "[post-commit] pull failed ($branch vs $upstream); resolve conflicts, then run 'git push'" >&2
+    exit 1
+fi
+echo "$out" | sed 's/^/[post-commit] pull: /'
+
+if ! out=$(git push 2>&1); then
+    echo "$out" | sed 's/^/[post-commit] push: /' >&2
+    echo "[post-commit] push failed; run 'git push' manually" >&2
+    exit 1
+fi
+echo "$out" | sed 's/^/[post-commit] push: /'
+
+echo "[post-commit] synced $branch -> $upstream"
