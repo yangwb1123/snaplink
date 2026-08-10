@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/yangwb1123/snaplink/config"
 	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/rotation"
 )
 
 // TestAppendReadyCheck_MemoryNoOps proves the type-assertion gate
@@ -108,6 +110,71 @@ func TestBuildApp_ReadyCheck_SQLiteFlipsTo503(t *testing.T) {
 	checks2 := decodeReadyz(t, rec2)
 	if v, present := checks2["sqlite-identity-clients"]; !present || v == "ok" {
 		t.Fatalf("post-close clients check = %q present=%v; want non-ok value", v, present)
+	}
+}
+
+// recordLogger captures Error messages; used to prove fail-open paths log
+// the outage instead of crashing.
+type recordLogger struct {
+	mu     sync.Mutex
+	errors []string
+}
+
+func (r *recordLogger) Error(msg string, _ ...any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.errors = append(r.errors, msg)
+}
+func (r *recordLogger) Info(string, ...any)  {}
+func (r *recordLogger) Debug(string, ...any) {}
+
+// TestClientSecretScan_ClosedStoreFailsOpen is the regression test for the
+// flaky nil-pointer panic when the expiry scanner's first sweep raced a
+// client-store Close: startGovernanceWorkers launches the sweep immediately,
+// and a closed *sqlite.ClientStore holds a nil *sql.DB. A closed store is a
+// store outage, so the sweep must log "client secret expiry scan failed" and
+// abort — never panic in the background goroutine (which would crash the
+// whole process). Closing the store BEFORE starting the scanner makes the
+// race deterministic: the first sweep always sees the nil DB.
+func TestClientSecretScan_ClosedStoreFailsOpen(t *testing.T) {
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "identity.db") + "?_journal=WAL"
+	cfg := &config.Config{}
+	cfg.Identity = config.IdentityConfig{
+		Backend: "sqlite",
+		SQLite:  config.IdentitySQLiteConfig{DSN: dsn},
+	}
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer func() { _ = a.registry.Close() }()
+
+	closer, ok := a.clientStore.(interface{ Close() error })
+	if !ok {
+		t.Fatal("sqlite client store does not implement Close — test setup bug")
+	}
+	if err := closer.Close(); err != nil {
+		t.Fatalf("close client store: %v", err)
+	}
+
+	// Sweep the closed (nil-DB) store through the real wiring path. The
+	// done channel only closes after the first sweep ran, so the log
+	// assertion below is deterministic.
+	log := &recordLogger{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := rotation.StartClientSecretScan(ctx, a.clientStore, nil, nil, log)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("scanner loop did not exit after cancel")
+	}
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	if len(log.errors) != 1 || log.errors[0] != "client secret expiry scan failed" {
+		t.Fatalf("scanner did not fail open on closed store; errors=%v", log.errors)
 	}
 }
 
