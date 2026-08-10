@@ -460,32 +460,32 @@ func scanRefreshToken(s scanner) (*oauthspi.RefreshToken, error) {
 // decodeRefreshJSONCols unmarshals the JSON-encoded columns onto out. The
 // empty / empty-collection sentinels stay the zero value.
 func decodeRefreshJSONCols(out *oauthspi.RefreshToken, scopesJSON, attrsJSON, resources, amrJSON, rolesJSON string) error {
-	if scopesJSON != "" && scopesJSON != "[]" {
-		if err := json.Unmarshal([]byte(scopesJSON), &out.Scopes); err != nil {
-			return fmt.Errorf("postgres: unmarshal scopes: %w", err)
-		}
+	cols := []refreshJSONCol{
+		{scopesJSON, "[]", &out.Scopes, "scopes"},
+		{attrsJSON, "{}", &out.Attributes, "attributes"},
+		{resources, "[]", &out.Resources, "resources"},
+		{amrJSON, "[]", &out.Amr, "amr"},
+		{rolesJSON, "[]", &out.Roles, "roles"},
 	}
-	if attrsJSON != "" && attrsJSON != "{}" {
-		if err := json.Unmarshal([]byte(attrsJSON), &out.Attributes); err != nil {
-			return fmt.Errorf("postgres: unmarshal attributes: %w", err)
+	for _, c := range cols {
+		if c.raw == "" || c.raw == c.empty {
+			continue
 		}
-	}
-	if resources != "" && resources != "[]" {
-		if err := json.Unmarshal([]byte(resources), &out.Resources); err != nil {
-			return fmt.Errorf("postgres: unmarshal resources: %w", err)
-		}
-	}
-	if amrJSON != "" && amrJSON != "[]" {
-		if err := json.Unmarshal([]byte(amrJSON), &out.Amr); err != nil {
-			return fmt.Errorf("postgres: unmarshal amr: %w", err)
-		}
-	}
-	if rolesJSON != "" && rolesJSON != "[]" {
-		if err := json.Unmarshal([]byte(rolesJSON), &out.Roles); err != nil {
-			return fmt.Errorf("postgres: unmarshal roles: %w", err)
+		if err := json.Unmarshal([]byte(c.raw), c.dst); err != nil {
+			return fmt.Errorf("postgres: unmarshal %s: %w", c.name, err)
 		}
 	}
 	return nil
+}
+
+// refreshJSONCol is one JSON-encoded refresh_tokens column: the raw text,
+// the empty-collection sentinel that means "no value", the destination, and
+// the column name for error messages. Table-driven so decodeRefreshJSONCols
+// stays within the complexity budget as columns are added.
+type refreshJSONCol struct {
+	raw, empty string
+	dst        any
+	name       string
 }
 
 var (
