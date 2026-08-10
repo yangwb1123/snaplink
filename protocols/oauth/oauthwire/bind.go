@@ -3,7 +3,9 @@ package oauthwire
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"reflect"
 	"strconv"
@@ -27,24 +29,45 @@ import (
 // compatibility with the original SDK behavior.
 func BindParams(ctx core.HandlerContext, v any) error {
 	r := ctx.Request()
+	switch normalizedMediaType(r) {
+	case "application/x-www-form-urlencoded":
+		return bindForm(r, v)
+	default:
+		// Default to JSON for "application/json", missing CT, or
+		// anything unexpected. The original Bind contract.
+		//
+		// REGRESSION BOUNDARY (B4-4): this JSON/missing-CT default is
+		// load-bearing — non-credential consumers (commerce, admin,
+		// selfservice) and the default-off baseline depend on it. Never
+		// "clean it up" into a global form-only flip; the strict
+		// enforcement lives in BindParamsFormOnly (bind_strict.go) and
+		// is opt-in per deployment.
+		return decodeSingleJSON(r.Body, v)
+	}
+}
+
+// normalizedMediaType returns the request's Content-Type with
+// parameters (charset, boundary, …) stripped and lowercased, e.g.
+// "application/json; charset=utf-8" → "application/json". An empty
+// or whitespace-only header normalizes to "".
+func normalizedMediaType(r *http.Request) string {
 	ct := r.Header.Get(core.HeaderContentType)
 	// Strip parameters (charset, boundary, …) — "application/json; charset=utf-8".
 	if i := strings.IndexByte(ct, ';'); i >= 0 {
 		ct = strings.TrimSpace(ct[:i])
 	}
-	ct = strings.ToLower(strings.TrimSpace(ct))
+	return strings.ToLower(strings.TrimSpace(ct))
+}
 
-	switch ct {
-	case "application/x-www-form-urlencoded":
-		if err := r.ParseForm(); err != nil {
-			return err
-		}
-		return formIntoStruct(r.PostForm, v)
-	default:
-		// Default to JSON for "application/json", missing CT, or
-		// anything unexpected. The original Bind contract.
-		return decodeSingleJSON(r.Body, v)
+// bindForm parses the request body as application/x-www-form-urlencoded
+// into v via formIntoStruct (multi-value + space-separated handling
+// included). Shared byte-identically by BindParams and
+// BindParamsFormOnly.
+func bindForm(r *http.Request, v any) error {
+	if err := r.ParseForm(); err != nil {
+		return err
 	}
+	return formIntoStruct(r.PostForm, v)
 }
 
 func decodeSingleJSON(body io.Reader, target any) error {
@@ -62,10 +85,16 @@ func decodeSingleJSON(body io.Reader, target any) error {
 	return nil
 }
 
+// rawMessageType is the reflect type of json.RawMessage, matched by
+// exact type identity so plain []byte fields (none in the request
+// structs today) are never misinterpreted as JSON text.
+var rawMessageType = reflect.TypeOf(json.RawMessage{})
+
 // formIntoStruct decodes url.Values into the target struct using the
 // destination's `json:"field_name"` tags as keys. Supports the
 // subset of types OAuth request bodies use: string, bool, integer pointers,
-// and []string.
+// []string, and json.RawMessage (RFC 9396 §3 / OIDC Core §5.5 complex
+// JSON parameters).
 func formIntoStruct(form url.Values, v any) error {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
@@ -86,7 +115,7 @@ func formIntoStruct(form url.Values, v any) error {
 		if !f.CanSet() {
 			continue
 		}
-		if err := setFormField(f, raw); err != nil {
+		if err := setFormField(tag, f, raw); err != nil {
 			return err
 		}
 	}
@@ -109,7 +138,9 @@ func formFieldKey(field reflect.StructField) string {
 }
 
 // setFormField writes raw form values into a supported struct field.
-func setFormField(f reflect.Value, raw []string) error {
+// key is the form key (from the json tag) and appears only in error
+// messages.
+func setFormField(key string, f reflect.Value, raw []string) error {
 	switch f.Kind() {
 	case reflect.String:
 		f.SetString(raw[0])
@@ -126,6 +157,20 @@ func setFormField(f reflect.Value, raw []string) error {
 			f.Set(value)
 		}
 	case reflect.Slice:
+		if f.Type() == rawMessageType {
+			// RFC 9396 §3 / OIDC Core §5.5: complex JSON parameters
+			// (claims, authorization_details) travel as a JSON-encoded
+			// string in form-encoded requests. The JSON body path
+			// captures the raw JSON value verbatim and rejects invalid
+			// JSON at decode time; parity requires the form value to be
+			// valid JSON text too — invalid text is a bind error, never
+			// a silent drop (the pre-F1 behavior lost the value).
+			if !json.Valid([]byte(raw[0])) {
+				return fmt.Errorf("oauth: form field %q must be a JSON value", key)
+			}
+			f.SetBytes([]byte(raw[0]))
+			return nil
+		}
 		if f.Type().Elem().Kind() == reflect.String {
 			f.Set(reflect.ValueOf(formStringSlice(raw)))
 		}
