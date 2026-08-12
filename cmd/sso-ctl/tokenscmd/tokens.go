@@ -71,7 +71,7 @@ func runRevoke(args []string) int {
 	}
 	tokenJTI := args[0]
 
-	client := apiclient.New()
+	client := apiclient.New(apiclient.WithNoRedirect())
 	resp, err := client.Post("/api/v1/admin/tokens/revoke", map[string]string{
 		"token": tokenJTI,
 	})
@@ -85,7 +85,7 @@ func runRevoke(args []string) int {
 		return 1
 	}
 	if resp.StatusCode != 200 {
-		fmt.Fprintf(os.Stderr, "%s: revoke failed (HTTP %d): %s\n", progName, resp.StatusCode, string(body))
+		fmt.Fprintln(os.Stderr, apiclient.StatusMessage(progName, "revoke", apiclient.RedirectHintAdmin, resp, body))
 		return 1
 	}
 	fmt.Printf("token %q revoked\n", tokenJTI)
@@ -130,7 +130,7 @@ func runIssueTemp(args []string) int {
 		return code
 	}
 
-	client := apiclient.New()
+	client := apiclient.New(apiclient.WithNoRedirect())
 	resp, err := client.Post("/api/v1/admin/tokens/temp", map[string]any{
 		"user_id": *userID,
 	})
@@ -144,7 +144,7 @@ func runIssueTemp(args []string) int {
 		return 1
 	}
 	if resp.StatusCode != 200 {
-		fmt.Fprintf(os.Stderr, "%s: issue-temp failed (HTTP %d): %s\n", progName, resp.StatusCode, string(body))
+		fmt.Fprintln(os.Stderr, apiclient.StatusMessage(progName, "issue-temp", apiclient.RedirectHintAdmin, resp, body))
 		return 1
 	}
 	var result map[string]any

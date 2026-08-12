@@ -13,6 +13,12 @@ server:
   session_ttl: 24h
   token_ttl: 1h
   default_token_strategy: jwt
+  # B4-4 credential wire hardening (opt-in): the four credential endpoints
+  # accept ONLY application/x-www-form-urlencoded; JSON/missing CT -> 415.
+  # Every in-tree compose consumer mints form-encoded, so the stack stays
+  # green. Other deploy trees (helm/baremetal/k8s) stay default-off — the
+  # deploy sweep test pins this as the single flip point.
+  require_form_content_type: true
 
 logging:
   level: info
@@ -52,6 +58,19 @@ clients:
     allowed_resources: [snaplink-sso-quota]
     token_strategy: jwt
     active: true
+
+# Global scope registry (scope-matrix-v2, B4-2): the dev stack provisions an
+# explicit matrix (the built-in table minus billing:checkout:create, which is
+# registered via extra_scopes below) plus the two compose-only dev scopes, so
+# every client.allowed_scopes entry above is registered and the stack stays
+# 400 invalid_scope-free under the enabled registry. sso-ctl config validate
+# fails pre-deploy on any future client scope outside matrix + extra_scopes.
+oauth:
+  scope_registry:
+    enabled: true
+    matrix: [admin:read, admin:write, billing:payment:order:read, billing:payment:write,
+             metering:write, billing:entitlement:read, audit:event:write, admin:*]
+    extra_scopes: [billing:checkout:create, tenant-quota:projection:write]
 
 tenant:
   enabled: true

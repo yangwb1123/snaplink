@@ -86,7 +86,7 @@ func TestParseOkta_BcryptRoundTrip(t *testing.T) {
 
 	ctx := context.Background()
 	p := newTestProvider(t)
-	if err := runImport(ctx, p, users, 100); err != nil {
+	if err := runImport(ctx, p, "tenant-acme", users, 100); err != nil {
 		t.Fatalf("runImport: %v", err)
 	}
 	// MinCost dummy keeps the miss-path precompute fast in tests.

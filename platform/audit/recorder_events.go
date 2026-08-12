@@ -16,7 +16,12 @@ import (
 )
 
 // RecordTokenIssued emits a token_issued event (any /token grant).
-func RecordTokenIssued(rec *Recorder, ctx core.HandlerContext, clientID, strategy, subjectID string) {
+// Variadic meta maps are applied via SetMeta (each non-empty key/value
+// pair lands in Metadata, never clobbering enrichment keys), so the
+// auth.token.issue projection can carry bounded authorization context
+// (e.g. the subject's tenant roles) without touching the hash-chain
+// wire contract of the Event struct itself.
+func RecordTokenIssued(rec *Recorder, ctx core.HandlerContext, clientID, strategy, subjectID string, meta ...map[string]string) {
 	if rec == nil {
 		return
 	}
@@ -26,6 +31,11 @@ func RecordTokenIssued(rec *Recorder, ctx core.HandlerContext, clientID, strateg
 	e.ClientID = clientID
 	e.TokenStrategy = strategy
 	e.ActorID = subjectID
+	for _, m := range meta {
+		for key, value := range m {
+			SetMeta(e, key, value)
+		}
+	}
 	rec.Record(ctx.Request().Context(), e)
 }
 

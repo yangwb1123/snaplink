@@ -43,6 +43,10 @@ interface requestOptions {
   body?: unknown;
   auth?: boolean;
   clientAuth?: boolean;
+  /** Send the body as application/x-www-form-urlencoded instead of JSON. */
+  form?: boolean;
+  /** Body keys with no form encoding; never emitted (defense in depth behind the generated guard). */
+  formBlockedFields?: string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -58,6 +62,34 @@ function encodeBasicCredentials(clientId: string, clientSecret: string): string 
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
+}
+
+/**
+ * Serialize a request body as application/x-www-form-urlencoded, mirroring
+ * the Go binder in protocols/oauth/oauthwire (bind.go):
+ * - undefined/null keys are dropped (JSON.stringify does the same today);
+ * - blockedFields keys are never emitted (no RFC defines a map form encoding);
+ * - booleans/numbers/strings use String(v) -- String(true) == "true", the
+ *   binder's only accepted truthy spelling;
+ * - string arrays become REPEATED keys (the documented resource/audience/
+ *   tokens contract; formStringSlice returns multi-value lists verbatim);
+ * - any other array (authorization_details) or plain object (claims) becomes
+ *   a single key with JSON.stringify(value) -- RFC 9396 §3 / OIDC Core §5.5.
+ */
+function formSerialize(body: Record<string, unknown>, blockedFields: string[]): string {
+  const params = new URLSearchParams();
+  const blocked = new Set(blockedFields);
+  for (const [k, v] of Object.entries(body)) {
+    if (blocked.has(k) || v === undefined || v === null) continue;
+    if (typeof v === "string" || typeof v === "boolean" || typeof v === "number") {
+      params.set(k, String(v));
+    } else if (Array.isArray(v) && v.every((item) => typeof item === "string")) {
+      for (const item of v) params.append(k, item);
+    } else {
+      params.set(k, JSON.stringify(v));
+    }
+  }
+  return params.toString();
 }
 
 // ---- Types (generated from components.schemas) ----
@@ -1846,8 +1878,13 @@ export class SSOClient {
     const init: RequestInit = { method, headers };
     if (this.requestTimeoutMs !== undefined) init.signal = AbortSignal.timeout(this.requestTimeoutMs);
     if (authenticatedBody !== undefined) {
-      headers["Content-Type"] = "application/json";
-      init.body = JSON.stringify(authenticatedBody);
+      if (opts.form) {
+        headers["Content-Type"] = "application/x-www-form-urlencoded";
+        init.body = formSerialize(authenticatedBody as Record<string, unknown>, opts.formBlockedFields ?? []);
+      } else {
+        headers["Content-Type"] = "application/json";
+        init.body = JSON.stringify(authenticatedBody);
+      }
     }
     if (opts.auth && this.getAccessToken) {
       const token = await this.getAccessToken();
@@ -2821,7 +2858,10 @@ export class SSOClient {
 
   /** Complete an MFA step-up challenge. */
   async postMFAComplete(body: MFACompleteRequest): Promise<LoginResponse | AuthorizationCodeResponse> {
-    return this.request<LoginResponse | AuthorizationCodeResponse>("POST", `/auth/mfa`, { body });
+    if (body.params !== undefined && body.params !== null) {
+      throw new SSOError(0, "invalid_request", "params has no application/x-www-form-urlencoded encoding; use code/assertion");
+    }
+    return this.request<LoginResponse | AuthorizationCodeResponse>("POST", `/auth/mfa`, { body, form: true, formBlockedFields: ["params"] });
   }
 
   /** Self-service signup (opt-in, default-off). */
@@ -2846,7 +2886,7 @@ export class SSOClient {
 
   /** Device-flow initiation (RFC 8628 §3.1). */
   async postDeviceCode(body: DeviceCodeRequest): Promise<DeviceCodeResponse> {
-    return this.request<DeviceCodeResponse>("POST", `/device/code`, { body });
+    return this.request<DeviceCodeResponse>("POST", `/device/code`, { body, form: true });
   }
 
   /** Render the device authorization verification page. */
@@ -2856,7 +2896,7 @@ export class SSOClient {
 
   /** User-side device-code approval (RFC 8628 §3.3). */
   async postDeviceVerify(body: DeviceVerifyRequest): Promise<Record<string, unknown>> {
-    return this.request<Record<string, unknown>>("POST", `/device/verify`, { body, auth: true });
+    return this.request<Record<string, unknown>>("POST", `/device/verify`, { body, auth: true, form: true });
   }
 
   /** OpenID Connect RP-Initiated Logout 1.0. */
@@ -2876,7 +2916,7 @@ export class SSOClient {
 
   /** Pushed Authorization Request (RFC 9126). */
   async postPAR(body: PARRequest): Promise<PARResponse> {
-    return this.request<PARResponse>("POST", `/par`, { body, clientAuth: true });
+    return this.request<PARResponse>("POST", `/par`, { body, clientAuth: true, form: true });
   }
 
   /** Dynamic Client Registration (RFC 7591). */
@@ -2901,17 +2941,17 @@ export class SSOClient {
 
   /** OAuth 2.0 token endpoint (RFC 6749 §3.2). */
   async postToken(body: TokenRequest): Promise<TokenIssuance> {
-    return this.request<TokenIssuance>("POST", `/token`, { body, clientAuth: true });
+    return this.request<TokenIssuance>("POST", `/token`, { body, clientAuth: true, form: true });
   }
 
   /** OAuth 2.0 token introspection (RFC 7662). */
   async postIntrospect(body: IntrospectRequest): Promise<IntrospectResponse | IntrospectBatchResponse> {
-    return this.request<IntrospectResponse | IntrospectBatchResponse>("POST", `/token/introspect`, { body, clientAuth: true });
+    return this.request<IntrospectResponse | IntrospectBatchResponse>("POST", `/token/introspect`, { body, clientAuth: true, form: true });
   }
 
   /** OAuth 2.0 token revocation (RFC 7009). */
   async postRevoke(body: RevokeRequest): Promise<void> {
-    return this.request<void>("POST", `/token/revoke`, { body, clientAuth: true });
+    return this.request<void>("POST", `/token/revoke`, { body, clientAuth: true, form: true });
   }
 
   /** Bulk revoke every refresh token bound to the bearer's subject. */

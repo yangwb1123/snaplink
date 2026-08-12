@@ -360,6 +360,23 @@ func TestSQLiteClients_ListOrderedById(t *testing.T) {
 	}
 }
 
+// TestSQLiteClients_ListClosedStoreReturnsError pins the nil-DB guard on
+// List: Close() nils the *sql.DB, and a background sweep (the client-secret
+// expiry scanner) may call List after that. A closed store is a store
+// outage: List must return an error, never panic with a nil dereference
+// (the regression this test guards against — see
+// platform/lifecycle/rotation/client_secret_scan.go).
+func TestSQLiteClients_ListClosedStoreReturnsError(t *testing.T) {
+	t.Parallel()
+	st := newClientStore(t)
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := st.List(context.Background()); err == nil {
+		t.Fatal("List on closed store: want error, got nil")
+	}
+}
+
 func TestSQLiteClients_ListByTenant(t *testing.T) {
 	t.Parallel()
 	st := newClientStore(t)

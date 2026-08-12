@@ -31,15 +31,23 @@ import (
 const progName = "sso-ctl tui"
 
 // Run is the tui subcommand entry point. args is unused — the TUI takes no
-// flags, apiclient.New() already reads SSO_ADMIN_ADDR / SSO_ADMIN_TOKEN from
+// flags, newClient() already reads SSO_ADMIN_ADDR / SSO_ADMIN_TOKEN from
 // the environment. The signature matches every other sso-ctl subcommand so
 // main.go can dispatch to it uniformly. Returns the process exit code.
 func Run(args []string) int {
-	client := apiclient.New()
+	client := newClient()
 	p := tea.NewProgram(newAppModel(client), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", progName, err)
 		return 1
 	}
 	return 0
+}
+
+// newClient builds the admin API client every TUI verb shares. Extracted so
+// the no-redirect pin is testable at the construction boundary: the
+// bubbletea program itself needs a TTY, so a regression in Run's client
+// construction is caught by building through the same path.
+func newClient() *apiclient.Client {
+	return apiclient.New(apiclient.WithNoRedirect())
 }

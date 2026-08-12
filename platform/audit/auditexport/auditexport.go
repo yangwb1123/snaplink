@@ -104,9 +104,14 @@ type ExportBundle struct {
 	BoundaryPrevHash string `json:"boundary_prev_hash"`
 	// HeadHash is the Hash of the last exported event, an external anchor
 	// for the head (whose tampering the chain alone cannot detect).
-	HeadHash   string         `json:"head_hash,omitempty"`
-	EventCount int            `json:"event_count"`
-	Events     []*audit.Event `json:"events"`
+	HeadHash string `json:"head_hash,omitempty"`
+	// Anchor is the signed notary checkpoint (chainer.go SignedCheckpoint)
+	// attesting this bundle's HeadHash, embedded so the evidence file is
+	// self-contained. nil for legacy/unanchored bundles; verification of
+	// the attestation is the CLI's job, not VerifyExportBundle's.
+	Anchor     *audit.SignedCheckpoint `json:"anchor,omitempty"`
+	EventCount int                     `json:"event_count"`
+	Events     []*audit.Event          `json:"events"`
 }
 
 // BuildExportBundle pages pager for every event matching q — honoring

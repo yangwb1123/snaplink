@@ -10,6 +10,7 @@ import (
 	"github.com/yangwb1123/snaplink/domains/userlifecycle"
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
@@ -44,6 +45,9 @@ type RefreshGrantDeps interface {
 	// EnforceRefreshConditionalAccess re-evaluates live CAP policies against
 	// the current request and may narrow scopes or require interactive login.
 	EnforceRefreshConditionalAccess(ctx core.HandlerContext, client *core.Client, info *oauth.RefreshToken, scopes []string) ([]string, bool)
+	// ScopeRegistry returns the wired global scope registry (nil = unwired
+	// no-op, the default-off byte-compat baseline).
+	ScopeRegistry() scoperegistry.Registry
 	// RefreshAbsoluteMaxLifetime returns the configured hard ceiling on a
 	// refresh-token family's total age since original issuance (0 = disabled,
 	// the default-off contract — see refreshEnforceAbsoluteMaxLifetime).
@@ -152,6 +156,15 @@ func HandleRefreshGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *cor
 func refreshResolveGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *core.Client, info *oauth.RefreshToken, scope string) ([]string, bool) {
 	grantScopes, ok := refreshResolveScopes(ctx, info, scope)
 	if !ok {
+		return nil, true
+	}
+	// Global scope registry (opt-in): one post-resolution check subsumes both
+	// the omitted path (family info.Scopes) and the requested subset path
+	// (subset property: requested ⊆ family). A pre-enablement family carrying
+	// an unregistered scope fails closed here with the same plain invalid_scope
+	// body the subset rejection emits — no silent narrowing, and the rotated
+	// family re-carries the checked set (registered stays registered).
+	if scoperegistry.RejectUnregistered(ctx, d.ScopeRegistry(), grantScopes) {
 		return nil, true
 	}
 	return d.EnforceRefreshConditionalAccess(ctx, client, info, grantScopes)
@@ -263,6 +276,7 @@ func refreshRotateFamily(d RefreshGrantDeps, ctx core.HandlerContext, client *co
 			AMR: info.Amr, ACR: info.Acr, AuthTime: info.AuthTime, Generation: info.Generation + 1,
 			FamilyCreatedAt: info.FamilyCreatedAt,
 			JTI:             info.JTI,
+			Roles:           info.Roles,
 		},
 		client.RefreshTokenTTL, info.ConfirmationJKT) // RFC 9449: key binding propagates unchanged
 }
@@ -287,6 +301,13 @@ func refreshRotatedSubject(client *core.Client, info *oauth.RefreshToken, issued
 		AMR:      handler.AmrOrProvider(info.Amr, info.Provider),
 		ACR:      info.Acr,
 		AuthTime: info.AuthTime,
+		// Roles is the ORIGINAL direct-mint login's tenant-membership vector,
+		// persisted on the refresh record and propagated unchanged — the same
+		// lineage discipline as AMR/ACR/AuthTime: a rotation must never
+		// silently drop an authorization input the first token carried. Empty
+		// (every token-endpoint grant family) = no roles claim, byte-identical
+		// to pre-feature rotations.
+		Roles: info.Roles,
 		// RFC 9396: the authorization_details grant captured at the original
 		// authorization survives the rotation — refreshed tokens MUST carry the
 		// same fine-grained authorization the user already consented to.

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	commercehttp "github.com/yangwb1123/snaplink/interfaces/commerce"
+	"github.com/yangwb1123/snaplink/interfaces/scopecontract"
 	"github.com/yangwb1123/snaplink/interfaces/ssoclient/rs"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
@@ -78,6 +79,42 @@ func TestContractRouterDetectsIncompleteRegistration(t *testing.T) {
 
 func statusHandler(status int) core.HandlerFunc {
 	return func(ctx core.HandlerContext) { ctx.ResponseWriter().WriteHeader(status) }
+}
+
+// TestContractRouter_MatrixProvisionedNo403 (B4-2 acceptance row 5): a token
+// minted under the scope-matrix-v2 registry carries scopes from
+// interfaces/scopecontract (the registry's matrix); every matrix scope that
+// maps to a commerce route must pass the billing admin gate — no 403 — and
+// the audit relay scope must never collide with the admin read/write gates.
+func TestContractRouter_MatrixProvisionedNo403(t *testing.T) {
+	router := core.NewStdRouter()
+	protected, err := newAdminContractRouter(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected.GET(commercehttp.PathPlans, statusHandler(http.StatusOK))
+	protected.POST(commercehttp.PathPlans, statusHandler(http.StatusCreated))
+	if err := protected.Err(); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name, method, scope string
+		want                int
+	}{
+		{"matrix admin:read reads", http.MethodGet, scopecontract.ScopeAdminRead, http.StatusOK},
+		{"matrix admin:write writes", http.MethodPost, scopecontract.ScopeAdminWrite, http.StatusCreated},
+		{"matrix admin:* reads", http.MethodGet, scopecontract.ScopeAdminWildcard, http.StatusOK},
+		{"matrix admin:* writes", http.MethodPost, scopecontract.ScopeAdminWildcard, http.StatusCreated},
+		{"audit relay scope is not admin", http.MethodGet, scopecontract.ScopeAuditEventWrite, http.StatusForbidden},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := serveWithClaims(router, test.method, commercehttp.PathPlans, test.scope)
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d (body=%s)", response.Code, test.want, response.Body.String())
+			}
+		})
+	}
 }
 
 func serveWithClaims(router http.Handler, method, path, scope string) *httptest.ResponseRecorder {

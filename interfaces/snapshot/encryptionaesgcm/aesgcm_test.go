@@ -3,6 +3,8 @@ package aesgcm_test
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -165,4 +167,114 @@ func TestSealer_PluggableInPipeline(t *testing.T) {
 	if !strings.Contains(err.Error(), "version") {
 		t.Fatalf("expected version error, got %v", err)
 	}
+}
+
+// testEnv mirrors the production envelopeParams JSON shape (aesgcm.go).
+// If the tags ever drift, mutations stop reaching the field production
+// reads and the row succeeds — the failing assertion makes the drift
+// self-detecting by construction. The version branch is not duplicated
+// here: TestSealer_PluggableInPipeline already covers it.
+type testEnv struct {
+	Version uint32 `json:"version"`
+	Nonce   []byte `json:"nonce"`
+}
+
+func TestSealer_OpenRejectsBadNonceLength(t *testing.T) {
+	t.Parallel()
+	s, err := aesgcm.New(mkKey(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cipher, params, err := s.Seal([]byte("data"))
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	rows := []struct {
+		name    string
+		wantLen int
+		mutated []byte
+	}{
+		{"zero", 0, mutateParams(t, params, func(e *testEnv) { e.Nonce = nil })},
+		{"eleven", 11, mutateParams(t, params, func(e *testEnv) { e.Nonce = e.Nonce[:11] })},
+		{"thirteen", 13, mutateParams(t, params, func(e *testEnv) { e.Nonce = append(e.Nonce, 0) })},
+		{"hundred", 100, mutateParams(t, params, func(e *testEnv) { e.Nonce = append(e.Nonce, make([]byte, 88)...) })},
+	}
+	for _, row := range rows {
+		row := row
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := s.Open(cipher, row.mutated)
+			// AES-GCM nonce size is 12; the production error carries the
+			// want-length, so both parts of the message are pinned.
+			want := fmt.Sprintf("bad nonce length %d (want 12)", row.wantLen)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("nonce %d: want error containing %q, got %v", row.wantLen, want, err)
+			}
+		})
+	}
+}
+
+func TestSealer_OpenErrorClassOracleStable(t *testing.T) {
+	t.Parallel()
+	// Byte-identity of the AEAD failure class across every key-oracle
+	// cause; pinned to the exact stdlib string so any future split of
+	// the class fails loudly. The version branch is not duplicated —
+	// TestSealer_PluggableInPipeline covers it.
+	const want = "snapshot/aesgcm: open: cipher: message authentication failed"
+
+	s, err := aesgcm.New(mkKey(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	wrong, err := aesgcm.New(mkKey(t)) // different key
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cipher, params, err := s.Seal([]byte("data"))
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	tamperedCipher := bytes.Clone(cipher)
+	tamperedCipher[0] ^= 0xFF
+	swappedNonce := mutateParams(t, params, func(e *testEnv) { e.Nonce[0] ^= 0xFF })
+
+	rows := []struct {
+		name string
+		s    *aesgcm.Sealer
+		c    []byte
+		p    []byte
+	}{
+		{"wrong_key", wrong, cipher, params},
+		{"tampered_cipher", s, tamperedCipher, params},
+		{"swapped_nonce", s, cipher, swappedNonce},
+	}
+	for _, row := range rows {
+		row := row
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := row.s.Open(row.c, row.p)
+			if err == nil || err.Error() != want {
+				t.Errorf("%s: want exact error %q, got %v", row.name, want, err)
+			}
+		})
+	}
+}
+
+// mutateParams unmarshals a sealed envelope, applies fn, and
+// re-marshals — exactly the attacker-tamper model (swap a field in
+// otherwise-valid params JSON, always producing valid base64).
+func mutateParams(t *testing.T, params []byte, fn func(*testEnv)) []byte {
+	t.Helper()
+	var e testEnv
+	if err := json.Unmarshal(params, &e); err != nil {
+		t.Fatalf("unmarshal sealed params: %v", err)
+	}
+	fn(&e)
+	mutated, err := json.Marshal(&e)
+	if err != nil {
+		t.Fatalf("marshal mutated params: %v", err)
+	}
+	return mutated
 }

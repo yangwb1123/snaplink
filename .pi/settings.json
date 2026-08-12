@@ -1,4 +1,3 @@
 {
-  "additionalSystemFiles": [".pi/APPEND_SYSTEM.md"],
-  "httpIdleTimeoutMs": 900000
+  "additionalSystemFiles": [".pi/APPEND_SYSTEM.md"]
 }

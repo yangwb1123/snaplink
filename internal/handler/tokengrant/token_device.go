@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -30,6 +31,9 @@ type DeviceGrantDeps interface {
 	RecordIDTokenIssued(ctx core.HandlerContext, clientID, subjectID string)
 	RecordSubjectClientAccess(ctx context.Context, subject, clientID string)
 	SrvLogger() spi.Logger
+	// ScopeRegistry returns the wired global scope registry (nil = unwired
+	// no-op, the default-off byte-compat baseline).
+	ScopeRegistry() scoperegistry.Registry
 }
 
 // HandleDeviceGrant is the device's poll path on /token (RFC 8628 §3.4-3.5).
@@ -82,6 +86,12 @@ func deviceMintAndRespond(d DeviceGrantDeps, ctx core.HandlerContext, client *co
 		return
 	}
 	issuedSub := d.ApplyPairwiseSubject(ctx.Request().Context(), client, dc.UserID)
+	// Global scope registry (opt-in): the stored device entry's scopes are the
+	// effective set for this branch (the token request carries no scope — the
+	// device approved them out-of-band). Post-resolution, pre-issuance.
+	if scoperegistry.RejectUnregistered(ctx, d.ScopeRegistry(), dc.Scopes) {
+		return
+	}
 	token, err := ti.Issue(ctx.Request().Context(), &core.Subject{
 		ID: issuedSub, Provider: dc.Provider, Claims: dc.Attributes,
 		Resources:           dc.Resources,

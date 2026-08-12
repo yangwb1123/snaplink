@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/yangwb1123/snaplink/shared/security"
@@ -17,6 +18,7 @@ import (
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
@@ -114,6 +116,23 @@ func (s *Server) conditionalAccessGroups(ctx context.Context, userID, clientID s
 	return groups
 }
 
+// tokenIssuedRolesMeta resolves the subject's tenant-membership role
+// codes for the token_issued audit projection. FAIL-OPEN: a roster
+// lookup outage returns nil (the roles metadata is omitted, the audit
+// row is still written, issuance is never blocked) — the same policy as
+// the mint path's subjectRoles usage. Roles are joined into one bounded
+// comma-separated metadata value; the claim is absent when the subject
+// has no membership or no tenant could be resolved.
+func (s *Server) tokenIssuedRolesMeta(ctx HandlerContext, clientID, subjectID string) map[string]string {
+	roles, err := s.subjectRoles(ctx.Request().Context(),
+		"token_issued role resolution failed — roles metadata omitted (fail-open)",
+		s.resolveTenantID(ctx, clientID), subjectID)
+	if err != nil || len(roles) == 0 {
+		return nil
+	}
+	return map[string]string{core.KeyRoles: strings.Join(roles, ",")}
+}
+
 // RevokeAcrossIssuers / MintImpersonationToken / TargetHoldsAdminScope /
 // RevokeToken / AuditPartialRevokeFailure moved to accessors_feature_gates.go
 // (this file was at its 500-line maintainability budget; that file is the
@@ -158,6 +177,11 @@ func (s *Server) AuthzErrorBodyDesc(ctx core.HandlerContext, code, desc string) 
 func (s *Server) IssuerForClient(c *Client) (string, TokenIssuer, error) {
 	return s.issuerForClient(c)
 }
+
+// ScopeRegistry returns the wired global scope registry (WithScopeRegistry),
+// nil when unwired — the default-off no-op every tokengrant effective-scope
+// check and the discovery filter rely on.
+func (s *Server) ScopeRegistry() scoperegistry.Registry { return s.scopeRegistry }
 
 // IDTokenIssuerForClient resolves the per-tenant id_token issuer.
 func (s *Server) IDTokenIssuerForClient(c *Client) (oidc.IDTokenIssuer, bool, error) {
@@ -379,6 +403,11 @@ func (s *Server) SPIFFEAudience() string { return s.spiffeAudience }
 // (WithIntrospectionCache). Nil means caching is disabled and every
 // /token/introspect call pays full JWT verification.
 func (s *Server) IntrospectionCache() oauth.IntrospectionCache { return s.introspectionCache }
+
+// RequireFormContentType reports whether the strict credential wire is
+// enabled (WithCredentialFormOnly): the four credential endpoints then
+// answer 415 for non-form Content-Types (Deps member).
+func (s *Server) RequireFormContentType() bool { return s.credentialFormOnly }
 
 // IntrospectionCacheTTL returns the configured TTL for cached introspection
 // results. Only meaningful when IntrospectionCache() is non-nil.

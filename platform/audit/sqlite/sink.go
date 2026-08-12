@@ -116,7 +116,36 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_trace     ON audit_events(trace_id);
 
 // Sink is the SQLite-backed [audit.Sink].
 type Sink struct {
-	db *sql.DB
+	db       *sql.DB
+	appender TxAppender
+}
+
+// Option customizes a Sink at construction. Options apply only to the
+// writable constructors (New / NewWithDB); OpenReadOnly never accepts
+// them because it must stay migration- and write-free.
+type Option func(*Sink)
+
+// TxAppender receives each recorded audit event inside the SAME SQLite
+// transaction that commits the audit row, so a governance connector
+// (e.g. the auditoutbox fact store) can write its row atomically with
+// the record — the B4-5 "in-tx" contract. Implementations must be cheap
+// and idempotent; they observe the FINAL redacted, chain-stamped event
+// (the Recorder hashes before the sink runs).
+//
+// Fail-open contract: when AppendInTx fails, Record rolls the
+// transaction back and re-inserts the audit row ALONE, so a connector
+// outage can never lose an audit record; the caller sees the appender
+// error (surfaced, e.g. via audit.WithErrorHandler) and the outbox fact
+// is simply absent for that event.
+type TxAppender interface {
+	AppendInTx(ctx context.Context, tx *sql.Tx, e *audit.Event) error
+}
+
+// WithTxAppender wires a same-transaction appender (see [TxAppender]).
+// Nil is a no-op; the default (unwired) Sink is byte-identical to a
+// pre-seam Sink.
+func WithTxAppender(appender TxAppender) Option {
+	return func(s *Sink) { s.appender = appender }
 }
 
 // New opens dsn, migrates the schema, and returns the sink.
@@ -128,7 +157,7 @@ type Sink struct {
 //
 // Tests / dev: `:memory:` for per-connection isolation;
 // `file::memory:?cache=shared` for a shared in-memory pool.
-func New(dsn string) (*Sink, error) {
+func New(dsn string, opts ...Option) (*Sink, error) {
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("audit/sqlite: open: %w", err)
@@ -141,16 +170,24 @@ func New(dsn string) (*Sink, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("audit/sqlite: migrate: %w", err)
 	}
-	return &Sink{db: db}, nil
+	sink := &Sink{db: db}
+	for _, option := range opts {
+		option(sink)
+	}
+	return sink, nil
 }
 
 // NewWithDB wraps an existing *sql.DB — shared-pool deployments
 // reuse the same connection across SDK subsystems.
-func NewWithDB(db *sql.DB) (*Sink, error) {
+func NewWithDB(db *sql.DB, opts ...Option) (*Sink, error) {
 	if err := migrate.Run(context.Background(), db, migrationNamespace, migrations); err != nil {
 		return nil, fmt.Errorf("audit/sqlite: migrate: %w", err)
 	}
-	return &Sink{db: db}, nil
+	sink := &Sink{db: db}
+	for _, option := range opts {
+		option(sink)
+	}
+	return sink, nil
 }
 
 // OpenReadOnly opens dsn for QUERY-ONLY access and returns the sink
@@ -225,7 +262,9 @@ func (s *Sink) Ping(ctx context.Context) error {
 }
 
 // Record persists e. ID is filled if empty so the audit.Recorder's
-// nil-ID guard isn't required.
+// nil-ID guard isn't required. With a TxAppender wired, the event and
+// its appender row commit in one transaction (fail-open on appender
+// error: the audit row is preserved alone and the error is returned).
 func (s *Sink) Record(ctx context.Context, e *audit.Event) error {
 	if s == nil || s.db == nil {
 		return errors.New("audit/sqlite: closed")
@@ -239,7 +278,34 @@ func (s *Sink) Record(ctx context.Context, e *audit.Event) error {
 	if e.Timestamp.IsZero() {
 		e.Timestamp = time.Now()
 	}
-	return insertEvent(ctx, s.db, e)
+	if s.appender == nil {
+		return insertEvent(ctx, s.db, e)
+	}
+	return s.recordWithAppender(ctx, e)
+}
+
+// recordWithAppender commits the audit row and the appender's row in
+// one transaction. FAIL-OPEN: an appender error rolls back and the
+// audit row is re-inserted alone — governance must never lose an audit
+// record to a connector failure — and the appender error is surfaced to
+// the caller (the outbox fact is the degraded, observable part).
+func (s *Sink) recordWithAppender(ctx context.Context, e *audit.Event) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("audit/sqlite: begin: %w", err)
+	}
+	if err := insertEvent(ctx, tx, e); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := s.appender.AppendInTx(ctx, tx, e); err != nil {
+		_ = tx.Rollback()
+		if reinsertErr := insertEvent(ctx, s.db, e); reinsertErr != nil {
+			return fmt.Errorf("audit/sqlite: tx appender %v; fail-open re-insert: %w", err, reinsertErr)
+		}
+		return fmt.Errorf("audit/sqlite: tx appender: %w (audit record preserved without appender row)", err)
+	}
+	return tx.Commit()
 }
 
 // insertEvent executes the INSERT for a single event against any execer
@@ -287,6 +353,17 @@ func (s *Sink) RecordBatch(ctx context.Context, events []*audit.Event) error {
 	if len(events) == 0 {
 		return nil
 	}
+	if s.appender == nil {
+		return s.recordBatch(ctx, events, false)
+	}
+	return s.recordBatch(ctx, events, true)
+}
+
+// recordBatch persists events in one BEGIN IMMEDIATE transaction. With
+// an appender, each event's appender row joins the same transaction;
+// an appender error aborts the batch and re-inserts every audit row
+// alone (the same fail-open degradation as recordWithAppender).
+func (s *Sink) recordBatch(ctx context.Context, events []*audit.Event, withAppender bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -305,6 +382,18 @@ func (s *Sink) RecordBatch(ctx context.Context, events []*audit.Event) error {
 		}
 		if err = insertEvent(ctx, tx, e); err != nil {
 			return err
+		}
+		if withAppender {
+			if err = s.appender.AppendInTx(ctx, tx, e); err != nil {
+				_ = tx.Rollback()
+				// Fail-open: preserve every audit row without the appender rows.
+				for _, re := range events {
+					if reinsertErr := insertEvent(ctx, s.db, re); reinsertErr != nil {
+						return fmt.Errorf("audit/sqlite: batch appender %v; fail-open re-insert: %w", err, reinsertErr)
+					}
+				}
+				return fmt.Errorf("audit/sqlite: batch appender: %w (audit records preserved without appender rows)", err)
+			}
 		}
 	}
 	return tx.Commit()

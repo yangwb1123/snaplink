@@ -37,6 +37,10 @@ interface requestOptions {
   body?: unknown;
   auth?: boolean;
   clientAuth?: boolean;
+  /** Send the body as application/x-www-form-urlencoded instead of JSON. */
+  form?: boolean;
+  /** Body keys with no form encoding; never emitted (defense in depth behind the generated guard). */
+  formBlockedFields?: string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -52,6 +56,34 @@ function encodeBasicCredentials(clientId: string, clientSecret: string): string 
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
+}
+
+/**
+ * Serialize a request body as application/x-www-form-urlencoded, mirroring
+ * the Go binder in protocols/oauth/oauthwire (bind.go):
+ * - undefined/null keys are dropped (JSON.stringify does the same today);
+ * - blockedFields keys are never emitted (no RFC defines a map form encoding);
+ * - booleans/numbers/strings use String(v) -- String(true) == "true", the
+ *   binder's only accepted truthy spelling;
+ * - string arrays become REPEATED keys (the documented resource/audience/
+ *   tokens contract; formStringSlice returns multi-value lists verbatim);
+ * - any other array (authorization_details) or plain object (claims) becomes
+ *   a single key with JSON.stringify(value) -- RFC 9396 §3 / OIDC Core §5.5.
+ */
+function formSerialize(body: Record<string, unknown>, blockedFields: string[]): string {
+  const params = new URLSearchParams();
+  const blocked = new Set(blockedFields);
+  for (const [k, v] of Object.entries(body)) {
+    if (blocked.has(k) || v === undefined || v === null) continue;
+    if (typeof v === "string" || typeof v === "boolean" || typeof v === "number") {
+      params.set(k, String(v));
+    } else if (Array.isArray(v) && v.every((item) => typeof item === "string")) {
+      for (const item of v) params.append(k, item);
+    } else {
+      params.set(k, JSON.stringify(v));
+    }
+  }
+  return params.toString();
 }
 
 `
@@ -155,8 +187,13 @@ const tsClientHeader = `export class SSOClient {
     const init: RequestInit = { method, headers };
     if (this.requestTimeoutMs !== undefined) init.signal = AbortSignal.timeout(this.requestTimeoutMs);
     if (authenticatedBody !== undefined) {
-      headers["Content-Type"] = "application/json";
-      init.body = JSON.stringify(authenticatedBody);
+      if (opts.form) {
+        headers["Content-Type"] = "application/x-www-form-urlencoded";
+        init.body = formSerialize(authenticatedBody as Record<string, unknown>, opts.formBlockedFields ?? []);
+      } else {
+        headers["Content-Type"] = "application/json";
+        init.body = JSON.stringify(authenticatedBody);
+      }
     }
     if (opts.auth && this.getAccessToken) {
       const token = await this.getAccessToken();

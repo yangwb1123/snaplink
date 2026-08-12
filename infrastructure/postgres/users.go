@@ -126,6 +126,21 @@ func (p *UserProvider) GetByExternalID(ctx context.Context, provider, externalID
 // column except created_at (preserved from the original insert, matching the
 // documented upsert contract).
 func (p *UserProvider) CreateOrUpdate(ctx context.Context, u *core.User) error {
+	return upsertUser(ctx, p.db, u)
+}
+
+// execer is the subset of *sql.DB and *sql.Tx the upsert needs, so one
+// upsertUser serves both the pool path (CreateOrUpdate) and the
+// transaction path (UpsertUserTx).
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// upsertUser runs the CREATE OR UPDATE upsert on the given execer with
+// the documented semantics: nil/empty-ID rejection, attribute JSON
+// encoding, CreatedAt preservation, ON CONFLICT(id) DO UPDATE, and
+// unique-violation collapse to core.ErrUserExists.
+func upsertUser(ctx context.Context, db execer, u *core.User) error {
 	if u == nil || u.ID == "" {
 		return errors.New("postgres: user.ID required")
 	}
@@ -139,7 +154,7 @@ func (p *UserProvider) CreateOrUpdate(ctx context.Context, u *core.User) error {
 	}
 	u.UpdatedAt = now
 
-	_, err = p.db.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
         INSERT INTO users (id, external_id, provider, email, name, attributes, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (id) DO UPDATE SET
@@ -159,6 +174,16 @@ func (p *UserProvider) CreateOrUpdate(ctx context.Context, u *core.User) error {
 		return fmt.Errorf("postgres: upsert user: %w", err)
 	}
 	return nil
+}
+
+// UpsertUserTx is the exported transaction-scoped upsert. It is a
+// package function, NOT a method on *UserProvider, because the
+// pair-write lives in infrastructure/postgres/tenantcommerce (which
+// already imports this package — a method would create the
+// postgres -> tenantcommerce -> postgres cycle). Precedent: Run and
+// Dialect are already exported for sibling use.
+func UpsertUserTx(ctx context.Context, tx *sql.Tx, u *core.User) error {
+	return upsertUser(ctx, tx, u)
 }
 
 // List implements [core.UserProvider]. No pagination — caller's job per the

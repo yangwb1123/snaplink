@@ -428,3 +428,25 @@ func (s *Server) recordTenantQuotaStoreFailure(ctx HandlerContext, clientID, ten
 	audit.SetMeta(e, "resource", string(resource))
 	s.auditor.Record(ctx.Request().Context(), e)
 }
+
+// recordRoleResolutionFailure emits the role_resolution_failed audit event
+// when the mint path's tenant-roster lookup failed (details-only-in-audit
+// discipline): the wire keeps its byte-identical shape — the token is still
+// minted with the roles claim omitted — and the failure evidence (tenant,
+// user, client) lives only in the audit row, never in a response or error
+// body. A log-only outage would be forensically unrecoverable: the degraded
+// artifact IS the deliverable (a valid token missing an authorization
+// input), so the event is the permanent record of the fail-open window.
+func (s *Server) recordRoleResolutionFailure(ctx HandlerContext, client *Client, userID string) {
+	if s.auditor == nil {
+		return
+	}
+	e := audit.EventFromRequest(ctx)
+	e.Type = audit.EventRoleResolutionFailed
+	e.Outcome = audit.OutcomeFailure
+	e.ClientID = client.ID
+	e.TenantID = client.TenantID
+	e.ActorID = userID
+	e.Reason = "tenant_roster_lookup_failed"
+	s.auditor.Record(ctx.Request().Context(), e)
+}

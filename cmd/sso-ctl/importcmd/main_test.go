@@ -3,11 +3,17 @@ package importcmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/yangwb1123/snaplink/domains/tenant/commerce"
+	"github.com/yangwb1123/snaplink/infrastructure/auditoutbox"
+	sso "github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // ---- parser tests ----
@@ -340,13 +346,37 @@ func TestOpenInput_Missing(t *testing.T) {
 
 func newTestProvider(t *testing.T) userStore {
 	t.Helper()
+	p, _ := newTestProviderDSN(t)
+	return p
+}
+
+// newTestProviderDSN is newTestProvider plus the DSN, so tests can open a
+// second handle (the outbox store) on the same sqlite file.
+func newTestProviderDSN(t *testing.T) (userStore, string) {
+	t.Helper()
 	dsn := "file:" + filepath.Join(t.TempDir(), "users.db")
 	p, err := openDB("sqlite", dsn, "")
 	if err != nil {
 		t.Fatalf("openDB: %v", err)
 	}
 	t.Cleanup(func() { _ = p.Close() })
-	return p
+	return p, dsn
+}
+
+// readOutboxEvents opens a second handle on the same sqlite file and
+// returns the pending/leased governance events the import wrote.
+func readOutboxEvents(t *testing.T, dsn string) []*commerce.OutboxEvent {
+	t.Helper()
+	store, err := auditoutbox.NewSQLiteOutboxStore(dsn)
+	if err != nil {
+		t.Fatalf("outbox store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	events, err := store.Pending(context.Background())
+	if err != nil {
+		t.Fatalf("pending events: %v", err)
+	}
+	return events
 }
 
 func TestOpenDB_BadDSN(t *testing.T) {
@@ -382,7 +412,7 @@ func TestRunImport_PersistsAndUpserts(t *testing.T) {
 		{ID: "auth0:2", ExternalID: "2", Provider: "auth0", Email: "b@x.z", Name: "B"},
 	}
 	out := captureStdout(t, func() {
-		if err := runImport(context.Background(), p, users, 1); err != nil {
+		if err := runImport(context.Background(), p, "tenant-acme", users, 1); err != nil {
 			t.Fatalf("runImport: %v", err)
 		}
 	})
@@ -400,7 +430,7 @@ func TestRunImport_PersistsAndUpserts(t *testing.T) {
 
 	// Re-import with a changed name → upsert, no duplicate, no error.
 	users[0].Name = "A2"
-	if err := runImport(context.Background(), p, users, 100); err != nil {
+	if err := runImport(context.Background(), p, "tenant-acme", users, 100); err != nil {
 		t.Fatalf("re-import: %v", err)
 	}
 	got2, _ := p.GetByID(context.Background(), "auth0:1")
@@ -413,16 +443,124 @@ func TestRunImport_PersistsAndUpserts(t *testing.T) {
 	}
 }
 
+// TestRunImport_EmitsOneEventPerUser (AC5) — the CLI wiring proof: each
+// imported user produces exactly one governance event in the SAME file's
+// audit_outbox, tenant-tied to the --tenant value, and a re-import of the
+// same file produces ZERO new events (deterministic idempotency keys)
+// while user rows still upsert.
+func TestRunImport_EmitsOneEventPerUser(t *testing.T) {
+	p, dsn := newTestProviderDSN(t)
+	ctx := context.Background()
+	users := []importedUser{
+		{ID: "auth0:1", ExternalID: "1", Provider: "auth0", Email: "a@x.z", Name: "A", Hash: "$2b$h", HashFormat: "bcrypt"},
+		{ID: "auth0:2", ExternalID: "2", Provider: "auth0", Email: "b@x.z", Name: "B"},
+	}
+	if err := runImport(ctx, p, "tenant-acme", users, 1); err != nil {
+		t.Fatalf("runImport: %v", err)
+	}
+
+	events := readOutboxEvents(t, dsn)
+	if len(events) != 2 {
+		t.Fatalf("events after import = %d, want 2 (one per user)", len(events))
+	}
+	ids := map[string]bool{}
+	for _, e := range events {
+		ids[e.AggregateID] = true
+		if e.TenantID != "tenant-acme" {
+			t.Errorf("event tenant = %q, want the --tenant value", e.TenantID)
+		}
+		if e.Type != importEventType {
+			t.Errorf("event type = %q, want %q", e.Type, importEventType)
+		}
+		if e.Payload["user_id"] != e.AggregateID || e.Payload["email"] != "" {
+			t.Errorf("event payload not bounded/redacted: %+v", e.Payload)
+		}
+	}
+	if !ids["auth0:1"] || !ids["auth0:2"] {
+		t.Errorf("event aggregate IDs = %v; want the imported set", ids)
+	}
+
+	// Re-import the same file (changed name only) → zero new events.
+	users[0].Name = "A2"
+	if err := runImport(ctx, p, "tenant-acme", users, 100); err != nil {
+		t.Fatalf("re-import: %v", err)
+	}
+	events = readOutboxEvents(t, dsn)
+	if len(events) != 2 {
+		t.Errorf("events after re-import = %d, want still 2 (idempotent insert)", len(events))
+	}
+	got, _ := p.GetByID(ctx, "auth0:1")
+	if got.Name != "A2" {
+		t.Errorf("re-import upsert did not apply; name = %q", got.Name)
+	}
+}
+
+// TestNewImportFact pins the CLI's event policy: deterministic ID/key,
+// bounded redacted payload (never hash/email/attributes), canonical
+// digest, and full Validate() conformance.
+func TestNewImportFact(t *testing.T) {
+	u := &sso.User{ID: "csv:a@x.z", Provider: "csv", Email: "a@x.z"}
+	fact := newImportFact("tenant-acme", u)
+	wantKey := "import:tenant-acme:csv:a@x.z"
+	if fact.ID != wantKey || fact.IdempotencyKey != wantKey {
+		t.Errorf("ID/key = %q/%q, want deterministic %q", fact.ID, fact.IdempotencyKey, wantKey)
+	}
+	if fact.Type != importEventType || fact.TenantID != "tenant-acme" {
+		t.Errorf("type/tenant = %q/%q", fact.Type, fact.TenantID)
+	}
+	if fact.AggregateType != "user" || fact.AggregateID != u.ID || fact.AggregateVersion != 1 {
+		t.Errorf("aggregate = %+v", fact)
+	}
+	if fact.Status != commerce.OutboxPending {
+		t.Errorf("status = %q, want pending", fact.Status)
+	}
+	if err := fact.Validate(); err != nil {
+		t.Fatalf("newImportFact must satisfy OutboxEvent.Validate: %v", err)
+	}
+	// Bounded, redacted projection: user_id + provider only.
+	if len(fact.Payload) != 2 || fact.Payload["user_id"] != u.ID || fact.Payload["provider"] != "csv" {
+		t.Errorf("payload = %+v; want user_id+provider only", fact.Payload)
+	}
+	for _, key := range []string{"email", "password_hash", "password_hash_format"} {
+		if _, present := fact.Payload[key]; present {
+			t.Errorf("payload leaks %q: %+v", key, fact.Payload)
+		}
+	}
+	if fact.PayloadDigest != digestPayload(fact.Payload) {
+		t.Errorf("digest %q != canonical digest", fact.PayloadDigest)
+	}
+	// Determinism: same tenant+user → same ID and digest; new tenant → new ID.
+	again := newImportFact("tenant-acme", u)
+	if again.ID != fact.ID || again.PayloadDigest != fact.PayloadDigest {
+		t.Error("same tenant+user must produce the identical event identity")
+	}
+	other := newImportFact("tenant-other", u)
+	if other.ID == fact.ID {
+		t.Error("different tenant must produce a different event ID")
+	}
+}
+
+// TestDigestPayload pins the canonical digest: map key order must not
+// change the digest (fact-equality across backends depends on it).
+func TestDigestPayload(t *testing.T) {
+	a := digestPayload(map[string]string{"user_id": "u1", "provider": "csv"})
+	b := digestPayload(map[string]string{"provider": "csv", "user_id": "u1"})
+	if a == "" || a != b {
+		t.Errorf("digest not canonical across key order: %q vs %q", a, b)
+	}
+}
+
 // TestRunImport_SkipsBadRows — a user with an empty ID fails the write
-// and is reported as skipped without aborting the whole run.
+// and is reported as skipped without aborting the whole run. (AC2 CLI
+// leg: the failing row rolls back its own pair; accounting unchanged.)
 func TestRunImport_SkipsBadRows(t *testing.T) {
 	p := newTestProvider(t)
 	users := []importedUser{
-		{ID: "", Email: "bad@x.z"},    // empty ID → CreateOrUpdate errors
+		{ID: "", Email: "bad@x.z"},    // empty ID → ImportUser errors
 		{ID: "ok:1", Email: "ok@x.z"}, // good
 	}
 	out := captureStdout(t, func() {
-		if err := runImport(context.Background(), p, users, 100); err != nil {
+		if err := runImport(context.Background(), p, "tenant-acme", users, 100); err != nil {
 			t.Fatalf("runImport should not return a fatal error: %v", err)
 		}
 	})
@@ -436,7 +574,7 @@ func TestRunImport_SkipsBadRows(t *testing.T) {
 func TestRunImport_DefaultBatchSize(t *testing.T) {
 	p := newTestProvider(t)
 	users := []importedUser{{ID: "x:1", Email: "x@x.z"}}
-	if err := runImport(context.Background(), p, users, 0); err != nil {
+	if err := runImport(context.Background(), p, "tenant-acme", users, 0); err != nil {
 		t.Fatalf("runImport with batch=0: %v", err)
 	}
 	if all, _ := p.List(context.Background()); len(all) != 1 {
@@ -483,9 +621,8 @@ func TestRunDryRun_NoHash(t *testing.T) {
 
 // TestRun_DryRun drives Run through the dry-run branch (parse flags →
 // openInput(file) → parseInput → runDryRun → return 0), which never
-// touches a DB and never calls os.Exit. Run uses its own flag set, so
-// repeated calls are safe. args carry NO leading program name — the
-// dispatcher strips it before calling Run.
+// touches a DB and never calls os.Exit. args carry NO --tenant (AC5:
+// --dry-run without --tenant succeeds — R4 exemption).
 func TestRun_DryRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "users.csv")
 	if err := os.WriteFile(path, []byte("email,name\na@x.z,Alice\n"), 0o600); err != nil {
@@ -503,9 +640,68 @@ func TestRun_DryRun(t *testing.T) {
 	}
 }
 
+// TestRun_DryRunWithoutTenantTouchesNothing — dry-run with a --dsn
+// pointing at a path that must never be created: zero events, zero user
+// rows, zero DB file (AC5).
+func TestRun_DryRunWithoutTenantTouchesNothing(t *testing.T) {
+	csvPath := filepath.Join(t.TempDir(), "users.csv")
+	if err := os.WriteFile(csvPath, []byte("email,name\nm@x.z,Mallory\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(t.TempDir(), "never-created.db")
+	var code int
+	captureStdout(t, func() {
+		code = Run([]string{"--format", "csv", "--file", csvPath, "--dsn", "file:" + dbPath, "--dry-run"})
+	})
+	if code != 0 {
+		t.Errorf("Run exit code = %d; want 0", code)
+	}
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		t.Errorf("dry-run created the DB file; want no writes at all")
+	}
+}
+
+// TestValidateTenantID pins the --tenant bounds: empty, over-long, and
+// control-character values are rejected; a plain value passes.
+func TestValidateTenantID(t *testing.T) {
+	if err := validateTenantID(""); err == nil {
+		t.Error("empty tenant must be rejected")
+	}
+	if err := validateTenantID(strings.Repeat("a", maxTenantLen+1)); err == nil {
+		t.Error("over-long tenant must be rejected")
+	}
+	if err := validateTenantID("acme\ncorp"); err == nil {
+		t.Error("control-character tenant must be rejected")
+	}
+	if err := validateTenantID("tenant-acme"); err != nil {
+		t.Errorf("plain tenant rejected: %v", err)
+	}
+}
+
+// TestParseFlags_MissingTenant_Exit2 runs parseFlags in a child process
+// (it terminates via os.Exit(2), so it cannot run in-process) and asserts
+// the exit code — the AC5 --tenant gate.
+func TestParseFlags_MissingTenant_Exit2(t *testing.T) {
+	if os.Getenv("IMPORTCMD_HELPER") == "1" {
+		parseFlags([]string{"--format", "csv", "--dsn", "file:x.db"})
+		os.Exit(0) // unreachable: parseFlags must exit 2
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestParseFlags_MissingTenant_Exit2")
+	cmd.Env = append(os.Environ(), "IMPORTCMD_HELPER=1")
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("child process: %v; want exit 2", err)
+	}
+	if exitErr.ExitCode() != 2 {
+		t.Fatalf("exit code = %d, want 2 (--tenant required for writes)", exitErr.ExitCode())
+	}
+}
+
 // TestRun_FullImport drives Run through the write path (parse → openInput
 // → parseInput → openDB → runImport → return 0) against a real SQLite DB,
-// then confirms the row landed.
+// then confirms the row landed AND the governance event exists in the same
+// file's audit_outbox.
 func TestRun_FullImport(t *testing.T) {
 	csvPath := filepath.Join(t.TempDir(), "users.csv")
 	if err := os.WriteFile(csvPath, []byte("email,name,password_hash\nm@x.z,Mallory,$2b$10$abc\n"), 0o600); err != nil {
@@ -515,7 +711,7 @@ func TestRun_FullImport(t *testing.T) {
 	dsn := "file:" + dbPath
 	var code int
 	out := captureStdout(t, func() {
-		code = Run([]string{"--format", "csv", "--file", csvPath, "--dsn", dsn})
+		code = Run([]string{"--format", "csv", "--file", csvPath, "--dsn", dsn, "--tenant", "tenant-acme"})
 	})
 	if code != 0 {
 		t.Errorf("Run exit code = %d; want 0", code)
@@ -536,6 +732,10 @@ func TestRun_FullImport(t *testing.T) {
 	}
 	if u.Email != "m@x.z" || u.Attributes["password_hash_format"] != "bcrypt" {
 		t.Errorf("imported user wrong: %+v", u)
+	}
+	events := readOutboxEvents(t, dsn)
+	if len(events) != 1 || events[0].TenantID != "tenant-acme" || events[0].AggregateID != "csv:m@x.z" {
+		t.Errorf("governance event missing/wrong after Run import: %+v", events)
 	}
 }
 
@@ -594,6 +794,8 @@ func testPostgresDSN(t *testing.T) string {
 // re-reads through core.UserProvider to confirm the hash attributes landed.
 // Unique IDs + Delete cleanup (not TRUNCATE) — the infrastructure/postgres
 // package tests TRUNCATE this table and may run concurrently on the same DSN.
+// The governance outbox rows this run enqueues are deleted in cleanup for the
+// same reason: tenantcommerce tests claim rows from tenant_commerce_outbox.
 func TestRunImport_Postgres_PersistsAndUpserts(t *testing.T) {
 	t.Parallel()
 	p, err := openDB("postgres", testPostgresDSN(t), os.Getenv("SSO_TEST_POSTGRES_DIALECT"))
@@ -609,7 +811,7 @@ func TestRunImport_Postgres_PersistsAndUpserts(t *testing.T) {
 		ID: id, ExternalID: "pg-1", Provider: "auth0",
 		Email: "pg@x.z", Name: "PG", Hash: "$2b$h", HashFormat: "bcrypt",
 	}}
-	if err := runImport(ctx, p, users, 100); err != nil {
+	if err := runImport(ctx, p, "tenant-pg", users, 100); err != nil {
 		t.Fatalf("runImport: %v", err)
 	}
 	got, err := p.GetByID(ctx, id)
@@ -621,11 +823,18 @@ func TestRunImport_Postgres_PersistsAndUpserts(t *testing.T) {
 		t.Errorf("hash attrs did not round-trip: %+v", got.Attributes)
 	}
 	users[0].Name = "PG2"
-	if err := runImport(ctx, p, users, 100); err != nil {
+	if err := runImport(ctx, p, "tenant-pg", users, 100); err != nil {
 		t.Fatalf("re-import: %v", err)
 	}
 	got2, _ := p.GetByID(ctx, id)
 	if got2.Name != "PG2" {
 		t.Errorf("upsert did not update name; got %q", got2.Name)
+	}
+	// Clean the governance rows this run enqueued (tenantcommerce tests
+	// claim tenant_commerce_outbox rows on a shared DSN).
+	if s, ok := p.(postgresUserStore); ok {
+		t.Cleanup(func() {
+			_, _ = s.DB().ExecContext(ctx, `DELETE FROM tenant_commerce_outbox WHERE tenant_id='tenant-pg'`)
+		})
 	}
 }

@@ -141,7 +141,7 @@ func handle{{.Name}}Delete(deps {{.Name}}Deps, ctx core.HandlerContext) {
 // oauth.GrantHandler (protocols/oauth/grant_handler.go) — GrantType() string
 // + Handle(ctx core.HandlerContext, client *core.Client, req
 // oauth.TokenRequest, dpopJKT, mtlsX5T string), registered via
-// sso.WithCustomGrant. See interfaces/sso/options_saml2_bearer.go's
+// sso.WithCustomGrant. See interfaces/sso/server_setup.go's
 // saml2BearerHandler for the simplest real (production) example this
 // template mirrors. This is deliberately NOT the built-in grant switch
 // (authorization_code/client_credentials/refresh_token are special-cased in
@@ -160,6 +160,10 @@ import (
 // {{.Description}} grant type. Register it once at boot:
 //
 //	sso.WithCustomGrant(&{{.Package}}.{{.Name}}GrantHandler{ /* deps */ })
+//
+// The production example this template mirrors is saml2BearerHandler at
+// interfaces/sso/server_setup.go, the grant the server registers via
+// sso.WithSAML2BearerGrant.
 type {{.Name}}GrantHandler struct {
 	// TODO: Add whatever dependencies this grant needs, e.g. a
 	// func(client *core.Client) (string, core.TokenIssuer, error) accessor to
@@ -245,7 +249,22 @@ func (h *{{.Name}}GrantHandler) Handle(ctx core.HandlerContext, client *core.Cli
 	//
 	// 4. Mint a token via the same path every built-in grant uses, passing
 	//    the VALIDATED grantedScopes (never the raw request scope string)
-	//    and the resolved roles:
+	//    and the resolved roles. The issuerForClient accessor resolves the
+	//    minting strategy and the TokenIssuer; that TokenIssuer stamps the
+	//    operator-configured issuer into the token's iss claim (the server
+	//    wires it from server.issuer via sso.WithIssuer, interfaces/sso/
+	//    options.go) — never a request-derived value. If the grant needs the
+	//    issuer identifier itself (RFC 9207 iss parity with the discovery
+	//    document), mirror the exported accessor (*sso.Server).ResolveIssuer(ctx)
+	//    (interfaces/sso/accessors.go, wrapping resolveIssuer at interfaces/
+	//    sso/server_discovery.go): the configured WithIssuer value wins when
+	//    set and not the DefaultIssuer sentinel (shared/core/consts_oauth.go);
+	//    only the sentinel falls back to the request base URL. The B4-1
+	//    allowlist contract forbids Host-derived issuer values: never take
+	//    the iss claim from the request Host header, a proxy-forwarded Host
+	//    header, or the request base URL helper — iss must equal the
+	//    identifier the server publishes via discovery (RFC 9207 §2
+	//    mix-up detection).
 	//
 	//    strategy, issuer, err := h.issuerForClient(client)
 	//    if err != nil {

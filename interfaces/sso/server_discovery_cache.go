@@ -7,6 +7,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
@@ -158,7 +159,15 @@ func (s *Server) computeDiscoverySnapshot(ctx context.Context) *clientDiscoveryS
 	snap.requirePAR = proj.requirePAR
 	snap.frontchannelLogout = proj.frontchannelLogout
 	snap.requireSignedRequestObject = proj.requireSignedRequestObject
-	snap.scopes = proj.scopes
+	// Under an enabled scope registry, scopes_supported MUST NOT advertise a
+	// scope /token would reject: filter the client-set union through the
+	// registry (a client with AllowedScopes=["anything"] is advertised
+	// "anything" today and 400s every /token request naming it once the
+	// registry is on). Registry-off (nil) is byte-identical — the full
+	// union. OIDC standard scopes survive because the registry pre-registers
+	// them; the filter covers OIDC discovery, RFC 8414 resource metadata,
+	// federation, and signed metadata (all derive from this snapshot).
+	snap.scopes = scoperegistry.FilterRegistered(s.scopeRegistry, proj.scopes)
 	snap.authorizationDetailTypes = proj.authorizationDetailTypes
 	return snap
 }

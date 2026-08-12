@@ -73,10 +73,10 @@ func NewServer(opts ...Option) *Server {
 	s.consentChallenges = consent.NewChallengeStore()
 	s.loginTransactionStore = login.NewMemoryTransactionStore()
 	s.panicRecovery = true
+	s.credentialFormOnly = false // B4-4: opt-in strict credential wire; explicit seed guards a future default flip.
 	// Conservative built-in default — see clientRegistrationRateLimiter's doc
-	// (sso_protocol.go) for why this one is seeded here rather than left nil
-	// like every other rate limiter, which options only ever tighten or
-	// disable (WithClientRegistrationRateLimit(nil)), never turn on cold.
+	// (sso_protocol.go): seeded here (not nil) because options only ever
+	// tighten or disable it, never turn it on cold.
 	s.clientRegistrationRateLimiter = ratelimit.NewMemoryLimiter(
 		defaultClientRegistrationRatePerSec, defaultClientRegistrationRateBurst)
 	for _, opt := range opts {

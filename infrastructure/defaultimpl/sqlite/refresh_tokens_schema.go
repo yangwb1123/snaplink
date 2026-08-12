@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     auth_time              INTEGER NOT NULL DEFAULT 0,
     confirmation_jkt       TEXT    NOT NULL DEFAULT '',
     generation             INTEGER NOT NULL DEFAULT 0,
-    family_created_at      INTEGER NOT NULL DEFAULT 0
+    family_created_at      INTEGER NOT NULL DEFAULT 0,
+    roles                  TEXT    NOT NULL DEFAULT '[]'
 );`
 
 // refreshTokensIndexDDL creates indexes + the family ledger. Runs AFTER
@@ -118,6 +119,12 @@ var refreshTokenMigrations = []migrate.Migration{
 	// thumbprint-less (Thumbprint("") => no observation) and the per-token
 	// geo table sees byte-identical behavior to before the feature.
 	{Version: 8, Name: "refresh_token_jti", Func: addRefreshTokenJTI},
+	// v9 backfills the roles column (the direct-mint tenant-membership role
+	// vector — see oauthspi.RefreshToken.Roles). Fresh DBs get it from the
+	// baseline DDL; pre-v9 DBs get it here. Existing rows default to '[]' — a
+	// token issued before the feature rotates without a roles claim,
+	// byte-identical to pre-feature rotations.
+	{Version: 9, Name: "refresh_token_roles", Func: addRefreshTokenRoles},
 }
 
 func addRefreshTokenFamilyExpiry(ctx context.Context, x migrate.Execer) error {
@@ -266,6 +273,24 @@ func addRefreshTokenJTI(ctx context.Context, x migrate.Execer) error {
 	}
 	_, err = x.ExecContext(ctx,
 		`ALTER TABLE refresh_tokens ADD COLUMN jti TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// addRefreshTokenRoles adds the roles column (direct-mint tenant-membership
+// role vector — see oauthspi.RefreshToken.Roles) to a pre-existing
+// refresh_tokens table. Idempotent via the column-exists check; existing
+// rows default to '[]' so a token issued before the feature rotates without
+// a roles claim (pre-feature behavior).
+func addRefreshTokenRoles(ctx context.Context, x migrate.Execer) error {
+	has, err := refreshTokenColumnExists(ctx, x, "roles")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	_, err = x.ExecContext(ctx,
+		`ALTER TABLE refresh_tokens ADD COLUMN roles TEXT NOT NULL DEFAULT '[]'`)
 	return err
 }
 

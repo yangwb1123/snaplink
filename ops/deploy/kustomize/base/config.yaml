@@ -8,7 +8,8 @@
 # config tree is the same shape as cmd/sso-server/config.yaml.
 
 server:
-  issuer: sso-server
+  issuer: http://sso-server.snaplink-sso.svc.cluster.local:8080
+  issuer_allowlist: [http://sso-server.snaplink-sso.svc.cluster.local:8080]
   required_capabilities: [core.runtime.v1, server.stock.v1]
   base_url: http://sso-server.snaplink-sso.svc.cluster.local:8080
   listen: ":8080"

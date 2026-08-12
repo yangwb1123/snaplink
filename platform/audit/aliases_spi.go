@@ -186,6 +186,7 @@ const (
 	EventTOTPEnrolled                        = auditspi.EventTOTPEnrolled
 	EventTenantSessionsRevoked               = auditspi.EventTenantSessionsRevoked
 	EventTenantQuotaStoreFailure             = auditspi.EventTenantQuotaStoreFailure
+	EventRoleResolutionFailed                = auditspi.EventRoleResolutionFailed
 	EventClientSecretExpiring                = auditspi.EventClientSecretExpiring
 	EventAuditChainCheckpoint                = auditspi.EventAuditChainCheckpoint
 	EventTenantQuotaProjectionApplied        = auditspi.EventTenantQuotaProjectionApplied

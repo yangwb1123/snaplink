@@ -85,7 +85,7 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 	if token == "" || info == nil {
 		return oauth.ErrRefreshTokenNotFound
 	}
-	scopes, attrs, resources, amr, err := marshalRefreshJSONCols(info)
+	scopes, attrs, resources, amr, roles, err := marshalRefreshJSONCols(info)
 	if err != nil {
 		return err
 	}
@@ -99,15 +99,15 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
         INSERT INTO refresh_tokens (token, user_id, client_id, provider,
             scopes, attributes, issued_at, expires_at, family_id, jti, resources,
             authorization_details, sid, amr, acr, auth_time, confirmation_jkt,
-            generation, family_created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            generation, family_created_at, roles)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		lookup, info.UserID, info.ClientID, info.Provider,
 		string(scopes), string(attrs),
 		info.IssuedAt.UnixNano(), info.ExpiresAt.UnixNano(),
 		info.FamilyID, info.JTI, string(resources),
 		string(info.AuthorizationDetails), info.SID,
 		string(amr), info.Acr, unixNanoOrZero(info.AuthTime), info.ConfirmationJKT,
-		info.Generation, unixNanoOrZero(info.FamilyCreatedAt),
+		info.Generation, unixNanoOrZero(info.FamilyCreatedAt), string(roles),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: insert refresh_token: %w", err)
@@ -117,20 +117,23 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 
 // marshalRefreshJSONCols JSON-encodes the slice/map columns of a RefreshToken
 // for storage. Extracted from Issue for the function-length budget.
-func marshalRefreshJSONCols(info *oauth.RefreshToken) (scopes, attrs, resources, amr []byte, err error) {
+func marshalRefreshJSONCols(info *oauth.RefreshToken) (scopes, attrs, resources, amr, roles []byte, err error) {
 	if scopes, err = json.Marshal(info.Scopes); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("sqlite: marshal scopes: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("sqlite: marshal scopes: %w", err)
 	}
 	if attrs, err = json.Marshal(info.Attributes); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("sqlite: marshal attributes: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("sqlite: marshal attributes: %w", err)
 	}
 	if resources, err = json.Marshal(info.Resources); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("sqlite: marshal resources: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("sqlite: marshal resources: %w", err)
 	}
 	if amr, err = json.Marshal(info.Amr); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("sqlite: marshal amr: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("sqlite: marshal amr: %w", err)
 	}
-	return scopes, attrs, resources, amr, nil
+	if roles, err = json.Marshal(info.Roles); err != nil {
+		return nil, nil, nil, nil, nil, fmt.Errorf("sqlite: marshal roles: %w", err)
+	}
+	return scopes, attrs, resources, amr, roles, nil
 }
 
 // Consume atomically deletes + returns the row. Single-use rotation
@@ -156,7 +159,7 @@ func (s *RefreshTokenStore) consume(ctx context.Context, lookup string) (*oauth.
         RETURNING user_id, client_id, provider, scopes, attributes,
                   issued_at, expires_at, family_id, jti, resources,
                   authorization_details, sid, amr, acr, auth_time,
-                  confirmation_jkt, generation, family_created_at`, lookup)
+                  confirmation_jkt, generation, family_created_at, roles`, lookup)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Reuse-detection path.
@@ -199,7 +202,7 @@ func (s *RefreshTokenStore) inspect(ctx context.Context, lookup string) (*oauth.
         SELECT user_id, client_id, provider, scopes, attributes,
                issued_at, expires_at, family_id, jti, resources,
                authorization_details, sid, amr, acr, auth_time,
-               confirmation_jkt, generation, family_created_at
+               confirmation_jkt, generation, family_created_at, roles
         FROM refresh_tokens WHERE token = ?`, lookup)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -392,7 +395,7 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 		out                                        oauth.RefreshToken
 		provider, scopesJSON, attrsJSON, resources string
 		familyID, jti, authDetails, sid            string
-		amrJSON, acr                               string
+		amrJSON, acr, rolesJSON                    string
 		issuedAtUnixNs, expiresAtUnixNs            int64
 		authTimeUnixNs                             int64
 		confirmationJKT                            string
@@ -406,7 +409,7 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 		&familyID, &jti, &resources,
 		&authDetails, &sid,
 		&amrJSON, &acr, &authTimeUnixNs,
-		&confirmationJKT, &generation, &familyCreatedAtUnixNs,
+		&confirmationJKT, &generation, &familyCreatedAtUnixNs, &rolesJSON,
 	); err != nil {
 		return nil, err
 	}
@@ -432,7 +435,7 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 	}
 	out.IssuedAt = time.Unix(0, issuedAtUnixNs).UTC()
 	out.ExpiresAt = time.Unix(0, expiresAtUnixNs).UTC()
-	if err := decodeRefreshJSONCols(&out, scopesJSON, attrsJSON, resources, amrJSON); err != nil {
+	if err := decodeRefreshJSONCols(&out, scopesJSON, attrsJSON, resources, amrJSON, rolesJSON); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -441,28 +444,33 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 // decodeRefreshJSONCols unmarshals the JSON-encoded columns onto out. The
 // empty / empty-collection sentinels ("", "[]", "{}") are left as the zero
 // value rather than allocating an empty slice/map.
-func decodeRefreshJSONCols(out *oauth.RefreshToken, scopesJSON, attrsJSON, resources, amrJSON string) error {
-	if scopesJSON != "" && scopesJSON != "[]" {
-		if err := json.Unmarshal([]byte(scopesJSON), &out.Scopes); err != nil {
-			return fmt.Errorf("sqlite: unmarshal scopes: %w", err)
-		}
+func decodeRefreshJSONCols(out *oauth.RefreshToken, scopesJSON, attrsJSON, resources, amrJSON, rolesJSON string) error {
+	cols := []refreshJSONCol{
+		{scopesJSON, "[]", &out.Scopes, "scopes"},
+		{attrsJSON, "{}", &out.Attributes, "attributes"},
+		{resources, "[]", &out.Resources, "resources"},
+		{amrJSON, "[]", &out.Amr, "amr"},
+		{rolesJSON, "[]", &out.Roles, "roles"},
 	}
-	if attrsJSON != "" && attrsJSON != "{}" {
-		if err := json.Unmarshal([]byte(attrsJSON), &out.Attributes); err != nil {
-			return fmt.Errorf("sqlite: unmarshal attributes: %w", err)
+	for _, c := range cols {
+		if c.raw == "" || c.raw == c.empty {
+			continue
 		}
-	}
-	if resources != "" && resources != "[]" {
-		if err := json.Unmarshal([]byte(resources), &out.Resources); err != nil {
-			return fmt.Errorf("sqlite: unmarshal resources: %w", err)
-		}
-	}
-	if amrJSON != "" && amrJSON != "[]" {
-		if err := json.Unmarshal([]byte(amrJSON), &out.Amr); err != nil {
-			return fmt.Errorf("sqlite: unmarshal amr: %w", err)
+		if err := json.Unmarshal([]byte(c.raw), c.dst); err != nil {
+			return fmt.Errorf("sqlite: unmarshal %s: %w", c.name, err)
 		}
 	}
 	return nil
+}
+
+// refreshJSONCol is one JSON-encoded refresh_tokens column: the raw text,
+// the empty-collection sentinel that means "no value", the destination, and
+// the column name for error messages. Table-driven so decodeRefreshJSONCols
+// stays within the complexity budget as columns are added.
+type refreshJSONCol struct {
+	raw, empty string
+	dst        any
+	name       string
 }
 
 var (

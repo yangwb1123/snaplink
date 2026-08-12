@@ -25,6 +25,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/netpolicy"
 	"github.com/yangwb1123/snaplink/platform/sse"
 	"github.com/yangwb1123/snaplink/protocols/caep"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/i18n"
 	"github.com/yangwb1123/snaplink/shared/security"
@@ -54,6 +55,12 @@ type wiringState struct {
 	compressionEnabled    bool
 	debugRequestLogging   bool // when set, logs requests/responses at DEBUG level
 	debugRequestLogBodies bool // when also set, includes bodies in that log output
+	// credentialFormOnly gates the strict credential wire (B4-4,
+	// WithCredentialFormOnly): when true, /token, /token/introspect,
+	// /token/revoke and /par accept ONLY application/x-www-form-urlencoded
+	// and answer 415 for any other Content-Type. Seeded false in NewServer
+	// — the default-off, byte-identical baseline.
+	credentialFormOnly bool
 
 	// apiVersionSupported lists the version tokens (e.g. "v1", "v2alpha")
 	// this deployment accepts via Accept-Version request-header negotiation
@@ -93,6 +100,14 @@ type wiringState struct {
 	regionMiddlewareOpts       region.MiddlewareOptions
 	servingRegionAdvertisement region.ID
 	invalidationBus            cluster.Bus
+
+	// scopeRegistry is the opt-in global scope registry (scope-matrix-v2,
+	// campaign B4-2, WithScopeRegistry): the /token seam and the per-branch
+	// effective-scope checks reject scopes it does not register with the
+	// standard 400 invalid_scope. Nil (the default, option never called) is
+	// a structural no-op — the server is byte-identical to a build without
+	// the feature. Build-once: no hot-reload, no per-replica toggling.
+	scopeRegistry scoperegistry.Registry
 
 	// webhookEngine is the opt-in generic event/webhook egress engine
 	// (WithWebhookEngine). Nil = no admin subscription/dead-letter routes,

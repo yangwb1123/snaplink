@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"time"
+
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+)
 
 // ServerConfig holds top-level Server tunables.
 // PprofConfig controls the optional Go runtime profiling endpoints. Disabled
@@ -53,6 +57,19 @@ type ServerConfig struct {
 	// built-in Ed25519JWTIssuer does); otherwise this flag is a
 	// no-op and an info log is emitted at startup.
 	SignedMetadata bool `yaml:"signed_metadata"`
+
+	// RequireFormContentType opts the server into the strict credential
+	// wire (B4-4): when true, the four credential endpoints (/token,
+	// /token/introspect, /token/revoke, /par) accept ONLY
+	// application/x-www-form-urlencoded (RFC 6749 §3.2 / 7662 §2.1 /
+	// 7009 §2.1 / 9126 §4.1) and answer 415 Unsupported Media Type with
+	// the plain {"error":"invalid_request"} envelope for a JSON body, a
+	// missing Content-Type, or any other media type — before the body is
+	// read; nothing is minted, revoked, introspected, or stored. Unset
+	// (nil) or false = legacy JSON acceptance, byte-identical to a build
+	// without the key. Boot-time only; no hot-reload; rollback = drop the
+	// key or set false.
+	RequireFormContentType *bool `yaml:"require_form_content_type"`
 
 	// OAuth21StrictMode flips the AS into draft-OAuth-2.1 strict
 	// posture: rejects response_type=token (implicit), drops `plain`
@@ -192,4 +209,17 @@ type HTTP2Config struct {
 // LoggingConfig controls the embedded logger.
 type LoggingConfig struct {
 	Level string `yaml:"level"` // debug | info | error
+}
+
+// credentialFormOnlyOptions returns the opt-in strict credential wire
+// option (B4-4, server.require_form_content_type). Unset (nil) appends
+// nothing so ServerOptions stays byte-identical to a pre-B4-4 build;
+// false is the explicit-legacy spelling of the same default. Only true
+// changes the four credential endpoints' wire behavior (415 for
+// JSON/missing/unexpected Content-Type).
+func (c *Config) credentialFormOnlyOptions() []sso.Option {
+	if c.Server.RequireFormContentType == nil {
+		return nil
+	}
+	return []sso.Option{sso.WithCredentialFormOnly(*c.Server.RequireFormContentType)}
 }

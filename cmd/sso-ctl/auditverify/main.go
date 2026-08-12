@@ -6,6 +6,8 @@
 //
 //	sso-ctl audit-verify --from-file events.json
 //	sso-ctl audit-verify --from-url https://sso.example.com --bearer $ADMIN_TOKEN
+//	sso-ctl audit-verify --from-file events.json --checkpoint cp.json [--notary-key notary.pub.hex]
+//	sso-ctl audit-verify --from-file window.json --anchor-hash <boundary-prev-hash>
 //
 // Either source is mutually exclusive. URL mode pages through
 // /api/v1/audit/events newest-first and reverses the buffer before
@@ -13,19 +15,35 @@
 // semantics. The query API caps each page at
 // audit.MaxQueryLimit (1000); --page-size lets operators tune.
 //
-// Exit code: 0 on a clean chain, 1 on a break / error.
+// --checkpoint anchors verification to a signed notary attestation of
+// the chain head: instead of proving only internal consistency, the
+// replayed head must equal the attested head (audit.VerifyChainAgainstCheckpoint).
+// --notary-key pins the checkpoint signer out-of-band (one or more
+// hex-encoded Ed25519 public keys, whitespace-separated) so a replaced
+// checkpoint file cannot simply be re-signed by an attacker.
+//
+// --anchor-hash anchors verification to the segment START: the boundary
+// PrevHash the oldest exported event carried at export time (an
+// auditexport bundle's boundary_prev_hash, the event before the window in
+// a full export, or a relayed batch's first event — NOT a checkpoint
+// file). --checkpoint proves the chain END; --anchor-hash proves the
+// segment START; the two are mutually exclusive (R5).
+//
+// Honest head reporting — a --limit-truncated run verifies the PREFIX and
+// says so (exit 1), never asserting the prefix head is the chain tip:
+// segment verified (0), prefix verified ... not the full chain (1),
+// chain BROKEN (1), empty segment (1), CLI misuse (2).
+// Exit code: 0 on a clean chain, 1 on a break / error, 2 on CLI misuse.
 package auditverify
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -55,43 +73,188 @@ Flags:
 	}
 }
 
-// Run executes the audit-verify subcommand over args (the argument
-// slice WITHOUT the leading program name). It returns the process exit
-// code: 0 on a clean chain / empty input, 1 on a chain break or load
-// error. CLI-misuse paths (usageErr) and runtime load errors (errorf)
-// exit the process directly, preserving the original main() behavior.
-func Run(args []string) int {
+// verifyOptions carries the parsed flag values between Run and its
+// helpers (flag pointers only live inside parseFlags' FlagSet).
+type verifyOptions struct {
+	fromFile      string
+	fromURL       string
+	bearer        string
+	limit         int
+	pageSize      int
+	timeout       time.Duration
+	checkpoint    string
+	notaryKey     string
+	anchorHash    string
+	anchorHashSet bool
+}
+
+// parseFlags builds the local FlagSet (wired as usageFlags so the
+// standalone usage banner renders the defaults) and returns the parsed
+// options.
+func parseFlags(args []string) verifyOptions {
 	fs := flag.NewFlagSet("sso-ctl audit-verify", flag.ExitOnError)
 	usageFlags = fs
 	fs.Usage = usage
 	fromFile := fs.String("from-file", "", "path to JSON array of audit events (mutually exclusive with --from-url)")
 	fromURL := fs.String("from-url", "", "base URL of the SSO server (mutually exclusive with --from-file)")
 	bearer := fs.String("bearer", "", "admin bearer token for the /api/v1/audit/events API (required with --from-url)")
-	limit := fs.Int("limit", 10_000, "max events to load")
+	limit := fs.Int("limit", 10_000, "max events to load (0 = unlimited; prefer 0 for anchored runs)")
 	pageSize := fs.Int("page-size", 500, "URL-mode pagination batch size (caps at audit.MaxQueryLimit=1000)")
 	timeoutSec := fs.Int("timeout-sec", 30, "URL-mode HTTP timeout in seconds")
+	checkpoint := fs.String("checkpoint", "", "path to a signed notary checkpoint (JSON); signature enforced at load")
+	notaryKey := fs.String("notary-key", "", "path to hex-encoded Ed25519 public key(s) pinning the checkpoint signer (one or more, whitespace-separated; requires --checkpoint)")
+	anchorHash := fs.String("anchor-hash", "", "hex PrevHash of the segment's first event — the boundary anchor (an auditexport bundle's boundary_prev_hash, the event before the window in a full export, or a relayed batch's first event); NOT a checkpoint file — verifies the segment START instead of genesis")
 	_ = fs.Parse(args)
+	// An explicit --anchor-hash "" is misuse (R5): the empty anchor is
+	// GenesisHash, expressed by OMITTING the flag. flag.Visit tells an
+	// explicitly-set empty value apart from an absent flag.
+	anchorHashSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "anchor-hash" {
+			anchorHashSet = true
+		}
+	})
+	return verifyOptions{
+		fromFile:      *fromFile,
+		fromURL:       *fromURL,
+		bearer:        *bearer,
+		limit:         *limit,
+		pageSize:      *pageSize,
+		timeout:       time.Duration(*timeoutSec) * time.Second,
+		checkpoint:    *checkpoint,
+		notaryKey:     *notaryKey,
+		anchorHash:    *anchorHash,
+		anchorHashSet: anchorHashSet,
+	}
+}
 
-	if *fromFile == "" && *fromURL == "" {
+// loadEvents reads events from the flag-selected source and reports
+// whether the --limit cap truncated the chain (checkpoint-anchored runs
+// fail fast on that; --anchor-hash and legacy runs report the truncation
+// honestly instead). URL mode requires a bearer token (legacy misuse path).
+func loadEvents(o verifyOptions) ([]*audit.Event, bool, error) {
+	if o.fromFile != "" {
+		return readFromFile(o.fromFile, o.limit)
+	}
+	if o.bearer == "" {
+		usageErr("--bearer is required with --from-url")
+	}
+	return readFromURL(o.fromURL, o.bearer, o.limit, o.pageSize, o.timeout)
+}
+
+// verifyAnchored is the --checkpoint branch of Run: truncation fail-fast,
+// the Phase-A posture notice, then VerifyChainAgainstCheckpoint (which
+// re-verifies the embedded-key signature, replays the chain, applies the
+// empty-set rule, and asserts head equality). Returns the exit code.
+func verifyAnchored(events []*audit.Event, cp *audit.SignedCheckpoint, notaryKeyPath string, limit int, truncated bool) int {
+	// A --limit-truncated list verifies against the wrong head and is
+	// indistinguishable from a genuine compromise alarm (--limit defaults
+	// to 10000, so truncation is the default state on long chains).
+	// Fail-fast BEFORE any verification output.
+	if truncated {
+		fmt.Fprintf(os.Stderr, "event list truncated by --limit %d before the attested head; rerun with --limit 0\n", limit)
+		return 1
+	}
+	if notaryKeyPath == "" {
+		// Phase-A posture, self-announcing: without a pin, a checkpoint
+		// file an attacker can replace is forgeable (embedded-key trust).
+		fmt.Fprintln(os.Stderr, "notice: no --notary-key: a checkpoint file an attacker can replace is forgeable (embedded-key trust) — add --notary-key to pin the signer")
+	}
+	if err := audit.VerifyChainAgainstCheckpoint(events, cp); err != nil {
+		fmt.Fprintf(os.Stderr, "chain BROKEN: %v\n", err)
+		return 1
+	}
+	// GenesisHash ("") is the only head an empty chain can attest;
+	// guarding the slice keeps the anchored empty-chain path panic-free.
+	head := audit.GenesisHash
+	if len(events) > 0 {
+		head = events[len(events)-1].Hash
+	}
+	fmt.Printf("chain verified: %d event(s), head=%s, checkpoint seq=%d\n",
+		len(events), head, cp.Checkpoint.Sequence)
+	return 0
+}
+
+// checkMisuse validates the CLI-flag rules and returns a nonzero exit
+// code for misuse, or 0. --notary-key without --checkpoint is checked
+// first so the misuse code 2 is RETURNED (in-process-testable; binary
+// behavior is unchanged via the os.Exit(run(args)) dispatcher), while
+// the legacy source-flag rules keep their os.Exit behavior (R4).
+func checkMisuse(o verifyOptions) int {
+	if o.notaryKey != "" && o.checkpoint == "" {
+		fmt.Fprintf(os.Stderr, progName+": --notary-key requires --checkpoint\n")
+		usage()
+		return 2
+	}
+	if o.anchorHashSet && o.anchorHash == "" {
+		fmt.Fprintf(os.Stderr, progName+": --anchor-hash requires a non-empty value\n")
+		usage()
+		return 2
+	}
+	if o.anchorHashSet && o.checkpoint != "" {
+		fmt.Fprintf(os.Stderr, progName+": --anchor-hash and --checkpoint are mutually exclusive\n")
+		usage()
+		return 2
+	}
+	if o.fromFile == "" && o.fromURL == "" {
 		usageErr("one of --from-file or --from-url is required")
 	}
-	if *fromFile != "" && *fromURL != "" {
+	if o.fromFile != "" && o.fromURL != "" {
 		usageErr("--from-file and --from-url are mutually exclusive")
 	}
+	return 0
+}
 
-	var events []*audit.Event
-	var err error
-	if *fromFile != "" {
-		events, err = readFromFile(*fromFile, *limit)
-	} else {
-		if *bearer == "" {
-			usageErr("--bearer is required with --from-url")
-		}
-		events, err = readFromURL(*fromURL, *bearer, *limit, *pageSize, time.Duration(*timeoutSec)*time.Second)
+// loadCheckpointIfRequested loads the anchor when --checkpoint is set; a
+// load failure prints the diagnostic and returns a nonzero exit code.
+// The checkpoint loads BEFORE events: a bad anchor fails fast without
+// touching the event source (mirrors auditexport ordering).
+func loadCheckpointIfRequested(checkpointPath, notaryKeyPath string) (*audit.SignedCheckpoint, int) {
+	if checkpointPath == "" {
+		return nil, 0
 	}
+	cp, err := loadAnchor(checkpointPath, notaryKeyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, progName+": %v\n", err)
+		return nil, 1
+	}
+	return cp, 0
+}
+
+// Run executes the audit-verify subcommand over args (the argument
+// slice WITHOUT the leading program name). It returns the process exit
+// code: 0 on a clean chain / empty input, 1 on a chain break or load
+// error, 2 on CLI misuse. New failure paths (checkpoint load, pinning,
+// truncation fail-fast, --notary-key misuse) print their diagnostic and
+// RETURN the code so tests can exercise them in-process; legacy
+// usageErr/errorf paths still exit the process directly (the binary
+// behavior is identical either way because cmd/sso-ctl main() does
+// os.Exit(run(args))).
+func Run(args []string) int {
+	o := parseFlags(args)
+	if code := checkMisuse(o); code != 0 {
+		return code
+	}
+
+	cp, code := loadCheckpointIfRequested(o.checkpoint, o.notaryKey)
+	if code != 0 {
+		return code
+	}
+
+	events, truncated, err := loadEvents(o)
 	if err != nil {
 		errorf("load events: %v", err)
 	}
+	if cp != nil {
+		return verifyAnchored(events, cp, o.notaryKey, o.limit, truncated)
+	}
+	if o.anchorHashSet {
+		return verifyAnchoredSegment(events, o.anchorHash, o.limit, truncated)
+	}
+
+	// Legacy unanchored tail — byte-identical when no checkpoint or
+	// anchor-hash flag is present (R4), except the truncated row below:
+	// a --limit-truncated prefix must never assert its head is the tip.
 	if len(events) == 0 {
 		fmt.Println("no events to verify")
 		return 0
@@ -101,23 +264,98 @@ func Run(args []string) int {
 		fmt.Fprintf(os.Stderr, "chain BROKEN: %v\n", err)
 		return 1
 	}
+	if truncated {
+		fmt.Printf("prefix verified: %d event(s) — truncated by --limit %d; head=%s is not the full chain\n",
+			len(events), o.limit, events[len(events)-1].Hash)
+		return 1
+	}
 	fmt.Printf("chain verified: %d event(s), head=%s\n", len(events), events[len(events)-1].Hash)
 	return 0
+}
+
+// loadCheckpoint reads the SignedCheckpoint JSON exactly once and
+// enforces the embedded-key signature at load (read-once, no TOCTOU;
+// same pattern as auditexport.loadCheckpoint).
+func loadCheckpoint(path string) (*audit.SignedCheckpoint, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read checkpoint %s: %w", path, err)
+	}
+	var cp audit.SignedCheckpoint
+	if err := json.Unmarshal(raw, &cp); err != nil {
+		return nil, fmt.Errorf("parse checkpoint %s: %w", path, err)
+	}
+	if err := audit.VerifyCheckpointSignature(&cp); err != nil {
+		return nil, fmt.Errorf("checkpoint %s FAILED signature check: %w", path, err)
+	}
+	return &cp, nil
+}
+
+// readPinnedKeys reads one or more hex-encoded Ed25519 public keys (each
+// 32 bytes -> 64 hex chars; whitespace-separated, trimmed) into a set.
+// The set form exists for rotation: add the new key, rotate the notary,
+// remove the old key — no verification gap.
+func readPinnedKeys(path string) (map[string][]byte, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read notary key %s: %w", path, err)
+	}
+	pinned := make(map[string][]byte)
+	for _, field := range strings.Fields(string(raw)) {
+		key, err := hex.DecodeString(field)
+		if err != nil {
+			return nil, fmt.Errorf("parse notary key %s: invalid hex %q", path, field)
+		}
+		if len(key) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("parse notary key %s: %q is %d bytes; want %d", path, field, len(key), ed25519.PublicKeySize)
+		}
+		pinned[string(key)] = key
+	}
+	if len(pinned) == 0 {
+		return nil, fmt.Errorf("parse notary key %s: no keys found", path)
+	}
+	return pinned, nil
+}
+
+// loadAnchor composes loadCheckpoint + optional pinning: when a pin file
+// is given, cp.SignerKey must be a member of the pinned set. Membership
+// is the load-bearing precondition: after it passes, VerifyCheckpointSignature
+// (which verifies against SignerKey) verifies against a pinned key by
+// construction. Do not "simplify" this into a SignerKey-only check (that
+// reopens the self-signed-checkpoint forge) or into a single-key match
+// (that makes rotation a fail-closed outage).
+func loadAnchor(checkpointPath, notaryKeyPath string) (*audit.SignedCheckpoint, error) {
+	cp, err := loadCheckpoint(checkpointPath)
+	if err != nil {
+		return nil, err
+	}
+	if notaryKeyPath == "" {
+		return cp, nil
+	}
+	pinned, err := readPinnedKeys(notaryKeyPath)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := pinned[string(cp.SignerKey)]; !ok {
+		return nil, fmt.Errorf("checkpoint signer key does not match pinned key")
+	}
+	return cp, nil
 }
 
 // readFromFile reads a JSON file containing an array of Events.
 // Accepts either the raw array OR an object with an "events" field
 // (mirrors the /api/v1/audit/events response shape so operators
 // can `curl > events.json` and feed it back in unmodified).
-// Returns events in CHAIN ORDER (oldest first).
-func readFromFile(path string, limit int) ([]*audit.Event, error) {
+// Returns events in CHAIN ORDER (oldest first) plus whether the
+// --limit cap truncated the file's chain.
+func readFromFile(path string, limit int) ([]*audit.Event, bool, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	events, err := parseEventList(raw)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// API-shaped responses come back newest-first; arrays from a
 	// file might be either order. Detect by looking at the first
@@ -126,10 +364,11 @@ func readFromFile(path string, limit int) ([]*audit.Event, error) {
 	if len(events) > 1 && events[0].PrevHash != "" && events[len(events)-1].PrevHash == "" {
 		reverseEvents(events)
 	}
-	if limit > 0 && len(events) > limit {
+	truncated := limit > 0 && len(events) > limit
+	if truncated {
 		events = events[:limit]
 	}
-	return events, nil
+	return events, truncated, nil
 }
 
 func parseEventList(raw []byte) ([]*audit.Event, error) {
@@ -146,84 +385,6 @@ func parseEventList(raw []byte) ([]*audit.Event, error) {
 		return env.Events, nil
 	}
 	return nil, errors.New("input is neither a JSON array nor an {events: [...]} object")
-}
-
-// readFromURL pages through /api/v1/audit/events newest-first, then
-// returns them reversed (oldest first) so audit.VerifyChain accepts
-// them directly. Stops when the server returns fewer events than
-// the page size (no more pages) or when we've collected `limit`.
-func readFromURL(base, bearer string, limit, pageSize int, timeout time.Duration) ([]*audit.Event, error) {
-	if pageSize <= 0 {
-		pageSize = 500
-	}
-	if pageSize > audit.MaxQueryLimit {
-		pageSize = audit.MaxQueryLimit
-	}
-	parsed, err := url.Parse(strings.TrimRight(base, "/"))
-	if err != nil {
-		return nil, fmt.Errorf("parse base URL: %w", err)
-	}
-	client := &http.Client{Timeout: timeout}
-	var collected []*audit.Event
-	offset := 0
-	for {
-		page, err := fetchEventPage(client, parsed, bearer, pageSize, offset)
-		if err != nil {
-			return nil, err
-		}
-		collected = append(collected, page...)
-		if limit > 0 && len(collected) >= limit {
-			collected = collected[:limit]
-			break
-		}
-		if len(page) < pageSize {
-			break
-		}
-		offset += len(page)
-	}
-	// API returns newest-first; flip for chain-order verification.
-	reverseEvents(collected)
-	return collected, nil
-}
-
-// fetchEventPage retrieves one /api/v1/audit/events page at the given offset.
-// Errors carry the offset so a multi-page failure pinpoints where it stopped.
-func fetchEventPage(client *http.Client, base *url.URL, bearer string, pageSize, offset int) ([]*audit.Event, error) {
-	u := *base
-	u.Path = base.Path + "/api/v1/audit/events"
-	q := u.Query()
-	q.Set("limit", strconv.Itoa(pageSize))
-	q.Set("offset", strconv.Itoa(offset))
-	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+bearer)
-	req.Header.Set("Accept", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch page (offset=%d): %w", offset, err)
-	}
-	body, readErr := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if readErr != nil {
-		return nil, fmt.Errorf("read page body (offset=%d): %w", offset, readErr)
-	}
-	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("page (offset=%d) http %d: %s", offset, resp.StatusCode, string(body))
-	}
-	page, err := parseEventList(body)
-	if err != nil {
-		return nil, fmt.Errorf("parse page (offset=%d): %w", offset, err)
-	}
-	return page, nil
-}
-
-func reverseEvents(s []*audit.Event) {
-	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
-		s[i], s[j] = s[j], s[i]
-	}
 }
 
 // usageErr prints "<prog>: <msg>", the usage banner, and exits 2 (CLI misuse).

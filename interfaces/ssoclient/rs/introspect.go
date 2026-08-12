@@ -57,6 +57,7 @@ func ValidateTokenWithIntrospect(ctx context.Context, token string, cfg Config) 
 		RenewAfter:    w.RenewAfter,
 		CnfJKT:        w.Cnf.JKT,
 		ServingRegion: w.ServingRegion,
+		TenantID:      w.TenantID,
 		Raw:           w.raw,
 	}
 	if err := validateIntrospectedClaims(claims, cfg); err != nil {

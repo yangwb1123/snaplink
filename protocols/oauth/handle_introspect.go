@@ -69,6 +69,40 @@ type IntrospectDeps interface {
 	// batch capability is disabled (the default) — an inbound `tokens`
 	// field is then ignored entirely and single-token behavior is unchanged.
 	IntrospectionBatchMaxSize() int
+	// RequireFormContentType reports whether the strict credential wire is
+	// enabled (B4-4, server.require_form_content_type): /token/introspect
+	// then accepts ONLY application/x-www-form-urlencoded and answers 415
+	// for a JSON body, a missing Content-Type, or any other media type,
+	// before the body is read. False (the default) keeps the dual-mode
+	// binder byte-identical to a build without the feature.
+	RequireFormContentType() bool
+}
+
+// bindCredentialRequest binds v through the dual-mode binder, or the
+// strict form-only binder when the Deps flag is set (B4-4), and writes
+// the 400/415 error response on failure. Returns true when a response
+// was already written. The 415 envelope is the plain core.ErrorBody
+// shape: deterministic, byte-identical across the four credential
+// endpoints and across rejection causes, reached only via
+// errors.Is(ErrFormOnly) before the body is read — never a credential
+// oracle. Malformed percent-encoding under a form Content-Type stays on
+// the existing 400 bind-error path.
+func bindCredentialRequest(d interface{ RequireFormContentType() bool }, ctx core.HandlerContext, v any) bool {
+	var err error
+	if d.RequireFormContentType() {
+		err = BindParamsFormOnly(ctx, v)
+	} else {
+		err = BindParams(ctx, v)
+	}
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrFormOnly) {
+		ctx.JSON(http.StatusUnsupportedMediaType, core.ErrorBody(core.ErrInvalidRequest))
+		return true
+	}
+	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+	return true
 }
 
 // introspectRequest is the bound form/JSON body for /token/introspect.
@@ -117,8 +151,7 @@ func HandleIntrospect(d IntrospectDeps, ctx core.HandlerContext) {
 	}
 
 	var req introspectRequest
-	if err := BindParams(ctx, &req); err != nil {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+	if bindCredentialRequest(d, ctx, &req) {
 		return
 	}
 	if id, secret, ok := BasicClientCreds(ctx.Request()); ok {

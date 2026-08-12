@@ -14,6 +14,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/internal/auth/login"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
 
@@ -302,6 +303,34 @@ func enforceJARReplay(ctx context.Context, p *jarPayload, replay security.JTIRep
 // alias so existing internal call sites (handler.go, handlers.go)
 // continue to compile during the gradual handlers extraction.
 func bindOAuthParams(ctx HandlerContext, v any) error { return oauth.BindParams(ctx, v) }
+
+// bindCredentialParams dispatches the /token bind (B4-4): the strict
+// form-only binder when credentialFormOnly is enabled, the exact legacy
+// dual-mode binder otherwise. On a bind error it writes the 400 or 415
+// error response and returns true. The 415 envelope is the PLAIN
+// core.ErrorBody shape (not the trace-aware errorBody): deterministic,
+// no trace_id, byte-identical across the four credential endpoints and
+// across rejection causes, reached only via errors.Is(ErrFormOnly)
+// before the body is read — never a credential oracle. Mode OFF is a
+// transparent pass-through: errors.Is(err, ErrFormOnly) is structurally
+// false and every byte of the baseline behavior is preserved.
+func (s *Server) bindCredentialParams(ctx HandlerContext, v any) (handled bool) {
+	var err error
+	if s.credentialFormOnly {
+		err = oauth.BindParamsFormOnly(ctx, v)
+	} else {
+		err = bindOAuthParams(ctx, v)
+	}
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, oauth.ErrFormOnly) {
+		ctx.JSON(http.StatusUnsupportedMediaType, core.ErrorBody(core.ErrInvalidRequest))
+		return true
+	}
+	ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
+	return true
+}
 
 // RFC 8705 §3 — Mutual-TLS Client Certificate-Bound Access Tokens.
 //

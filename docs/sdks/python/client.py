@@ -1441,6 +1441,8 @@ class SSOClient:
         query: Optional[Dict[str, Any]] = None,
         body: Optional[Any] = None,
         auth: bool = False,
+        form: bool = False,
+        form_blocked_fields: Optional[List[str]] = None,
     ) -> Any:
         url = self.base_url + path
         if query:
@@ -1450,8 +1452,12 @@ class SSOClient:
         headers = {"Accept": "application/json"}
         data = None
         if body is not None:
-            headers["Content-Type"] = "application/json"
-            data = json.dumps(body).encode("utf-8")
+            if form:
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+                data = _form_encode(body, form_blocked_fields).encode("utf-8")
+            else:
+                headers["Content-Type"] = "application/json"
+                data = json.dumps(body).encode("utf-8")
         if auth and self.get_access_token:
             token = self.get_access_token()
             if token:
@@ -2215,7 +2221,9 @@ class SSOClient:
 
     def post_mfa_complete(self, body: MFACompleteRequest) -> Union[LoginResponse, AuthorizationCodeResponse]:
         """Complete an MFA step-up challenge. (operationId: postMFAComplete)"""
-        return self._request("POST", "/auth/mfa", body=body)
+        if body.get("params") is not None:
+            raise SSOError(0, "invalid_request", "params has no application/x-www-form-urlencoded encoding; use code/assertion")
+        return self._request("POST", "/auth/mfa", body=body, form=True, form_blocked_fields=["params"])
 
     def self_register(self, body: Dict[str, Any]) -> Dict[str, Any]:
         """Self-service signup (opt-in, default-off). (operationId: selfRegister)"""
@@ -2235,7 +2243,7 @@ class SSOClient:
 
     def post_device_code(self, body: DeviceCodeRequest) -> DeviceCodeResponse:
         """Device-flow initiation (RFC 8628 §3.1). (operationId: postDeviceCode)"""
-        return self._request("POST", "/device/code", body=body)
+        return self._request("POST", "/device/code", body=body, form=True)
 
     def get_device_verify(self) -> None:
         """Render the device authorization verification page. (operationId: getDeviceVerify)"""
@@ -2243,7 +2251,7 @@ class SSOClient:
 
     def post_device_verify(self, body: DeviceVerifyRequest) -> Dict[str, Any]:
         """User-side device-code approval (RFC 8628 §3.3). (operationId: postDeviceVerify)"""
-        return self._request("POST", "/device/verify", body=body, auth=True)
+        return self._request("POST", "/device/verify", body=body, form=True, auth=True)
 
     def get_end_session(self, query: Optional[Dict[str, Any]] = None) -> None:
         """OpenID Connect RP-Initiated Logout 1.0. (operationId: getEndSession)"""
@@ -2259,7 +2267,7 @@ class SSOClient:
 
     def post_par(self, body: PARRequest) -> PARResponse:
         """Pushed Authorization Request (RFC 9126). (operationId: postPAR)"""
-        return self._request("POST", "/par", body=body)
+        return self._request("POST", "/par", body=body, form=True)
 
     def post_register(self, body: DCRRequest) -> DCRResponse:
         """Dynamic Client Registration (RFC 7591). (operationId: postRegister)"""
@@ -2279,15 +2287,15 @@ class SSOClient:
 
     def post_token(self, body: TokenRequest) -> TokenIssuance:
         """OAuth 2.0 token endpoint (RFC 6749 §3.2). (operationId: postToken)"""
-        return self._request("POST", "/token", body=body)
+        return self._request("POST", "/token", body=body, form=True)
 
     def post_introspect(self, body: IntrospectRequest) -> Union[IntrospectResponse, IntrospectBatchResponse]:
         """OAuth 2.0 token introspection (RFC 7662). (operationId: postIntrospect)"""
-        return self._request("POST", "/token/introspect", body=body)
+        return self._request("POST", "/token/introspect", body=body, form=True)
 
     def post_revoke(self, body: RevokeRequest) -> None:
         """OAuth 2.0 token revocation (RFC 7009). (operationId: postRevoke)"""
-        return self._request("POST", "/token/revoke", body=body)
+        return self._request("POST", "/token/revoke", body=body, form=True)
 
     def post_revoke_all(self) -> Dict[str, Any]:
         """Bulk revoke every refresh token bound to the bearer's subject. (operationId: postRevokeAll)"""
@@ -2754,6 +2762,37 @@ class SSOClient:
     def post_web_authn_registration_finish(self, body: Dict[str, Any], query: Optional[Dict[str, Any]] = None) -> WebAuthnFinishRegistrationResponse:
         """Complete a WebAuthn registration ceremony. (operationId: postWebAuthnRegistrationFinish)"""
         return self._request("POST", "/webauthn/registration/finish", query=query, body=body)
+
+
+def _form_encode(body: Dict[str, Any], blocked_fields: Optional[List[str]] = None) -> str:
+    """Serialize a request body as application/x-www-form-urlencoded.
+
+    Mirrors the Go binder in protocols/oauth/oauthwire (bind.go):
+    - None values are dropped (JSON.stringify's null-drop equivalent);
+    - blocked_fields keys are never emitted (no RFC defines a map form
+      encoding; the generated method additionally fails loud on them);
+    - bools become lowercase "true"/"false" -- urllib would emit
+      "True"/"False", which the binder silently coerces to false
+      (device approval denied, trust grant never minted);
+    - string lists become REPEATED keys via urlencode(doseq=True) (the
+      documented resource/audience/tokens contract);
+    - other lists (authorization_details) and dicts (claims) become a
+      single JSON-string key (RFC 9396 §3 / OIDC Core §5.5).
+    """
+    blocked = set(blocked_fields or [])
+    encoded: Dict[str, Any] = {}
+    for key, value in body.items():
+        if key in blocked or value is None:
+            continue
+        if isinstance(value, bool):
+            encoded[key] = "true" if value else "false"
+        elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+            encoded[key] = value
+        elif isinstance(value, (list, dict)):
+            encoded[key] = json.dumps(value)
+        else:
+            encoded[key] = value
+    return urllib.parse.urlencode(encoded, doseq=True)
 
 
 def _parse_body(status: int, raw: bytes) -> Any:

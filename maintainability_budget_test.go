@@ -48,6 +48,14 @@ var skipDirs = map[string]bool{
 	// ops/scripts/trend.py — their presence depends on what was run locally,
 	// so counting them would make the fan-out gates flap)
 	"__pycache__": true, ".pytest_cache": true, ".trends": true,
+	// batch-runner campaign definitions and per-run archives
+	// (docs/campaigns, docs/architect-analysis/auto/{runs,analyses},
+	// docs/results) — workflow tooling like ai-dev, not product surface; the
+	// committed tree keeps only depth-3 summaries under auto/ (same category
+	// as the path-based test/oidc-conformance/results skip in maxdepth_test.go)
+	"campaigns": true, "runs": true, "analyses": true, "results": true,
+	// local tool-state dirs (gitignored; present only in dev checkouts)
+	".pi-batch": true, ".venv": true, ".pi": true,
 	// nested modules (own go.mod)
 	"kms": true, "redis": true, "postgres": true, "saml": true, "ldap": true,
 	"extauthz": true, "kerberos": true, "radius": true, "kafka": true,

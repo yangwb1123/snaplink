@@ -431,6 +431,51 @@ func TestClientAdminService_UpdatePreservesFieldsNotInAdminProto(t *testing.T) {
 	}
 }
 
+// TestClientAdminService_UpdateRoundTripsReadOnlyBinding is the mirror
+// assertion for the read-only wire fields: Update must never consume
+// TenantId/GrantTypes from the request, and the read path (clientToProto)
+// must surface the stored binding on every Client-bearing RPC. A request
+// that carries no binding fields round-trips the stored values untouched.
+func TestClientAdminService_UpdateRoundTripsReadOnlyBinding(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	requireOK(t, store.Add(context.Background(), &sso.Client{
+		ID:         "app-3",
+		Name:       "App",
+		Active:     true,
+		TenantID:   "tenant-acme",
+		GrantTypes: []string{"authorization_code", "refresh_token"},
+	}), "seed Add")
+
+	svc := NewClientAdminService(store, nil, nil, nil)
+	ctx := context.Background()
+	_, err := svc.Update(ctx, &adminv1.UpdateClientRequest{
+		// The write side must ignore the read-only binding fields even when
+		// a caller echoes them back, and must not require them either.
+		Client: &adminv1.Client{Id: "app-3", Name: "App Renamed", Active: true},
+	})
+	requireOK(t, err, "Update")
+
+	stored, err := store.Get(ctx, "app-3")
+	requireOK(t, err, "Get after Update")
+	if stored.TenantID != "tenant-acme" {
+		t.Errorf("Update wiped TenantID, got %q", stored.TenantID)
+	}
+	if len(stored.GrantTypes) != 2 || stored.GrantTypes[0] != "authorization_code" || stored.GrantTypes[1] != "refresh_token" {
+		t.Errorf("Update wiped GrantTypes, got %+v", stored.GrantTypes)
+	}
+
+	// Read path: the surfaced proto must carry the stored binding.
+	resp, err := svc.Get(ctx, &adminv1.GetClientRequest{Id: "app-3"})
+	requireOK(t, err, "Get")
+	if resp.Client.TenantId != "tenant-acme" {
+		t.Errorf("read path TenantId = %q, want %q", resp.Client.TenantId, "tenant-acme")
+	}
+	if len(resp.Client.GrantTypes) != 2 || resp.Client.GrantTypes[0] != "authorization_code" || resp.Client.GrantTypes[1] != "refresh_token" {
+		t.Errorf("read path GrantTypes = %+v, want [authorization_code refresh_token]", resp.Client.GrantTypes)
+	}
+}
+
 // TestClientAdminService_UpdateUnknownClientReturnsNotFound proves Update
 // fails fast with NotFound (checked up front via Get) rather than
 // constructing a client from a nonexistent record.

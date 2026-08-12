@@ -128,6 +128,16 @@ type RefreshToken struct {
 	// RefreshGrantDeps.RefreshAbsoluteMaxLifetime) — an additive-migration
 	// default that never retroactively kills a pre-existing family.
 	FamilyCreatedAt time.Time `json:"family_created_at,omitempty"`
+
+	// Roles is the tenant-membership role-code vector captured at the
+	// original DIRECT-MINT login (the only issuance with roster access),
+	// persisted so refresh rotation re-stamps the SAME roles claim instead
+	// of silently dropping it mid-session — the propagate-unchanged lineage
+	// discipline of Amr/Acr/AuthTime/AuthorizationDetails. Token-endpoint
+	// grants (authcode/device/CIBA/exchange) deliberately leave it empty:
+	// their rotations must not invent roles the original grant never
+	// carried. Empty = no roles claim on rotated tokens.
+	Roles []string `json:"roles,omitempty"`
 }
 
 // RefreshAuthContext groups the per-issue refresh-record context threaded into
@@ -157,6 +167,13 @@ type RefreshAuthContext struct {
 	// branch stamps one. A rotation whose parent predates the field leaves it
 	// empty — pre-feature behavior (thumbprint-less introspection).
 	JTI string
+
+	// Roles propagates the original direct-mint login's tenant-membership
+	// role vector unchanged across rotation (see RefreshToken.Roles), so a
+	// rotated access token carries the SAME roles claim as the first token
+	// of the family. Left empty by every token-endpoint grant — only the
+	// direct-mint login site threads it.
+	Roles []string
 }
 
 // IsExpired reports whether the refresh token's lifetime has elapsed.

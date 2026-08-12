@@ -56,7 +56,8 @@ type ClientAdminService struct {
 	// *sso.Server injection into grpcserver).
 	onClientChange func(clientID string)
 	// onClientDeleted releases quota using the full pre-delete record, whose
-	// TenantID is intentionally absent from the admin wire protocol.
+	// TenantID is intentionally read-only on the admin wire (surfaced by
+	// clientToProto, never consumed by a mutation).
 	onClientDeleted func(context.Context, *sso.Client)
 }
 
@@ -405,6 +406,11 @@ func clientToProto(c *sso.Client, includeSecret bool) *adminv1.Client {
 		Active:                c.Active,
 		ClientSecretExpiresAt: clientExpiryUnix(c),
 		LoginPageUri:          c.LoginPageURI,
+		// Read-only projection of the stored binding: operators verify the
+		// tenant and grant allowlist here, matching the token claim path
+		// (Subject.TenantID) and /token enforcement.
+		TenantId:   c.TenantID,
+		GrantTypes: append([]string(nil), c.GrantTypes...),
 	}
 	if includeSecret {
 		out.Secret = c.Secret
@@ -412,6 +418,9 @@ func clientToProto(c *sso.Client, includeSecret bool) *adminv1.Client {
 	return out
 }
 
+// protoToClient maps the admin wire's writable fields only: TenantId and
+// GrantTypes are read-only over the admin API (binding is established at
+// registration time) and must never be consumed here.
 func protoToClient(in *adminv1.Client) *sso.Client {
 	if in == nil {
 		return nil

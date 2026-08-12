@@ -56,6 +56,12 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_config_drift_detected_total` | Counter | — |
 | `sso_dr_last_drill_success` | Gauge | — (absent before the first drill) |
 
+Scope-registry (`oauth.scope_registry.enabled`) rejections introduce **no new
+audit event type and no new metric**: they are plain 400 `invalid_scope`
+responses covered by the existing per-request logging, preserving bounded
+cardinality — the registry itself is build-once server config, so there is no
+runtime state to observe beyond request outcomes.
+
 `sso_feature_gate_enabled` is seeded once at boot. A supported SIGHUP reload
 changes live route state but does not currently update this gauge, so use it as
 startup configuration rather than current-state telemetry. ADR-0009's future

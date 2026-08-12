@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -19,6 +20,9 @@ type SAML2BearerGrantDeps interface {
 	// SAML2AssertionValidator returns the configured SAML 2.0 assertion
 	// validator for RFC 7522; nil means the grant is not supported.
 	SAML2AssertionValidator() SAMLAssertionValidator
+	// ScopeRegistry returns the wired global scope registry (nil = unwired
+	// no-op, the default-off byte-compat baseline).
+	ScopeRegistry() scoperegistry.Registry
 }
 
 // SAMLAssertionValidator validates an RFC 7522 SAML 2.0 bearer assertion.
@@ -48,6 +52,15 @@ func HandleSAML2BearerGrant(d SAML2BearerGrantDeps, ctx core.HandlerContext, cli
 	}
 	grantScopes, ok := authorizeSAML2Scopes(ctx, scopes, client)
 	if !ok {
+		return
+	}
+	// Global scope registry (opt-in): the GrantedScopes result (incl. the
+	// rule-4 default for an empty request) is the effective set for this
+	// branch — post-resolution, pre-issuance. Request-borne SAML2 scopes were
+	// already covered by the dispatch seam (saml2_bearer rides
+	// customGrantHandlers, which runs after it); this check closes the
+	// store-bound/defaulted gap.
+	if scoperegistry.RejectUnregistered(ctx, d.ScopeRegistry(), grantScopes) {
 		return
 	}
 	issueSAML2Token(d, ctx, client, subject, strategy, ti, grantScopes, resources, dpopJKT, mtlsX5T)

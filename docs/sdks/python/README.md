@@ -55,6 +55,19 @@ been in the stdlib `typing` module since Python 3.8, so this is still
 
 (`cmd/gensdk/schema.go` + `gen_py.go` — see their doc comments for detail.)
 
+- **The OAuth credential family sends `application/x-www-form-urlencoded`
+  bodies**: the seven credential-endpoint operations (`post_token`,
+  `post_introspect`, `post_revoke`, `post_par`, `post_device_code`,
+  `post_device_verify`, `post_mfa_complete`) use the RFC-mandated form
+  wire; every other operation keeps sending JSON. Form values follow the
+  server binder's contract: booleans are lowercase `true`/`false` (never
+  Python's `True`/`False` — the binder silently coerces those to false),
+  string arrays (`resource`/`audience`/`tokens`) become repeated keys via
+  `urlencode(doseq=True)`, objects and arrays of objects (`claims`,
+  `authorization_details`) become a single key holding the JSON text
+  (RFC 9396 §3 / OIDC Core §5.5), and `params` on `post_mfa_complete` has
+  no form encoding — the client raises an `invalid_request` error rather
+  than sending it (use the flat `code`/`assertion` fields instead).
 - **Every generated `TypedDict` is `total=False`** (every key optional to
   the type checker) rather than encoding the spec's `required` list
   precisely — the precise version needs `Required[]`/`NotRequired[]`

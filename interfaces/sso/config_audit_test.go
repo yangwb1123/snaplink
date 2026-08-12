@@ -19,6 +19,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	"github.com/yangwb1123/snaplink/platform/cluster/memory"
 	"github.com/yangwb1123/snaplink/platform/configaudit"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func cfgAuditGet(t *testing.T, base, path string) (int, map[string]any) {
@@ -59,6 +60,74 @@ func TestConfigAuditAPI_NotMountedWithoutSnapshotsOrStore(t *testing.T) {
 		if code, _ := cfgAuditGet(t, httpSrv.URL, path); code != http.StatusNotFound {
 			t.Errorf("GET %s = %d, want 404 (unmounted) when no snapshot/store is wired", path, code)
 		}
+	}
+}
+
+func fghrPost(h http.Handler, path, body string) fghrResponse {
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return fghrResponse{status: rec.Code, header: rec.Header().Clone(), body: rec.Body.String()}
+}
+
+// TestConfigAudit_OperatorPaths_GateAwareTruthiness is the deploy-tree
+// truthiness sweep for the operator's admin routes (R2). It drives a real
+// server with const-derived paths (no literals) and asserts the three-phase
+// gate contract: gate open -> GET running and POST cluster-diff answer 200,
+// gate closed -> both collapse to a 404 byte-identical to
+// fghrNeverMountedBaseline on the same server (oracle-safe gating, no
+// header/body leak), re-open -> 200 again. Phase 1 runs on the DEFAULT gate
+// state (AdminAPI unset = ON via gateOn(nil)), so a gate-default flip to
+// OFF fails phase 1 — that is the flip detector. A naive sweep that only
+// checks "endpoint responds" would misread the gated 404 as truthiness
+// drift; byte-identity with an unmounted route is what separates "gated by
+// design" from "broke". Method fidelity matters too: cluster-diff must be
+// reachable via POST, not just GET, and the POST carries the snapshot body
+// in all three phases — an empty-body POST is 400 (snapshot required),
+// which would abort the 404 phase before gating is exercised.
+func TestConfigAudit_OperatorPaths_GateAwareTruthiness(t *testing.T) {
+	runningPath := core.PathAPIPrefix + core.PathAdminConfigRunning
+	clusterDiffPath := core.PathAPIPrefix + core.PathAdminConfigClusterDiff
+	postBody := `{"snapshot":{"rate_limit":5}}`
+
+	applied := map[string]any{"rate_limit": float64(10)}
+	running := map[string]any{"rate_limit": float64(20)}
+	// No WithFeatureGates: the gate must be exercised in its default state
+	// (gateOn(nil) == true) so a default flip to OFF fails phase 1.
+	srv := sso.NewServer(
+		sso.WithConfigSnapshots(applied, func(context.Context) (map[string]any, error) { return running, nil }),
+	)
+	h := srv.Handler()
+
+	// Phase 1: gate open (default) — both deploy-tree routes answer non-404.
+	if resp := fghrGet(h, runningPath); resp.status != http.StatusOK {
+		t.Fatalf("GET %s with gate open = %d, want 200", runningPath, resp.status)
+	}
+	if resp := fghrPost(h, clusterDiffPath, postBody); resp.status != http.StatusOK {
+		t.Fatalf("POST %s with gate open = %d, want 200", clusterDiffPath, resp.status)
+	}
+
+	// Phase 2: gate closed — both routes answer byte-identically to the
+	// never-mounted baseline path on the same server (fghrNeverMountedBaseline
+	// is immune to store-coupling churn that would flip a history baseline
+	// from 404 to 200).
+	if !srv.SetAdminAPIGateEnabled(false) {
+		t.Fatal("SetAdminAPIGateEnabled(false) = false, want true")
+	}
+	baselineGET := fghrGet(h, fghrNeverMountedBaseline)
+	baselinePOST := fghrPost(h, fghrNeverMountedBaseline, postBody)
+	fghrAssertIdentical(t, fghrGet(h, runningPath), baselineGET, "GET running with gate closed")
+	fghrAssertIdentical(t, fghrPost(h, clusterDiffPath, postBody), baselinePOST, "POST cluster-diff with gate closed")
+
+	// Phase 3: re-open — both routes are reachable again.
+	if !srv.SetAdminAPIGateEnabled(true) {
+		t.Fatal("SetAdminAPIGateEnabled(true) = false, want true")
+	}
+	if resp := fghrGet(h, runningPath); resp.status != http.StatusOK {
+		t.Fatalf("GET %s after re-open = %d, want 200", runningPath, resp.status)
+	}
+	if resp := fghrPost(h, clusterDiffPath, postBody); resp.status != http.StatusOK {
+		t.Fatalf("POST %s after re-open = %d, want 200", clusterDiffPath, resp.status)
 	}
 }
 

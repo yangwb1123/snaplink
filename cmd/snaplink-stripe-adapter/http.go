@@ -213,8 +213,17 @@ func (a *adapterHTTP) authorizeMachineCheckout(
 	writer http.ResponseWriter, claims *rs.Claims, input checkoutRequest,
 ) (*tenantBinding, bool) {
 	binding := a.config.CheckoutBindings[claims.ClientID]
+	// Ordering is load-bearing: binding == nil precedes the claim comparison
+	// so an unbound machine client with ANY claim state keeps the existing
+	// insufficient_scope rejection. The final condition is the mint-time
+	// binding consistency check: the claim is stamped from the same client
+	// (token_client_credentials.go), so an absent claim is provable config
+	// drift and fails closed. All four causes share one writer call —
+	// byte-identical to today's cross-tenant rejection, no new observable
+	// class (a bound-vs-unbound client probe stays indistinguishable).
 	if rs.CheckScope(claims, scopeCheckoutCreate) != nil || binding == nil ||
-		(input.TenantID != "" && input.TenantID != binding.TenantID) {
+		(input.TenantID != "" && input.TenantID != binding.TenantID) ||
+		claims.TenantID != binding.TenantID {
 		writeCheckoutChallenge(writer, http.StatusForbidden, "insufficient_scope", scopeCheckoutCreate)
 		return nil, false
 	}
@@ -224,9 +233,22 @@ func (a *adapterHTTP) authorizeMachineCheckout(
 func (a *adapterHTTP) authorizeUserCheckout(
 	writer http.ResponseWriter, claims *rs.Claims, input checkoutRequest,
 ) (*tenantBinding, bool) {
-	binding := a.config.TenantBindings[input.TenantID]
-	if claims.Subject == "" || rs.CheckScope(claims, scopeAdminWrite) != nil || binding == nil {
+	if claims.Subject == "" || rs.CheckScope(claims, scopeAdminWrite) != nil {
 		writeCheckoutChallenge(writer, http.StatusForbidden, "insufficient_scope", scopeAdminWrite)
+		return nil, false
+	}
+	binding := a.config.TenantBindings[input.TenantID]
+	if binding == nil || claims.TenantID != input.TenantID {
+		// Single constant response for all four causes (missing input
+		// tenant, unbound input tenant, claim mismatch, absent claim): any
+		// distinguishable variant would let a valid token holder probe which
+		// tenants are configured. No scope attribute — the code alone
+		// separates this class from a scope denial. Under the B4-1 mint
+		// contract every token is stamped from the client binding
+		// (infrastructure/defaultimpl/issue_payload.go), so a claim-less
+		// token is provable mint-time drift and fails closed; the
+		// "" != input.TenantID case is the only class this gate adds.
+		writeCheckoutChallenge(writer, http.StatusForbidden, ErrTenantMismatch, "")
 		return nil, false
 	}
 	return binding, true

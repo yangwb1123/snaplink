@@ -75,6 +75,12 @@ func (d *introspectDeps) IntrospectionSigner() IntrospectionSigner { return d.si
 func (d *introspectDeps) IntrospectionBatchMaxSize() int           { return d.batchMaxSize }
 func (d *introspectDeps) SessionManager() core.SessionManager      { return d.sessionMgr }
 
+// RequireFormContentType returns false — the legacy dual-mode posture —
+// so every existing JSON-post unit test in this file stays on the
+// byte-identical binder path. The strict-mode rows live in test/ against
+// the real *sso.Server (which satisfies this member via its accessor).
+func (d *introspectDeps) RequireFormContentType() bool { return false }
+
 var _ IntrospectDeps = (*introspectDeps)(nil)
 
 // dummyIssuer satisfies map[string]core.TokenIssuer membership so

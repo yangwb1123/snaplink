@@ -10,6 +10,7 @@ import (
 	"github.com/yangwb1123/snaplink/domains/tokenexchange"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
@@ -102,6 +103,9 @@ type TokenExchangeDeps interface {
 	// no-op — byte-identical to a build without this feature. Pure
 	// observability; never consulted by any authorization decision.
 	TokenExchangeChainStore() tokenexchange.ChainStore
+	// ScopeRegistry returns the wired global scope registry (nil = unwired
+	// no-op, the default-off byte-compat baseline).
+	ScopeRegistry() scoperegistry.Registry
 }
 
 // HandleTokenExchangeGrant processes the RFC 8693 token-exchange grant. Behavior
@@ -398,32 +402,19 @@ func tokExEnforcePolicy(d TokenExchangeDeps, ctx core.HandlerContext, client *co
 	return false
 }
 
-// tokExEnforceTenantCollaboration is the OPTIONAL cross-tenant B2B
-// collaboration gate (domains/tenantcollab). It activates ONLY when BOTH an
-// ExternalUserStore and a TenantCollaborationStore are wired (either nil is
-// a complete no-op — byte-identical to a build without this feature) AND the
-// subject_token's home tenant (the TenantID of the client it was originally
-// issued to) differs from the exchanging client's own tenant — a genuine
-// cross-tenant hop. Same-tenant exchanges, and any exchange where either
-// side has no tenant at all, are UNAFFECTED: there is no boundary here for
-// this gate to police (AGENTS.md §3 Tenant & Residency — this only ever
-// NARROWS a cross-tenant exchange, never widens the pre-existing
-// tenant-isolation guarantee).
-//
-// A genuine cross-tenant hop requires BOTH an explicit TenantCollaboration
-// trust row AND a matching GuestRecord registration (tokExAuthorizeGuestHop);
-// either miss collapses to the SAME invalid_grant every other token-exchange
-// failure returns (oracle-leak collapse, AGENTS.md §3) — this gate's whole
-// purpose is to let an operator BLOCK unregistered cross-tenant hops, so
-// leaking WHICH check failed would hand back a tenant-topology oracle.
-//
-// On success, the guest's registered Roles further narrow the already-
-// resolved scope set (never widen it): a requested scope outside the
-// guest's Roles is invalid_scope, mirroring the client-allowlist narrowing
-// tokExResolveScope already applies. The hop is then audited with BOTH the
-// guest-tenant context and the originating home-tenant identity so a SIEM
-// can always trace the action back to its home account. Returns true when
-// it has written a response and the caller must stop.
+// tokExEnforceTenantCollaboration is the OPTIONAL cross-tenant B2B gate
+// (domains/tenantcollab): it activates only when BOTH an ExternalUserStore
+// and a TenantCollaborationStore are wired AND the subject_token's home
+// tenant differs from the exchanging client's — a genuine cross-tenant hop.
+// Same-tenant exchanges and store-less exchanges are UNAFFECTED (this gate
+// only ever NARROWS, never widens, tenant isolation). A hop requires BOTH a
+// TenantCollaboration trust row AND a GuestRecord registration; either miss
+// collapses to the SAME invalid_grant every other exchange failure returns
+// (oracle-leak collapse — no signal about WHICH check failed). On success
+// the guest's registered Roles further narrow the resolved scope set (a
+// scope outside Roles is invalid_scope, mirroring tokExResolveScope). The
+// hop is audited with guest + home-tenant context. Returns true when it has
+// written a response and the caller must stop.
 func tokExEnforceTenantCollaboration(d TokenExchangeDeps, ctx core.HandlerContext, client *core.Client, st *tokExState) bool {
 	extStore := d.ExternalUserStore()
 	collabStore := d.TenantCollaborationStore()
@@ -454,6 +445,11 @@ func tokExEnforceTenantCollaboration(d TokenExchangeDeps, ctx core.HandlerContex
 				return true
 			}
 		}
+	}
+	// Global scope registry (opt-in): the guest-narrowed set is the effective
+	// scope for the hop — post-entitlement, pre-issuance.
+	if scoperegistry.RejectUnregistered(ctx, d.ScopeRegistry(), st.scopes) {
+		return true
 	}
 	tokExAuditCrossTenant(d, ctx, client, homeTenant, guestTenant, st.claims.Subject)
 	return false

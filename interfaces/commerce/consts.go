@@ -25,6 +25,7 @@ const (
 	ScopeAdminWrite       = "admin:write"
 	ScopePaymentOrderRead = "billing:payment:order:read"
 	ScopePaymentWrite     = "billing:payment:write"
+	ScopeCheckoutCreate   = "billing:checkout:create"
 )
 
 const (

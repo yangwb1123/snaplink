@@ -55,6 +55,11 @@ func (d *revokeDeps) SrvLogger() spi.Logger                                     
 func (d *revokeDeps) TrustedDeviceStore() core.TrustedDeviceStore                       { return d.trustedDevs }
 func (d *revokeDeps) IntrospectionCache() IntrospectionCache                            { return d.introspectCache }
 
+// RequireFormContentType returns false — the legacy dual-mode posture —
+// so every existing JSON-post unit test in this file stays on the
+// byte-identical binder path.
+func (d *revokeDeps) RequireFormContentType() bool { return false }
+
 var _ RevokeDeps = (*revokeDeps)(nil)
 
 // validateClientSecret mirrors the production AuthenticateClientCreds: look

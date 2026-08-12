@@ -251,7 +251,7 @@ func validateTenantStatus(status string) error {
 // ok=false means the error was already printed to stderr (exit 1). Shared
 // by tenants.go and users.go — same pattern, only the path differs.
 func fetchList(progName, path string) ([]byte, bool) {
-	client := apiclient.New()
+	client := apiclient.New(apiclient.WithNoRedirect())
 	resp, err := client.Get(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: list failed: %v\n", progName, err)
@@ -263,7 +263,7 @@ func fetchList(progName, path string) ([]byte, bool) {
 		return nil, false
 	}
 	if resp.StatusCode != 200 {
-		fmt.Fprintf(os.Stderr, "%s: list failed (HTTP %d): %s\n", progName, resp.StatusCode, string(body))
+		fmt.Fprintln(os.Stderr, apiclient.StatusMessage(progName, "list", apiclient.RedirectHintAdmin, resp, body))
 		return nil, false
 	}
 	return body, true
@@ -272,7 +272,7 @@ func fetchList(progName, path string) ([]byte, bool) {
 // fetchOne GETs a single admin resource and returns the response body.
 // ok=false means the error was already printed to stderr (exit 1).
 func fetchOne(progName, path string) ([]byte, bool) {
-	client := apiclient.New()
+	client := apiclient.New(apiclient.WithNoRedirect())
 	resp, err := client.Get(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: get failed: %v\n", progName, err)
@@ -284,7 +284,7 @@ func fetchOne(progName, path string) ([]byte, bool) {
 		return nil, false
 	}
 	if resp.StatusCode != 200 {
-		fmt.Fprintf(os.Stderr, "%s: get failed (HTTP %d): %s\n", progName, resp.StatusCode, string(body))
+		fmt.Fprintln(os.Stderr, apiclient.StatusMessage(progName, "get", apiclient.RedirectHintAdmin, resp, body))
 		return nil, false
 	}
 	return body, true
@@ -295,7 +295,7 @@ func fetchOne(progName, path string) ([]byte, bool) {
 // "create", "update", "delete", "set-status"). ok=false means the error was
 // already printed to stderr (exit 1).
 func doWrite(progName, method, path string, reqBody any, verb string) ([]byte, bool) {
-	client := apiclient.New()
+	client := apiclient.New(apiclient.WithNoRedirect())
 	resp, err := client.Do(method, path, reqBody)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %s failed: %v\n", progName, verb, err)
@@ -307,7 +307,7 @@ func doWrite(progName, method, path string, reqBody any, verb string) ([]byte, b
 		return nil, false
 	}
 	if resp.StatusCode != 200 {
-		fmt.Fprintf(os.Stderr, "%s: %s failed (HTTP %d): %s\n", progName, verb, resp.StatusCode, string(body))
+		fmt.Fprintln(os.Stderr, apiclient.StatusMessage(progName, verb, apiclient.RedirectHintAdmin, resp, body))
 		return nil, false
 	}
 	return body, true

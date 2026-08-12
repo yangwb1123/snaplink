@@ -429,7 +429,7 @@ func (s *Server) recordCodeSent(ctx HandlerContext, provider, target string, ok 
 // reaches every grant without touching those hot files.
 func (s *Server) recordTokenIssued(ctx HandlerContext, clientID, strategy, subjectID string) {
 	s.recordTenantTokenIssued(ctx, clientID, strategy)
-	audit.RecordTokenIssued(s.auditor, ctx, clientID, strategy, subjectID)
+	audit.RecordTokenIssued(s.auditor, ctx, clientID, strategy, subjectID, s.tokenIssuedRolesMeta(ctx, clientID, subjectID))
 	s.offerUsage(ctx, metering.Event{
 		Kind:      metering.KindAccess,
 		Endpoint:  metering.EndpointToken,

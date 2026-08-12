@@ -87,6 +87,7 @@ func (s *Server) issueRefreshToken(
 		AMR:                  authCtx.AMR,
 		ACR:                  authCtx.ACR,
 		AuthTime:             authCtx.AuthTime,
+		Roles:                authCtx.Roles,
 		ClientTTLOverride:    clientTTLOverride,
 		ConfirmationJKT:      confirmationJKT,
 		Generation:           authCtx.Generation,
@@ -202,15 +203,9 @@ func (s *Server) sessionPolicyCapExceeded(ctx HandlerContext, userID, clientID, 
 	// and role selectors simply don't match — a roster outage must never
 	// block login. ensureJITMembership runs before createSession, so a
 	// JIT-provisioned role is visible on the first login.
-	if tenantID != "" && s.tenantUserStore != nil {
-		if m, err := s.tenantUserStore.Get(ctx.Request().Context(), tenantID, userID); err == nil && m != nil {
-			in.SubjectRoles = []string{string(m.Role)}
-		} else if err != nil {
-			s.logger.Error("token policy: role resolution failed — role selectors inert (fail-open)",
-				"tenant", tenantID, "user", userID, "error", err)
-			s.metrics.ObserveTokenPolicyRoleResolutionError()
-		}
-	}
+	in.SubjectRoles, _ = s.subjectRoles(ctx.Request().Context(),
+		"token policy: role resolution failed — role selectors inert (fail-open)",
+		tenantID, userID)
 	dec := tokenpolicy.Evaluate(in, policies)
 	if !dec.Deny || dec.Reason != tokenpolicy.DenyActiveSessions {
 		return false
@@ -220,6 +215,32 @@ func (s *Server) sessionPolicyCapExceeded(ctx HandlerContext, userID, clientID, 
 	s.logger.Info("token policy denied session creation",
 		"client", clientID, "user", userID, "active", len(sessions))
 	return true
+}
+
+// subjectRoles resolves the user's tenant-membership role codes from the
+// TenantUserStore roster for tenantID, keyed on the LOCAL subject (never a
+// pairwise pseudonym — the store is keyed (TenantID, UserID)). FAIL-OPEN
+// with logging + metric: an outage returns nil roles (the caller omits the
+// claim / role selectors stop matching) instead of blocking issuance.
+// ErrNoMembership is NOT an error (absent membership stays silent). failMsg
+// is the caller's log string — the policy seam keeps its wording, the mint path uses its own.
+func (s *Server) subjectRoles(ctx context.Context, failMsg, tenantID, userID string) ([]string, error) {
+	if tenantID == "" || s.tenantUserStore == nil {
+		return nil, nil
+	}
+	m, err := s.tenantUserStore.Get(ctx, tenantID, userID)
+	if err != nil {
+		if errors.Is(err, core.ErrNoMembership) {
+			return nil, nil
+		}
+		s.logger.Error(failMsg, "tenant", tenantID, "user", userID, "error", err)
+		s.metrics.ObserveTokenPolicyRoleResolutionError()
+		return nil, err
+	}
+	if m == nil {
+		return nil, nil
+	}
+	return []string{string(m.Role)}, nil
 }
 
 func (s *Server) requireDeps(deps ...string) error {

@@ -29,6 +29,13 @@ type PARDeps interface {
 	// MaxScopeCount returns the configured cap on the number of
 	// space-separated scopes accepted in a single request; <= 0 = unbounded.
 	MaxScopeCount() int
+	// RequireFormContentType reports whether the strict credential wire is
+	// enabled (B4-4, server.require_form_content_type): /par then accepts
+	// ONLY application/x-www-form-urlencoded and answers 415 for a JSON
+	// body, a missing Content-Type, or any other media type, before the
+	// body is read. False (the default) keeps the dual-mode binder
+	// byte-identical to a build without the feature.
+	RequireFormContentType() bool
 }
 
 // HandlePAR implements RFC 9126 Pushed Authorization Requests.
@@ -63,8 +70,7 @@ func HandlePAR(d PARDeps, ctx core.HandlerContext) {
 	}
 
 	var req parRequestForm
-	if err := BindParams(ctx, &req); err != nil {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+	if bindCredentialRequest(d, ctx, &req) {
 		return
 	}
 	if id, secret, ok := BasicClientCreds(ctx.Request()); ok {

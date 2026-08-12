@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/tenant/commerce"
+	"github.com/yangwb1123/snaplink/infrastructure/auditoutbox"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/migrate"
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -166,6 +168,21 @@ func (p *UserProvider) GetByExternalID(ctx context.Context, provider, externalID
 // matching the documented contract that CreateOrUpdate is upsert
 // semantics).
 func (p *UserProvider) CreateOrUpdate(ctx context.Context, u *sso.User) error {
+	return upsertUser(ctx, p.db, u)
+}
+
+// execer is the subset of *sql.DB and *sql.Tx the upsert needs, so one
+// upsertUser serves both the pool path (CreateOrUpdate) and the
+// transaction path (CreateOrUpdateTx / ImportUser).
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// upsertUser runs the CREATE OR UPDATE upsert on the given execer with
+// the documented semantics: nil/empty-ID rejection, attribute JSON
+// encoding, CreatedAt preservation, ON CONFLICT(id) DO UPDATE, and
+// unique-violation collapse to sso.ErrUserExists.
+func upsertUser(ctx context.Context, db execer, u *sso.User) error {
 	if u == nil || u.ID == "" {
 		return errors.New("sqlite: user.ID required")
 	}
@@ -179,7 +196,7 @@ func (p *UserProvider) CreateOrUpdate(ctx context.Context, u *sso.User) error {
 	}
 	u.UpdatedAt = now
 
-	_, err = p.db.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
         INSERT INTO users (id, external_id, provider, email, name, attributes, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
@@ -197,6 +214,43 @@ func (p *UserProvider) CreateOrUpdate(ctx context.Context, u *sso.User) error {
 			return sso.ErrUserExists
 		}
 		return fmt.Errorf("sqlite: upsert: %w", err)
+	}
+	return nil
+}
+
+// CreateOrUpdateTx is the transaction-scoped upsert (R1 of the import
+// governance spec): identical semantics to CreateOrUpdate, but the
+// caller controls the transaction, so the user row can commit atomically
+// with a governance outbox row.
+func (p *UserProvider) CreateOrUpdateTx(ctx context.Context, tx *sql.Tx, u *sso.User) error {
+	return upsertUser(ctx, tx, u)
+}
+
+// ImportUser is the pair-write the import CLI calls: one atomic
+// transaction commits the user upsert AND its governance outbox event
+// (audit_outbox, the same table the auditgovernance relay drains), so a
+// crash or failure can never leave an orphan on either side. The event
+// ID/key MUST be deterministic (the sqlite ON CONFLICT(id) DO NOTHING is
+// primary-key targeted — a random ID on re-import would violate the
+// (tenant_id, idempotency_key) unique index and error instead of
+// no-op'ing).
+func (p *UserProvider) ImportUser(ctx context.Context, u *sso.User, event *commerce.OutboxEvent) error {
+	if p == nil || p.db == nil {
+		return errors.New("sqlite: user provider closed")
+	}
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("sqlite: begin import tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := upsertUser(ctx, tx, u); err != nil {
+		return err
+	}
+	if err := auditoutbox.InsertEventTx(ctx, tx, event); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sqlite: commit import tx: %w", err)
 	}
 	return nil
 }

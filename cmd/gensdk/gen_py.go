@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-
+	"strconv"
 	"strings"
 )
 
@@ -153,7 +153,8 @@ const pyClientHeader = `class SSOClient:
         query: Optional[Dict[str, Any]] = None,
         body: Optional[Any] = None,
         auth: bool = False,
-        client_auth: bool = False,
+        form: bool = False,
+        form_blocked_fields: Optional[List[str]] = None,
     ) -> Any:
         url = self.base_url + path
         if query:
@@ -163,9 +164,13 @@ const pyClientHeader = `class SSOClient:
         headers = {"Accept": "application/json"}
         authenticated_body = self._with_client_auth(body, headers) if client_auth else body
         data = None
-        if authenticated_body is not None:
-            headers["Content-Type"] = "application/json"
-            data = json.dumps(authenticated_body).encode("utf-8")
+        if body is not None:
+            if form:
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+                data = _form_encode(body, form_blocked_fields).encode("utf-8")
+            else:
+                headers["Content-Type"] = "application/json"
+                data = json.dumps(body).encode("utf-8")
         if auth and self.get_access_token:
             token = self.get_access_token()
             if token:
@@ -217,6 +222,37 @@ func pyEmitMethods(b *strings.Builder, ops []Operation) {
 // pyModuleHelpers are free functions (not methods) shared by every
 // SSOClient instance — split out of the class purely for readability.
 const pyModuleHelpers = `
+def _form_encode(body: Dict[str, Any], blocked_fields: Optional[List[str]] = None) -> str:
+    """Serialize a request body as application/x-www-form-urlencoded.
+
+    Mirrors the Go binder in protocols/oauth/oauthwire (bind.go):
+    - None values are dropped (JSON.stringify's null-drop equivalent);
+    - blocked_fields keys are never emitted (no RFC defines a map form
+      encoding; the generated method additionally fails loud on them);
+    - bools become lowercase "true"/"false" -- urllib would emit
+      "True"/"False", which the binder silently coerces to false
+      (device approval denied, trust grant never minted);
+    - string lists become REPEATED keys via urlencode(doseq=True) (the
+      documented resource/audience/tokens contract);
+    - other lists (authorization_details) and dicts (claims) become a
+      single JSON-string key (RFC 9396 §3 / OIDC Core §5.5).
+    """
+    blocked = set(blocked_fields or [])
+    encoded: Dict[str, Any] = {}
+    for key, value in body.items():
+        if key in blocked or value is None:
+            continue
+        if isinstance(value, bool):
+            encoded[key] = "true" if value else "false"
+        elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+            encoded[key] = value
+        elif isinstance(value, (list, dict)):
+            encoded[key] = json.dumps(value)
+        else:
+            encoded[key] = value
+    return urllib.parse.urlencode(encoded, doseq=True)
+
+
 def _parse_body(status: int, raw: bytes) -> Any:
     if status == 204 or not raw:
         return None
@@ -245,12 +281,36 @@ func pyEmitMethod(b *strings.Builder, op Operation) {
 		doc = op.ID
 	}
 	fmt.Fprintf(b, "        \"\"\"%s (operationId: %s)\"\"\"\n", pySafe(doc), op.ID)
+	// The guard exists because the form serializer cannot express a map;
+	// JSON-only operations keep their map fields working, so only form-wire
+	// operations get it (today exactly post_mfa_complete.params).
+	if op.ContentType == formContentType {
+		for _, f := range op.FormBlockedFields {
+			// Presence-based guard (fires for params: {} too), mirroring the
+			// binder's PostForm.Has semantics: a map has no form encoding, so
+			// fail loud client-side instead of attempting a wire the server
+			// rejects (400 mfa_invalid on /auth/mfa once the strict binder
+			// lands; a silent drop today).
+			fmt.Fprintf(b, "        if body.get(%q) is not None:\n", f)
+			fmt.Fprintf(b, "            raise SSOError(0, \"invalid_request\", %q)\n", f+" has no application/x-www-form-urlencoded encoding; use code/assertion")
+		}
+	}
 	fmt.Fprintf(b, "        return self._request(%q, %s", strings.ToUpper(op.Method), pyPathExpr(op.Path))
 	if len(op.QueryParams) > 0 {
 		b.WriteString(", query=query")
 	}
 	if op.HasBody {
 		b.WriteString(", body=body")
+	}
+	if op.ContentType == formContentType {
+		b.WriteString(", form=True")
+		if len(op.FormBlockedFields) > 0 {
+			quoted := make([]string, len(op.FormBlockedFields))
+			for i, f := range op.FormBlockedFields {
+				quoted[i] = strconv.Quote(f)
+			}
+			b.WriteString(", form_blocked_fields=[" + strings.Join(quoted, ", ") + "]")
+		}
 	}
 	if op.RequiresAuth {
 		b.WriteString(", auth=True")

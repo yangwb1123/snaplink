@@ -58,8 +58,8 @@ func TestMaxVersions_AllReturnPositive(t *testing.T) {
 	if got := sqlite.UsersMaxVersion(); got != 2 {
 		t.Errorf("UsersMaxVersion() = %d, want 2 (v2 adds SCIM userName uniqueness)", got)
 	}
-	if got := sqlite.RefreshTokensMaxVersion(); got != 8 {
-		t.Errorf("RefreshTokensMaxVersion() = %d, want 8 (v7 bounds the family reuse ledger, v8 adds jti for refresh-introspect thumbprints)", got)
+	if got := sqlite.RefreshTokensMaxVersion(); got != 9 {
+		t.Errorf("RefreshTokensMaxVersion() = %d, want 9 (v7 bounds the family reuse ledger, v8 adds jti for refresh-introspect thumbprints, v9 adds roles for the tenant-membership claim)", got)
 	}
 	if got := sqlite.AuthCodesMaxVersion(); got != 4 {
 		t.Errorf("AuthCodesMaxVersion() = %d, want 4 (v3 adds requested_claims for the OIDC §5.5 claims parameter, v4 adds auth_time/amr/acr/resources/authorization_details/sid RFC 9068 auth context)", got)

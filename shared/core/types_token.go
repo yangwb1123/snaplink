@@ -224,11 +224,29 @@ type Subject struct {
 	ServingRegion string
 
 	// TenantID is the OAuth client's tenant binding at mint time, read from
-	// the client being served. Policy-input ONLY: the ClampingIssuer scopes
-	// max_ttl rules with it. NOT a token claim — issuers emit only fields
-	// they enumerate in buildAccessPayload. Empty = no tenant affinity
-	// (single-tenant deployments stay byte-identical).
+	// the client being served. It is BOTH policy input (the ClampingIssuer
+	// scopes max_ttl rules with it) AND a token claim: buildAccessPayload
+	// emits it as the top-level `tenant_id` access-token claim (SnapLink
+	// extension — RFC 9068 has no tenant claim). Mint-time semantics like
+	// ServingRegion: token exchange stamps the EXCHANGING client's binding
+	// (the guest tenant on a cross-tenant hop), not the subject_token's home
+	// tenant. Empty = no tenant affinity (single-tenant deployments stay
+	// byte-identical; the same-named `ext` attribute copy is stripped only
+	// when this literal is emitted).
 	TenantID string
+
+	// Roles is the subject's tenant-membership role codes at mint time
+	// (e.g. ["member"], ["admin"]), resolved from the TenantUserStore
+	// roster for the CLIENT's tenant and keyed on the LOCAL subject — never
+	// the pairwise pseudonym. buildAccessPayload emits it as the top-level
+	// `roles` access-token claim (AMR guard+copy discipline: emitted only
+	// when non-empty, copied defensively). Direct-mint logins and the
+	// refresh rotations of their server-managed refresh tokens carry it;
+	// token-endpoint grants leave it empty (no roster access there). When
+	// non-empty, the same-named `ext` attribute copy is stripped so one
+	// token never carries two values for one claim name. Empty = no roles
+	// claim on the wire.
+	Roles []string
 
 	// ConfirmationJKT is the RFC 9449 DPoP JWK thumbprint that
 	// binds this access token to a specific public key. When non-

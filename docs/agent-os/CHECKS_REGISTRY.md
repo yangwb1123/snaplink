@@ -9,7 +9,7 @@ Catalog of the Python engineering helpers. Committed Go gates are specified in
 | Module | Purpose | Command |
 |---|---|---|
 | `acceptance.py` | Supplementary U1–U9 report | `accept` |
-| `adapters_check.py` | Adapters delivery contract enforcement: conformance-suite inventory, router-backend matrix, embed examples, line budgets; behaviorally runs suite + matrix | `adapters`, `make adapters-check` |
+| `adapters_check.py` | Adapters delivery contract enforcement: conformance-suite inventory, router-backend matrix, embed examples, line budgets, kin-openapi validation of nested `cmd/*/openapi.yaml`, exported wire-code ↔ error-codes.md Stripe-row pairing; behaviorally runs suite + matrix | `adapters`, `make adapters-check` |
 | `adr_compliance.py` | Project ADR checks | `adr-compliance` |
 | `architecture.py` | Python dependency-direction check | `architecture` |
 | `build.py` | Configured binary build | `build` |
@@ -21,6 +21,7 @@ Catalog of the Python engineering helpers. Committed Go gates are specified in
 | `health_report.py` | Aggregate engineering health | `health-report` |
 | `invariants.py` | Presence-only security marker scan | `check-invariants` |
 | `route_contract.py` | Compiles registered route constants and requires matching OpenAPI operations + unique operation IDs | `check-routes`, `make route-contract` |
+| `proto_openapi_parity.py` | Proto message field ↔ OpenAPI schema property parity (admin `Client` ↔ `AdminClient`); symmetric drift detection, rejects oneof/nested/reserved blocks it cannot represent | `check-proto-openapi-parity`, `make proto-openapi-parity` |
 | `review_feature.py` | Feature-spec/checklist runner | `review [spec]` |
 | `root_business_code.py` | Root business-file policy | via `accept`, `check-root` |
 | `root_files.py` | Root file-count diagnostic | via `accept` |
@@ -41,7 +42,7 @@ Run `python cli.py check-test` for check-module tests and
 |---|---|
 | Fast loop | `check`, `check-filesize` |
 | Composite reports | `harness`, `accept`, `evaluate` |
-| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `adapters`, `capabilities check`, `sdk-surface check`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
+| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `check-proto-openapi-parity`, `adapters`, `capabilities check`, `sdk-surface check`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
 | Scaffolding | `generate` |
 | Diagnostics | `diagnose`, `trend`, `health-report`, `self-test` |
 | Test execution | `test`, `race`, `bench`, `check-test`, `skill-test` |
@@ -57,7 +58,11 @@ Run `python cli.py check-test` for check-module tests and
 - `route_contract.py` covers statically registered stock-server routes plus
   the out-of-router liveness/readiness probes. Embedder-owned dynamic routes
   added through `Server.Handle` require their own OpenAPI contract.
-- `adapters_check.py` static scans are existence-level; behavior is covered
+- `adapters_check.py` static scans cover existence-level contract facts AND
+  two wire-contract assertions: every `cmd/*/openapi.yaml` passes pinned
+  kin-openapi validation, and every exported wire-code const in
+  `cmd/snaplink-stripe-adapter/model.go` appears as a `| code |` row in the
+  error-codes.md Stripe section (one-directional: consts ⊆ rows); behavior is covered
   by the Go tests it invokes (conformance suite + matrix), which run without
   `-race` — race coverage lives in `make ci`'s `race` target and
   `make test-e2e`.

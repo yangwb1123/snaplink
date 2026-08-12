@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -14,6 +15,9 @@ type ClientCredentialsDeps interface {
 	DPoPTokenTypeOr(defaultType, jkt string) string
 	RecordTokenIssued(ctx core.HandlerContext, clientID, strategy, subjectID string)
 	LogErrorCtx(ctx core.HandlerContext, msg string, kv ...any)
+	// ScopeRegistry returns the wired global scope registry (nil = unwired
+	// no-op, the default-off byte-compat baseline).
+	ScopeRegistry() scoperegistry.Registry
 }
 
 // HandleClientCredentialsGrant processes the RFC 6749 §4.4 client_credentials
@@ -34,6 +38,12 @@ func HandleClientCredentialsGrant(d ClientCredentialsDeps, ctx core.HandlerConte
 	grantCCScopes, ccScopeErr := oauth.GrantedScopes(scopes, client)
 	if ccScopeErr != nil {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidScope))
+		return
+	}
+	// Global scope registry (opt-in): the rule-4 defaulted set (empty request,
+	// client allowlist minus openid) and the requested set both resolve HERE, so
+	// this post-resolution check is the effective-scope point for this branch.
+	if scoperegistry.RejectUnregistered(ctx, d.ScopeRegistry(), grantCCScopes) {
 		return
 	}
 	// client_credentials: subject IS the client, so ClientID = Sub.

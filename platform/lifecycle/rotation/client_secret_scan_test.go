@@ -41,6 +41,21 @@ func (f *fakeClientStore) RotateSecret(context.Context, string) (string, error) 
 	return "", nil
 }
 
+// captureLogger records Error messages so fail-open tests can assert the
+// sweep logged the outage instead of silently swallowing it.
+type captureLogger struct {
+	mu     sync.Mutex
+	errors []string
+}
+
+func (c *captureLogger) Error(msg string, _ ...any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.errors = append(c.errors, msg)
+}
+func (c *captureLogger) Info(string, ...any)  {}
+func (c *captureLogger) Debug(string, ...any) {}
+
 func TestClientSecretScan_WarnsWithinWindows(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -105,13 +120,17 @@ func TestClientSecretScan_StoreOutageFailsOpen(t *testing.T) {
 	store := &fakeClientStore{err: context.DeadlineExceeded}
 	sink := audit.NewMemorySink(10)
 	rec := audit.New(sink)
-	sc := NewClientSecretExpiryScanner(store, rec, nil, spi.NopLogger{})
+	log := &captureLogger{}
+	sc := NewClientSecretExpiryScanner(store, rec, nil, log)
 
 	sc.sweep(ctx) // must not panic, must not emit
 
 	events, _ := sink.Query(ctx, audit.Query{Type: audit.EventClientSecretExpiring})
 	if len(events) != 0 {
 		t.Fatalf("store outage emitted %d events, want 0", len(events))
+	}
+	if len(log.errors) != 1 || log.errors[0] != "client secret expiry scan failed" {
+		t.Fatalf("fail-open log = %v, want [client secret expiry scan failed]", log.errors)
 	}
 }
 

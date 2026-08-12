@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // defaultTokenTTL is the fallback access-token lifetime shared by the
@@ -31,7 +32,7 @@ func buildAccessPayload(issuer string, subject *sso.Subject, scopes []string, jt
 		Nbf:      now.Unix(),
 		Iat:      now.Unix(),
 		Scope:    strings.Join(scopes, " "),
-		Extra:    subject.Claims,
+		Extra:    claimsWithoutEmittedKeys(subject),
 		ClientID: subject.ClientID,
 		JTI:      jti,
 		ACR:      subject.ACR,
@@ -39,6 +40,10 @@ func buildAccessPayload(issuer string, subject *sso.Subject, scopes []string, jt
 		// Unconditional literal assignment (SID discipline): omitempty
 		// performs the omission, so no wire-visible guard is needed.
 		ServingRegion: subject.ServingRegion,
+		// Same discipline as ServingRegion: the client's mint-time tenant
+		// binding is stamped unconditionally and omitempty omits it when
+		// empty (single-tenant stays byte-identical).
+		TenantID: subject.TenantID,
 	}
 	applyOptionalClaims(&payload, subject)
 	return payload
@@ -75,6 +80,12 @@ func applyOptionalClaims(payload *ed25519Payload, subject *sso.Subject) {
 	if len(subject.AMR) > 0 {
 		payload.AMR = append([]string(nil), subject.AMR...)
 	}
+	// Roles: same guard+copy discipline as AMR — the claim is emitted only
+	// when non-empty and the subject's slice is never aliased into the
+	// payload (a later caller mutation must not change the signed claim set).
+	if len(subject.Roles) > 0 {
+		payload.Roles = append([]string(nil), subject.Roles...)
+	}
 	if len(subject.AuthorizationDetails) > 0 {
 		payload.AuthorizationDetails = append(json.RawMessage(nil), subject.AuthorizationDetails...)
 	}
@@ -90,6 +101,40 @@ func applyOptionalClaims(payload *ed25519Payload, subject *sso.Subject) {
 	if len(subject.Resources) > 0 {
 		payload.Aud = audClaim(append([]string(nil), subject.Resources...))
 	}
+}
+
+// claimsWithoutEmittedKeys returns subject.Claims for the token payload,
+// minus any key that buildAccessPayload also emits as a top-level claim
+// (tenant_id when the client is tenant-bound, roles when membership
+// resolved). A token must never carry two values for one claim name — the
+// mint-time binding literal wins, the attribute-bag copy is dropped. The
+// caller-owned map is never mutated (token exchange passes the original
+// token's Extra straight through; authcode/device/refresh pass the
+// authenticator's attribute map): a copy is made only when a key actually
+// needs removing, so the single-tenant hot path returns the original map
+// identity with zero allocation.
+func claimsWithoutEmittedKeys(subject *sso.Subject) map[string]string {
+	stripTenant := subject.TenantID != ""
+	stripRoles := len(subject.Roles) > 0
+	if !stripTenant && !stripRoles {
+		return subject.Claims
+	}
+	_, hasTenant := subject.Claims[core.KeyTenantID]
+	_, hasRoles := subject.Claims[core.KeyRoles]
+	if (!stripTenant || !hasTenant) && (!stripRoles || !hasRoles) {
+		return subject.Claims
+	}
+	out := make(map[string]string, len(subject.Claims))
+	for k, v := range subject.Claims {
+		if stripTenant && k == core.KeyTenantID {
+			continue
+		}
+		if stripRoles && k == core.KeyRoles {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // jwsSigner is the structural signing contract every {Ed25519,ECDSA,RSA}

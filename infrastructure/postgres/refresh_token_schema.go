@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     auth_time              BIGINT  NOT NULL DEFAULT 0,
     confirmation_jkt       TEXT    NOT NULL DEFAULT '',
     generation             BIGINT  NOT NULL DEFAULT 0,
-    family_created_at      BIGINT  NOT NULL DEFAULT 0
+    family_created_at      BIGINT  NOT NULL DEFAULT 0,
+    roles                  TEXT    NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_client
@@ -65,6 +66,13 @@ CREATE TABLE IF NOT EXISTS refresh_rotation_windows (
 
 var refreshTokenMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: refreshTokenSchema},
+	// v2 backfills the roles column (the direct-mint tenant-membership role
+	// vector — see oauthspi.RefreshToken.Roles) onto databases created before
+	// this field existed. Fresh DBs get it from the baseline DDL; existing
+	// rows default to '[]' — a token issued before the feature rotates
+	// without a roles claim, byte-identical to pre-feature rotations.
+	{Version: 2, Name: "refresh_token_roles",
+		SQL: `ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS roles TEXT NOT NULL DEFAULT '[]'`},
 }
 
 // RefreshTokensMaxVersion returns the highest migration version declared for

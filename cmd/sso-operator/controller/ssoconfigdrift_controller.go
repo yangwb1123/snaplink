@@ -148,10 +148,16 @@ func (r *Reconciler) runCheck(ctx context.Context, cr *drift.SSOConfigDrift) che
 	if err != nil {
 		return checkResult{failed: true, message: fmt.Sprintf("fetch cluster A running config failed: %s", err)}
 	}
+	if err := validateRunningSnapshot(running); err != nil {
+		return checkResult{failed: true, message: fmt.Sprintf("cluster A running config failed structural validation: %s", err)}
+	}
 
 	patch, err := postClusterDiff(ctx, r.httpClient(), cr.Spec.ClusterB.BaseURL, tokenB, running)
 	if err != nil {
 		return checkResult{failed: true, message: fmt.Sprintf("cluster B diff request failed: %s", err)}
+	}
+	if err := validatePatch(patch, running); err != nil {
+		return checkResult{failed: true, message: fmt.Sprintf("cluster B diff response failed structural validation: %s", err)}
 	}
 
 	return checkResult{

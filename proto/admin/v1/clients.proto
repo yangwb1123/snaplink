@@ -81,6 +81,12 @@ message Client {
   // Hosted-login return used to resume an upstream OIDC/SAML callback into
   // this client's original authorization request. HTTPS except loopback dev.
   string login_page_uri = 10;
+  // Read-only over the admin API: surfaced for operator verification of the
+  // client's tenant binding and grant-type allowlist. Mutations never consume
+  // these fields — binding is established at registration time (YAML/DCR/
+  // federation); GrantTypes is enforced at /token (unauthorized_client).
+  string tenant_id = 11;
+  repeated string grant_types = 12;
 }
 
 message ListClientsRequest {
