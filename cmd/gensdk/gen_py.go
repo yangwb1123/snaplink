@@ -29,6 +29,7 @@ func GeneratePython(title, version string, reg *Registry, ops []Operation) strin
 	}
 	b.WriteString(pyClientHeader)
 	pyEmitMethods(&b, ops)
+	pyEmitExports(&b, reg.Named())
 	return b.String()
 }
 
@@ -48,6 +49,7 @@ func pyBanner(title, version string) string {
 
 from __future__ import annotations
 
+import base64
 import json
 import urllib.error
 import urllib.parse
@@ -80,9 +82,69 @@ const pyClientHeader = `class SSOClient:
     """Minimal, hand-scoped client for the snaplink/sso HTTP API. See the
     module docstring for exactly what operation surface this covers."""
 
-    def __init__(self, base_url: str, get_access_token: Optional[Callable[[], Optional[str]]] = None):
+    def __init__(
+        self,
+        base_url: str,
+        get_access_token: Optional[Callable[[], Optional[str]]] = None,
+        *,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
+        request_timeout: Optional[float] = None,
+    ):
         self.base_url = base_url.rstrip("/")
-        self.get_access_token = get_access_token
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.request_timeout = request_timeout
+        self._token: Optional[str] = None
+        self.get_access_token = get_access_token or (lambda: self._token)
+
+    @property
+    def is_logged_in(self) -> bool:
+        return bool(self._token)
+
+    @property
+    def access_token(self) -> Optional[str]:
+        return self._token
+
+    def login(
+        self,
+        username: str,
+        password: str,
+        *,
+        client_id: Optional[str] = None,
+        scope: Optional[List[str]] = None,
+        extra_credential: Optional[Dict[str, str]] = None,
+    ) -> Union[LoginResponse, MFARequiredResponse]:
+        resolved_client_id = client_id or self.client_id
+        if not resolved_client_id:
+            raise SSOError(0, "invalid_request", "client_id is required")
+        credential: Dict[str, str] = {"username": username, "password": password}
+        if extra_credential:
+            credential.update(extra_credential)
+        response = self.post_login({
+            "provider": "password",
+            "client_id": resolved_client_id,
+            "scope": scope or ["openid", "profile", "email"],
+            "credential": credential,
+        })
+        self._capture_token(response)
+        return response
+
+    def complete_mfa(self, body: MFACompleteRequest) -> Union[LoginResponse, AuthorizationCodeResponse]:
+        response = self.post_mfa_complete(body)
+        self._capture_token(response)
+        return response
+
+    def logout(self) -> None:
+        try:
+            if self._token:
+                self.post_logout({})
+        finally:
+            self._token = None
+
+    def _capture_token(self, response: Any) -> None:
+        if isinstance(response, dict) and response.get("access_token"):
+            self._token = response["access_token"]
 
     def _request(
         self,
@@ -91,6 +153,7 @@ const pyClientHeader = `class SSOClient:
         query: Optional[Dict[str, Any]] = None,
         body: Optional[Any] = None,
         auth: bool = False,
+        client_auth: bool = False,
     ) -> Any:
         url = self.base_url + path
         if query:
@@ -98,22 +161,44 @@ const pyClientHeader = `class SSOClient:
             if filtered:
                 url += "?" + urllib.parse.urlencode(filtered)
         headers = {"Accept": "application/json"}
+        authenticated_body = self._with_client_auth(body, headers) if client_auth else body
         data = None
-        if body is not None:
+        if authenticated_body is not None:
             headers["Content-Type"] = "application/json"
-            data = json.dumps(body).encode("utf-8")
+            data = json.dumps(authenticated_body).encode("utf-8")
         if auth and self.get_access_token:
             token = self.get_access_token()
             if token:
                 headers["Authorization"] = f"Bearer {token}"
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req) as resp:
+            opener = urllib.request.urlopen
+            if self.request_timeout is None:
+                response = opener(req)
+            else:
+                response = opener(req, timeout=self.request_timeout)
+            with response as resp:
                 return _parse_body(resp.status, resp.read())
         except urllib.error.HTTPError as exc:
             payload = exc.read()
             error, error_description = _parse_error(payload)
             raise SSOError(exc.code, error, error_description) from exc
+
+    def _with_client_auth(self, body: Optional[Any], headers: Dict[str, str]) -> Optional[Any]:
+        if not self.client_secret:
+            return body
+        body_map = body if isinstance(body, dict) else {}
+        client_id = self.client_id or body_map.get("client_id")
+        if not client_id:
+            raise SSOError(0, "invalid_request", "client_id is required with client_secret")
+        credentials = f"{client_id}:{self.client_secret}".encode("utf-8")
+        headers["Authorization"] = "Basic " + base64.b64encode(credentials).decode("ascii")
+        if not isinstance(body, dict):
+            return body
+        without_credentials = dict(body)
+        without_credentials.pop("client_id", None)
+        without_credentials.pop("client_secret", None)
+        return without_credentials
 
 `
 
@@ -170,7 +255,27 @@ func pyEmitMethod(b *strings.Builder, op Operation) {
 	if op.RequiresAuth {
 		b.WriteString(", auth=True")
 	}
+	if pyUsesClientAuth(op.ID) {
+		b.WriteString(", client_auth=True")
+	}
 	b.WriteString(")\n\n")
+}
+
+func pyUsesClientAuth(operationID string) bool {
+	switch operationID {
+	case "postToken", "postIntrospect", "postRevoke", "postPAR":
+		return true
+	default:
+		return false
+	}
+}
+
+func pyEmitExports(b *strings.Builder, names []string) {
+	b.WriteString("\n__all__ = [\n    \"SSOError\",\n    \"SSOClient\",\n")
+	for _, name := range names {
+		fmt.Fprintf(b, "    %q,\n", name)
+	}
+	b.WriteString("]\n")
 }
 
 // pyMethodParams orders parameters the way Python requires: every
