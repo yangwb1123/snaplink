@@ -43,7 +43,10 @@ services:
     # -grpc-listen is the listener-disabled branch of that decision.
     command: ["--config", "/etc/sso/conformance.yaml", "-grpc-listen", ""]
     environment:
-      - SSO_SERVER__ISSUER=http://sso-issuer:8180
+      # ISSUER_URL is interpolated by compose: unset => the HTTP topology
+      # (byte-identical to the committed default), "https://sso-issuer:8181"
+      # => the HTTPS issuer topology (run-headless.sh --issuer-https).
+      - SSO_SERVER__ISSUER=${ISSUER_URL:-http://sso-issuer:8180}
       - SSO_LOGGING__LEVEL=debug
     healthcheck:
       # distroless runtime has no wget/shell; the image ships the static Go
@@ -81,11 +84,11 @@ services:
       - OIDC_GITLAB_SECRET=v8RzbLs4Ml5kLiCVdZ15cTZlu_e9gBrRPZerVVIQ2NM
       - OIDC_GOOGLE_CLIENTID=google-client
       - OIDC_GOOGLE_SECRET=google-secret
-      - JAVA_EXTRA_ARGS=-Doidc.gitlab.iss=http://sso-issuer:8180
-          -Doidc.admin.issuer=http://sso-issuer:8180
+      - JAVA_EXTRA_ARGS=-Doidc.gitlab.iss=${ISSUER_URL:-http://sso-issuer:8180}
+          -Doidc.admin.issuer=${ISSUER_URL:-http://sso-issuer:8180}
           -Doidc.admin.group=openid-conformance-suite-admins
           -Dspring.security.oauth2.client.provider.gitlab.user-name-attribute=sub
-          -Doidc.gitlab.admin-group-indicator-claims={'sub':{'openid-conformance-suite-admins'}} -Dlogging.level.org.springframework.security=DEBUG
+          -Doidc.gitlab.admin-group-indicator-claims={'sub':{'openid-conformance-suite-admins'}} -Dlogging.level.org.springframework.security=DEBUG ${ISSUER_TLS_JVM_ARGS:-}
       - CONFORMANCE_DB_HOST=conformance-db
       - CONFORMANCE_DB_PORT=5432
       - CONFORMANCE_DB_NAME=conformance
@@ -97,11 +100,20 @@ services:
       # (the issuer configured in config.yaml).
       - CONFORMANCE_SSO_SERVER=http://sso-server:8080
       - CONFORMANCE_SSO_DISCOVERY=http://sso-server:8080/.well-known/openid-configuration
+    # The suite's JVM validates the issuer's self-signed TLS cert; the
+    # harness mounts certs/ (gitignored) so the --issuer-https run can
+    # install a truststore containing the generated cert via
+    # ISSUER_TLS_JVM_ARGS.
+    volumes:
+      - ./certs:/certs:ro
     extra_hosts:
-      # The issuer under test is http://sso-issuer:8180. The suite container
-      # resolves it via host-gateway to the host, where compose publishes
-      # 8180 -> sso-server:8080. A real browser would add a hosts entry too;
-      # the headless runner uses curl --resolve sso-issuer:8180:127.0.0.1.
+      # The issuer under test is http://sso-issuer:8180 (HTTP topology) or
+      # https://sso-issuer:8181 (HTTPS topology, terminated by the
+      # issuer-proxy service). The suite container resolves it via
+      # host-gateway to the host, where compose publishes 8180 ->
+      # sso-server:8080 and 8181 -> issuer-proxy:443. A real browser would
+      # add a hosts entry too; the headless runner uses curl --resolve
+      # sso-issuer:<port>:127.0.0.1.
       - "sso-issuer:host-gateway"
     depends_on:
       sso-server:
@@ -110,6 +122,25 @@ services:
         condition: service_started
       mongodb:
         condition: service_started
+    networks:
+      - conformance-net
+
+  # TLS-terminating reverse proxy in front of the server under test for
+  # the HTTPS issuer topology (run-headless.sh --issuer-https). Reuses the
+  # same self-signed certs/ pair and nginx pattern as suite-proxy; only
+  # started when the issuer-https compose profile is active, so the default
+  # HTTP topology starts exactly the services it always did.
+  issuer-proxy:
+    image: nginx:latest
+    profiles: ["issuer-https"]
+    ports:
+      - "8181:443"
+    volumes:
+      - ./issuer-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/certs:ro
+    depends_on:
+      sso-server:
+        condition: service_healthy
     networks:
       - conformance-net
 

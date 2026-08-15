@@ -18,26 +18,60 @@ Therefore:
 - An RFP response must name the exact server commit, configuration and official
   result it relies on.
 
-## Smoke run evidence (HTTP-only local topology)
+## Smoke run evidence (local topologies)
 
 `test/oidc-conformance/run-headless.sh` against the pinned suite image
 `release-v5.2.1` produced, for the `oidcc-server` module of the Basic
-certification plan (discovery + dynamic-client variants):
+certification plan (discovery + dynamic-client variants), across two local
+topologies:
 
-- 59 SUCCESS steps covering discovery fetch/validation, JWKS fetch and
-  validation, dynamic client registration, the authorization-code round
-  trip (browser-driven login against the local OP), ID-token verification,
-  userinfo and resource-endpoint calls.
-- One expected FAILURE: `VerifyClientManagementCredentials` requires an
-  `https` client-management URL, which an HTTP-only local issuer cannot
-  provide. An externally reachable HTTPS issuer is required before any
-  certification claim (see the harness README).
+- HTTP issuer (`results/af3bc485/` baseline; same-commit re-run
+  `results/7400ba0c/`): **59 SUCCESS + 1 FAILURE** in both. The sole
+  failure, `VerifyClientManagementCredentials`, requires an `https`
+  client-management URL, which an HTTP-only local issuer cannot provide.
+- HTTPS issuer behind a self-signed local proxy (`results/7400ba0c-https/`):
+  **60 SUCCESS + 0 FAILURE**. The HTTPS issuer satisfies the https-URI
+  requirement and `VerifyClientManagementCredentials` passes
+  (registration_client_uri `https://sso-issuer:8181/register/...`).
 
-This is smoke evidence only — not an OIDF result. Certification language
-still requires an official suite run against an HTTPS topology with archived
-plan/result artifacts and, for "certified", an issued OIDF listing.
+Both runs cover discovery fetch/validation, JWKS fetch and validation,
+dynamic client registration, the authorization-code round trip
+(browser-driven login against the local OP), ID-token verification,
+userinfo and resource-endpoint calls, and carry the same three non-fatal
+WARNINGs (non-requested `ext`/`scope` id-token claims).
 
-### Latest run (2026-08-15, HEAD `af3bc485`)
+This is smoke evidence only — not an OIDF result. The local HTTPS issuer is
+still a self-signed, non-externally-reachable topology; certification
+language still requires an official suite run against an externally
+reachable HTTPS issuer with archived plan/result artifacts and, for
+"certified", an issued OIDF listing.
+
+### Latest run (2026-08-15, HEAD `7400ba0c` — HTTPS issuer topology)
+
+`./run-headless.sh --timeout 900 --issuer-https` completed at HEAD
+`7400ba0c` on 2026-08-15. The HTTPS topology adds an nginx `issuer-proxy`
+(reusing the self-signed `certs/` pair, host 8181 -> sso-server:8080) and
+sets the issuer to `https://sso-issuer:8181`; the suite JVM validates the
+self-signed cert through a truststore built from the pinned image's default
+CAs plus the harness cert. The run executed the full `oidcc-server` module
+of the Basic certification plan and archived the evidence under
+`results/7400ba0c-https/` (plan.json, oidcc-server.log.json,
+oidcc-server.info.json, config.yaml, commit.txt, worktree.txt):
+
+- **60 SUCCESS + 0 FAILURE**, same step sequence as the `af3bc485` HTTP
+  baseline except that `VerifyClientManagementCredentials` now passes
+  (`URL for client management point does not use https scheme` no longer
+  fires: the dynamically registered client's `registration_client_uri` is
+  `https://sso-issuer:8181/register/...`).
+- Run note (environment, both topologies): the script's curl calls to the
+  `sso-issuer` hostname must bypass the ambient HTTP(S) proxy — with
+  `HTTP_PROXY` set and `sso-issuer` absent from `no_proxy`, the proxy
+  answers the login POST with 502 and the suite login cannot complete.
+  The archived runs were executed with the proxy environment variables
+  unset; everything else (server build, containers, headless Chrome) is
+  localhost/container-network traffic.
+
+### Previous run (2026-08-15, HEAD `af3bc485` — HTTP issuer topology)
 
 `./run-headless.sh --timeout 900` completed at HEAD `af3bc485` on
 2026-08-15, after the harness fix in that same commit removed the
@@ -53,10 +87,10 @@ oidcc-server.info.json, config.yaml, commit.txt, worktree.txt):
   both runs).
 - The failure is the expected `VerifyClientManagementCredentials`
   (`URL for client management point does not use https scheme`): the
-  committed harness is an HTTP-only local topology and cannot provide
-  the `https` client-management URL that step requires. An externally
-  reachable HTTPS issuer is still required before any certification
-  claim.
+  HTTP-only local issuer cannot provide the `https` client-management URL
+  that step requires. The HTTPS issuer topology (see above) closes this
+  gap; an externally reachable HTTPS issuer is still required before any
+  certification claim.
 - Run note (environment, not harness): the script's curl calls to the
   `sso-issuer` hostname must bypass the ambient HTTP(S) proxy — with
   `HTTP_PROXY` set and `sso-issuer` absent from `no_proxy`, the proxy
@@ -64,6 +98,11 @@ oidcc-server.info.json, config.yaml, commit.txt, worktree.txt):
   The archived run was executed with the proxy environment variables
   unset; everything else (server build, containers, headless Chrome) is
   localhost/container-network traffic.
+
+A same-commit HTTP re-run at HEAD `7400ba0c` (`results/7400ba0c/`, after
+this commit added the HTTPS topology) reproduced the identical
+59 SUCCESS + 1 FAILURE counts and step sequence, confirming the default
+HTTP path is unchanged.
 
 ## Current response-type boundary
 
@@ -152,8 +191,9 @@ The manual scaffold lives in
 runnable as checked in: it pins the official suite image to a release tag
 (`registry.gitlab.com/openid/conformance-suite:release-v5.2.1`), mounts a
 committed, `--validate-only`-checked server configuration, and defines the
-supported-profile allowlist. The workflow remains browser-interactive and
-not part of `make ci`; there are no OIDC-conformance Make targets.
+supported-profile allowlist. The workflow runs headless via
+`./run-headless.sh` (with `--issuer-https` for the HTTPS issuer topology)
+and is not part of `make ci`; there are no OIDC-conformance Make targets.
 
 **Supported OIDF modules** (only code-based profiles; implicit and hybrid
 are rejected by the runtime and must never be selected): `basic` (code),
@@ -163,8 +203,9 @@ are rejected by the runtime and must never be selected): `basic` (code),
 Before treating a run as release evidence:
 
 1. Use the pinned conformance-suite image (never `:latest`); record its digest.
-2. Use HTTPS and issuer/redirect URIs valid for the selected plan for the
-   certification run (the committed harness is an HTTP-only smoke topology).
+2. Use an externally reachable HTTPS issuer with a CA-trusted certificate for
+   the certification run (the committed harness is a local smoke topology —
+   HTTP or HTTPS behind a self-signed local proxy).
 3. Select only modules from the allowlist above, matching the response types
    and options actually configured.
 4. Archive the suite version, plan, configuration, server commit and complete

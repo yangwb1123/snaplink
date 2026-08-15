@@ -76,9 +76,16 @@ deployment actually registers.
 ### Official protocol certification
 
 Protocol unit/integration tests and an OIDF conformance Docker Compose harness
-exist. No official OpenID Foundation result or certification listing is
-recorded. The harness is interactive, uses an unpinned conformance image and is
-not part of default CI. See [sso/oidc-conformance.md](sso/oidc-conformance.md).
+exist. The harness is headless and repeatable (`run-headless.sh`, pinned to
+`registry.gitlab.com/openid/conformance-suite:release-v5.2.1`), stays
+outside default CI, and archives its runs under
+`test/oidc-conformance/results/<commit>[-https]/` (git-ignored). Local smoke
+topologies pass the `oidcc-server` Basic-certification module (HTTP issuer:
+59 SUCCESS + 1 expected https-only failure; HTTPS issuer behind a self-signed
+local proxy: 60 SUCCESS). No official OpenID Foundation result or
+certification listing is recorded. The remaining boundary: an official run
+against an externally reachable HTTPS issuer with a CA-trusted certificate,
+and an issued OIDF listing. See [sso/oidc-conformance.md](sso/oidc-conformance.md).
 
 ### Disaster-recovery snapshot scope
 

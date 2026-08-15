@@ -73,11 +73,17 @@ class CDP:
         for k in ("state", "nonce", "code_challenge", "code_challenge_method"):
             if k in q:
                 body[k] = q[k][0]
-        req = urllib.request.Request("http://127.0.0.1:8180/auth/login",
+        # The issuer's TLS is terminated by the local nginx proxy; the
+        # browser side uses an unverified SSL context (self-signed cert).
+        parts = urllib.parse.urlparse(ISSUER)
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        login_base = f"{parts.scheme}://127.0.0.1:{port}"
+        req = urllib.request.Request(login_base + "/auth/login",
                                      data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json",
-                                              "Host": "sso-issuer:8180"})
-        with urllib.request.urlopen(req, timeout=30) as r:
+                                              "Host": f"{parts.hostname}:{port}"})
+        ctx = _CTX if parts.scheme == "https" else None
+        with urllib.request.urlopen(req, timeout=30, context=ctx) as r:
             data = json.loads(r.read())
         return data.get("code", "")
 
@@ -95,9 +101,12 @@ def api(cj, path):
         return json.loads(r.read())
 
 def main():
+    global ISSUER
     test_id = sys.argv[1]
     cookie = sys.argv[2] if len(sys.argv) > 2 else ""
     timeout = int(sys.argv[3]) if len(sys.argv) > 3 else 300
+    if len(sys.argv) > 4:
+        ISSUER = sys.argv[4]
     chrome = subprocess.Popen([
         "google-chrome", "--headless=new", "--disable-gpu", "--no-sandbox",
         "--ignore-certificate-errors", "--remote-allow-origins=*",

@@ -7,17 +7,54 @@
 # headless Chrome (auto-fulfilling the JSON logins), and archives the result
 # under results/<commit>/.
 #
-# Usage: ./run-headless.sh [--module oidcc-server] [--timeout 450]
+# Usage: ./run-headless.sh [--module oidcc-server] [--timeout 450] [--issuer-https]
 #
-# Requires: docker compose v2, google-chrome, python3 (websocket-client).
+# --issuer-https runs the HTTPS issuer topology: an nginx issuer-proxy
+# terminates the self-signed cert on host 8181 and the issuer URL becomes
+# https://sso-issuer:8181, so the OIDF suite's https-only checks (e.g.
+# VerifyClientManagementCredentials) apply. The default (no flag) keeps the
+# HTTP topology byte-identical to the committed behavior. Evidence is
+# archived under results/<commit>[-https]/.
+#
+# Requires: docker compose v2, google-chrome, python3 (websocket-client),
+# openssl; --issuer-https additionally requires keytool (JDK) to build the
+# suite JVM truststore for the self-signed cert.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 MODULE="${MODULE:-oidcc-server}"
 TIMEOUT="${TIMEOUT:-450}"
-COMPOSE=(docker compose --env-file config.env)
+ISSUER_HTTPS=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --module) MODULE="$2"; shift 2 ;;
+    --module=*) MODULE="${1#*=}"; shift ;;
+    --timeout) TIMEOUT="$2"; shift 2 ;;
+    --timeout=*) TIMEOUT="${1#*=}"; shift ;;
+    --issuer-https) ISSUER_HTTPS=1; shift ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
 ISSUER_HOST="sso-issuer"
-ISSUER_URL="http://${ISSUER_HOST}:8180"
+ISSUER_PORT="8180"
+ISSUER_SCHEME="http"
+ARCHIVE_SUFFIX=""
+# Must stay in sync with the pinned tag in docker-compose.yml (used to
+# extract the JVM default truststore for the --issuer-https run).
+SUITE_IMAGE="registry.gitlab.com/openid/conformance-suite:release-v5.2.1"
+COMPOSE=(docker compose --env-file config.env)
+if [ -n "${ISSUER_HTTPS:-}" ]; then
+  ISSUER_PORT="8181"
+  ISSUER_SCHEME="https"
+  ARCHIVE_SUFFIX="-https"
+  # Compose interpolation picks these up for the sso-server issuer and the
+  # suite's OIDC provider config + JVM TLS truststore.
+  export ISSUER_URL="${ISSUER_SCHEME}://${ISSUER_HOST}:${ISSUER_PORT}"
+  export ISSUER_TLS_JVM_ARGS="-Djavax.net.ssl.trustStore=/certs/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit"
+  COMPOSE=(docker compose --env-file config.env --profile issuer-https)
+fi
+ISSUER_URL="${ISSUER_SCHEME}://${ISSUER_HOST}:${ISSUER_PORT}"
 DISCOVERY_URL="${ISSUER_URL}/.well-known/openid-configuration"
 ADMIN_USER="openid-conformance-suite-admins"
 ADMIN_PASS="S3cure-admin-pass!"
@@ -25,6 +62,32 @@ SUITE_BASE="https://localhost:8443"
 SERVER_HTTP="http://127.0.0.1:8180"
 
 say() { printf '\n== %s\n' "$*"; }
+
+# The suite JVM validates the issuer's TLS cert: the self-signed cert must
+# carry the sso-issuer SAN and the suite container must trust it. Regenerate
+# the (gitignored) cert only when the SAN is missing; in HTTPS mode build a
+# truststore that keeps the JVM's default CAs AND the local cert (the suite
+# resolves its hardcoded Google login provider's discovery at startup, so a
+# bare truststore would break accounts.google.com and abort startup).
+prepare_tls() {
+  mkdir -p certs
+  if ! openssl x509 -in certs/server.crt -noout -ext subjectAltName 2>/dev/null | grep -q "sso-issuer"; then
+    say "generating self-signed cert with the sso-issuer SAN"
+    openssl req -x509 -newkey rsa:2048 -keyout certs/server.key -out certs/server.crt \
+      -days 3650 -nodes -subj "/CN=localhost" \
+      -addext "subjectAltName=DNS:localhost,DNS:sso-issuer,IP:127.0.0.1"
+  fi
+  if [ -n "${ISSUER_HTTPS:-}" ]; then
+    say "building suite JVM truststore (default CAs + self-signed cert)"
+    # SUITE_IMAGE must stay in sync with the pinned tag in docker-compose.yml.
+    cid="$(docker create "${SUITE_IMAGE}")"
+    docker cp "${cid}:/opt/java/openjdk/lib/security/cacerts" certs/truststore.jks >/dev/null
+    docker rm "${cid}" >/dev/null
+    keytool -importcert -noprompt -alias snaplink -file certs/server.crt \
+      -keystore certs/truststore.jks -storepass changeit
+  fi
+}
+prepare_tls
 
 say "validating pinned server config"
 "${COMPOSE[@]}" run --rm --no-deps sso-server --validate-only -grpc-listen "" --config /etc/sso/conformance.yaml >/dev/null
@@ -36,6 +99,13 @@ for i in $(seq 1 60); do
   sleep 2
 done
 curl -sf "$SERVER_HTTP/health" >/dev/null || { echo "sso-server not healthy"; exit 1; }
+if [ -n "${ISSUER_HTTPS:-}" ]; then
+  for i in $(seq 1 30); do
+    if curl -skf "https://127.0.0.1:8181/health" >/dev/null 2>&1; then break; fi
+    sleep 2
+  done
+  curl -skf "https://127.0.0.1:8181/health" >/dev/null || { echo "issuer proxy not healthy"; exit 1; }
+fi
 
 say "registering suite login client (DCR)"
 REG="$(curl -sf -X POST "$SERVER_HTTP/register" -H 'Content-Type: application/json' \
@@ -52,7 +122,7 @@ say "updating suite login config and restarting the suite"
 sed -i.bak -E \
   "s/^(\s*- OIDC_GITLAB_CLIENTID=).*/\1${CLIENT_ID}/; s/^(\s*- OIDC_GITLAB_SECRET=).*/\1${CLIENT_SECRET}/" \
   docker-compose.yml
-"${COMPOSE[@]}" up -d --force-recreate conformance-suite >/dev/null
+"${COMPOSE[@]}" up -d --force-recreate conformance-suite suite-proxy >/dev/null
 
 # The suite needs a moment to boot; wait for its login page.
 for i in $(seq 1 90); do
@@ -81,7 +151,7 @@ import urllib.parse
 print(urllib.parse.parse_qs(urllib.parse.urlparse('''$auth''').query).get('code_challenge',[''])[0])
 PY
 )"
-  login="$(curl -sk --resolve "${ISSUER_HOST}:8180:127.0.0.1" -X POST "$ISSUER_URL/auth/login" \
+  login="$(curl -sk --resolve "${ISSUER_HOST}:${ISSUER_PORT}:127.0.0.1" -X POST "$ISSUER_URL/auth/login" \
     -H 'Content-Type: application/json' \
     -d "{\"provider\":\"password\",\"client_id\":\"${CLIENT_ID}\",\"redirect_uri\":\"https://localhost:8443/login/oauth2/code/gitlab\",\"response_type\":\"code\",\"scope\":[\"openid\",\"email\"],\"state\":\"${state}\",\"nonce\":\"${nonce}\",\"code_challenge\":\"${challenge}\",\"code_challenge_method\":\"S256\",\"credential\":{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASS}\"}}")"
   code="$(python3 -c "import json,sys; print(json.loads('''$login''').get('code',''))")"
@@ -133,11 +203,11 @@ print('; '.join(f'{c.name}={c.value}' for c in cj))
 PY
 )"
 say "driving the browser (headless Chrome auto-login)"
-python3 "$(dirname "$0")/drive_test.py" "$TEST_ID" "$COOKIE_STR" "$TIMEOUT" || true
+python3 "$(dirname "$0")/drive_test.py" "$TEST_ID" "$COOKIE_STR" "$TIMEOUT" "$ISSUER_URL" || true
 
 say "archiving evidence"
 COMMIT="$(cd ../.. && git rev-parse --short HEAD)"
-OUT="$(pwd)/results/${COMMIT}"
+OUT="$(pwd)/results/${COMMIT}${ARCHIVE_SUFFIX}"
 mkdir -p "$OUT"
 curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/log/${TEST_ID}" > "$OUT/oidcc-server.log.json"
 curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/info/${TEST_ID}" > "$OUT/oidcc-server.info.json"
@@ -145,7 +215,7 @@ curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/plan/${PLAN_ID}" > "$OUT/plan.json"
 cp config.yaml "$OUT/config.yaml"
 (cd ../.. && git rev-parse HEAD > "$OUT/commit.txt" 2>/dev/null || true)
 (cd ../.. && git status --porcelain > "$OUT/worktree.txt" 2>/dev/null || true)
-echo "artifacts in results/${COMMIT}/"
+echo "artifacts in results/${COMMIT}${ARCHIVE_SUFFIX}/"
 
 say "final test state"
 curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/info/${TEST_ID}" | python3 -c \
