@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -249,7 +250,11 @@ func (s *ClientStore) RotateSecretWithLifecycle(ctx context.Context, clientID st
 	if overlap > 0 {
 		until = now.Add(overlap)
 	}
-	res, err := s.db.Load().ExecContext(ctx, `UPDATE clients SET
+	db := s.db.Load()
+	if db == nil {
+		return "", errors.New("sqlite: client store closed")
+	}
+	res, err := db.ExecContext(ctx, `UPDATE clients SET
 		previous_secret = CASE WHEN ? > 0 THEN secret ELSE '' END,
 		secret_overlap_until = ?, secret = ?, secret_rotated_at = ?, secret_expires_at = ? WHERE id = ?`,
 		int64(overlap), unixNanoOrZero(until), hashed, unixNanoOrZero(now),
