@@ -35,7 +35,7 @@ Delivered:
 - The compatibility policy (additive, semver-tracked, operationId
   verbatim naming) is committed in the registry itself.
 
-### 2. Produce auditable OIDC/FAPI conformance evidence — PARTIAL (headless run + archive landed; HTTPS topology run + OIDF listing remain)
+### 2. Produce auditable OIDC/FAPI conformance evidence — PARTIAL (headless + local HTTP/HTTPS topologies landed; external official run + OIDF listing + archive upload strategy remain)
 
 The harness in `test/oidc-conformance/` is repaired and **headless-runnable
 as checked in**: the official suite image is pinned to a release tag
@@ -46,14 +46,28 @@ those response types). `./run-headless.sh` drives the whole run — build,
 DCR-register the suite's OIDC login client, signup admin user, create the
 Basic-certification discovery plan, run a module through headless Chrome
 (auto-fulfilling the JSON logins), and archive plan/log/info under
-`results/<commit>/`.
+`results/<commit>[-https]/`.
 
-Smoke evidence (HTTP-only local topology): `oidcc-server` completes with
-59 SUCCESS steps; the single failure is the expected
-`VerifyClientManagementCredentials` https-URI requirement.
+Smoke evidence (local topologies, suite `release-v5.2.1`, `oidcc-server`
+module of the Basic discovery+dynamic plan):
+
+- HTTP issuer baseline trio (`results/34ea1d3d/`, `results/af3bc485/`,
+  `results/7400ba0c/`): **59 SUCCESS + 1 FAILURE** each; the sole failure
+  is the expected `VerifyClientManagementCredentials` https-URI
+  requirement.
+- HTTPS issuer behind the self-signed local proxy
+  (`results/7400ba0c-https/`): **60 SUCCESS + 0 FAILURE** — the https-only
+  client-management check now passes (`registration_client_uri` is
+  `https://sso-issuer:8181/...`).
+
+The certification-readiness evidence kit (evidence table, reproduction
+manual, module coverage matrix, remaining blockers) is packaged in
+[oidc-conformance.md](sso/oidc-conformance.md).
 
 Remaining: an official run against an externally reachable HTTPS issuer
-with archived artifacts, and an OpenID Foundation listing before any
+(requires deployment; the local HTTPS topology is self-signed and
+non-reachable), an OpenID Foundation account + listing submission, and an
+archive upload strategy for the release that claims the run — before any
 certification language is used.
 
 ### 4. Remove obsolete frontend configuration semantics — DONE
