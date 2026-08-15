@@ -48,7 +48,9 @@ func TestRunPushApprovalPrune_RemovesExpiredAtInterval(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(2 * time.Second):
+		// Race builds schedule the prune goroutine late under full-suite
+		// load; 500ms was flaky. The loop exits on ctx.Done with no work.
 		t.Fatal("scheduler didn't exit after cancel")
 	}
 

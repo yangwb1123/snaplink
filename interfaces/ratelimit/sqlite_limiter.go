@@ -221,7 +221,10 @@ func (s *SQLiteLimiter) consumeToken(tokens *float64) (allowed bool, retryAfter 
 		return false, 0, true
 	}
 	needed := 1.0 - *tokens
-	return false, time.Duration(needed / s.perSecond * float64(time.Second)), false
+	// Ceil so a denial never reports a zero Retry-After (a sub-nanosecond
+	// needed would otherwise truncate to 0s); HTTP clients treat 0 as
+	// "retry immediately".
+	return false, time.Duration(math.Ceil(needed / s.perSecond * float64(time.Second))), false
 }
 
 // persistBucket writes the post-consumption token state back via upsert. It
