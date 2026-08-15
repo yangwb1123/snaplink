@@ -1,0 +1,141 @@
+# B8-R2 rerun: finalize preserved ssoext work + rerun prototype/minimal
+# extraction.
+#
+# Round 1 outcomes (2026-08-15):
+#   - B8-1 (conformance HTTPS): DONE — 9f4b182f; HTTPS topology 60 SUCCESS +
+#     0 FAILURE (VerifyClientManagementCredentials flipped PASS), HTTP
+#     baseline byte-identical; report validated at
+#     docs/campaigns/reports/b8-conformance-https.md. Skipped via --reuse.
+#   - B8-2 (ssoext registrars): agent exited 1 mid-finalization (pi
+#     connection error) after ~23 min. The FULL implementation was
+#     preserved in the worktree (interfaces/ssoext/{ldap,kerberos,radius}_
+#     registry*.go, infrastructure/{ldap,radius}/build*.go,
+#     infrastructure/kerberos/build_test.go, doc edits). Compile-checked:
+#     go build/vet PASS on ssoext + all three nested modules. Task R2-A
+#     verifies, fixes if needed, and commits.
+#   - B8-3 (prototype/minimal): agent died at startup (connection error,
+#     16.9s, nothing done). Task R2-B reruns it.
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b8-r2.yaml --reuse
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative. Files are referenced by PATH — read them with
+#     your tools, do not expect them inlined.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report (table of commands
+#     with real results; never claim a test passed that you did not run).
+#   - Engineering budgets: no file over 500 lines, no function over 50 lines
+#     / cyclo 15, no new maintainability exemptions, no skipDirs /
+#     layerExemptions additions, no layer violations.
+#   - Commit with a conventional imperative message + AI co-author trailer.
+#     The post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库。任务：收尾上一轮已实现但未提交的 ssoext
+    认证器族注册器工作（agent 在最终验证/提交阶段因连接错误中断；
+    实现已在工作树中完整保留，勿重新实现）。
+
+    现状（已核验）：
+    - git status 显示未提交文件：interfaces/ssoext/ldap_registry.go、
+      kerberos_registry.go、radius_registry.go（+各自 _test.go）、
+      infrastructure/ldap/build.go(+_test.go)、infrastructure/radius/
+      build.go(+_test.go)、infrastructure/kerberos/build_test.go，
+      以及已修改的 interfaces/ssoext/saml_registry.go、
+      infrastructure/{ldap,kerberos,radius}/doc.go、CHANGELOG.md、
+      docs/architecture/DIRECTORY_MAP.md、docs/architecture/
+      profile-isolation.md、docs/deferred-backlog.md。
+    - 编译已通过：go build/vet（ssoext + 三个嵌套模块）。
+    - 任务契约：为 LDAP/Kerberos/RADIUS 认证器族补齐 ssoext 类型化
+      注册器（SAML 为模板：interfaces/ssoext/saml_registry.go；
+      build_http.go:383-392 的 fail-closed 名称查表；嵌套模块经自身
+      go.mod + replace 引用 ssoext）。
+
+    执行要求（先读契约，再验证，勿重写已实现代码）：
+    1. 通读未提交实现：确认每族注册器语义与 SAML 逐字对齐（进程本地、
+       重复注册 panic、未注册 lookup 失败、Deps 仅 stdlib + 根模块
+       类型、非热插件注册表注释纪律）；确认模块侧 build.go 适配正确
+       嵌入 ssoext Deps 类型；确认文档修改（DIRECTORY_MAP/profile-
+       isolation/deferred-backlog/CHANGELOG）与实现一致。发现不一致
+       或缺口 → 小步修复（不得推倒重来）。
+    2. 测试必须实际运行并报告：
+       go build ./... && go vet ./...
+       go test ./interfaces/ssoext/... -count=1
+       (cd infrastructure/ldap && go test ./... -count=1)
+       (cd infrastructure/kerberos && go test ./... -count=1)
+       (cd infrastructure/radius && go test ./... -count=1)
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+       各嵌套模块 go.mod 若需 tidy（新增了根模块引用时）→ go mod tidy
+       并确认 go.mod/go.sum 变更最小化。
+    3. conventional commit（imperative + AI co-author trailer；若发现并
+       修复了缺口，报告须列出每个修复的根因）。
+    4. 硬边界：不添加维护性豁免、不改分层、不新增第三方依赖。
+  output: docs/campaigns/reports/b8-ssoext-authenticator-registrars.md
+  timeout: 1500
+  validate: |
+    go build ./... && go vet ./... && go test ./interfaces/ssoext/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：prototype/minimal 物理包提取（README/
+    DIRECTORY_MAP/deferred-backlog 声明的开放边界："package-level
+    isolation remains an extraction target"），先写有界设计、再实现。
+
+    契约（先读，后实现）：
+    - README.md "Edition profiles" 段（prototype 排 OIDC 面；minimal
+      继承并加 OIDC+tracing；"A disabled route is not evidence that its
+      code was compiled out; package-level isolation remains an extraction
+      target"）
+    - docs/architecture/DIRECTORY_MAP.md（prototype/minimal target the
+      dedicated cmd/sso-minimal composition root ... 边界声明在
+      ops/build/profile-isolation.json，由 python cli.py profiles
+      evidence 证明）
+    - docs/deferred-backlog.md "Static build modules" 段（"shares the
+      broad cmd/sso-minimal dependency graph" / "not yet physically
+      isolated" 开放边界）
+    - ops/build/profile-isolation.json（billing/small/full；small =
+      sso-minimal 97 包 vs full 193 包——small↔full 隔离已实证）
+    - cmd/sso-minimal/（14 个 .go 文件、2158 行：app.go/commands.go/
+      config.go/edition.go/logger.go/main.go/op_session.go/server.go/
+      surface.go/grant_filter.go 等；prototype 与 minimal 当前共享）
+    - profile 定义：ops/build/ 下 prototype/minimal profile 的 command
+      目标（以实际文件为准；python cli.py configure --profile ... 驱动）
+
+    第一步——设计文档（必须先写）：
+    docs/design/prototype-minimal-physical-isolation.md，必须裁决：
+    1. 提取形状：新建 cmd/sso-prototype 独立包保留 cmd/sso-minimal 为
+       minimal，还是三根——以"最小变更 + 可验证隔离增量"为判据，给出
+       证据与理由。
+    2. 共享代码处置：op_session.go（325 行）等两版共享文件——复制 vs
+       下沉到 interfaces/sso 或 shared 的判定规则；禁止为提取而制造
+       重复死代码（prototype 不需要的 OIDC 面必须编译剔除）。
+    3. profile 接线：prototype/minimal profile 的目标 command 调整；
+       python cli.py configure 构建两版验证。
+    4. 隔离证据：python cli.py profiles evidence 如何证明 prototype
+       与 minimal 的包集合差异（prototype 不得链接 protocols/oidc
+       等）；small 行如何演变。
+    5. 硬边界：不改变任何运行时行为（两版功能逐字节不变）、不触碰
+       full/standard 组合、不加维护性豁免、保持 cmd/ 目录预算（≤10
+       非测试 .go/目录、≤15 子目录、文件 ≤500 行）。
+
+    第二步——实现（按设计；验收断言在设计中必须可测试）：
+    1. 新 cmd 包 + profile 调整 + 构建产物验证（python3 cli.py configure
+       --profile prototype --build 与 --profile minimal --build 均成功）。
+    2. 隔离断言：prototype 二进制包图排除 OIDC 面（go list 依赖检查或
+       profiles evidence 扩展，以设计裁决为准）；minimal 含 OIDC。
+    3. 测试：两版 smoke（可复用 cmd/sso-minimal 现有 flow_test 形状，
+       禁止 skip）。
+    4. 文档同步：README/DIRECTORY_MAP/deferred-backlog 的开放边界句
+       更新为已提取 + 证据引用；CHANGELOG.md Added。
+    5. 验证命令（必须实际运行并报告输出）：
+       python3 cli.py configure --profile prototype --build
+       python3 cli.py configure --profile minimal --build
+       python3 cli.py profiles evidence
+       go build ./... && go vet ./...
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    6. conventional commit（imperative + AI co-author trailer；构建产物
+       不入库——dist/ 与 bin/ 保持忽略）。
+  output: docs/campaigns/reports/b8-prototype-minimal-isolation.md
+  timeout: 2400
+  validate: |
+    python3 cli.py profiles evidence && go build ./... && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
