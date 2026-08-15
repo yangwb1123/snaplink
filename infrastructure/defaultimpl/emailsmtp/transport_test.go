@@ -68,7 +68,11 @@ func serveSMTP(t *testing.T, conn net.Conn, got chan<- string) {
 		if err != nil {
 			return
 		}
-		cmd := strings.ToUpper(strings.Fields(line)[0])
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue // stray CRLF from a failing/aborting peer (e.g. TLS handshake failure)
+		}
+		cmd := strings.ToUpper(fields[0])
 		switch cmd {
 		case "EHLO", "HELO":
 			reply("250 fake.local")
