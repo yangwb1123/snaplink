@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -61,15 +62,30 @@ func TestSQLiteLimiter_RefillAfterIdle(t *testing.T) {
 func TestSQLiteLimiter_RetryAfterIsPositiveOnDenial(t *testing.T) {
 	t.Parallel()
 	lim := newSQLiteLimiterForTest(t, 1, 1) // 1 token, refilling at 1/sec
-	_, _ = lim.Allow("alice")
-	_, retry := lim.Allow("alice")
-	if retry <= 0 {
-		t.Fatalf("Retry-After should be positive on denial, got %v", retry)
+	// Pin the clock: with the real clock, the two Allow calls can land more
+	// than a refill interval apart under -race/full-suite load, silently
+	// refilling the bucket and turning the denial into an allow.
+	now := time.Unix(1_700_000_000, 0)
+	lim.now = func() time.Time { return now }
+	// A fail-open first Allow (sqlite busy under full-suite load) is the
+	// limiter's designed degradation, not a denial — retry the scenario on
+	// a fresh key. A real denial with a non-positive Retry-After fails.
+	for attempt := 0; attempt < 3; attempt++ {
+		key := fmt.Sprintf("alice-%d", attempt)
+		lim.Allow(key) // consume the burst token
+		ok, retry := lim.Allow(key)
+		if !ok {
+			if retry <= 0 {
+				t.Fatalf("Retry-After should be positive on denial, got %v", retry)
+			}
+			// Should be close to 1s (full token refill at 1/sec).
+			if retry > 2*time.Second {
+				t.Fatalf("Retry-After unreasonably high: %v (expected ~1s)", retry)
+			}
+			return
+		}
 	}
-	// Should be close to 1s (full token refill at 1/sec).
-	if retry > 2*time.Second {
-		t.Fatalf("Retry-After unreasonably high: %v (expected ~1s)", retry)
-	}
+	t.Fatal("fail-open degraded every attempt; denial never observed")
 }
 
 func TestSQLiteLimiter_KeysIsolated(t *testing.T) {

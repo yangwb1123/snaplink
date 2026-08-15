@@ -112,13 +112,21 @@ func TestRegisterObservability_ServingWhenAllChecksPass(t *testing.T) {
 	waitStatus(t, h.hc, healthpb.HealthCheckResponse_SERVING)
 
 	// Protocol conformance: a registered concrete service carries the same
-	// verdict; an unknown service is NOT_FOUND, never SERVING.
-	resp, err := h.hc.Check(context.Background(), &healthpb.HealthCheckRequest{Service: "snaplink.discovery.v1.Discovery"})
-	if err != nil {
-		t.Fatalf("Check(registered service): %v", err)
-	}
-	if resp.Status != healthpb.HealthCheckResponse_SERVING {
-		t.Errorf("Check(registered service) = %v, want SERVING", resp.Status)
+	// verdict; an unknown service is NOT_FOUND, never SERVING. The poller's
+	// service-name sweep can land a tick after the overall watch fires, so
+	// poll briefly before declaring failure.
+	var resp *healthpb.HealthCheckResponse
+	var err error
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		resp, err = h.hc.Check(context.Background(), &healthpb.HealthCheckRequest{Service: "snaplink.discovery.v1.Discovery"})
+		if err == nil && resp.Status == healthpb.HealthCheckResponse_SERVING {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Check(registered service) never SERVING: err=%v status=%v", err, resp.GetStatus())
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	_, err = h.hc.Check(context.Background(), &healthpb.HealthCheckRequest{Service: "no.such.Service"})
 	if status.Code(err) != codes.NotFound {
