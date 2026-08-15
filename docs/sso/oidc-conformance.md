@@ -37,6 +37,28 @@ This is smoke evidence only — not an OIDF result. Certification language
 still requires an official suite run against an HTTPS topology with archived
 plan/result artifacts and, for "certified", an issued OIDF listing.
 
+### Latest run attempt (2026-08-15, HEAD `cf9b4569`)
+
+`./run-headless.sh --timeout 900` was re-run at HEAD `cf9b4569` on
+2026-08-15. It did **not** reach any conformance step: the server under
+test refuses to boot under the fail-closed gRPC transport preflight added
+in `f585545e` (gRPC plane TLS posture). The committed harness starts the
+server with only `--config /etc/sso/conformance.yaml`; the default
+`-grpc-listen :8081` binds all interfaces without TLS material, which the
+current binary rejects (`gRPC listener :8081 would serve plaintext and is
+refused by default: provide TLS material … or pass -grpc-insecure`).
+`--validate-only` fails with the same posture error (exit 1), so the
+harness aborts at "starting harness" before any plan/log/info artifact is
+produced; no archive exists under `results/cf9b4569/`.
+
+- 0 SUCCESS / 0 FAIL steps executed; the last completed smoke run remains
+the 2026-07-31 archive at `results/34ea1d3d/` (59 SUCCESS + the expected
+`VerifyClientManagementCredentials` failure above).
+- A diagnostic boot of the same image with `-grpc-insecure` passes
+`/health`, confirming the sole blocker is the harness/server drift, not
+the conformance topology. The harness was **not** modified; the drift is
+recorded as a defect in the run report.
+
 ## Current response-type boundary
 
 The authorization handler and discovery metadata accept:
