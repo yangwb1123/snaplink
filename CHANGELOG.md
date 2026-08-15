@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- SMTP implicit TLS: the built-in email sender now establishes the TLS
+  connection before the first SMTP verb on port `465` (auto-selected) or with
+  `smtp.tls_mode: implicit`; STARTTLS (`587`) and plaintext (`25`) behavior is
+  unchanged. Verification is fail-closed (ServerName pinned to the relay host,
+  TLS 1.2 floor, no `InsecureSkipVerify`).
 - API-only identity-platform capabilities added after `v0.10.0`:
   - OpenID Federation list, resolve, trust-mark status, and historical-key
     endpoints.

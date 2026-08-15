@@ -251,11 +251,12 @@ is ASYNC fire-and-forget (a background goroutine bounded by `smtp.timeout`) so
 |---|---|
 | `smtp.enabled` | Master switch; `false` = byte-identical no-op delivery |
 | `smtp.host` | SMTP relay hostname (also required — enabling without a host is a no-op) |
-| `smtp.port` | SMTP relay port (`587` STARTTLS, `25` plaintext relay; implicit-TLS `465` is a follow-up, not yet supported) |
+| `smtp.port` | SMTP relay port (`587` STARTTLS, `25` plaintext relay; `465` = implicit TLS — the connection is TLS-encrypted before the first SMTP verb) |
 | `smtp.username` | AUTH username; empty = no AUTH attempted |
 | `smtp.password` | AUTH password — supports `secret://` resolution (`config/secrets.go`) and the `SSO_SMTP__PASSWORD` env override; never commit a plaintext value |
 | `smtp.from` | Envelope + `From:` header address |
-| `smtp.starttls` | Documents intent; `net/smtp.SendMail` negotiates STARTTLS automatically whenever the server advertises it and falls back to plaintext otherwise |
+| `smtp.starttls` | Documents intent: `net/smtp.SendMail` negotiates STARTTLS automatically whenever the server advertises it and falls back to plaintext otherwise — the pre-existing 587/25 behavior, unchanged. Require TLS at the relay/edge when plaintext fallback is unacceptable |
+| `smtp.tls_mode` | SMTP TLS selection: `auto` (default; also the behavior for an unset or unrecognized value) = implicit TLS on port `465` only; `implicit` = TLS handshake before the first SMTP verb on any port (non-standard implicit-TLS relays). Verification is always fail-closed: `ServerName` is the relay host, the TLS floor is 1.2, and `InsecureSkipVerify` is never set — a relay with an untrusted certificate must be terminated at the edge/relay |
 | `smtp.timeout` | Per-send bound for the background dispatch goroutine; 0 = 10s default |
 | `smtp.templates_dir` | Filesystem overlay for the six go:embed default templates (`password_reset`/`email_verification`/`email_change`/`invitation`/`otp`/`notification`); empty = embedded defaults only |
 | `smtp.link_base_url` | Prefixed to reset/verify/invite links — required because the sender only ever sees the token/target its `spi.*Sender` method receives, never `server.issuer` |

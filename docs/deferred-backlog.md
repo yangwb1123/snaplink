@@ -121,8 +121,12 @@ that validate JWTs fully offline remains future work.
 ### SMTP transport
 
 The built-in sender uses `net/smtp`: STARTTLS is negotiated when advertised but
-may fall back to plaintext. Implicit TLS on port 465 is not supported. Require
-TLS at the relay/edge when plaintext fallback is unacceptable.
+may fall back to plaintext. Implicit TLS on port 465 is supported via a
+`crypto/tls.Dial`-first transport, auto-selected on port 465 or with
+`smtp.tls_mode: implicit`; certificate verification is fail-closed (ServerName
+pinned to the relay host, TLS 1.2 floor, no `InsecureSkipVerify`). Require TLS
+at the relay/edge when plaintext fallback on STARTTLS-capable ports is
+unacceptable.
 
 ### CIBA user-code enrollment boundary
 

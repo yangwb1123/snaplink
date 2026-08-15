@@ -2,7 +2,9 @@ package emailsmtp
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net"
 	"net/smtp"
 	"strings"
 	"time"
@@ -12,6 +14,20 @@ import (
 // defaults to defaultSendFunc and WithSendFunc overrides for tests, so tests
 // never need a live SMTP server for sender/template coverage.
 type sendFunc func(addr string, a smtp.Auth, from string, to []string, msg []byte) error
+
+// tlsDialFunc establishes a TLS connection to addr using cfg — the seam the
+// implicit-TLS transport dials through. New defaults it to crypto/tls.Dial;
+// WithTLSDial overrides it for tests, mirroring WithSendFunc.
+type tlsDialFunc func(network, addr string, cfg *tls.Config) (net.Conn, error)
+
+// Config.TLSMode values. tlsModeAuto (the zero value, and the fallback for any
+// unrecognized string) keeps the pre-implicit-TLS behavior byte-for-byte:
+// port 465 selects implicit TLS, every other port goes through
+// net/smtp.SendMail's opportunistic STARTTLS negotiation.
+const (
+	tlsModeAuto     = "auto"
+	tlsModeImplicit = "implicit"
+)
 
 // defaultTimeout bounds a background send when cfg.Timeout is unset (<= 0).
 const defaultTimeout = 10 * time.Second
@@ -32,12 +48,82 @@ const (
 
 // defaultSendFunc is net/smtp.SendMail: it negotiates STARTTLS automatically
 // whenever the server advertises it and falls back to plaintext otherwise, so
-// smtp.starttls needs no separate code branch here. Implicit TLS (port 465,
-// which SendMail cannot do — it always starts with a plaintext dial) is a
-// deferred follow-up: a crypto/tls.Dial branch keyed on cfg.Port==465, kept
-// out of v1 per the adjudicated scope (STARTTLS 587 + plaintext 25 now).
+// smtp.starttls needs no separate code branch here (587/25 behavior is
+// unchanged). Implicit TLS (port 465, which SendMail cannot do — it always
+// starts with a plaintext dial) is served by implicitTLSSendFunc instead,
+// selected in sendMessage when useImplicitTLS reports it.
 func defaultSendFunc(addr string, a smtp.Auth, from string, to []string, msg []byte) error {
 	return smtp.SendMail(addr, a, from, to, msg)
+}
+
+// defaultTLSDial is crypto/tls.Dial adapted to tlsDialFunc's net.Conn return:
+// tls.Dial's concrete *tls.Conn result is not assignable to a
+// net.Conn-returning func type, so New wires this adapter as the default
+// dialTLS instead of tls.Dial directly.
+func defaultTLSDial(network, addr string, cfg *tls.Config) (net.Conn, error) {
+	return tls.Dial(network, addr, cfg)
+}
+
+// implicitTLSConfig builds the TLS client config for an implicit-TLS session:
+// ServerName pinned to the relay host (SNI + certificate verification name)
+// and a TLS 1.2 floor. InsecureSkipVerify is NEVER set — a relay with an
+// untrusted certificate must be terminated at the edge/relay, not silently
+// trusted in software, so a verification failure is fail-closed.
+func implicitTLSConfig(host string) *tls.Config {
+	return &tls.Config{
+		ServerName: host,
+		MinVersion: tls.VersionTLS12,
+	}
+}
+
+// implicitTLSSendFunc is the port-465 transport: it establishes the TLS
+// connection FIRST (crypto/tls.Dial) and only then speaks SMTP over it — the
+// one thing net/smtp.SendMail cannot express, since SendMail always starts
+// with a plaintext dial and only upgrades via STARTTLS. It mirrors
+// SendMail's session steps (greet/hello via NewClient, optional AUTH, MAIL,
+// RCPT, DATA write, QUIT) and wraps errors without echoing credentials or
+// message contents.
+func implicitTLSSendFunc(dial tlsDialFunc, tlsCfg *tls.Config, addr string, a smtp.Auth, from string, to []string, msg []byte) error {
+	conn, err := dial("tcp", addr, tlsCfg)
+	if err != nil {
+		return fmt.Errorf("emailsmtp: implicit-tls dial: %w", err)
+	}
+	defer conn.Close()
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("emailsmtp: implicit-tls address %q: %w", addr, err)
+	}
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return fmt.Errorf("emailsmtp: implicit-tls session: %w", err)
+	}
+	if a != nil {
+		if err := client.Auth(a); err != nil {
+			return fmt.Errorf("emailsmtp: implicit-tls auth: %w", err)
+		}
+	}
+	if err := client.Mail(from); err != nil {
+		return fmt.Errorf("emailsmtp: implicit-tls mail: %w", err)
+	}
+	for _, rcpt := range to {
+		if err := client.Rcpt(rcpt); err != nil {
+			return fmt.Errorf("emailsmtp: implicit-tls rcpt: %w", err)
+		}
+	}
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("emailsmtp: implicit-tls data: %w", err)
+	}
+	if _, err := w.Write(msg); err != nil {
+		return fmt.Errorf("emailsmtp: implicit-tls write: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("emailsmtp: implicit-tls data close: %w", err)
+	}
+	if err := client.Quit(); err != nil {
+		return fmt.Errorf("emailsmtp: implicit-tls quit: %w", err)
+	}
+	return nil
 }
 
 // dispatch performs the actual send on a background goroutine, decoupled
@@ -68,13 +154,29 @@ func (s *Sender) sendMessage(parent context.Context, to string, msg []byte) erro
 		auth = smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
 	}
 	done := make(chan error, 1)
-	go func() { done <- s.send(addr, auth, s.cfg.From, []string{to}, msg) }()
+	go func() {
+		if s.useImplicitTLS() {
+			done <- implicitTLSSendFunc(s.dialTLS, implicitTLSConfig(s.cfg.Host), addr, auth, s.cfg.From, []string{to}, msg)
+			return
+		}
+		done <- s.send(addr, auth, s.cfg.From, []string{to}, msg)
+	}()
 	select {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// useImplicitTLS reports whether this send must open the connection with a
+// TLS handshake before the first SMTP verb: the conventional 465 implicit-TLS
+// port, or Config.TLSMode explicitly requesting it (see tlsModeImplicit). Any
+// other port keeps net/smtp.SendMail's opportunistic STARTTLS negotiation
+// (587) or plaintext relay (25) — byte-identical to the pre-implicit-TLS
+// behavior. Unrecognized TLSMode values fall back to auto.
+func (s *Sender) useImplicitTLS() bool {
+	return s.cfg.Port == 465 || s.cfg.TLSMode == tlsModeImplicit
 }
 
 // buildMessage assembles an RFC5322 message. Each Send targets exactly one

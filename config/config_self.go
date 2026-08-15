@@ -132,11 +132,21 @@ type SMTPConfig struct {
 	// SSO_SMTP__PASSWORD env override — never commit a plaintext password.
 	Password string `yaml:"password"`
 	From     string `yaml:"from"`
-	// StartTLS documents intent (net/smtp.SendMail negotiates STARTTLS
-	// automatically whenever the server advertises it, and falls back to
-	// plaintext otherwise, so there is no separate code branch to gate).
-	// Implicit TLS (port 465) is a deferred follow-up.
+	// StartTLS documents intent: net/smtp.SendMail negotiates STARTTLS
+	// automatically whenever the server advertises it and falls back to
+	// plaintext otherwise — the pre-existing 587/25 behavior, unchanged, with
+	// no separate code branch to gate. Implicit TLS is selected by port or
+	// TLSMode instead (see TLSMode).
 	StartTLS bool `yaml:"starttls"`
+	// TLSMode selects the outbound TLS behavior: "" / "auto" = implicit TLS
+	// (TLS handshake before the first SMTP verb) on port 465 only, everything
+	// else keeps net/smtp.SendMail's STARTTLS-when-advertised negotiation
+	// (may fall back to plaintext — require TLS at the relay/edge if that is
+	// unacceptable); "implicit" = TLS handshake before the first SMTP verb
+	// regardless of port. Any other value behaves as "auto". Verification is
+	// fail-closed (no InsecureSkipVerify): ServerName is the relay host, TLS
+	// floor 1.2.
+	TLSMode string `yaml:"tls_mode"`
 	// Timeout bounds each background send; 0 = SDK default (10s).
 	Timeout time.Duration `yaml:"timeout"`
 	// TemplatesDir overlays the five go:embed default templates

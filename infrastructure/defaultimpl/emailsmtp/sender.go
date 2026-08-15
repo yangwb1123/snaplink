@@ -69,11 +69,12 @@ var _ core.NotificationSender = (*NotificationSender)(nil)
 // interface guard lives at the cmd wiring site instead (see
 // cmd/sso-server/serverbuildauthn), not here.
 type Sender struct {
-	cfg  Config
-	tmpl *templateSet
-	send sendFunc
-	now  func() time.Time
-	log  spi.Logger
+	cfg     Config
+	tmpl    *templateSet
+	send    sendFunc
+	dialTLS tlsDialFunc
+	now     func() time.Time
+	log     spi.Logger
 }
 
 // Option configures a Sender at construction.
@@ -82,10 +83,26 @@ type Option func(*Sender)
 // WithSendFunc overrides the transport (default net/smtp.SendMail via
 // defaultSendFunc) — the legitimate seam tests use to capture outbound mail
 // without a live SMTP server. Nil is ignored so a zero-value Option is inert.
+// It only affects the non-implicit-TLS path: an implicit-TLS send (port 465
+// or tls_mode=implicit) always uses the TLS transport, which is overridden
+// with WithTLSDial instead.
 func WithSendFunc(fn sendFunc) Option {
 	return func(s *Sender) {
 		if fn != nil {
 			s.send = fn
+		}
+	}
+}
+
+// WithTLSDial overrides the TLS dial used by the implicit-TLS transport
+// (default crypto/tls.Dial). Nil is ignored. Tests inject a dial that trusts
+// a throwaway CA so the real tls.Dial + handshake still runs against an
+// in-process TLS SMTP listener while everything else about the sender's TLS
+// config (ServerName, MinVersion, no InsecureSkipVerify) is exercised as-is.
+func WithTLSDial(fn tlsDialFunc) Option {
+	return func(s *Sender) {
+		if fn != nil {
+			s.dialTLS = fn
 		}
 	}
 }
@@ -100,7 +117,7 @@ func New(cfg Config, log spi.Logger, opts ...Option) (*Sender, error) {
 	if log == nil {
 		log = spi.NopLogger{}
 	}
-	s := &Sender{cfg: cfg, tmpl: ts, send: defaultSendFunc, now: time.Now, log: log}
+	s := &Sender{cfg: cfg, tmpl: ts, send: defaultSendFunc, dialTLS: defaultTLSDial, now: time.Now, log: log}
 	for _, o := range opts {
 		o(s)
 	}
