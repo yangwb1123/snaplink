@@ -161,6 +161,8 @@ authenticators:
 ```bash
 go build -o sso-server ./cmd/sso-server
 ./sso-server -config config.yaml        # HTTP on :8080, gRPC on :8081 (in-memory backends, OIDC on)
+#   gRPC plaintext is fail-closed by default: pass -grpc-insecure (edge
+#   TLS) or -grpc-tls-cert/-grpc-tls-key, or bind a loopback -grpc-listen.
 ```
 
 Config resolves low→high: **file < env (`SSO_SERVER__LISTEN=:9090`) < etcd (opt-in) < flags**.

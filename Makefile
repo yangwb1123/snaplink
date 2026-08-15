@@ -158,7 +158,7 @@ config-validate: ## Validate all deploy config.yaml files against current server
 	for cfg in cmd/sso-server/config.yaml bin/config.yaml ops/deploy/compose/config.yaml ops/deploy/baremetal-ha/sso/config.yaml ops/deploy/k8s/config.yaml ops/deploy/k8s-prod/config.yaml docs/examples/basic/config.yaml; do \
 		echo -n "  $$cfg ... "; \
 		if [ -f "$$cfg" ]; then \
-			if SSO_POSTGRES__DSN='$(VALIDATION_POSTGRES_DSN)' $(GO) run ./cmd/sso-server --config="$$cfg" --validate-only 2>/dev/null; then \
+			if SSO_POSTGRES__DSN='$(VALIDATION_POSTGRES_DSN)' $(GO) run ./cmd/sso-server --config="$$cfg" --validate-only -grpc-insecure 2>/dev/null; then \
 				echo "OK"; \
 			else \
 				echo "FAIL"; fail=1; \
@@ -406,7 +406,7 @@ config-validate-all: ## Validate all 7 deploy config files against the server.
 	for cfg in cmd/sso-server/config.yaml bin/config.yaml ops/deploy/compose/config.yaml ops/deploy/baremetal-ha/sso/config.yaml ops/deploy/k8s/config.yaml ops/deploy/k8s-prod/config.yaml docs/examples/basic/config.yaml; do \
 		echo -n "  $$cfg ... "; \
 		if [ -f "$$cfg" ]; then \
-			if SSO_POSTGRES__DSN='$(VALIDATION_POSTGRES_DSN)' $(GO) run ./cmd/sso-server --config="$$cfg" --validate-only 2>/dev/null; then \
+			if SSO_POSTGRES__DSN='$(VALIDATION_POSTGRES_DSN)' $(GO) run ./cmd/sso-server --config="$$cfg" --validate-only -grpc-insecure 2>/dev/null; then \
 				echo "OK"; \
 			else \
 				echo "FAIL"; fail=1; \

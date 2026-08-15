@@ -42,6 +42,8 @@ services:
       - "--config=/etc/sso/config.yaml"
       - "--etcd-endpoints=etcd:2379"
       - "--etcd-prefix=/snaplink/config"
+      # Plaintext gRPC behind the Caddy TLS edge (fail-closed default opt-out).
+      - "--grpc-insecure"
     ports:
       # Browser-facing HTTP (REST + JWKS + /livez + /readyz + /metrics).
       - "8080:8080"

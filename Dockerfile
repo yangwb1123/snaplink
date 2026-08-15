@@ -12,7 +12,7 @@
 # Run sso-server:
 #   docker run --rm -p 8080:8080 -p 8081:8081 \
 #       -v $(pwd)/cmd/sso-server/config.yaml:/etc/sso/config.yaml \
-#       snaplink/sso-server --config /etc/sso/config.yaml
+#       snaplink/sso-server --config /etc/sso/config.yaml --grpc-insecure
 #
 # The image does NOT bake in a config file — operators bind-mount or
 # template their own. The default cmd/sso-server/config.yaml in this

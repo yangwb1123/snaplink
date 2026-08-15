@@ -87,6 +87,11 @@ sso-server --config config.yaml      # HTTP :8080, gRPC :8081
 
 - **HTTP `:8080`** — OAuth2/OIDC + the REST admin plane (`/api/v1/admin/*`).
 - **gRPC `:8081`** — the admin/control plane (`--grpc-listen ''` disables it).
+  Plaintext is fail-closed by default (Decision 5 of
+  `docs/design/grpcserver-observability-tls.md`): provide TLS material
+  (`-grpc-tls-cert/-grpc-tls-key` or the shared `-tls-cert/-tls-key` pair),
+  bind a loopback `-grpc-listen`, or pass `-grpc-insecure` for an edge-TLS
+  deployment behind a TLS-terminating proxy (the stock deploy trees do this).
 - **Probes (served OUTSIDE the rate-limit/metrics stack):** `/livez` (process
   up), `/readyz` (aggregates every `WithReadyCheck` — db ping, etcd reachable,
   signing-backend health), `/metrics` (Prometheus).

@@ -143,7 +143,7 @@ services:
     image: snaplink/sso-server:local
     restart: unless-stopped
     networks: [ssoha]
-    command: ["--config", "/etc/sso/config.yaml"]
+    command: ["--config", "/etc/sso/config.yaml", "--grpc-insecure"]
     environment:
       SSO_SERVER__ISSUER: ${SSO_ISSUER}
       SSO_SERVER__BASE_URL: ${SSO_ISSUER}

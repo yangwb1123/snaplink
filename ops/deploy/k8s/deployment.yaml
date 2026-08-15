@@ -51,6 +51,10 @@ spec:
           args:
             - "--config"
             - "/etc/sso/config.yaml"
+            # gRPC control plane is plaintext behind the TLS-terminating
+            # ingress (fail-closed default; explicit opt-out per
+            # docs/design/grpcserver-observability-tls.md Decision 5).
+            - "--grpc-insecure"
 
           ports:
             - name: http
