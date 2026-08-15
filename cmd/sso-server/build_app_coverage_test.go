@@ -399,8 +399,10 @@ func TestBuildApp_FullFeatureSet(t *testing.T) {
 		t.Fatal("nil handler")
 	}
 
-	// newGRPCServer registers every conditional admin service.
-	gs, err := newGRPCServer(a, "", "", quietLogger())
+	// newGRPCServer registers every conditional admin service. Loopback
+	// plaintext transport: these tests never bind a listener, they only
+	// walk the conditional registration wiring.
+	gs, err := newGRPCServer(a, grpcTransport{mode: grpcTransportLoopbackPlaintext}, quietLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +453,7 @@ func TestNewGRPCServer_MinimalRegistersCoreServices(t *testing.T) {
 		t.Fatalf("buildApp: %v", err)
 	}
 	defer shutdownApp(t, a)
-	gs, err := newGRPCServer(a, "", "", quietLogger())
+	gs, err := newGRPCServer(a, grpcTransport{mode: grpcTransportLoopbackPlaintext}, quietLogger())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -44,6 +44,12 @@ func (l *slogLogger) Info(msg string, kv ...any)  { l.inner.Info(msg, kv...) }
 func (l *slogLogger) Error(msg string, kv ...any) { l.inner.Error(msg, kv...) }
 func (l *slogLogger) Debug(msg string, kv ...any) { l.inner.Debug(msg, kv...) }
 
+// Warn is NOT part of spi.Logger (the SPI deliberately has no Warn level);
+// it exists on the concrete cmd logger so call sites that need a genuine
+// warning (e.g. the gRPC plaintext operator opt-out) can type-assert for it
+// and fall back to Info for other spi.Logger implementations.
+func (l *slogLogger) Warn(msg string, kv ...any) { l.inner.Warn(msg, kv...) }
+
 // slogLogger implements spi.ContextLogger: the *Ctx variants append the
 // W3C trace_id the SDK stamped onto ctx (parsed from the request's
 // traceparent — the same id that lands on audit Event.TraceID), so ops

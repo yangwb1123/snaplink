@@ -96,7 +96,7 @@ func main() {
 	// --validate-only: load + validate config, then exit without
 	// starting the server. Useful for CI and pre-deployment checks.
 	if flags.validateOnly {
-		logger.Info("config valid", "build_profile", buildinfo.BuildProfile, "required_capabilities", cfg.Server.RequiredCapabilities)
+		validateOnlyBoot(flags, logger, cfg)
 		return
 	}
 
@@ -111,10 +111,24 @@ func main() {
 	}()
 
 	reloader := newConfigReloader(cfg, sources, logger)
-	if err := run(cfg, logger, flags.tlsCert, flags.tlsKey, flags.grpcListen, reloader); err != nil {
+	if err := run(cfg, logger, flags.tlsCert, flags.tlsKey, flags.grpcTLSCert, flags.grpcTLSKey, flags.grpcInsecure, flags.grpcListen, reloader); err != nil {
 		logger.Error("server exited with error", "error", err)
 		os.Exit(1)
 	}
+}
+
+// validateGRPCTransportPosture preflights the fail-closed gRPC transport
+// decision for -validate-only, which exits before run() reaches the gRPC
+// server construction. Extracted so the wiring is test-locked: a stock
+// preflight (no TLS material on a non-loopback -grpc-listen) must fail the
+// same way the real boot would. An empty listen (listener disabled) skips
+// the decision, exactly like startGRPCServer's early return.
+func validateGRPCTransportPosture(f runtimeFlags) error {
+	if f.grpcListen == "" {
+		return nil
+	}
+	_, err := decideGRPCTransport(f.grpcListen, f.tlsCert, f.tlsKey, f.grpcTLSCert, f.grpcTLSKey, f.grpcInsecure)
+	return err
 }
 
 func validateBuildCapabilities(required []string) {
@@ -274,6 +288,12 @@ type app struct {
 	// is false.
 	metrics *metrics.Metrics
 
+	// grpcHealthStop flips the gRPC health plane to NOT_SERVING + notifies
+	// Watch clients (set by newGRPCServer via RegisterObservability; nil
+	// when the gRPC listener is disabled). Called by the shutdown path
+	// BEFORE GracefulStop so load balancers drain this replica first.
+	grpcHealthStop func()
+
 	// Tenant store (multi-tenant routing). Nil when disabled. Closed
 	// during shutdown so SQL backends release their connections.
 	tenantStore                  tenant.Store
@@ -385,7 +405,7 @@ type app struct {
 	pgDB *sql.DB
 }
 
-func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen string, reloader *configreload.Reloader) error {
+func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcTLSCert, grpcTLSKey string, grpcInsecure bool, grpcListen string, reloader *configreload.Reloader) error {
 	a, err := buildApp(cfg, logger)
 	if err != nil {
 		return err
@@ -413,7 +433,7 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	startHTTPServer(httpSrv, cfg, logger, tlsCert, tlsKey, errCh)
 	pprofSrv := startPprofServer(cfg, logger)
 
-	grpcSrv, err := startGRPCServer(a, grpcListen, logger, tlsCert, tlsKey, errCh)
+	grpcSrv, err := startGRPCServer(a, grpcListen, logger, tlsCert, tlsKey, grpcTLSCert, grpcTLSKey, grpcInsecure, errCh)
 	if err != nil {
 		return err
 	}
@@ -427,8 +447,18 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	closeSSEBroker(a)
-	shutdownServers(ctx, logger, httpSrv, pprofSrv, grpcSrv)
+	shutdownServers(ctx, logger, httpSrv, pprofSrv, grpcSrv, a.grpcHealthStop)
 	shutdownSubsystems(ctx, a, logger)
 	logger.Info("server stopped cleanly")
 	return nil
+}
+
+// validateOnlyBoot preflights the gRPC transport posture (a boot-time fact,
+// fail-closed TLS default, not config) and exits — a stock deployment must
+// not get a green preflight and a CrashLoop at boot.
+func validateOnlyBoot(flags runtimeFlags, logger *slogLogger, cfg *config.Config) {
+	if err := validateGRPCTransportPosture(flags); err != nil {
+		fail("grpc transport: %v", err)
+	}
+	logger.Info("config valid", "build_profile", buildinfo.BuildProfile, "required_capabilities", cfg.Server.RequiredCapabilities)
 }

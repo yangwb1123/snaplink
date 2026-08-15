@@ -31,6 +31,14 @@ type runtimeFlags struct {
 	tlsCert    string
 	tlsKey     string
 
+	// gRPC transport posture (runtime-only, like grpcListen): dedicated
+	// gRPC TLS material falls back to the shared HTTP pair; insecure is the
+	// explicit plaintext opt-out. See decideGRPCTransport in main_servers.go
+	// for the full fail-closed matrix.
+	grpcTLSCert  string
+	grpcTLSKey   string
+	grpcInsecure bool
+
 	// Optional centralized config endpoints (empty = etcd disabled).
 	etcdEndpoints string
 	etcdPrefix    string
@@ -59,6 +67,9 @@ func parseRuntimeFlags() runtimeFlags {
 	grpcListen := flag.String("grpc-listen", ":8081", "gRPC listen address ('' to disable)")
 	tlsCert := flag.String("tls-cert", "", "TLS cert file (omit for HTTP)")
 	tlsKey := flag.String("tls-key", "", "TLS key file (omit for HTTP)")
+	grpcTLSCert := flag.String("grpc-tls-cert", "", "gRPC TLS cert file (falls back to -tls-cert)")
+	grpcTLSKey := flag.String("grpc-tls-key", "", "gRPC TLS key file (falls back to -tls-key)")
+	grpcInsecure := flag.Bool("grpc-insecure", false, "allow plaintext gRPC on any address (explicit TLS opt-out)")
 	validateOnly := flag.Bool("validate-only", false, "load and validate config then exit without starting the server")
 
 	// Optional centralized config: when --etcd-endpoints is set, an etcd
@@ -75,6 +86,9 @@ func parseRuntimeFlags() runtimeFlags {
 		grpcListen:    *grpcListen,
 		tlsCert:       *tlsCert,
 		tlsKey:        *tlsKey,
+		grpcTLSCert:   *grpcTLSCert,
+		grpcTLSKey:    *grpcTLSKey,
+		grpcInsecure:  *grpcInsecure,
 		etcdEndpoints: *etcdEndpoints,
 		etcdPrefix:    *etcdPrefix,
 		validateOnly:  *validateOnly,

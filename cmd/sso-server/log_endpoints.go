@@ -90,6 +90,9 @@ func logGRPCServices(cfg *config.Config, grpcListen string) {
 		return
 	}
 	fmt.Printf("gRPC services on %s:\n", grpcListen)
+	fmt.Println("  grpc.health.v1.Health / Check + Watch")
+	fmt.Println("  grpc.reflection.v1.ServerReflection / ServerReflectionInfo")
+	fmt.Println("  grpc.reflection.v1alpha.ServerReflection / ServerReflectionInfo (legacy clients)")
 	fmt.Println("  snaplink.audit.v1.AuditWriter / Record + StreamEvents")
 	fmt.Println("  snaplink.authz.v1.Authorizer / Check + List* + GetMenus")
 	fmt.Println("  snaplink.discovery.v1.Discovery / Register + Discover + Watch")

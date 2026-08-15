@@ -124,8 +124,11 @@ func closeSSEBroker(a *app) {
 
 // shutdownServers gracefully stops the HTTP, pprof, and gRPC listeners under the
 // shared shutdown deadline. HTTP falls back to a hard Close on graceful-shutdown
-// error; gRPC falls back to Stop when GracefulStop outlives ctx.
-func shutdownServers(ctx context.Context, logger spi.Logger, httpSrv, pprofSrv *http.Server, grpcSrv *grpc.Server) {
+// error; gRPC falls back to Stop when GracefulStop outlives ctx. grpcHealthStop
+// (nil when the gRPC listener is disabled) runs BEFORE GracefulStop: it flips
+// every health status to NOT_SERVING and notifies Watch clients, so load
+// balancers drain this replica before the RPC plane closes.
+func shutdownServers(ctx context.Context, logger spi.Logger, httpSrv, pprofSrv *http.Server, grpcSrv *grpc.Server, grpcHealthStop func()) {
 	if err := httpSrv.Shutdown(ctx); err != nil {
 		logger.Error("http graceful shutdown failed", "error", err)
 		_ = httpSrv.Close()
@@ -135,6 +138,9 @@ func shutdownServers(ctx context.Context, logger spi.Logger, httpSrv, pprofSrv *
 	}
 	if grpcSrv == nil {
 		return
+	}
+	if grpcHealthStop != nil {
+		grpcHealthStop()
 	}
 	stopped := make(chan struct{})
 	go func() { grpcSrv.GracefulStop(); close(stopped) }()

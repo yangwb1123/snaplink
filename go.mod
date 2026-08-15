@@ -19,6 +19,7 @@ require (
 	github.com/tetratelabs/wazero v1.12.0
 	go.etcd.io/etcd/api/v3 v3.6.11
 	go.etcd.io/etcd/client/v3 v3.6.11
+	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.68.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.43.0
@@ -28,7 +29,7 @@ require (
 	golang.org/x/crypto v0.51.0
 	golang.org/x/time v0.15.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260401024825-9d38bb4040a9
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260406210006-6f92a3bedf2d
 	google.golang.org/grpc v1.80.0
 	google.golang.org/protobuf v1.36.11
 	github.com/oschwald/maxminddb-golang v1.13.1
