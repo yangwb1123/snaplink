@@ -56,7 +56,8 @@ plan/log/info artifacts under `results/<commit>/`.
 
 ```bash
 # 1. Validate the pinned server config (fails fast on schema drift):
-docker compose run --rm --no-deps sso-server --validate-only
+#    (empty -grpc-listen disables the gRPC plane; see docker-compose.yml)
+docker compose run --rm --no-deps sso-server --validate-only -grpc-listen ""
 
 # 2. Build and start the harness:
 docker compose up -d --build
@@ -107,7 +108,7 @@ issuer per OIDF guidance.
 
 - Server startup: `docker compose logs sso-server`
 - Config rejected at boot: the server refuses to start; run
-  `docker compose run --rm --no-deps sso-server --validate-only` to see the
+  `docker compose run --rm --no-deps sso-server --validate-only -grpc-listen ""` to see the
   error without starting a container.
 - Redirect/network failure: verify the issuer and server URL are reachable
   from the conformance container (`docker compose exec conformance-suite

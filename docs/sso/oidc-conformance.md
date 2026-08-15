@@ -1,6 +1,6 @@
 # OIDC Conformance Status
 
-Last verified against the code on 2026-07-31.
+Last verified against the code on 2026-08-15.
 
 ## Certification status
 
@@ -37,27 +37,33 @@ This is smoke evidence only — not an OIDF result. Certification language
 still requires an official suite run against an HTTPS topology with archived
 plan/result artifacts and, for "certified", an issued OIDF listing.
 
-### Latest run attempt (2026-08-15, HEAD `cf9b4569`)
+### Latest run (2026-08-15, HEAD `af3bc485`)
 
-`./run-headless.sh --timeout 900` was re-run at HEAD `cf9b4569` on
-2026-08-15. It did **not** reach any conformance step: the server under
-test refuses to boot under the fail-closed gRPC transport preflight added
-in `f585545e` (gRPC plane TLS posture). The committed harness starts the
-server with only `--config /etc/sso/conformance.yaml`; the default
-`-grpc-listen :8081` binds all interfaces without TLS material, which the
-current binary rejects (`gRPC listener :8081 would serve plaintext and is
-refused by default: provide TLS material … or pass -grpc-insecure`).
-`--validate-only` fails with the same posture error (exit 1), so the
-harness aborts at "starting harness" before any plan/log/info artifact is
-produced; no archive exists under `results/cf9b4569/`.
+`./run-headless.sh --timeout 900` completed at HEAD `af3bc485` on
+2026-08-15, after the harness fix in that same commit removed the
+fail-closed gRPC blocker recorded in `b465301a` (empty `-grpc-listen`
+disables the gRPC plane, which the harness does not exercise). The run
+executed the full `oidcc-server` module of the Basic certification plan
+(discovery + dynamic-client variant, 38 plan modules) and archived the
+evidence under `results/af3bc485/` (plan.json, oidcc-server.log.json,
+oidcc-server.info.json, config.yaml, commit.txt, worktree.txt):
 
-- 0 SUCCESS / 0 FAIL steps executed; the last completed smoke run remains
-the 2026-07-31 archive at `results/34ea1d3d/` (59 SUCCESS + the expected
-`VerifyClientManagementCredentials` failure above).
-- A diagnostic boot of the same image with `-grpc-insecure` passes
-`/health`, confirming the sole blocker is the harness/server drift, not
-the conformance topology. The harness was **not** modified; the drift is
-recorded as a defect in the run report.
+- **59 SUCCESS + 1 FAILURE** — identical counts and step sequence to the
+  2026-07-31 baseline archive at `results/34ea1d3d/` (60 steps total in
+  both runs).
+- The failure is the expected `VerifyClientManagementCredentials`
+  (`URL for client management point does not use https scheme`): the
+  committed harness is an HTTP-only local topology and cannot provide
+  the `https` client-management URL that step requires. An externally
+  reachable HTTPS issuer is still required before any certification
+  claim.
+- Run note (environment, not harness): the script's curl calls to the
+  `sso-issuer` hostname must bypass the ambient HTTP(S) proxy — with
+  `HTTP_PROXY` set and `sso-issuer` absent from `no_proxy`, the proxy
+  answers the login POST with 502 and the suite login cannot complete.
+  The archived run was executed with the proxy environment variables
+  unset; everything else (server build, containers, headless Chrome) is
+  localhost/container-network traffic.
 
 ## Current response-type boundary
 
