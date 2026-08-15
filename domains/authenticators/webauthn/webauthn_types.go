@@ -110,14 +110,56 @@ const (
 	extensionLargeBlob = "largeBlob"
 )
 
-// credentialExtensionSetter is an OPTIONAL UserStore capability — same
-// pattern as [handleResolver] — for persisting SDK-captured extension
-// metadata alongside a credential. [MemoryUserStore] implements it; a store
-// that doesn't is a silent no-op at [Helper.persistCredentialExtensions]:
-// Discoverable/LargeBlobSupported simply stay nil ("unknown") for that
-// backend, the same safe default as never having requested the extension.
-type credentialExtensionSetter interface {
+// CredentialExtensionSetter is an OPTIONAL UserStore capability — same
+// pattern as [HandlePreservingUserCreator] — for persisting SDK-captured
+// extension metadata alongside a credential. [MemoryUserStore] implements
+// it; a store that doesn't is a silent no-op at
+// [Helper.persistCredentialExtensions]: Discoverable/LargeBlobSupported
+// simply stay nil ("unknown") for that backend, the same safe default as
+// never having requested the extension. Exported so cross-package
+// consumers (the snapshot restorer's replay) can type-assert it.
+type CredentialExtensionSetter interface {
 	SetCredentialExtensions(ctx context.Context, name string, credentialID []byte, ext CredentialExtensions) error
+}
+
+// UserCredentialRecord is one user's exported passkey state: identity
+// (username + handle + display name) plus the verification-relevant
+// credential projection and SDK-captured extension metadata. It is what
+// the snapshot layer carries across nodes — public-key material only.
+//
+// Credential is a DEEP COPY of the live record with the bulky
+// Attestation blob (ClientDataJSON / AttestationObject / attestation
+// certificate) zeroed: the blob is never read post-registration in this
+// repo (the MDS login path passes a nil statement), while
+// AttestationFormat is preserved because go-webauthn's GetAppID consults
+// it during login. Verification touches PublicKey, AttestationFormat,
+// Flags, SignCount, and ID — all of which survive the projection.
+type UserCredentialRecord struct {
+	UserName    string
+	Handle      []byte
+	DisplayName string
+	Credential  gw.Credential
+	Extensions  CredentialExtensions
+}
+
+// CredentialLister is the OPTIONAL capability a [UserStore] may implement
+// to enumerate every user's credentials for snapshot export. Exporter
+// implementations MUST deep-copy credentials out of live records — never
+// hand out live pointers, or a restore-time mutation/redaction could
+// corrupt the running server's in-memory credentials.
+type CredentialLister interface {
+	ListCredentials(ctx context.Context) ([]UserCredentialRecord, error)
+}
+
+// HandlePreservingUserCreator is OPTIONAL: it preserves the exported
+// handle on restore. Absent, the restorer cannot faithfully recreate a
+// user whose handle is pinned by a platform authenticator — conditional /
+// discoverable login resolves users BY HANDLE ([Helper.GetByHandle]), so
+// a re-minted handle would strand restored credentials — and the
+// restorer SKIPS the record (fail-closed, counted) instead of silently
+// re-minting.
+type HandlePreservingUserCreator interface {
+	CreateUserWithHandle(ctx context.Context, name, displayName string, handle []byte) (*User, error)
 }
 
 // LargeBlobRequest configures the WebAuthn Level 3 largeBlob extension

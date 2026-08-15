@@ -307,3 +307,24 @@ func TestMemoryClients_ValidateSecretUnknownClient(t *testing.T) {
 		t.Errorf("err = %v want ErrNoSuchClient", err)
 	}
 }
+
+// TestMemoryClients_ValidateSecretEmptyStoredSecret_Rejected locks the F1
+// guard: a client with NO stored secret must never authenticate — not even
+// against an empty presented value (fresh-node-restore state; snapshot
+// artifacts never carry secrets). The FAPI client-auth method gate runs
+// before credential validation, so enforce-mode Basic violations still
+// report invalid_request on the wire.
+func TestMemoryClients_ValidateSecretEmptyStoredSecret_Rejected(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := defaultimpl.NewMemoryClientStore()
+	if err := store.Add(ctx, &sso.Client{ID: "web", Name: "Restored", Active: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := store.ValidateSecret(ctx, "web", ""); err == nil {
+		t.Fatal("empty stored secret authenticated an empty presented secret")
+	}
+	if err := store.ValidateSecret(ctx, "web", "anything"); err == nil {
+		t.Fatal("empty stored secret authenticated a non-empty presented secret")
+	}
+}

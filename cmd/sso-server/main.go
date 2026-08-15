@@ -462,3 +462,27 @@ func validateOnlyBoot(flags runtimeFlags, logger *slogLogger, cfg *config.Config
 	}
 	logger.Info("config valid", "build_profile", buildinfo.BuildProfile, "required_capabilities", cfg.Server.RequiredCapabilities)
 }
+
+// wireSnapshotCredentialSeams wires the v3 credential-portability seams:
+// the webauthn user store (passkeys), the TOTP enrollment store (seeds), and
+// the pipeline's own sealer (the seed envelope derives from it). Every seam
+// is optional and type-asserted — a build without webauthn/totp wiring (or
+// without snapshot encryption) simply omits the category, with zero
+// behavior change to the default artifact. The sealer must be the SAME
+// instance the pipeline uses, or seed exports would hard-fail (safe
+// direction, but invisible) — srw.pipeline carries it.
+func (b *appBuilder) wireSnapshotCredentialSeams(srw *snapshotReleaseWiring) {
+	if srw.snapshotter == nil || srw.restorer == nil || srw.pipeline == nil {
+		return
+	}
+	if b.webauthnUsers != nil {
+		srw.snapshotter.WebAuthn = b.webauthnUsers
+		srw.restorer.WebAuthn = b.webauthnUsers
+	}
+	if totpStore, ok := b.totpEnrollStore.(authenticators.TOTPStore); ok {
+		srw.snapshotter.TOTP = totpStore
+		srw.restorer.TOTP = totpStore
+	}
+	srw.snapshotter.Sealer = srw.pipeline.Sealer
+	srw.restorer.Sealer = srw.pipeline.Sealer
+}

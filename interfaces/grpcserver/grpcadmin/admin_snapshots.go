@@ -61,6 +61,7 @@ func (s *SnapshotAdminService) Export(ctx context.Context, in *adminv1.ExportSna
 	var opts snapshot.ExportOptions
 	if in != nil {
 		opts.SourceNodeID = in.SourceNodeId
+		opts.IncludeCredentialSeeds = in.IncludeCredentialSeeds
 		for _, x := range in.Exclude {
 			opts.Exclude = append(opts.Exclude, snapshot.ResourceCategory(x))
 		}
@@ -243,13 +244,14 @@ func (s *SnapshotAdminService) restoreTracked(
 		return nil, err
 	}
 	opts := snapshot.RestoreOptions{
-		Mode:               mode,
-		DryRun:             in.DryRun,
-		AdvanceBootstrap:   in.AdvanceBootstrap,
-		Confirm:            in.Confirm,
-		AutoSafetySnapshot: captureIntended,
-		RollbackOnError:    rollbackOnError,
-		Exclude:            restoreExclude(in),
+		Mode:                   mode,
+		DryRun:                 in.DryRun,
+		AdvanceBootstrap:       in.AdvanceBootstrap,
+		Confirm:                in.Confirm,
+		AutoSafetySnapshot:     captureIntended,
+		RollbackOnError:        rollbackOnError,
+		Exclude:                restoreExclude(in),
+		RestoreCredentialSeeds: in.RestoreCredentialSeeds,
 	}
 	if err := s.validateTrackedRestore(ctx, &operation, in, snap, &opts); err != nil {
 		return nil, err
@@ -334,7 +336,8 @@ func (s *SnapshotAdminService) terminateRollback(
 	finalRep.RolledBack = rolledBack
 	finalRep.Committed = false
 	finalRep.SafetySnapshotID = safetyID
-	result, _ := json.Marshal(&finalRep)
+	// Ledger persistence never carries rotated plaintext secrets.
+	result, _ := json.Marshal(snapshot.RedactCredentialRecovery(&finalRep))
 
 	rollbackErr := ""
 	if rolledBack {

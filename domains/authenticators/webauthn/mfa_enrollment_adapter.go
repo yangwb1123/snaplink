@@ -62,7 +62,7 @@ func (a *MFAEnrollmentAdapter) ListFactors(ctx context.Context, userID string) (
 			Label:  mfaFactorLabel,
 		}
 		// Surface credProps' captured "discoverable" status when this store
-		// persisted it (see [credentialExtensionSetter]) — nil when the
+		// persisted it (see [CredentialExtensionSetter]) — nil when the
 		// extension was never requested/captured, so a plain UserStore
 		// (no extension support) stays byte-identical to before this field
 		// existed.

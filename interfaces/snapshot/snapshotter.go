@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
 	"github.com/yangwb1123/snaplink/domains/connections"
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/domains/tenant"
@@ -20,6 +22,14 @@ import (
 // List() method. Every dependency is optional — the snapshot only
 // includes categories whose backend was wired (and not Excluded). A
 // nil Snapshotter field means "skip this category", NOT "fail".
+//
+// WebAuthn / TOTP / Sealer are the v3 credential-portability seams.
+// WebAuthn exports passkeys when the wired store implements
+// webauthn.CredentialLister (absent ⇒ category silently omitted, the
+// optional-store pattern). TOTP seeds export ONLY when the operator
+// explicitly sets ExportOptions.IncludeCredentialSeeds and every gate
+// (sealer + PurposeSealer + SeedExporter) is present — a set flag with a
+// missing gate is a hard error, never silent absence.
 type Snapshotter struct {
 	Clients     sso.ClientStore               // optional
 	Users       sso.UserProvider              // optional
@@ -30,6 +40,20 @@ type Snapshotter struct {
 	Pairwise    security.PairwiseSubjectStore // optional
 	Tracker     bootstrap.Tracker             // optional, for BootstrapState
 	Namespace   string                        // bootstrap namespace; defaults to "sso-server"
+
+	// WebAuthn is the passkey store the webauthn_credentials category
+	// enumerates. Optional: a store that doesn't implement
+	// webauthn.CredentialLister (or a nil store) simply omits the
+	// category.
+	WebAuthn webauthn.UserStore
+
+	// TOTP is the seed store for the opt-in totp_seeds category, and
+	// Sealer the master encryption sealer its purpose-separated envelope
+	// is derived from. cmd wires the SAME sealer instance the pipeline
+	// uses; nil Sealer means no encryption configured, which fails closed
+	// (an explicit seed request errors).
+	TOTP   authenticators.TOTPStore
+	Sealer Sealer
 
 	// DefaultExportRedactor is applied to every Export that doesn't
 	// supply ExportOptions.Redactor. Nil (the default) means NO
@@ -53,6 +77,15 @@ type ExportOptions struct {
 	// network policy (which is environment-specific).
 	Exclude []ResourceCategory
 
+	// IncludeCredentialSeeds opts into exporting TOTP seeds inside the
+	// purpose-separated sealed envelope (totp_seeds category). Unset (the
+	// default) keeps the artifact byte-identical in scope to today. Once
+	// set, every missing gate is a HARD error — no encryption sealer, no
+	// PurposeSealer derivation, no SeedExporter store — because an
+	// operator who explicitly asked must not get silent absence (that is
+	// how DR incidents happen).
+	IncludeCredentialSeeds bool
+
 	// Redactor, when non-nil, strips secret-bearing fields from the
 	// exported snapshot before it is returned (and therefore before it
 	// is serialized + sealed). It overrides Snapshotter.DefaultExportRedactor
@@ -60,7 +93,11 @@ type ExportOptions struct {
 	//
 	// Redaction runs on export-local COPIES of the affected resources,
 	// so it NEVER mutates the live store's objects. A redacted snapshot
-	// is for inspection / sharing, NOT restore — see Redactor.
+	// is for inspection / sharing, NOT restore — see Redactor. Redaction
+	// and seed export are mutually exclusive: an effective redactor with
+	// seeds present fails with ErrSnapshotSeedsWithRedaction (the
+	// Redactor interface cannot error and cannot scrub opaque
+	// ciphertext, so the pipeline refuses).
 	Redactor Redactor
 }
 
@@ -79,6 +116,17 @@ func (s *Snapshotter) Export(ctx context.Context, opts ExportOptions) (*Snapshot
 	}
 	if err := s.exportResources(ctx, snap, opts); err != nil {
 		return nil, err
+	}
+
+	// Redaction XOR seeds: the refusal lives HERE (in Export), not in
+	// the Redactor — the interface cannot return errors and cannot scrub
+	// opaque ciphertext. An effective redactor with seeds present would
+	// either silently drop the category or ship seeds in a redacted
+	// artifact; both are unacceptable, so the pipeline refuses. All
+	// in-repo export paths go through Export; anything calling Redact
+	// directly bypasses this check by construction.
+	if snap.Resources.SeedEnvelope != nil && effectiveRedactor(opts.Redactor, s.DefaultExportRedactor) != nil {
+		return nil, ErrSnapshotSeedsWithRedaction
 	}
 
 	s.applyRedaction(snap, opts)
@@ -112,7 +160,9 @@ func (s *Snapshotter) newSnapshot(ns string, opts ExportOptions) (*Snapshot, err
 }
 
 // exportResources polls each wired backend in the order downstream
-// enumeration depends on.
+// enumeration depends on. The v3 credential categories enumerate after
+// users: webauthn credentials and TOTP seeds both key on restored
+// identities.
 func (s *Snapshotter) exportResources(ctx context.Context, snap *Snapshot, opts ExportOptions) error {
 	tenantIDs, err := s.exportTenants(ctx, snap, opts)
 	if err != nil {
@@ -131,6 +181,12 @@ func (s *Snapshotter) exportResources(ctx context.Context, snap *Snapshot, opts 
 		return err
 	}
 	if err := s.exportUsers(ctx, snap, opts); err != nil {
+		return err
+	}
+	if err := s.exportWebAuthn(ctx, snap, opts); err != nil {
+		return err
+	}
+	if err := s.exportTotpSeeds(ctx, snap, opts); err != nil {
 		return err
 	}
 	if err := s.exportPairwise(ctx, snap, opts); err != nil {
@@ -384,70 +440,6 @@ func effectiveRedactor(perCall, def Redactor) Redactor {
 // struct copy is sufficient because the redactor only zeros scalar
 // string fields (Secret, RegistrationAccessToken); the shared slice
 // fields (JWKS, RedirectURIs, ...) are read, never written.
-func copyClientsForRedaction(snap *Snapshot) {
-	src := snap.Resources.Clients
-	if len(src) == 0 {
-		return
-	}
-	out := make([]*sso.Client, len(src))
-	for i, c := range src {
-		if c == nil {
-			continue
-		}
-		cp := *c
-		out[i] = &cp
-	}
-	snap.Resources.Clients = out
-}
-
-// copyUsersForRedaction replaces snap.Resources.Users with a slice of shallow
-// user copies so the redactor's secret-attribute scrub mutates only the export's
-// copies, never the source store's objects. The shallow copy aliases the source
-// Attributes MAP, but redactUserSecrets reassigns the copy a fresh map rather
-// than deleting from the shared one, so the live user's password_hash survives.
-func copyUsersForRedaction(snap *Snapshot) {
-	src := snap.Resources.Users
-	if len(src) == 0 {
-		return
-	}
-	out := make([]*sso.User, len(src))
-	for i, u := range src {
-		if u == nil {
-			continue
-		}
-		cp := *u
-		out[i] = &cp
-	}
-	snap.Resources.Users = out
-}
-
-func copyConnectionsForRedaction(snap *Snapshot) {
-	src := snap.Resources.Connections
-	if len(src) == 0 {
-		return
-	}
-	out := make([]*connections.Connection, len(src))
-	for i, item := range src {
-		if item == nil {
-			continue
-		}
-		cp := *item
-		cp.Domains = append([]string(nil), item.Domains...)
-		cp.Config = make(map[string]string, len(item.Config))
-		for key, value := range item.Config {
-			cp.Config[key] = value
-		}
-		out[i] = &cp
-	}
-	snap.Resources.Connections = out
-}
-
-// newSnapshotID returns a sortable, time-prefixed ID:
-//
-//	snap_2026-05-15T08-30-05Z_<6-byte-rand-base64>
-//
-// The dashes inside the timestamp are intentional — colons are
-// problematic in file system paths.
 func newSnapshotID() (string, error) {
 	buf := make([]byte, 6)
 	if _, err := rand.Read(buf); err != nil {

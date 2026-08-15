@@ -17,7 +17,9 @@ package aesgcm
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -133,6 +135,27 @@ func (s *Sealer) Open(ciphertext []byte, paramsRaw []byte) ([]byte, error) {
 	}
 	return plain, nil
 }
+
+// DeriveSealer implements the optional [snapshot.PurposeSealer]
+// capability: HKDF-SHA256 over the master key with info=purpose yields a
+// 32-byte purpose key. Purpose separation is real: ciphertext sealed for
+// one purpose cannot be opened (or swapped) under another, and each
+// derived sealer mints its own random nonces, so the AES-GCM nonce domain
+// stays per-purpose. A derived sealer's params are byte-identical in
+// shape to the base sealer's (version + nonce) — the key is the only
+// difference, so cross-purpose opens fail as AEAD errors.
+func (s *Sealer) DeriveSealer(purpose string) (snapshot.Sealer, error) {
+	if len(s.key) != KeySize {
+		return nil, errors.New("snapshot/aesgcm: sealer not configured")
+	}
+	key, err := hkdf.Key(sha256.New, s.key, nil, purpose, KeySize)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot/aesgcm: derive purpose key: %w", err)
+	}
+	return New(key)
+}
+
+var _ snapshot.PurposeSealer = (*Sealer)(nil)
 
 // Compile-time interface assertion.
 var _ snapshot.Sealer = (*Sealer)(nil)

@@ -92,7 +92,7 @@ func extensionsFromCreation(results protocol.AuthenticationExtensionsClientOutpu
 }
 
 // persistCredentialExtensions best-effort persists ext against credentialID
-// when the configured UserStore opts into [credentialExtensionSetter] AND
+// when the configured UserStore opts into [CredentialExtensionSetter] AND
 // there is anything captured. A store that doesn't implement it — or an ext
 // with everything nil (extension not requested / not echoed) — is a silent
 // no-op: this is enrichment metadata, never a ceremony decision, so it fails
@@ -101,7 +101,7 @@ func (h *Helper) persistCredentialExtensions(ctx context.Context, name string, c
 	if ext == (CredentialExtensions{}) {
 		return
 	}
-	setter, ok := h.users.(credentialExtensionSetter)
+	setter, ok := h.users.(CredentialExtensionSetter)
 	if !ok {
 		return
 	}

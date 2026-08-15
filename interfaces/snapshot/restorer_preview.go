@@ -51,7 +51,13 @@ func (r *Restorer) Preview(ctx context.Context, snap *Snapshot, opts RestoreOpti
 // snapshot carries (untouched live entries must not be reported as deleted —
 // the restore will not remove them).
 func (r *Restorer) liveSnapshot(ctx context.Context, snap *Snapshot, opts RestoreOptions) (*Snapshot, error) {
-	live := &Snapshot{SchemaVersion: SchemaVersion, SourceNamespace: snap.SourceNamespace}
+	// The live side carries an EXPLICIT category list (never nil): a nil
+	// manifest means "include all" in artifact semantics, but the live
+	// side is only a partial view of what this restorer can enumerate —
+	// categories the diff engine cannot index (the v3 credential
+	// categories, nil/unwired backends) stay out of the diff so their
+	// dry-run counts keep the plan's probe counts (dry-run honesty).
+	live := &Snapshot{SchemaVersion: SchemaVersion, SourceNamespace: snap.SourceNamespace, Categories: make([]ResourceCategory, 0, len(AllCategories()))}
 	add := func(cat ResourceCategory, entries func() error) error {
 		if r.backendFor(cat) == nil || excluded(cat, opts.Exclude) || !snap.IncludesCategory(cat) {
 			return nil
@@ -442,6 +448,11 @@ func overlayDryRunCounts(rep *Report, mode RestoreMode, d *DiffResult) {
 		return
 	}
 	for _, cd := range d.Categories {
-		rep.Items[cd.Category] = projectCounts(mode, cd)
+		// RequiresRotation is a probe-side prediction the diff cannot
+		// project (the diff knows nothing about live secrets) — carry it
+		// across the overlay so dry-run stays honest.
+		projected := projectCounts(mode, cd)
+		projected.RequiresRotation = rep.Items[cd.Category].RequiresRotation
+		rep.Items[cd.Category] = projected
 	}
 }

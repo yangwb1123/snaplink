@@ -106,6 +106,15 @@ func (s *ClientStore) ValidateSecret(ctx context.Context, clientID, clientSecret
 	if err != nil {
 		return err
 	}
+	// A client with NO stored secret must never authenticate — not even
+	// against an empty presented value (memory-store parity; see the
+	// memory implementation's comment for the fresh-node-restore
+	// rationale). The FAPI client-auth method gate runs before credential
+	// validation, so an enforce-mode Basic violation still reports
+	// invalid_request.
+	if c.Secret == "" {
+		return errors.New("client has no secret configured")
+	}
 	current := compareClientSecret(c.Secret, clientSecret)
 	previous := time.Now().Before(c.SecretOverlapUntil) && compareClientSecret(c.PreviousSecret, clientSecret)
 	if !current && !previous {

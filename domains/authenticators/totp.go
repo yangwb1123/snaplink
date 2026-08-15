@@ -59,6 +59,34 @@ type TOTPStore interface {
 	GetSecret(ctx context.Context, userID string) ([]byte, error)
 }
 
+// SeedRecord is one user's TOTP shared secret, exported for snapshot
+// portability. The Secret is MUST-encrypt material: it must never travel
+// in a plaintext artifact — the snapshot layer wraps it in a
+// purpose-separated sealed envelope behind an explicit operator flag.
+type SeedRecord struct {
+	UserID string
+	Secret []byte
+}
+
+// SeedExporter is an OPTIONAL TOTPStore capability: enumerate every
+// user's TOTP seed for snapshot export. Implementations MUST return
+// copies (never live pointers) — the exporter's records are marshaled
+// into a sealed envelope, and a caller-visible mutation must not corrupt
+// the running store. MemoryTOTPStore and the durable enrollment-store
+// backends implement it.
+type SeedExporter interface {
+	ExportSeeds(ctx context.Context) ([]SeedRecord, error)
+}
+
+// SeedImporter is an OPTIONAL TOTPStore capability: restore one user's
+// seed. The secret is byte-copied into the store so post-call mutation
+// cannot corrupt stored state; verification is a pure function of
+// (secret, step), so a byte-identical import keeps existing TOTP codes
+// working with no re-enrollment.
+type SeedImporter interface {
+	ImportSeed(ctx context.Context, userID string, secret []byte) error
+}
+
 // TOTPStoreFunc adapts a function to the TOTPStore interface.
 type TOTPStoreFunc func(ctx context.Context, userID string) ([]byte, error)
 
@@ -99,6 +127,35 @@ func (m *MemoryTOTPStore) GetSecret(_ context.Context, userID string) ([]byte, e
 	copy(cp, s)
 	return cp, nil
 }
+
+// ExportSeeds implements the optional [SeedExporter] capability: a copy
+// of every enrolled (userID, secret) pair. Copying keeps a caller's
+// post-export mutation from corrupting the live store.
+func (m *MemoryTOTPStore) ExportSeeds(_ context.Context) ([]SeedRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]SeedRecord, 0, len(m.secrets))
+	for userID, s := range m.secrets {
+		cp := make([]byte, len(s))
+		copy(cp, s)
+		out = append(out, SeedRecord{UserID: userID, Secret: cp})
+	}
+	return out, nil
+}
+
+// ImportSeed implements the optional [SeedImporter] capability. Bytes are
+// copied, matching Set's mutation-safety contract; an existing enrollment
+// for userID is replaced (one secret per user, mirroring AddTOTPFactor's
+// upsert semantics in the durable stores).
+func (m *MemoryTOTPStore) ImportSeed(_ context.Context, userID string, secret []byte) error {
+	m.Set(userID, secret)
+	return nil
+}
+
+var (
+	_ SeedExporter = (*MemoryTOTPStore)(nil)
+	_ SeedImporter = (*MemoryTOTPStore)(nil)
+)
 
 // ErrTOTPNoSecret is returned by TOTPStore when the supplied userID
 // has no enrollment record. Authenticator collapses every failure

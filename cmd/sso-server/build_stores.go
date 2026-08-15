@@ -170,6 +170,7 @@ func (b *appBuilder) buildSnapshotterRestorer(srw *snapshotReleaseWiring, srv *s
 		Pairwise: pairwise, Invalidator: srv,
 		Namespace: bootstrapNamespace,
 	}
+	b.wireSnapshotCredentialSeams(srw)
 }
 
 // wirePeerTrust compiles security.trusted_proxies.cidrs ONCE into the

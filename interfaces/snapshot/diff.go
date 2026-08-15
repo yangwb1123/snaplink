@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/configaudit"
 )
 
@@ -416,3 +418,80 @@ func roleKeyID(clientID, code string) string { return clientID + "/" + code }
 
 // assignmentKeyID is the display identity for one (clientID, userID) pair.
 func assignmentKeyID(clientID, userID string) string { return clientID + "/" + userID }
+
+func copyClientsForRedaction(snap *Snapshot) {
+	src := snap.Resources.Clients
+	if len(src) == 0 {
+		return
+	}
+	out := make([]*sso.Client, len(src))
+	for i, c := range src {
+		if c == nil {
+			continue
+		}
+		cp := *c
+		out[i] = &cp
+	}
+	snap.Resources.Clients = out
+}
+
+// copyUsersForRedaction replaces snap.Resources.Users with a slice of shallow
+// user copies so the redactor's secret-attribute scrub mutates only the export's
+// copies, never the source store's objects. The shallow copy aliases the source
+// Attributes MAP, but redactUserSecrets reassigns the copy a fresh map rather
+// than deleting from the shared one, so the live user's password_hash survives.
+func copyUsersForRedaction(snap *Snapshot) {
+	src := snap.Resources.Users
+	if len(src) == 0 {
+		return
+	}
+	out := make([]*sso.User, len(src))
+	for i, u := range src {
+		if u == nil {
+			continue
+		}
+		cp := *u
+		out[i] = &cp
+	}
+	snap.Resources.Users = out
+}
+
+func copyConnectionsForRedaction(snap *Snapshot) {
+	src := snap.Resources.Connections
+	if len(src) == 0 {
+		return
+	}
+	out := make([]*connections.Connection, len(src))
+	for i, item := range src {
+		if item == nil {
+			continue
+		}
+		cp := *item
+		cp.Domains = append([]string(nil), item.Domains...)
+		cp.Config = make(map[string]string, len(item.Config))
+		for key, value := range item.Config {
+			cp.Config[key] = value
+		}
+		out[i] = &cp
+	}
+	snap.Resources.Connections = out
+}
+
+// newSnapshotID returns a sortable, time-prefixed ID:
+//
+//	snap_2026-05-15T08-30-05Z_<6-byte-rand-base64>
+//
+// The dashes inside the timestamp are intentional — colons are
+// problematic in file system paths.
+
+func bytesEqualSlices(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

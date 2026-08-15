@@ -49,6 +49,21 @@ type Sealer interface {
 	Open(cipher []byte, params []byte) (plain []byte, err error)
 }
 
+// PurposeSealer is an OPTIONAL Sealer capability: derive a
+// purpose-separated Sealer from this one. The derived sealer's key is
+// HKDF-SHA256 over the master key material with info=purpose, so
+// ciphertexts sealed for one purpose cannot be opened (or swapped) under
+// another, and each derived sealer mints its own random nonces (the AEAD
+// nonce domain stays per-purpose).
+//
+// encryptionaesgcm and encryptionpassphrase implement it; the none
+// sealer deliberately does not — no real encryption, no purpose
+// separation, which is exactly the fail-closed gate the TOTP-seed
+// envelope relies on (no encryption ⇒ seeds never leave the node).
+type PurposeSealer interface {
+	DeriveSealer(purpose string) (Sealer, error)
+}
+
 // EncryptionAlgorithm constants. These are written into the envelope so
 // readers know which Sealer to use.
 const (

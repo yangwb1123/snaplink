@@ -2,7 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"time"
@@ -122,6 +124,52 @@ func (s *TOTPEnrollmentStore) GetSecret(ctx context.Context, userID string) ([]b
 		return nil, fmt.Errorf("sqlite: get totp secret: %w", err)
 	}
 	return secret, nil
+}
+
+// ExportSeeds implements the optional [authenticators.SeedExporter]
+// capability: every enrolled (user_id, secret) pair for snapshot
+// portability. Rows are freshly scanned, so no live pointers escape.
+func (s *TOTPEnrollmentStore) ExportSeeds(ctx context.Context) ([]authenticators.SeedRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT user_id, secret FROM totp_factors`)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: list totp seeds: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []authenticators.SeedRecord
+	for rows.Next() {
+		var (
+			userID string
+			secret []byte
+		)
+		if err := rows.Scan(&userID, &secret); err != nil {
+			return nil, fmt.Errorf("sqlite: scan totp seed: %w", err)
+		}
+		out = append(out, authenticators.SeedRecord{UserID: userID, Secret: secret})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: list totp seeds rows: %w", err)
+	}
+	return out, nil
+}
+
+// ImportSeed implements the optional [authenticators.SeedImporter]
+// capability: restores one user's seed via the same upsert AddTOTPFactor
+// uses (the store's at-rest protection applies; no snapshot-side schema).
+// The factor row gets a fresh random factor ID — the seed record carries no
+// factor identity.
+func (s *TOTPEnrollmentStore) ImportSeed(ctx context.Context, userID string, secret []byte) error {
+	return s.AddTOTPFactor(ctx, userID, randomFactorID(), "restored", secret)
+}
+
+// randomFactorID mints a factor ID for imported seeds (the seed record
+// carries no factor identity; a fresh ID keeps the /me/mfa list view
+// well-formed).
+func randomFactorID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "restored"
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // ListFactors returns the user's TOTP factor (0 or 1 element).

@@ -648,3 +648,18 @@ func TestSQLiteClients_ClientTrustFieldsRoundTrip(t *testing.T) {
 		t.Errorf("ClientTrustSetAt = %v, want %v", scored.ClientTrustSetAt, setAt)
 	}
 }
+
+// TestSQLiteClients_ValidateSecretEmptyStoredSecret_Rejected locks the F1
+// guard (memory-store parity): a client with NO stored secret must never
+// authenticate, even against an empty presented value.
+func TestSQLiteClients_ValidateSecretEmptyStoredSecret_Rejected(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := newClientStore(t)
+	if err := store.Add(ctx, &sso.Client{ID: "web", Name: "Restored", Active: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := store.ValidateSecret(ctx, "web", ""); err == nil {
+		t.Fatal("empty stored secret authenticated an empty presented secret")
+	}
+}

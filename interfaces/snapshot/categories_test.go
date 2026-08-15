@@ -21,6 +21,10 @@ func TestAllCategories_StableContents(t *testing.T) {
 		snapshot.CategoryAssignments,
 		snapshot.CategoryMenus,
 		snapshot.CategoryNetPolicy,
+		// v3 credential-portability categories are appended at the END so
+		// the v1/v2 category order stays byte-identical.
+		snapshot.CategoryWebAuthn,
+		snapshot.CategoryTotpSeeds,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("len = %d, want %d", len(got), len(want))
@@ -89,12 +93,16 @@ func TestIsValidSchemaVersion(t *testing.T) {
 	if !snapshot.IsValidSchemaVersion(snapshot.SchemaVersion) {
 		t.Errorf("current SchemaVersion %q rejected by IsValidSchemaVersion", snapshot.SchemaVersion)
 	}
+	// v1 and v2 artifacts remain readable by v3 builds.
 	if !snapshot.IsValidSchemaVersion("1") {
-		t.Error("schema v1 must remain readable during the v2 migration")
+		t.Error("schema v1 must remain readable")
 	}
-	for _, bogus := range []string{"", "0", "3", "v1", "1.0"} {
+	if !snapshot.IsValidSchemaVersion("2") {
+		t.Error("schema v2 must remain readable during the v3 migration")
+	}
+	for _, bogus := range []string{"", "0", "4", "v1", "1.0"} {
 		if snapshot.IsValidSchemaVersion(bogus) {
-			t.Errorf("IsValidSchemaVersion(%q) returned true; only v1 and %q are supported", bogus, snapshot.SchemaVersion)
+			t.Errorf("IsValidSchemaVersion(%q) returned true; only v1, v2 and %q are supported", bogus, snapshot.SchemaVersion)
 		}
 	}
 }
