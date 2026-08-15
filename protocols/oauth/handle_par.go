@@ -143,8 +143,20 @@ func authenticatePARClient(d PARDeps, ctx core.HandlerContext, req *parRequestFo
 		return nil, false
 	}
 	// Skip client_secret validation when the JWT assertion already
-	// proved client identity (RFC 7521 §4.2 forbids requiring both).
-	if req.ClientAssertion == "" {
+	// proved client identity (RFC 7521 §4.2 forbids requiring both), or
+	// when the client is registered as a PUBLIC client
+	// (token_endpoint_auth_method="none", RFC 6749 §2.3.1) — the /token
+	// contract, mirrored here. Every OTHER client is confidential and
+	// MUST authenticate before push (RFC 9126 §2): an empty presented
+	// secret is rejected even when the stored secret is empty, because
+	// accepting ("","") against a fresh-node-restored (secret-less)
+	// client would let anyone who knows the client_id push authorization
+	// requests as that client.
+	if req.ClientAssertion == "" && client.TokenEndpointAuthMethod != "none" {
+		if req.ClientSecret == "" {
+			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
+			return nil, false
+		}
 		if err := clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret); err != nil {
 			// RFC 6749 §5.2: client-auth failure is invalid_client (same code
 			// as unknown-client above — oracle-safe, no client_id enumeration).
