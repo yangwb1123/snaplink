@@ -4,7 +4,8 @@
 //
 // Usage:
 //
-//	sso-ctl audit-export --dsn <sqlite-dsn> --since 2026-01-01T00:00:00Z --until 2026-04-01T00:00:00Z --out evidence-q1.json
+//	sso-ctl audit-export --dsn <sqlite-dsn|postgres-dsn> --since 2026-01-01T00:00:00Z --until 2026-04-01T00:00:00Z --out evidence-q1.json
+//	sso-ctl audit-export --from-url https://sso.example.com --bearer $ADMIN_TOKEN --out evidence.json
 //	sso-ctl audit-export --verify evidence-q1.json
 //
 // The bundle carries a boundary anchor so a date-range export that does
@@ -13,18 +14,19 @@
 // a finished bundle file with no store access, so an auditor who received
 // only the JSON can confirm it is untampered.
 //
-// The export is strictly READ-ONLY: the store is opened via
-// auditsqlite.OpenReadOnly, which NEVER migrates the schema — so a
-// read-only DSN (file:...?mode=ro) works, and a read-write DSN is never
-// write-locked or schema-mutated by this tool. A schema whose version does
-// not match the binary is reported, never migrated.
+// The export is strictly READ-ONLY: a store source (--dsn) is opened via
+// the shared auditstore opener — sqlite via auditsqlite.OpenReadOnly,
+// postgres via the non-migrating postgres opener — which NEVER migrates
+// the schema, so a read-only DSN (file:...?mode=ro) works, a read-write
+// DSN is never write-locked or schema-mutated by this tool, and a postgres
+// store is never migrated (operators enforce server-side read-only via a
+// read-only role — there is no ?mode=ro equivalent for postgres). The
+// --from-url source issues GETs only. A schema whose version does not
+// match the binary is reported, never migrated.
 //
 // A bundle may hold PII, so the tool never logs event contents — it
 // prints only counts, the boundary hash, and the output path to stderr,
 // keeping stdout a pure JSON bundle when --out is omitted.
-//
-// v1 supports the direct --dsn mode only; a --from-url mode against the
-// live /api/v1/audit/events API is a planned follow-up.
 //
 // A bundle can be anchored to a signed notary checkpoint (--anchor): the
 // export embeds the attestation only when the bundle ends exactly at the
@@ -49,14 +51,15 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"time"
 
+	"github.com/yangwb1123/snaplink/cmd/auditstore"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/audit/auditexport"
 	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
-	auditsqlite "github.com/yangwb1123/snaplink/platform/audit/sqlite"
 )
 
 const progName = "sso-ctl audit-export"
@@ -67,6 +70,9 @@ const progName = "sso-ctl audit-export"
 const (
 	flagDSN       = "dsn"
 	flagVerify    = "verify"
+	flagFromURL   = "from-url"
+	flagBearer    = "bearer"
+	flagTimeout   = "timeout-sec"
 	flagOut       = "out"
 	flagType      = "type"
 	flagOutcome   = "outcome"
@@ -86,6 +92,8 @@ const (
 // can drive the export core without a FlagSet or os.Exit paths.
 type options struct {
 	dsn, verify, out                                    string
+	fromURL, bearer                                     string
+	timeoutSec                                          int
 	typ, outcome, actorID, clientID, tenantID, provider string
 	requestID, traceID, since, until                    string
 	limit                                               int
@@ -129,21 +137,37 @@ func dispatch(o options) (int, error) {
 	if err := validateOutcome(o.outcome); err != nil {
 		return 2, err
 	}
+	modes := 0
+	if o.dsn != "" {
+		modes++
+	}
+	if o.fromURL != "" {
+		modes++
+	}
 	if o.verify != "" {
-		if o.dsn != "" {
-			return 2, usageErrorf("--%s and --%s are mutually exclusive", flagVerify, flagDSN)
-		}
+		modes++
+	}
+	if modes == 0 {
+		return 2, usageErrorf("one of --%s (export), --%s <base> (live API), or --%s <bundle> (offline verify) is required", flagDSN, flagFromURL, flagVerify)
+	}
+	if modes > 1 {
+		return 2, usageErrorf("--%s, --%s, and --%s are mutually exclusive", flagDSN, flagFromURL, flagVerify)
+	}
+	if o.verify != "" {
 		return runVerify(o.verify, o.anchor)
 	}
-	if o.dsn == "" {
-		return 2, usageErrorf("--%s (export) or --%s <bundle> (offline verify) is required", flagDSN, flagVerify)
+	if o.fromURL != "" && o.bearer == "" {
+		return 2, usageErrorf("--%s requires --%s", flagFromURL, flagBearer)
 	}
 	return run(o)
 }
 
 func bindFlags(fs *flag.FlagSet, o *options) {
-	fs.StringVar(&o.dsn, flagDSN, "", "SQLite DSN to export from (required for export; opened read-only, append ?mode=ro for a live DB)")
-	fs.StringVar(&o.verify, flagVerify, "", "offline-verify a bundle file instead of exporting (no --dsn); non-zero exit on tamper")
+	fs.StringVar(&o.dsn, flagDSN, "", "DSN to export from (required for export unless --from-url; sqlite file DSN or postgres://|postgresql:// DSN; opened read-only, never migrated; for postgres use a read-only role — there is no ?mode=ro equivalent)")
+	fs.StringVar(&o.fromURL, flagFromURL, "", "base URL of the SSO server to export from via the live /api/v1/audit/events API (requires --bearer; exclusive with --dsn and --verify)")
+	fs.StringVar(&o.bearer, flagBearer, "", "admin bearer token for the audit events API (required with --from-url)")
+	fs.IntVar(&o.timeoutSec, flagTimeout, 30, "HTTP timeout in seconds for --from-url mode")
+	fs.StringVar(&o.verify, flagVerify, "", "offline-verify a bundle file instead of exporting (no --dsn/--from-url); non-zero exit on tamper")
 	fs.StringVar(&o.out, flagOut, "", "output file for the JSON bundle (default: stdout)")
 	fs.StringVar(&o.typ, flagType, "", "filter: event type (unrecognized values warn; custom types allowed)")
 	fs.StringVar(&o.outcome, flagOutcome, "", "filter: outcome (success|failure; unrecognized value is a usage error)")
@@ -179,17 +203,19 @@ func run(o options) (int, error) {
 			return 1, err
 		}
 	}
-	// OpenReadOnly never migrates: a read-only DSN works and a live
-	// read-write store is never write-locked or schema-mutated by an
-	// export. Using New here would BEGIN IMMEDIATE + apply DDL — a write
-	// from a read-only tool.
-	sink, err := auditsqlite.OpenReadOnly(o.dsn)
+	// The source is opened read-only via the shared auditstore opener
+	// (sqlite: auditsqlite.OpenReadOnly; postgres: the non-migrating
+	// postgres opener) or the HTTP adapter for --from-url. Never migrates:
+	// a read-only DSN works and a live read-write store is never
+	// write-locked or schema-mutated by an export. Using New here would
+	// BEGIN IMMEDIATE + apply DDL — a write from a read-only tool.
+	pager, closer, err := openSource(o)
 	if err != nil {
 		return 1, fmt.Errorf("open audit store: %w", err)
 	}
-	defer func() { _ = sink.Close() }()
+	defer func() { _ = closer.Close() }()
 
-	bundle, err := auditexport.BuildExportBundle(context.Background(), sink, q)
+	bundle, err := auditexport.BuildExportBundle(context.Background(), pager, q)
 	if err != nil {
 		return 1, err
 	}
@@ -204,6 +230,27 @@ func run(o options) (int, error) {
 	}
 	printSummary(bundle, o.out)
 	return 0, nil
+}
+
+// openSource returns the QueryPager + Closer for the flag-selected
+// source: --dsn routes through the shared dialect classifier (sqlite
+// OpenReadOnly or the postgres non-migrating opener), --from-url builds
+// the HTTP adapter over the live /api/v1/audit/events API. Both are
+// strictly read-only and satisfy auditexport.QueryPager, so the export
+// core is source-agnostic.
+func openSource(o options) (auditexport.QueryPager, io.Closer, error) {
+	if o.fromURL != "" {
+		p, err := newURLPager(o.fromURL, o.bearer, time.Duration(o.timeoutSec)*time.Second)
+		if err != nil {
+			return nil, nil, err
+		}
+		return p, p, nil
+	}
+	st, err := auditstore.OpenReadOnly(o.dsn)
+	if err != nil {
+		return nil, nil, err
+	}
+	return st, st, nil
 }
 
 // runVerify loads a previously exported bundle file and re-verifies it
@@ -396,7 +443,8 @@ func usage() {
 	fmt.Fprint(os.Stderr, progName+` — export or offline-verify a tamper-evident bulk audit bundle for compliance evidence.
 
 Usage:
-  `+progName+` --dsn <sqlite-dsn> [filters] [--out evidence.json]
+  `+progName+` --dsn <sqlite-dsn|postgres-dsn> [filters] [--out evidence.json]
+  `+progName+` --from-url <base> --bearer <admin-token> [filters] [--out evidence.json]
   `+progName+` --verify <bundle.json>
 
 Flags:

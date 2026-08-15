@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `sso-ctl` audit tooling durable-store read paths and live-API export source:
+  `audit-verify --dsn <sqlite|postgres>` and `audit-export --dsn <postgres>` read
+  the audit store offline through a shared read-only accessor
+  (`cmd/auditstore`), which classifies a DSN by scheme
+  (`postgres://`/`postgresql://` vs a sqlite path or `file:` URI), pages
+  newest-first and reverses into chain order, and never migrates: sqlite opens
+  via `auditsqlite.OpenReadOnly` (fail-closed `checkSchemaCurrent`), postgres
+  via a new non-migrating constructor `postgres.OpenAuditReadOnly` (fail-closed
+  `schema_migrations_audit` version check; operators enforce server-side
+  read-only with a read-only role — there is no `?mode=ro` equivalent).
+  `audit-export --from-url <base> --bearer <token>` exports over the live
+  `/api/v1/audit/events` API through a `QueryPager` adapter (bearer-gated, no
+  redirects, non-2xx diagnostics name the offset), shipping the previously
+  documented planned follow-up; `--timeout-sec` applies to that mode.
+  Verification cores are unchanged (`audit.VerifyChain` / `VerifyChainSegment`
+  / `VerifyChainAgainstCheckpoint`, `BuildExportBundle`); a store whose schema
+  version does not match the binary is reported (exit 1), never migrated.
+  End-to-end acceptance covers a stock postgres-backed server (bundle
+  `HeadHash` == store chain head, `--verify` 0, byte-tamper 1) and the URL leg
+  (advertised `/api/v1/audit/events` never 404s; no/weak bearer → 401;
+  `--from-url` without `--bearer` → exit 2).
 - Prototype/minimal physical package extraction: the two small editions now
   build from dedicated composition roots (`cmd/sso-prototype` and
   `cmd/sso-minimal`) that share edition-generic composition code in

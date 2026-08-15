@@ -93,7 +93,7 @@ Usage:
   %s <command> [arguments]
 
 Commands:
-  audit-verify   Verify the audit-log hash chain (from a file or the live API).
+  audit-verify   Verify the audit-log hash chain (from a file, the live API, or a sqlite/postgres audit store).
   audit-export   Export or offline-verify a tamper-evident bulk audit bundle (compliance evidence).
   soc2-report    Build a SOC2-flavored evidence pack over a verified audit-export bundle.
   clients        List OAuth clients or inspect a specific client.
