@@ -5,7 +5,10 @@
 // registrars themselves live here — OUTSIDE cmd — so a fork imports the types
 // instead of re-declaring them, and the generic machinery is the single
 // standard implementation in platform/registrar. The cmd-owned SAML registry
-// is consumed by mountSAMLHandler (saml.handler); the authenticator-family
+// is consumed by mountSAMLHandler (saml.handler); the external-signer
+// registry (ExternalSignerRegistry, the canonical registrar behind
+// keys.signing.external) is consumed by serverbuildsign, which delegates to
+// it so the KMS family stays one name space; the authenticator-family
 // registries (LDAP/Kerberos/RADIUS) are consumed by the operator's own boot
 // composition, because stock config deliberately has no ldap/kerberos/radius
 // sections — those surfaces are fork-binary integrations only.

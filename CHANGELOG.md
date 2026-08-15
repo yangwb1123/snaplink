@@ -34,6 +34,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matching the SAML registry contract. Stock `cmd` wiring is unchanged
   (no ldap/kerberos/radius config sections; those surfaces remain
   fork-binary integrations).
+- ssoext host-API registrar for the KMS external-signer family: `interfaces/ssoext`
+  now exposes `ExternalSignerRegistry` / `RegisterExternalSigner` /
+  `LookupExternalSigner` / `RegisteredExternalSigners` plus the
+  `ExternalSignerDeps` bundle (stdlib + intra-repo types only — no vendor KMS
+  SDK enters the core module's go.mod) on the standard `platform/registrar`
+  machinery, completing the nested-module migration declared in
+  `docs/deferred-backlog.md`. The four nested modules
+  (`infrastructure/kms/{awskms,gcpkms,azurekeyvault,pkcs11}`) each add a
+  `Build` adapter embedding `ssoext.ExternalSignerDeps`, mirroring the
+  ldap/radius adapters, so a forked binary registers a name-addressed factory
+  whose closure holds the vendor SDK client. `keys.signing.external` now
+  resolves through the canonical `ssoext` registry;
+  `serverbuildsign`'s `ExternalSignerFactory` / `ExternalSignerRegistry` /
+  `RegisterExternalSigner` are kept as delegating aliases so existing fork
+  binaries compile and behave identically (lookup error text, panic
+  discipline, and the health/metrics/readiness wrapping are unchanged).
 - Automatic degraded-mode transitions: with
   `degradation.auto_read_only_on_store_loss: true`, `sso-server` now runs an
   in-process driver that polls its wired storage-health sources (the same Ping
