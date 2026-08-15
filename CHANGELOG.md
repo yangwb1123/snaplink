@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- ssoext host-API registrars for the LDAP/Kerberos/RADIUS authenticator
+  families: `interfaces/ssoext` now exposes `LDAPAuthenticatorRegistry` /
+  `KerberosHandlerRegistry` / `RADIUSAuthenticatorRegistry` (plus the
+  `Register*`/`Lookup*`/`Registered*` functions) on the standard
+  `platform/registrar` machinery, with a per-family `*ServerDeps` bundle of
+  stdlib + intra-repo types only — no go-ldap/gokrb5/layeh dependency enters
+  the core module's go.mod. The nested modules each embed their `ssoext`
+  Deps bundle (`ldapauth.Deps` / `kerberosauth.Deps` / `radiusauth.Deps`) and
+  expose a `Build` factory adaptation, so a forked binary registers a
+  name-addressed factory at boot and its own composition looks it up —
+  process-local, panic-on-duplicate, fail-closed on an unregistered name,
+  matching the SAML registry contract. Stock `cmd` wiring is unchanged
+  (no ldap/kerberos/radius config sections; those surfaces remain
+  fork-binary integrations).
 - Automatic degraded-mode transitions: with
   `degradation.auto_read_only_on_store_loss: true`, `sso-server` now runs an
   in-process driver that polls its wired storage-health sources (the same Ping

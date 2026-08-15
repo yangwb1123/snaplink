@@ -1,10 +1,14 @@
 // Package ssoext is the operator-extension host API for the stock server:
 // the typed, name-addressed registrars a forked binary uses to plug in
-// surfaces whose heavy dependencies (SAML/XML/DSig, vendor KMS SDKs) must
-// stay out of the core module's go.mod. The registrars themselves live
-// here — OUTSIDE cmd — so a fork imports the types instead of
-// re-declaring them, and the generic machinery is the single standard
-// implementation in platform/registrar.
+// surfaces whose heavy dependencies (SAML/XML/DSig, the LDAP/Kerberos/RADIUS
+// stacks, vendor KMS SDKs) must stay out of the core module's go.mod. The
+// registrars themselves live here — OUTSIDE cmd — so a fork imports the types
+// instead of re-declaring them, and the generic machinery is the single
+// standard implementation in platform/registrar. The cmd-owned SAML registry
+// is consumed by mountSAMLHandler (saml.handler); the authenticator-family
+// registries (LDAP/Kerberos/RADIUS) are consumed by the operator's own boot
+// composition, because stock config deliberately has no ldap/kerberos/radius
+// sections — those surfaces are fork-binary integrations only.
 //
 // Registration is process-local and name-addressed by configuration
 // (saml.handler selects a factory by name at boot). It is the in-process

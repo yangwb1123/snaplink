@@ -110,8 +110,8 @@ The `full` profile's claims are proven as follows:
   separate Go modules by construction; the standard host API for
   operator-registered factories is `interfaces/ssoext` (typed registrars on
   `platform/registrar`) and the module catalog (`ops/build/modules.json`).
-  Migrating the remaining nested modules onto that host API proceeds once
-  the boundary is stable.
+  SAML (consumed via `saml.handler`) plus the LDAP/Kerberos/RADIUS
+  authenticator families are migrated onto it; the KMS family remains.
 - No in-process capability is classified as hot: activation is
   `restart`-only, generation leases and static route slots are required
   before any hot classification, and installable third-party code must run

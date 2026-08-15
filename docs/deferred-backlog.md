@@ -33,7 +33,7 @@ Retired audits, plans, and migration records are summarized in
 | Hosted login, admin, self-service, developer and setup UIs | **External** | Separate frontend projects, normally reverse-proxied beside the server. No static SPA is served by this repository; the API contract those projects must consume is [frontend-contract.md](frontend-contract.md). |
 | Admin API-doc viewer | **Implemented** | `WithAPIDocsUI` serves an admin-gated, self-contained API reference. It is not an application UI. |
 | TypeScript/Python SDKs | **Implemented** | Generated from `docs/openapi.yaml` via the `ops/build/sdk-surface.json` registry (full documented operation set: admin, SCIM, SSF, Federation included); validated by `python cli.py sdk-surface check`. Not yet published as versioned packages. |
-| Nested protocol/infrastructure modules | **Partial** | Strict cold-build profiles and the Kafka static adapter are implemented. The standard host API (`interfaces/ssoext` on `platform/registrar`) now exists outside `cmd/`; migrating SAML/LDAP/Kerberos/RADIUS/KMS families onto it is the remaining work. |
+| Nested protocol/infrastructure modules | **Partial** | Strict cold-build profiles and the Kafka static adapter are implemented. The standard host API (`interfaces/ssoext` on `platform/registrar`) now exists outside `cmd/`; SAML (consumed via `saml.handler`) plus the LDAP/Kerberos/RADIUS authenticator families are migrated onto it, each nested module embedding the corresponding `ssoext` Deps bundle. The KMS family (awskms/gcpkms/azurekeyvault/pkcs11 external signers) is the remaining work. |
 
 ## Partial capabilities
 

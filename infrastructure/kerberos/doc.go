@@ -36,7 +36,10 @@
 //   - kerberosauth.Deps          — ROOT-module-typed accessors (sso.ClientStore,
 //     sso.SessionManager, sso.UserProvider, IssuerForClient, the optional
 //     IDTokenIssuerForClient + EncryptIDToken, AuditRecorder, Logger). It
-//     mirrors the shape the WebAuthn/SAML mint paths consume.
+//     EMBEDS the standard host-API bundle interfaces/ssoext.KerberosServerDeps
+//     (the exact seams the stock server hands a registered Kerberos handler
+//     factory), so a fork constructs Build's Deps with ONE field — no
+//     field-for-field copy (mirrors saml.Deps).
 //   - kerberosauth.Config        — the per-surface config (keytab, service
 //     principal, realm, the client_id to mint for, attribute mapping, mount
 //     path). Validate() fails the operator's boot closed on a misconfig.
@@ -60,6 +63,7 @@
 //		"net/http"
 //
 //		"github.com/yangwb1123/snaplink/interfaces/sso"
+//		"github.com/yangwb1123/snaplink/interfaces/ssoext"
 //		kerberosauth "github.com/yangwb1123/snaplink/kerberos"
 //	)
 //
@@ -93,14 +97,16 @@
 //		//    exported on *sso.Server: IssuerForClient, IDTokenIssuerForClient,
 //		//    EncryptIDTokenForClient, SessionMgr(), ClientStoreAccessor().
 //		res, err := kerberosauth.Build(kerberosauth.Deps{
-//			ClientStore:            srv.ClientStoreAccessor(),
-//			SessionManager:         srv.SessionMgr(),
-//			UserProvider:           userProvider, // your fork's UserProvider
-//			IssuerForClient:        srv.IssuerForClient,        // per-tenant access-token key
-//			IDTokenIssuerForClient: srv.IDTokenIssuerForClient, // per-tenant id_token key
-//			EncryptIDToken:         srv.EncryptIDTokenForClient,
-//			AuditRecorder:          auditRecorder, // your fork's audit.Recorder
-//			Logger:                 logger,
+//			KerberosServerDeps: ssoext.KerberosServerDeps{
+//				ClientStore:            srv.ClientStoreAccessor(),
+//				SessionManager:         srv.SessionMgr(),
+//				UserProvider:           userProvider, // your fork's UserProvider
+//				IssuerForClient:        srv.IssuerForClient,        // per-tenant access-token key
+//				IDTokenIssuerForClient: srv.IDTokenIssuerForClient, // per-tenant id_token key
+//				EncryptIDToken:         srv.EncryptIDTokenForClient,
+//				AuditRecorder:          auditRecorder, // your fork's audit.Recorder
+//				Logger:                 logger,
+//			},
 //		}, cfg, validator)
 //		if err != nil {
 //			return err
@@ -113,6 +119,34 @@
 //			}
 //		}
 //		return nil
+//	}
+//
+// The host-API path (interfaces/ssoext on platform/registrar) wraps the same
+// construction in a NAME-ADDRESSED factory the fork's own boot composition
+// consumes: the fork registers the factory under a name its own config selects
+// (stock config deliberately has NO kerberos section — desktop SSO is a
+// fork-binary integration), and the factory receives
+// ssoext.KerberosServerDeps from the registry and hands them straight to Build
+// via the embedded KerberosServerDeps field. Copy-pasteable:
+//
+//	func init() {
+//		ssoext.RegisterKerberosHandlers("desktop-sso", func(ctx context.Context, d ssoext.KerberosServerDeps) (*ssoext.KerberosHandlerSet, error) {
+//			validator, err := kerberosauth.NewGokrb5Validator(cfg) // your keytab config, closed over
+//			if err != nil {
+//				return nil, err
+//			}
+//			res, err := kerberosauth.Build(kerberosauth.Deps{
+//				KerberosServerDeps: d, // no field-for-field copy — the embedding IS the adaptation
+//			}, cfg, validator)
+//			if err != nil {
+//				return nil, err
+//			}
+//			handlers := make([]ssoext.KerberosHandler, len(res.Handlers))
+//			for i, h := range res.Handlers {
+//				handlers[i] = ssoext.KerberosHandler{Method: h.Method, Path: h.Path, Handler: h.Handler}
+//			}
+//			return &ssoext.KerberosHandlerSet{Handlers: handlers}, nil
+//		})
 //	}
 //
 // # The Negotiate flow (RFC 4559)
