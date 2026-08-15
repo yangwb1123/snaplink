@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Prototype/minimal physical package extraction: the two small editions now
+  build from dedicated composition roots (`cmd/sso-prototype` and
+  `cmd/sso-minimal`) that share edition-generic composition code in
+  `internal/composition`, instead of both compiling the same `cmd/sso-minimal`
+  package. The minimal-only OIDC surface (discovery, ID Token, UserInfo,
+  logout, tracing wiring) is compiled only into the minimal binary — the
+  prototype root contains no OIDC surface code. The prototype profile selects
+  `./cmd/sso-prototype`; `ops/build/profile-isolation.json` splits the former
+  `small` row into per-edition `prototype`/`minimal` rows, and
+  `python cli.py profiles evidence` now proves each binary links only its own
+  cmd root (prototype never links `cmd/sso-minimal` and vice versa) while
+  keeping the shared `interfaces/sso` SDK boundary documented.
 - ssoext host-API registrars for the LDAP/Kerberos/RADIUS authenticator
   families: `interfaces/ssoext` now exposes `LDAPAuthenticatorRegistry` /
   `KerberosHandlerRegistry` / `RADIUSAuthenticatorRegistry` (plus the

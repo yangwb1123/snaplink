@@ -28,12 +28,13 @@
         "shared/core"
       ]
     },
-    "small": {
-      "summary": "prototype + minimal editions share one binary (cmd/sso-minimal); the durable/admin/observability graph must stay out.",
+    "prototype": {
+      "summary": "prototype edition binary: smallest SSO/OAuth slice on its own composition root (cmd/sso-prototype); the minimal root and the durable/admin/observability graph must stay out.",
       "binaries": [
-        { "package": "./cmd/sso-minimal", "binary": "sso-minimal" }
+        { "package": "./cmd/sso-prototype", "binary": "sso-prototype" }
       ],
       "must_not_link": [
+        "cmd/sso-minimal",
         "cmd/sso-server",
         "config/",
         "domains/authenticators/webauthn",
@@ -77,6 +78,66 @@
         "shared/security/fipspolicy"
       ],
       "must_link": [
+        "cmd/sso-prototype",
+        "domains/authenticators",
+        "infrastructure/defaultimpl",
+        "interfaces/sso",
+        "platform/lifecycle/sessionhub",
+        "protocols/oauth",
+        "shared/core"
+      ]
+    },
+    "minimal": {
+      "summary": "minimal edition binary: prototype + OIDC surface + tracing on its own composition root (cmd/sso-minimal); the prototype root and the durable/admin/observability graph must stay out.",
+      "binaries": [
+        { "package": "./cmd/sso-minimal", "binary": "sso-minimal" }
+      ],
+      "must_not_link": [
+        "cmd/sso-prototype",
+        "cmd/sso-server",
+        "config/",
+        "domains/authenticators/webauthn",
+        "domains/connections/sqlite",
+        "domains/identitylink/memory",
+        "domains/identitylink/sqlite",
+        "domains/metering/memory",
+        "domains/metering/sqlite",
+        "domains/permissions/sqlite",
+        "domains/tenant/sqlite",
+        "domains/threataction/memory",
+        "domains/tokenanomaly/memory",
+        "domains/tokenpolicy/memory",
+        "domains/userlifecycle/memory",
+        "gen/proto",
+        "infrastructure/defaultimpl/cryptosigner",
+        "infrastructure/defaultimpl/detectors",
+        "infrastructure/defaultimpl/emailsmtp",
+        "infrastructure/defaultimpl/sqlite",
+        "infrastructure/identitylinkpostgres",
+        "infrastructure/postgres",
+        "infrastructure/redis",
+        "infrastructure/sms",
+        "interfaces/grpcserver",
+        "interfaces/snapshot",
+        "interfaces/ssoext",
+        "platform/audit/sqlite",
+        "platform/bootstrap",
+        "platform/cluster/etcd",
+        "platform/cluster/memory",
+        "platform/configaudit/sqlite",
+        "platform/geo/static",
+        "platform/lifecycle/operations",
+        "platform/netpolicy/etcd",
+        "platform/netpolicy/memory",
+        "platform/registry",
+        "platform/releases",
+        "platform/signingkeys/etcd",
+        "platform/signingkeys/memory",
+        "protocols/scim",
+        "shared/security/fipspolicy"
+      ],
+      "must_link": [
+        "cmd/sso-minimal",
         "domains/authenticators",
         "infrastructure/defaultimpl",
         "interfaces/sso",

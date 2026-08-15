@@ -25,11 +25,15 @@ the commands and profiles available in the current tree.
 | Stock-server/business-module hot integration and audit-exporter tap | Not implemented |
 | External plugin supervisor | Not implemented |
 
-`prototype` and `minimal` are behaviorally distinct but not yet physically
-isolated from one another. Both target `cmd/sso-minimal`, which still reaches
-the broad dependency graph through `interfaces/sso`. Their build profile and
-runtime surface are real boundaries; their package inventory is not yet proof
-that every excluded capability or dependency left the binary.
+`prototype` and `minimal` are behaviorally distinct and physically
+extracted: each edition has its own composition root (`cmd/sso-prototype`
+and `cmd/sso-minimal`) sharing edition-generic composition in
+`internal/composition`, so neither binary links the other edition's root.
+Both still reach the broad SDK dependency graph through `interfaces/sso`
+(the shared product SDK deliberately links the OIDC protocol packages).
+Their build profile and runtime surface are real boundaries; their package
+inventory proves the composition-root isolation and the
+infrastructure/admin/durable exclusions.
 
 ## Profile hierarchy
 
@@ -44,7 +48,8 @@ that every excluded capability or dependency left the binary.
 
 Inheritance is additive: a child selects its parent's modules and adds its own
 edition bundle. It inherits the build target unless it explicitly overrides
-one. `prototype` and `minimal` use `cmd/sso-minimal`; `full` selects
+one. `prototype` uses `cmd/sso-prototype`; `minimal` uses `cmd/sso-minimal`;
+`full` selects
 `cmd/sso-server` so its inventory describes the complete stock composition
 rather than the smaller runtime. Compilation does not turn every production
 option on: runtime configuration, feature gates and backend availability
@@ -291,7 +296,7 @@ authenticated protocol. Go `.so` plugins are not supported.
 ```bash
 python cli.py modules check
 python -m pytest checks/test_modules.py -q
-go test ./cmd/sso-minimal
+go test ./cmd/sso-prototype ./cmd/sso-minimal ./internal/composition
 go build ./... && go vet ./...
 go test -run 'TestMaintainability_|TestArchitecture_' .
 ```

@@ -95,7 +95,7 @@ Delivered:
   the SessionManager, stamps SID into the code, and the exchange-minted
   id_token emits the sid claim. The minimal edition's parallel
   `opSessionStore` is gone — its cookie IS the canonical session ID
-  (see `cmd/sso-minimal/op_session.go` and the SID propagation test).
+  (see `internal/composition/op_session.go` and the SID propagation test).
 - **Standard typed registrars outside cmd/**: `platform/registrar` is the
   single generic typed registry; the SAML route registrar moved to the new
   `interfaces/ssoext` host API; `serverbuildsign`'s external-signer
@@ -103,7 +103,8 @@ Delivered:
 - **Physical isolation + evidence**: `python cli.py profiles evidence`
   builds every profile binary, asserts the declared
   `ops/build/profile-isolation.json` boundaries (the small editions must
-  not link the durable/admin/observability graph; the full edition must
+  not link the durable/admin/observability graph or each other's
+  composition root; the full edition must
   link it) and archives per-binary package lists, `go version -m` SBOMs,
   symbol counts and size deltas under `dist/profiles/`. Wired into
   `make ci`. Full-profile evidence (durable state, security controls,

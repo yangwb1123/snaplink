@@ -29,7 +29,7 @@ def _by_id(items: list[dict]) -> dict[str, dict]:
 def test_profile_build_uses_configured_target_inputs_and_verifier(profile: str):
     build = _by_id(_release_config()["builds"])[f"snaplink-{profile}"]
     expected = {
-        "prototype": ("./cmd/sso-minimal", "snaplink"),
+        "prototype": ("./cmd/sso-prototype", "snaplink"),
         "minimal": ("./cmd/sso-minimal", "snaplink"),
         "full": ("./cmd/sso-server", "snaplink"),
         "billing": ("./cmd/snaplink-billing", "snaplink-billing"),

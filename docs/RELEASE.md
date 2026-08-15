@@ -60,8 +60,10 @@ The resulting first version lines are
 `snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, and
 `snaplink-v1.1.1.full`; billing reports `snaplink-billing v1.1.1`. Every
 version command also reports the UTC build time, full Git hash,
-dirty-source marker, and Go toolchain. `prototype` and `minimal` still share
-`cmd/sso-minimal` and a larger linked dependency graph. SKU release evidence
+dirty-source marker, and Go toolchain. `prototype` and `minimal` build from
+dedicated composition roots (`cmd/sso-prototype` / `cmd/sso-minimal`, sharing
+`internal/composition`) but still link a larger shared SDK dependency graph
+through `interfaces/sso`. SKU release evidence
 proves the target-specific runtime profile and canonical module-lock binding;
 it explicitly does not claim complete package-level physical dependency
 isolation for any SKU. A

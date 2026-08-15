@@ -87,8 +87,10 @@ Generated from [`ops/build/capabilities.json`](../ops/build/capabilities.json); 
 
 Build an edition with, for example,
 `python cli.py configure --profile minimal --version v1.1.1 --build`.
-`prototype` and `minimal` currently share the `cmd/sso-minimal` physical
-dependency graph despite exposing different runtime surfaces. See
+`prototype` and `minimal` have dedicated composition roots
+(`cmd/sso-prototype` / `cmd/sso-minimal`) with distinct physical dependency
+graphs — each links only its own root — while sharing the `interfaces/sso`
+SDK surface. See
 [plugin-system.md](plugin-system.md) for lifecycle boundaries.
 
 “Implemented” does not mean OpenID Certified. Certification evidence is tracked

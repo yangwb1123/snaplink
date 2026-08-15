@@ -99,6 +99,13 @@ func layerName(rel string) string {
 		// root package: the public Server type + server_*.go HTTP handlers.
 		return "interfaces"
 	}
+	if strings.HasPrefix(rel, "internal/composition") {
+		// shared composition helpers for the small-edition cmd roots
+		// (cmd/sso-prototype, cmd/sso-minimal) — wires concrete
+		// implementations, so it is the composition layer, and only
+		// cmd/ roots import it downward.
+		return "composition"
+	}
 	if strings.HasPrefix(rel, "internal/auth") {
 		return "domains"
 	}

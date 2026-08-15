@@ -18,7 +18,7 @@ before:
 
 builds:
   - id: snaplink-prototype
-    main: ./cmd/sso-minimal
+    main: ./cmd/sso-prototype
     binary: snaplink
     env: [CGO_ENABLED=0]
     flags:

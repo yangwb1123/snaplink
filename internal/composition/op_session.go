@@ -1,4 +1,4 @@
-package main
+package composition
 
 import (
 	"bytes"
@@ -24,30 +24,33 @@ const (
 
 var errInvalidOPSession = errors.New("op session invalid")
 
-// opSessionGate is the edition's browser-side handle on the CANONICAL
+// OpSessionGate is the edition's browser-side handle on the CANONICAL
 // session lifecycle: the OP-session cookie IS the canonical session ID,
 // and every create/resolve/destroy goes through the server's
 // SessionManager (wired via WithSessionManager). There is no parallel
 // session state here — the session record, its sid in the auth code and
 // the id_token sid claim all come from the canonical store. The gate only
 // exists because the manager is constructed inside sso.NewServer, so the
-// middleware/authenticator capture it via setMgr right after.
-type opSessionGate struct {
+// middleware/authenticator capture it via SetMgr right after.
+type OpSessionGate struct {
 	mu  sync.RWMutex
 	mgr core.SessionManager
 }
 
-func newOPSessionGate() *opSessionGate {
-	return &opSessionGate{}
+func NewOPSessionGate() *OpSessionGate {
+	return &OpSessionGate{}
 }
 
-func (g *opSessionGate) setMgr(mgr core.SessionManager) {
+// SetMgr wires the canonical SessionManager once the server is built.
+func (g *OpSessionGate) SetMgr(mgr core.SessionManager) {
 	g.mu.Lock()
 	g.mgr = mgr
 	g.mu.Unlock()
 }
 
-func (g *opSessionGate) manager() core.SessionManager {
+// Manager returns the wired canonical SessionManager (nil before the server
+// is built).
+func (g *OpSessionGate) Manager() core.SessionManager {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return g.mgr
@@ -57,11 +60,11 @@ func (g *opSessionGate) manager() core.SessionManager {
 // token, or nil. A dead session is dropped from the manager's view and
 // reports nil so a stale cookie behaves exactly like no cookie (the login
 // falls back to visible authentication — never an oracle about why).
-func (g *opSessionGate) resolve(ctx context.Context, token string) *core.Session {
+func (g *OpSessionGate) resolve(ctx context.Context, token string) *core.Session {
 	if token == "" {
 		return nil
 	}
-	mgr := g.manager()
+	mgr := g.Manager()
 	if mgr == nil {
 		return nil
 	}
@@ -76,21 +79,21 @@ func (g *opSessionGate) resolve(ctx context.Context, token string) *core.Session
 // end the session at the OP, not just drop the browser cookie — the sid
 // bound into outstanding refresh tokens dies with it (refresh rotation
 // refuses dead sessions).
-func (g *opSessionGate) destroy(ctx context.Context, token string) {
+func (g *OpSessionGate) destroy(ctx context.Context, token string) {
 	if token == "" {
 		return
 	}
-	if mgr := g.manager(); mgr != nil {
+	if mgr := g.Manager(); mgr != nil {
 		_ = mgr.Destroy(ctx, token)
 	}
 }
 
 type opSessionAuthenticator struct {
-	gate *opSessionGate
-	user userSeed
+	gate *OpSessionGate
+	user UserSeed
 }
 
-func newOPSessionAuthenticator(gate *opSessionGate, user userSeed) sso.Authenticator {
+func newOPSessionAuthenticator(gate *OpSessionGate, user UserSeed) sso.Authenticator {
 	return &opSessionAuthenticator{gate: gate, user: user}
 }
 
@@ -129,11 +132,11 @@ func (a *opSessionAuthenticator) LoginURL(string) string { return "" }
 
 type opSessionHandler struct {
 	next   http.Handler
-	gate   *opSessionGate
+	gate   *OpSessionGate
 	secure bool
 }
 
-func newOPSessionHandler(next http.Handler, gate *opSessionGate, issuer string) http.Handler {
+func newOPSessionHandler(next http.Handler, gate *OpSessionGate, issuer string) http.Handler {
 	parsed, _ := url.Parse(issuer)
 	return &opSessionHandler{
 		next:   next,
@@ -179,7 +182,7 @@ func (h *opSessionHandler) serveLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func readLoginPayload(r *http.Request) (map[string]any, []byte, bool) {
-	if r.ContentLength < 0 || r.ContentLength > maxBodyBytes {
+	if r.ContentLength < 0 || r.ContentLength > MaxBodyBytes {
 		return nil, nil, false
 	}
 	raw, err := io.ReadAll(r.Body)

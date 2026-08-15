@@ -73,9 +73,10 @@ that billing can be hot-loaded into an SSO process.
 
 For source version `v1.1.1`, the three binaries report
 `snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, and
-`snaplink-v1.1.1.full`. `prototype` and `minimal` currently share
-`cmd/sso-minimal`, so their different runtime surfaces do not yet imply
-different physical dependency graphs. Neither small edition is a production
+`snaplink-v1.1.1.full`. `prototype` and `minimal` build from dedicated
+composition roots (`cmd/sso-prototype` / `cmd/sso-minimal`), so each binary
+links only its own edition root; both still share the `interfaces/sso` SDK
+dependency graph. Neither small edition is a production
 topology or browser end-to-end artifact. Unless a profile is named explicitly,
 the rest of this guide describes the compatibility `sso-server`.
 

@@ -1,4 +1,4 @@
-package main
+package composition
 
 import (
 	"context"
@@ -18,14 +18,16 @@ const (
 	shutdownTimeout   = 15 * time.Second
 )
 
-func serve(ctx context.Context, cfg runtimeConfig, handler http.Handler, stderr io.Writer) error {
+// Serve listens on cfg.Listen and serves handler until ctx is cancelled or
+// the listener fails.
+func Serve(ctx context.Context, cfg RuntimeConfig, handler http.Handler, stderr io.Writer) error {
 	listener, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", cfg.Listen, err)
 	}
 	server := newHTTPServer(cfg.Listen, handler)
 	fmt.Fprintf(stderr, "%s: listening on http://%s (issuer %s)\n",
-		programName, listener.Addr(), cfg.Issuer)
+		ProgramName, listener.Addr(), cfg.Issuer)
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	select {

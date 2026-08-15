@@ -124,7 +124,7 @@ def test_standard_kafka_dependency_order_is_stable():
 def test_prototype_uses_its_own_build_target():
     plan = resolve_plan("prototype")
     assert plan.buildable
-    assert plan.profile.build_package == "./cmd/sso-minimal"
+    assert plan.profile.build_package == "./cmd/sso-prototype"
     assert plan.profile.binary_name == "snaplink"
     assert plan.profile.program_name == "snaplink"
     assert plan.profile.composition_module == "sso-prototype-runtime"

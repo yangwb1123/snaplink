@@ -1,17 +1,22 @@
 package main
 
 import (
+	"context"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/internal/composition"
 )
 
-func TestDiscoveryMatchesConfiguredMinimalClients(t *testing.T) {
+// TestDiscoveryMatchesConfiguredPrototypeClients pins the prototype discovery
+// document: OAuth metadata only, the configured (non-openid) scopes, and none
+// of the hidden or OIDC-only fields.
+func TestDiscoveryMatchesConfiguredPrototypeClients(t *testing.T) {
 	cfg := composition.DefaultsFromEnv(func(string) string { return "" }, edition)
 	cfg.Issuer = "https://issuer.example"
-	cfg.Second.Scopes = []string{"openid", "groups"}
+	cfg.Second.Scopes = []string{"groups"}
 	app, err := buildHandler(cfg)
 	if err != nil {
 		t.Fatalf("build handler: %v", err)
@@ -19,9 +24,8 @@ func TestDiscoveryMatchesConfiguredMinimalClients(t *testing.T) {
 	server := httptest.NewServer(app)
 	t.Cleanup(server.Close)
 
-	document := getJSON(t, server.URL+"/.well-known/openid-configuration", "")
+	document := getJSON(t, server.URL+sso.PathOAuthAuthorizationServerMetadata, "")
 	assertStringList(t, document[composition.KeyScopes], []string{
-		"openid",
 		"profile",
 		"email",
 		"groups",
@@ -32,14 +36,18 @@ func TestDiscoveryMatchesConfiguredMinimalClients(t *testing.T) {
 	})
 	for _, key := range composition.HiddenMetadataEndpoints {
 		if _, exists := document[key]; exists {
-			t.Fatalf("minimal discovery advertises %s", key)
+			t.Fatalf("prototype discovery advertises %s", key)
 		}
 	}
-	if document["userinfo_endpoint"] == nil {
-		t.Fatalf("minimal discovery hides the OIDC surface: %v", document)
+	for _, key := range prototypeHiddenMetadata {
+		if _, exists := document[key]; exists {
+			t.Fatalf("prototype discovery advertises OIDC field %s", key)
+		}
 	}
 }
 
+// TestOPSessionHonorsMaxAge is the shared OP-session behavior: an expired
+// session must not satisfy max_age even in the prototype edition.
 func TestOPSessionHonorsMaxAge(t *testing.T) {
 	cfg := composition.DefaultsFromEnv(func(string) string { return "" }, edition)
 	cfg.Issuer = "http://issuer.example"
@@ -55,4 +63,20 @@ func TestOPSessionHonorsMaxAge(t *testing.T) {
 	if body["code"] != nil {
 		t.Fatalf("expired OP session satisfied max_age: %v", body)
 	}
+}
+
+func setOPSessionAuthTime(t *testing.T, gate *composition.OpSessionGate, authTime time.Time) {
+	t.Helper()
+	mgr := gate.Manager()
+	if mgr == nil {
+		t.Fatal("no session manager wired")
+	}
+	sessions, err := mgr.ListByUser(context.Background(), composition.DefaultUserID)
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("OP sessions = %d, want 1", len(sessions))
+	}
+	sessions[0].CreatedAt = authTime
 }

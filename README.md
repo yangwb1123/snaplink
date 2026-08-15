@@ -59,10 +59,16 @@ The following lines report the UTC build time, full Git commit hash (with a
 `SOURCE_DATE_EPOCH` when a profile build needs a reproducible timestamp.
 `--profile production` remains a compatibility alias for `full`.
 
-`prototype` and `minimal` have distinct runtime surfaces but currently share
-the `cmd/sso-minimal` physical package/dependency graph. A disabled route is
-not evidence that its code was compiled out; package-level isolation remains
-an extraction target. The repository ships no login UI, so browser deployment
+`prototype` and `minimal` are now physically extracted: each edition has its
+own composition root (`cmd/sso-prototype` and `cmd/sso-minimal`) sharing the
+edition-generic composition in `internal/composition`, so the minimal-only
+OIDC surface code is compiled only into the minimal binary. The package-set
+difference is proven by `python cli.py profiles evidence` (the prototype
+binary links `cmd/sso-prototype` and never `cmd/sso-minimal`, and vice
+versa); both still share the `interfaces/sso` product SDK, which deliberately
+links the OIDC protocol packages for every edition (see
+[docs/architecture/profile-isolation.md](docs/architecture/profile-isolation.md)).
+The repository ships no login UI, so browser deployment
 still requires a same-origin login frontend in front of the POST login API.
 
 ---

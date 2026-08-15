@@ -361,7 +361,7 @@
       "module_capabilities": ["oauth.sso-prototype.v1"],
       "config_keys": ["oauth", "clients"],
       "surfaces": ["/auth/login", "/token"],
-      "sources": ["cmd/sso-minimal/commands.go"]
+      "sources": ["internal/composition/commands.go"]
     },
     {
       "id": "observability.core",

@@ -1,4 +1,4 @@
-package main
+package composition
 
 import (
 	"errors"
@@ -11,28 +11,32 @@ import (
 )
 
 const (
-	defaultListen       = "127.0.0.1:8080"
-	defaultUserID       = "user-alice"
-	defaultUsername     = "alice"
-	defaultUserPassword = "s3cret"
-	defaultClientID     = "demo-app"
-	defaultClientSecret = "demo-secret"
-	defaultRedirectURI  = "http://127.0.0.1:3000/callback"
-	defaultSecondID     = "demo-app-b"
-	defaultSecondSecret = "demo-secret-b"
-	defaultSecondURI    = "http://127.0.0.1:3001/callback"
+	DefaultListen       = "127.0.0.1:8080"
+	DefaultUserID       = "user-alice"
+	DefaultUsername     = "alice"
+	DefaultUserPassword = "s3cret"
+	DefaultClientID     = "demo-app"
+	DefaultClientSecret = "demo-secret"
+	DefaultRedirectURI  = "http://127.0.0.1:3000/callback"
+	DefaultSecondID     = "demo-app-b"
+	DefaultSecondSecret = "demo-secret-b"
+	DefaultSecondURI    = "http://127.0.0.1:3001/callback"
 )
 
-type runtimeConfig struct {
+// RuntimeConfig is the resolved runtime configuration for a small-edition
+// server. It is edition-parameterized: default scopes and scope validation
+// derive from Edition, so each composition root behaves exactly as its
+// edition prescribes.
+type RuntimeConfig struct {
 	Listen  string
 	Issuer  string
-	Edition runtimeEdition
-	User    userSeed
-	Client  clientSeed
-	Second  clientSeed
+	Edition Edition
+	User    UserSeed
+	Client  ClientSeed
+	Second  ClientSeed
 }
 
-type userSeed struct {
+type UserSeed struct {
 	ID          string
 	Username    string
 	Password    string
@@ -40,24 +44,31 @@ type userSeed struct {
 	DisplayName string
 }
 
-type clientSeed struct {
+type ClientSeed struct {
 	ID          string
 	Secret      string
 	RedirectURI string
 	Scopes      []string
 }
 
-func parseRuntimeConfig(args []string, getenv func(string) string, stderr io.Writer) (runtimeConfig, error) {
-	cfg := defaultsFromEnv(getenv)
-	fs := flag.NewFlagSet(programName, flag.ContinueOnError)
+// ParseRuntimeConfig resolves flags, environment, and edition defaults and
+// validates the result.
+func ParseRuntimeConfig(
+	args []string,
+	getenv func(string) string,
+	stderr io.Writer,
+	edition Edition,
+) (RuntimeConfig, error) {
+	cfg := DefaultsFromEnv(getenv, edition)
+	fs := flag.NewFlagSet(ProgramName, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	addFlags(fs, &cfg)
 	fs.Usage = func() { writeUsage(stderr, fs) }
 	if err := fs.Parse(args); err != nil {
-		return runtimeConfig{}, err
+		return RuntimeConfig{}, err
 	}
 	if fs.NArg() != 0 {
-		return runtimeConfig{}, fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
+		return RuntimeConfig{}, fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
 	}
 	cfg.Client.Scopes = splitScopes(strings.Join(cfg.Client.Scopes, ","))
 	cfg.Second.Scopes = splitScopes(strings.Join(cfg.Second.Scopes, ","))
@@ -67,36 +78,36 @@ func parseRuntimeConfig(args []string, getenv func(string) string, stderr io.Wri
 	return cfg, cfg.validate()
 }
 
-func defaultsFromEnv(getenv func(string) string) runtimeConfig {
-	edition := configuredRuntimeEdition()
-	defaultScopes := defaultScopesForEdition(edition)
-	return runtimeConfig{
-		Listen:  envOr(getenv, "SSO_MINIMAL_LISTEN", defaultListen),
+// DefaultsFromEnv seeds the runtime configuration from SSO_MINIMAL_* variables
+// and the edition's default scopes.
+func DefaultsFromEnv(getenv func(string) string, edition Edition) RuntimeConfig {
+	return RuntimeConfig{
+		Listen:  envOr(getenv, "SSO_MINIMAL_LISTEN", DefaultListen),
 		Issuer:  getenv("SSO_MINIMAL_ISSUER"),
 		Edition: edition,
-		User: userSeed{
-			ID:          envOr(getenv, "SSO_MINIMAL_USER_ID", defaultUserID),
-			Username:    envOr(getenv, "SSO_MINIMAL_USERNAME", defaultUsername),
-			Password:    envOr(getenv, "SSO_MINIMAL_USER_PASSWORD", defaultUserPassword),
+		User: UserSeed{
+			ID:          envOr(getenv, "SSO_MINIMAL_USER_ID", DefaultUserID),
+			Username:    envOr(getenv, "SSO_MINIMAL_USERNAME", DefaultUsername),
+			Password:    envOr(getenv, "SSO_MINIMAL_USER_PASSWORD", DefaultUserPassword),
 			Email:       getenv("SSO_MINIMAL_USER_EMAIL"),
 			DisplayName: getenv("SSO_MINIMAL_USER_DISPLAY_NAME"),
 		},
-		Client: clientSeed{
-			ID:          envOr(getenv, "SSO_MINIMAL_CLIENT_ID", defaultClientID),
-			Secret:      envOr(getenv, "SSO_MINIMAL_CLIENT_SECRET", defaultClientSecret),
-			RedirectURI: envOr(getenv, "SSO_MINIMAL_REDIRECT_URI", defaultRedirectURI),
-			Scopes:      splitScopes(envOr(getenv, "SSO_MINIMAL_SCOPES", defaultScopes)),
+		Client: ClientSeed{
+			ID:          envOr(getenv, "SSO_MINIMAL_CLIENT_ID", DefaultClientID),
+			Secret:      envOr(getenv, "SSO_MINIMAL_CLIENT_SECRET", DefaultClientSecret),
+			RedirectURI: envOr(getenv, "SSO_MINIMAL_REDIRECT_URI", DefaultRedirectURI),
+			Scopes:      splitScopes(envOr(getenv, "SSO_MINIMAL_SCOPES", edition.DefaultScopes)),
 		},
-		Second: clientSeed{
-			ID:          envOr(getenv, "SSO_MINIMAL_SECOND_CLIENT_ID", defaultSecondID),
-			Secret:      envOr(getenv, "SSO_MINIMAL_SECOND_CLIENT_SECRET", defaultSecondSecret),
-			RedirectURI: envOr(getenv, "SSO_MINIMAL_SECOND_REDIRECT_URI", defaultSecondURI),
-			Scopes:      splitScopes(envOr(getenv, "SSO_MINIMAL_SECOND_SCOPES", defaultScopes)),
+		Second: ClientSeed{
+			ID:          envOr(getenv, "SSO_MINIMAL_SECOND_CLIENT_ID", DefaultSecondID),
+			Secret:      envOr(getenv, "SSO_MINIMAL_SECOND_CLIENT_SECRET", DefaultSecondSecret),
+			RedirectURI: envOr(getenv, "SSO_MINIMAL_SECOND_REDIRECT_URI", DefaultSecondURI),
+			Scopes:      splitScopes(envOr(getenv, "SSO_MINIMAL_SECOND_SCOPES", edition.DefaultScopes)),
 		},
 	}
 }
 
-func addFlags(fs *flag.FlagSet, cfg *runtimeConfig) {
+func addFlags(fs *flag.FlagSet, cfg *RuntimeConfig) {
 	fs.StringVar(&cfg.Listen, "listen", cfg.Listen, "HTTP listen address")
 	fs.StringVar(&cfg.Issuer, "issuer", cfg.Issuer, "public issuer URL")
 	fs.StringVar(&cfg.User.ID, "user-id", cfg.User.ID, "seed user ID")
@@ -124,7 +135,7 @@ func addFlags(fs *flag.FlagSet, cfg *runtimeConfig) {
 	})
 }
 
-func (cfg runtimeConfig) validate() error {
+func (cfg RuntimeConfig) validate() error {
 	if cfg.Listen == "" || cfg.Issuer == "" {
 		return errors.New("listen and issuer are required")
 	}
@@ -149,18 +160,14 @@ func (cfg runtimeConfig) validate() error {
 	return nil
 }
 
-func validateClientSeed(
-	client clientSeed,
-	label string,
-	edition runtimeEdition,
-) error {
+func validateClientSeed(client ClientSeed, label string, edition Edition) error {
 	if client.ID == "" || client.Secret == "" {
 		return fmt.Errorf("%s client ID and secret are required", label)
 	}
 	if !validHTTPURL(client.RedirectURI) {
 		return fmt.Errorf("%s redirect URI must be an absolute http or https URL", label)
 	}
-	if edition.oidcEnabled() && !contains(client.Scopes, "openid") {
+	if edition.OIDC && !contains(client.Scopes, "openid") {
 		return fmt.Errorf("%s scopes must include openid", label)
 	}
 	return nil

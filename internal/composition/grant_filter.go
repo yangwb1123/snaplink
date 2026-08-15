@@ -1,4 +1,4 @@
-package main
+package composition
 
 import (
 	"bytes"
@@ -12,20 +12,23 @@ import (
 )
 
 const (
-	headerCacheControl = "Cache-Control"
-	headerPragma       = "Pragma"
-	valueNoStore       = "no-store"
-	valueNoCache       = "no-cache"
+	HeaderCacheControl = "Cache-Control"
+	HeaderPragma       = "Pragma"
+	ValueNoStore       = "no-store"
+	ValueNoCache       = "no-cache"
 	invalidGrantChoice = "invalid"
 )
 
+// authorizationCodeOnly is the small editions' grant filter: the token
+// endpoint accepts only the authorization_code grant, and rejects every
+// other grant type with an indistinguishable no-store 400 invalid_grant.
 func authorizationCodeOnly(w http.ResponseWriter, r *http.Request) bool {
 	grantType, ok := readGrantType(r)
 	if !ok || grantType == "" || grantType == "authorization_code" {
 		return true
 	}
-	w.Header().Set(headerCacheControl, valueNoStore)
-	w.Header().Set(headerPragma, valueNoCache)
+	w.Header().Set(HeaderCacheControl, ValueNoStore)
+	w.Header().Set(HeaderPragma, ValueNoCache)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 	_ = json.NewEncoder(w).Encode(map[string]string{
@@ -35,12 +38,12 @@ func authorizationCodeOnly(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func readGrantType(r *http.Request) (string, bool) {
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
+	raw, err := io.ReadAll(io.LimitReader(r.Body, MaxBodyBytes+1))
 	if err != nil {
 		return "", false
 	}
 	r.Body = io.NopCloser(bytes.NewReader(raw))
-	if len(raw) > maxBodyBytes {
+	if len(raw) > MaxBodyBytes {
 		return "", false
 	}
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {

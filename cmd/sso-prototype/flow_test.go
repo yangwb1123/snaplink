@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -11,9 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/internal/composition"
@@ -23,14 +20,17 @@ const testVerifier = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDEFGHIJK"
 
 func TestAuthorizationCodePKCEFlow(t *testing.T) {
 	server, cfg := testServer(t)
-	discovery := getJSON(t, server.URL+"/.well-known/openid-configuration", "")
+	discovery := getJSON(t, server.URL+sso.PathOAuthAuthorizationServerMetadata, "")
 	if discovery["issuer"] != cfg.Issuer {
 		t.Fatalf("discovery issuer = %v, want %s", discovery["issuer"], cfg.Issuer)
 	}
 	assertStringList(t, discovery[composition.KeyGrantTypes], []string{"authorization_code"})
 	assertStringList(t, discovery[composition.KeyResponseTypes], []string{"code"})
 	if discovery["device_authorization_endpoint"] != nil {
-		t.Fatalf("minimal discovery advertises device flow: %v", discovery)
+		t.Fatalf("prototype discovery advertises device flow: %v", discovery)
+	}
+	if discovery["userinfo_endpoint"] != nil {
+		t.Fatalf("prototype discovery advertises the OIDC surface: %v", discovery)
 	}
 	jwks := getJSON(t, server.URL+"/.well-known/jwks.json", "")
 	if keys, ok := jwks["keys"].([]any); !ok || len(keys) == 0 {
@@ -39,18 +39,24 @@ func TestAuthorizationCodePKCEFlow(t *testing.T) {
 	code := loginForCode(t, server.URL, cfg, testVerifier)
 	tokens := exchangeCode(t, server.URL, cfg, code, testVerifier)
 	access, _ := tokens["access_token"].(string)
-	if access == "" || tokens["id_token"] == nil {
-		t.Fatalf("token response missing OIDC tokens: %v", tokens)
+	if access == "" {
+		t.Fatalf("token response missing access token: %v", tokens)
 	}
-	info := getJSON(t, server.URL+"/userinfo", access)
-	if info["sub"] != cfg.User.ID {
-		t.Fatalf("userinfo sub = %v, want %s", info["sub"], cfg.User.ID)
+	if tokens["id_token"] != nil {
+		t.Fatalf("prototype token response carries an id_token: %v", tokens)
 	}
 }
 
-func TestMinimalHidesUnselectedRoutes(t *testing.T) {
+func TestPrototypeHidesUnselectedRoutes(t *testing.T) {
 	server, _ := testServer(t)
-	for _, path := range []string{"/device/code", "/metrics", "/register"} {
+	for _, path := range []string{
+		"/device/code",
+		"/metrics",
+		"/register",
+		sso.PathOIDCDiscovery,
+		sso.PathUserInfo,
+		sso.PathEndSession,
+	} {
 		resp, err := http.Get(server.URL + path)
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)
@@ -62,7 +68,7 @@ func TestMinimalHidesUnselectedRoutes(t *testing.T) {
 	}
 }
 
-func TestMinimalRejectsClientCredentialsGrant(t *testing.T) {
+func TestPrototypeRejectsClientCredentialsGrant(t *testing.T) {
 	server, cfg := testServer(t)
 	raw, err := json.Marshal(map[string]any{
 		"grant_type":    "client_credentials",
@@ -118,52 +124,65 @@ func TestWrongAndUnknownCredentialsAreIndistinguishable(t *testing.T) {
 		json.Unmarshal(unknownBody, &unknownEnvelope) != nil {
 		t.Fatalf("decode credential failures: known=%s unknown=%s", knownBody, unknownBody)
 	}
-	if knownEnvelope["trace_id"] == nil || unknownEnvelope["trace_id"] == nil {
-		t.Fatalf("credential failures lack trace IDs: known=%s unknown=%s", knownBody, unknownBody)
-	}
-	delete(knownEnvelope, "trace_id")
-	delete(unknownEnvelope, "trace_id")
+	// The prototype edition wires no tracing middleware, so the failure
+	// envelopes must be byte-identical without any trace_id decoration.
 	if !maps.Equal(knownEnvelope, unknownEnvelope) {
 		t.Fatalf("credential bodies differ:\nknown: %s\nunknown: %s", knownBody, unknownBody)
 	}
 }
 
-func TestOPSessionSignsIntoSecondRPWithoutPassword(t *testing.T) {
+// TestOPSessionResumesAcrossRPsWithoutOIDC is the prototype-flavored
+// canonical-lifecycle regression: the OP session created at password login
+// flows as session_id in the code response, resumes for a second RP without
+// credentials, and dies on logout. There is no id_token in the prototype
+// edition, so the sid-claim assertions stay in cmd/sso-minimal.
+func TestOPSessionResumesAcrossRPsWithoutOIDC(t *testing.T) {
 	cfg := composition.DefaultsFromEnv(func(string) string { return "" }, edition)
 	cfg.Issuer = "http://issuer.example"
 	rpB := cfg.Second
-	server, client, sessions := prototypeServerWithSessions(t, cfg)
-	codeA := loginForCodeWithClient(t, client, server.URL, cfg, cfg.Client, true)
-	exchangeForClient(t, client, server.URL, cfg.Client, codeA)
-	originalAuthTime := time.Now().Add(-10 * time.Minute).Truncate(time.Second)
-	setOPSessionAuthTime(t, sessions, originalAuthTime)
-	codeB := loginForCodeWithClient(t, client, server.URL, cfg, rpB, false)
-	tokens := exchangeForClient(t, client, server.URL, rpB, codeB)
-	if tokens["id_token"] == nil {
-		t.Fatalf("RP-B exchange returned no id_token: %v", tokens)
-	}
-	if got := jwtTimeClaim(t, tokens["id_token"], "auth_time"); got != originalAuthTime.Unix() {
-		t.Fatalf("RP-B auth_time = %d, want original %d", got, originalAuthTime.Unix())
-	}
-}
+	server, client, _ := prototypeServerWithSessions(t, cfg)
 
-func TestOPSessionSupportsPromptNoneAcrossRPs(t *testing.T) {
-	cfg := composition.DefaultsFromEnv(func(string) string { return "" }, edition)
-	cfg.Issuer = "http://issuer.example"
-	rpB := composition.ClientSeed{
-		ID: "rp-b", Secret: "rp-b-secret",
-		RedirectURI: "http://127.0.0.1:3001/callback",
-		Scopes:      []string{"openid"},
+	status, body := postJSONWithClient(t, client, server.URL+"/auth/login",
+		loginPayloadForClient(cfg, cfg.Client))
+	if status != http.StatusOK || body["code"] == nil {
+		t.Fatalf("login = %d %v, want code", status, body)
 	}
-	server, client := twoRPServer(t, cfg, rpB)
-	loginForCodeWithClient(t, client, server.URL, cfg, cfg.Client, true)
+	sessionID, _ := body["session_id"].(string)
+	if sessionID == "" {
+		t.Fatalf("login response has no session_id: %v", body)
+	}
+	exchangeForClient(t, client, server.URL, cfg.Client, body["code"].(string))
+
+	// Resume for RP-B without credentials: same canonical session. The code
+	// response of the resumed login must carry the SAME canonical session_id
+	// (the prototype edition has no id_token, so the sid-claim assertions
+	// stay in cmd/sso-minimal).
 	payload := loginPayloadForClient(cfg, rpB)
 	delete(payload, "provider")
 	delete(payload, "credential")
+	status, resumed := postJSONWithClient(t, client, server.URL+"/auth/login", payload)
+	if status != http.StatusOK || resumed["code"] == nil {
+		t.Fatalf("RP-B resume = %d %v, want authorization code", status, resumed)
+	}
+	resumedSession, _ := resumed["session_id"].(string)
+	if resumedSession != sessionID {
+		t.Fatalf("resumed session_id = %q, want %q", resumedSession, sessionID)
+	}
+
+	// Logout destroys the canonical session; a stale cookie cannot resume.
+	_, body = postJSONWithClient(t, client, server.URL+"/logout", map[string]any{
+		"session_id": sessionID,
+	})
+	if body["status"] != "logged_out" {
+		t.Fatalf("logout = %v, want logged_out", body)
+	}
+	payload = loginPayloadForClient(cfg, rpB)
+	delete(payload, "provider")
+	delete(payload, "credential")
 	payload["prompt"] = "none"
-	status, body := postJSONWithClient(t, client, server.URL+"/auth/login", payload)
-	if status != http.StatusOK || body["code"] == nil {
-		t.Fatalf("RP-B prompt=none = %d %v, want authorization code", status, body)
+	_, body = postJSONWithClient(t, client, server.URL+"/auth/login", payload)
+	if body["code"] != nil {
+		t.Fatalf("prompt=none resumed after logout: %v", body)
 	}
 }
 
@@ -173,7 +192,7 @@ func TestOPSessionHonorsPromptLogin(t *testing.T) {
 	rpB := composition.ClientSeed{
 		ID: "rp-b", Secret: "rp-b-secret",
 		RedirectURI: "http://127.0.0.1:3001/callback",
-		Scopes:      []string{"openid"},
+		Scopes:      []string{"profile"},
 	}
 	server, client := twoRPServer(t, cfg, rpB)
 	loginForCodeWithClient(t, client, server.URL, cfg, cfg.Client, true)
@@ -184,64 +203,6 @@ func TestOPSessionHonorsPromptLogin(t *testing.T) {
 	_, body := postJSONWithClient(t, client, server.URL+"/auth/login", payload)
 	if body["code"] != nil {
 		t.Fatalf("prompt=login reused OP session: %v", body)
-	}
-}
-
-// TestOPSessionSIDPropagatesThroughCodeExchange is the canonical-lifecycle
-// regression test for P0-5: the OP session created at password login must
-// flow as session_id in the code response, as the sid claim in the id_token
-// of BOTH the originating and the resumed exchange, and must die on logout
-// (after which prompt=none resume must fail). No edition-local session store
-// exists anymore — every assertion reads the canonical SessionManager.
-func TestOPSessionSIDPropagatesThroughCodeExchange(t *testing.T) {
-	cfg := composition.DefaultsFromEnv(func(string) string { return "" }, edition)
-	cfg.Issuer = "http://issuer.example"
-	rpB := composition.ClientSeed{
-		ID: "rp-b", Secret: "rp-b-secret",
-		RedirectURI: "http://127.0.0.1:3001/callback",
-		Scopes:      []string{"openid"},
-	}
-	cfg.Client.Scopes = []string{"openid"}
-	server, client := twoRPServer(t, cfg, rpB)
-
-	// Password login mints a canonical session; the code response carries it.
-	status, body := postJSONWithClient(t, client, server.URL+"/auth/login",
-		loginPayloadForClient(cfg, cfg.Client))
-	if status != http.StatusOK || body["code"] == nil {
-		t.Fatalf("login = %d %v, want code", status, body)
-	}
-	sessionID, _ := body["session_id"].(string)
-	if sessionID == "" {
-		t.Fatalf("login response has no session_id: %v", body)
-	}
-
-	// The exchanged id_token carries the SAME sid.
-	tokens := exchangeForClient(t, client, server.URL, cfg.Client, body["code"].(string))
-	if got := jwtStringClaim(t, tokens["id_token"], "sid"); got != sessionID {
-		t.Fatalf("id_token sid = %q, want session %q", got, sessionID)
-	}
-
-	// Resume for RP-B without credentials: same session, same sid.
-	codeB := loginForCodeWithClient(t, client, server.URL, cfg, rpB, false)
-	tokensB := exchangeForClient(t, client, server.URL, rpB, codeB)
-	if got := jwtStringClaim(t, tokensB["id_token"], "sid"); got != sessionID {
-		t.Fatalf("resumed id_token sid = %q, want session %q", got, sessionID)
-	}
-
-	// Logout destroys the canonical session; a stale cookie cannot resume.
-	_, body = postJSONWithClient(t, client, server.URL+"/logout", map[string]any{
-		"session_id": sessionID,
-	})
-	if body["status"] != "logged_out" {
-		t.Fatalf("logout = %v, want logged_out", body)
-	}
-	payload := loginPayloadForClient(cfg, rpB)
-	delete(payload, "provider")
-	delete(payload, "credential")
-	payload["prompt"] = "none"
-	_, body = postJSONWithClient(t, client, server.URL+"/auth/login", payload)
-	if body["code"] != nil {
-		t.Fatalf("prompt=none resumed after logout: %v", body)
 	}
 }
 
@@ -269,15 +230,6 @@ func twoRPServer(
 		t.Fatalf("build handler: %v", err)
 	}
 	return serverWithCookieJar(t, app)
-}
-
-func prototypeServer(
-	t *testing.T,
-	cfg composition.RuntimeConfig,
-) (*httptest.Server, *http.Client) {
-	t.Helper()
-	server, client, _ := prototypeServerWithSessions(t, cfg)
-	return server, client
 }
 
 func prototypeServerWithSessions(
@@ -309,11 +261,11 @@ func buildHandlerWithSessions(
 	return composition.BuildHandler(cfg, composition.BuildOptions{
 		ExtraClients: extraClients,
 		SessionGate:  sessions,
-		ExtraOptions: minimalExtraOptions,
+		ExtraOptions: prototypeExtraOptions,
 		Surface: composition.SurfaceHooks{
-			IsMetadata: minimalMetadataPath,
-			Allowed:    minimalRouteAllowed,
-			Narrow:     minimalNarrowMetadata,
+			IsMetadata: prototypeMetadataPath,
+			Allowed:    prototypeRouteAllowed,
+			Narrow:     prototypeNarrowMetadata,
 		},
 	})
 }
@@ -525,70 +477,4 @@ func assertStringList(t *testing.T, value any, want []string) {
 			t.Fatalf("list = %#v, want %v", value, want)
 		}
 	}
-}
-
-func setOPSessionAuthTime(t *testing.T, gate *composition.OpSessionGate, authTime time.Time) {
-	t.Helper()
-	mgr := gate.Manager()
-	if mgr == nil {
-		t.Fatal("no session manager wired")
-	}
-	sessions, err := mgr.ListByUser(context.Background(), composition.DefaultUserID)
-	if err != nil {
-		t.Fatalf("list sessions: %v", err)
-	}
-	if len(sessions) != 1 {
-		t.Fatalf("OP sessions = %d, want 1", len(sessions))
-	}
-	sessions[0].CreatedAt = authTime
-}
-
-func jwtTimeClaim(t *testing.T, raw any, name string) int64 {
-	t.Helper()
-	token, ok := raw.(string)
-	if !ok {
-		t.Fatalf("%s token = %T, want string", name, raw)
-	}
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		t.Fatalf("%s token has %d parts", name, len(parts))
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		t.Fatalf("decode %s payload: %v", name, err)
-	}
-	claims := map[string]any{}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		t.Fatalf("decode %s claims: %v", name, err)
-	}
-	value, ok := claims[name].(float64)
-	if !ok {
-		t.Fatalf("%s claim = %v", name, claims[name])
-	}
-	return int64(value)
-}
-
-func jwtStringClaim(t *testing.T, raw any, name string) string {
-	t.Helper()
-	token, ok := raw.(string)
-	if !ok {
-		t.Fatalf("%s token = %T, want string", name, raw)
-	}
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		t.Fatalf("%s token has %d parts", name, len(parts))
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		t.Fatalf("decode %s payload: %v", name, err)
-	}
-	claims := map[string]any{}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		t.Fatalf("decode %s claims: %v", name, err)
-	}
-	value, _ := claims[name].(string)
-	if value == "" {
-		t.Fatalf("%s claim = %v, want string", name, claims[name])
-	}
-	return value
 }
