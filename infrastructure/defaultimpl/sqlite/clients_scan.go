@@ -249,7 +249,7 @@ func (s *ClientStore) RotateSecretWithLifecycle(ctx context.Context, clientID st
 	if overlap > 0 {
 		until = now.Add(overlap)
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE clients SET
+	res, err := s.db.Load().ExecContext(ctx, `UPDATE clients SET
 		previous_secret = CASE WHEN ? > 0 THEN secret ELSE '' END,
 		secret_overlap_until = ?, secret = ?, secret_rotated_at = ?, secret_expires_at = ? WHERE id = ?`,
 		int64(overlap), unixNanoOrZero(until), hashed, unixNanoOrZero(now),
