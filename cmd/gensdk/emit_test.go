@@ -410,11 +410,12 @@ func TestGeneratePy_FormBranch(t *testing.T) {
 		"return urllib.parse.urlencode(encoded, doseq=True)",
 		`encoded[key] = "true" if value else "false"`,
 		// All seven ops carry form=True; post_token keeps the body
-		// credentials (Python has no Basic-strip path — C5).
-		`return self._request("POST", "/token", body=body, form=True)`,
-		`return self._request("POST", "/token/introspect", body=body, form=True)`,
-		`return self._request("POST", "/token/revoke", body=body, form=True)`,
-		`return self._request("POST", "/par", body=body, form=True)`,
+		// credentials (Python has no Basic-strip path — C5). The four
+		// credential ops additionally carry client_auth (f3546f05).
+		`return self._request("POST", "/token", body=body, form=True, client_auth=True)`,
+		`return self._request("POST", "/token/introspect", body=body, form=True, client_auth=True)`,
+		`return self._request("POST", "/token/revoke", body=body, form=True, client_auth=True)`,
+		`return self._request("POST", "/par", body=body, form=True, client_auth=True)`,
 		`return self._request("POST", "/device/code", body=body, form=True)`,
 		`return self._request("POST", "/device/verify", body=body, form=True, auth=True)`,
 		// C1 guard with presence semantics + defense-in-depth skip.
