@@ -1,0 +1,91 @@
+# B9-R2 rerun: finalize the preserved sso-ctl audit DSN work.
+#
+# Round 1 outcomes (2026-08-15):
+#   - B9-1 (KMS ssoext registrars): DONE — d89e682e, report validated at
+#     docs/campaigns/reports/b9-kms-ssoext-registrars.md. Skipped via
+#     --reuse.
+#   - B9-2 (sso-ctl audit DSN paths): agent TIMED OUT (1835s > 1800s) after
+#     implementing the full surface. The worktree was preserved and is
+#     compile-clean (go build/vet PASS; cmd/sso-ctl tests PASS):
+#       cmd/auditstore/                     (shared read-only reader)
+#       cmd/sso-ctl/auditexport/url_pager.go(+_test)   (--from-url pager)
+#       cmd/sso-ctl/auditverify/dsn_source.go(+dsn_test.go) (--dsn sources)
+#       cmd/sso-ctl/{auditexport,auditverify}/main.go   (wiring)
+#       infrastructure/postgres/audit_readonly.go(+_test)
+#       test/auditexport_evidence_test.go   (A1-A3/B1-B2 e2e, gated on
+#       SSO_TEST_POSTGRES_DSN)
+#   - B9-3 (OIDF evidence kit): DONE — e390810c, report validated. Skipped
+#     via --reuse.
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b9-r2.yaml --reuse
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative. Files are referenced by PATH — read them with
+#     your tools, do not expect them inlined.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report (table of commands
+#     with real results; never claim a test passed that you did not run).
+#   - Commit with a conventional imperative message + AI co-author trailer.
+#     The post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库。任务：收尾上一轮超时但实现已完整保留的 sso-ctl
+    审计 DSN 读路径工作（agent 在 1800s 超时；实现已保留且编译通过，
+    勿重新实现——你的工作是核验、跑全门禁（含 postgres e2e）、修复
+    缺口、提交）。
+
+    现状（已核验）：
+    - git status 未提交文件：cmd/auditstore/（共享只读读取器）、
+      cmd/sso-ctl/auditexport/url_pager.go(+_test.go)、
+      cmd/sso-ctl/auditverify/dsn_source.go(+dsn_test.go)、
+      已修改 cmd/sso-ctl/{auditexport,auditverify}/main.go、
+      infrastructure/postgres/audit_readonly.go(+_test.go)、
+      test/auditexport_evidence_test.go（A1-A3/B1-B2 e2e）。
+    - go build ./... && go vet ./... 已 PASS；cmd/sso-ctl 测试已 PASS。
+    - postgres e2e 被 SSO_TEST_POSTGRES_DSN 门控——上一轮很可能在此
+      阶段超时（未提交前验证是否实跑过）。
+
+    契约（先读，验收断言以需求文档为准）：
+    - docs/architect-analysis/auto/cmd-sso-ctl-audit-dsn-requirements.md
+      （REQ-1/2/3/5/6；REQ-4 audit-agg 不在范围，报告注明排除）
+    - docs/architect-analysis/auto/cmd-sso-ctl-auditexport-postgres-from-url-requirements.md
+      （REQ-1 非迁移 postgres 只读 opener；接受度 A1-A3：postgres 导出
+      HeadHash==链头、--verify 0、字节篡改 --verify 1；B1-B2：广告端点
+      不 404、弱 bearer 401、--from-url 无 --bearer → exit 2）
+
+    执行要求：
+    1. 通读保留实现（勿重写）：auditstore dialect 分类器 +
+       sqlite/postgres 双 opener（postgres 必须非迁移 + schema 版本
+       校验 fail-closed）；audit-verify --dsn 与 audit-export --dsn
+       postgres / --from-url 接线；--verify 路径未变；发现缺口 → 小步
+       修复并报告根因。
+    2. postgres e2e 必须实跑（禁止 skip）：本机 docker 容器
+       docker-db_postgres-1 正在运行（IP 172.18.0.9:5432，用户
+       postgres 免密；必要时 docker run -p 发布端口或改用容器 IP）。
+       DSN 形如 postgres://postgres@172.18.0.9:5432/sso_test?sslmode=disable
+       （库名以测试实际需要为准，可自建）。跑
+       SSO_TEST_POSTGRES_DSN=... go test ./test/ -run
+       'AuditExport|AuditDSN|AuditVerify' -count=1 -v
+       并如实报告 A1-A3/B1-B2 各断言结果。若 postgres 环境确实不可达，
+       报告 not_executed + 精确原因（但这是硬验收，先尽力排除环境
+       因素）。
+    3. 全部验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./cmd/sso-ctl/... -count=1
+       go test ./infrastructure/postgres/... -count=1（注意：
+       SSO_TEST_POSTGRES_DSN 未设时现有 postgres 集成测试会 skip——如实
+       报告；audit_readonly_test 不得 skip）
+       go test ./test/ -run 'AuditExport|AuditDSN|AuditVerify' -count=1 -v
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    4. 文档/契约同步（同提交，若上一轮未完成）：sso-ctl 帮助文本、
+       CHANGELOG Added；需求文档状态若需更新则一并。
+    5. conventional commit（imperative + AI co-author trailer）。
+    6. 硬边界：audit 导出严格只读（永不迁移 schema）；零豁免；新文件
+       ≤500 行、函数 ≤50 行/cyclo ≤15；cmd/sso-ctl 目录 ≤10 非测试
+       .go 文件。
+  output: docs/campaigns/reports/b9-ssoctl-audit-dsn.md
+  timeout: 1800
+  validate: |
+    go build ./... && go vet ./... && go test ./cmd/sso-ctl/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
