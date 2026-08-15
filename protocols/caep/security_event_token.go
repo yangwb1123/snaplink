@@ -39,6 +39,14 @@ const (
 	// sessions and refuse further access.
 	EventURIRISCAccountDisabled = "https://schemas.openid.net/secevent/risc/event-type/account-disabled"
 
+	// EventURIRISCAccountEnabled — OpenID RISC: the subject's account was
+	// re-enabled at the IdP. Emitted on a lifecycle transition back into
+	// ACTIVE so an RP that disabled the subject on account-disabled can
+	// resume honoring it (reinstated suspension, restored archive). The
+	// stock receiver no-ops events it does not act on, so this positive
+	// signal is safe for RPs that do not handle it.
+	EventURIRISCAccountEnabled = "https://schemas.openid.net/secevent/risc/event-type/account-enabled"
+
 	// EventURICAEPSessionRevoked — OpenID CAEP: a session for the subject
 	// was revoked. The real-time cross-RP revocation primitive: an RP that
 	// receives this for a subject it has an active session for SHOULD

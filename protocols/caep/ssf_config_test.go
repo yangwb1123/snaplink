@@ -95,6 +95,7 @@ func TestDefaultSSFSupportedEvents(t *testing.T) {
 		"https://schemas.openid.net/secevent/caep/event-type/session-revoked",
 		"https://schemas.openid.net/secevent/caep/event-type/credential-change",
 		"https://schemas.openid.net/secevent/risc/event-type/account-disabled",
+		"https://schemas.openid.net/secevent/risc/event-type/account-enabled",
 	}
 	for _, expected := range expectedEvents {
 		found := false

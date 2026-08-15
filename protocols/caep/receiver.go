@@ -244,12 +244,14 @@ type SSFConfigDeps interface {
 }
 
 // DefaultSSFSupportedEvents is the set of SSF/CAEP events the transmitter
-// currently maps from internal audit events. Aligned with event_mapper.go.
+// maps from internal audit events (account-enabled is the lifecycle
+// reactivation signal, listed so RPs can subscribe to it).
 var DefaultSSFSupportedEvents = []string{
 	"https://schemas.openid.net/secevent/caep/event-type/token-revocation",
 	"https://schemas.openid.net/secevent/caep/event-type/session-revoked",
 	"https://schemas.openid.net/secevent/caep/event-type/credential-change",
 	"https://schemas.openid.net/secevent/risc/event-type/account-disabled",
+	"https://schemas.openid.net/secevent/risc/event-type/account-enabled",
 }
 
 // HandleSSFConfiguration serves GET /.well-known/ssf-configuration — returns

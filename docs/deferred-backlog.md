@@ -123,8 +123,17 @@ validation across the full `sub`/`act` chain, and introspection; non-active
 transitions also revoke sessions and refresh tokens. It remains additive to
 `core.User.IsActive`, and `client_credentials` remains outside this user gate.
 The stock Postgres/Cockroach backend persists state and append-only history for
-multi-replica deployments. A standardized event channel for resource servers
-that validate JWTs fully offline remains future work.
+multi-replica deployments. Lifecycle transitions are now also projected onto the
+CAEP/SSF event channel: the existing transmitter maps
+`admin_user_lifecycle_changed` to signed SETs (`risc/account-disabled` +
+`caep/session-revoked` on non-active targets, `risc/account-enabled` on
+reactivation) pushed to the affected tenant's opted-in clients — the
+standardized event channel for resource servers that validate JWTs fully
+offline. The fan-out resolves receivers through the user's OWN tenants
+(`caep.WithTenantUserStore`); the stock binary does not wire tenant membership,
+so in a default deployment lifecycle events resolve to no receivers
+(conservative silence, never a broadcast-to-all). See
+[design/lifecycle-caep-events.md](design/lifecycle-caep-events.md).
 
 ### SMTP transport
 

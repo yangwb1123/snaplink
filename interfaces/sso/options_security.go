@@ -417,7 +417,7 @@ func WithAuditRecorder(r *audit.Recorder) Option {
 // recorder is also wired, the Server taps its audit pipeline so the
 // transmitter sees every recorded event, maps the small mapped subset
 // (refresh-token-family reuse, tenant tokens revoked, scoped admin token
-// revoke) onto a signed Security Event Token (RFC 8417), and PUSHES it
+// revoke, user-lifecycle transitions) onto a signed Security Event Token (RFC 8417), and PUSHES it
 // async + best-effort to the AFFECTED client's registered receiver —
 // scoped to the event's client/tenant so one RP's revocation never leaks
 // to another. The SET is signed by the SAME key already in JWKS, so RPs

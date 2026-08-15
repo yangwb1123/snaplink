@@ -102,6 +102,7 @@ type Transmitter struct {
 	signer       JWTSigner
 	clients      core.ClientStore
 	tenantScoped core.TenantScopedClientStore // optional; nil ⇒ tenant fan-out is a no-op
+	tenants      core.TenantUserStore         // optional; nil ⇒ user-scoped fan-out is a no-op
 	issuer       string                       // SET `iss`; the AS issuer URL
 	httpClient   *http.Client
 	timeout      time.Duration
@@ -282,36 +283,6 @@ func (t *Transmitter) Record(ctx context.Context, e *audit.Event) error {
 		go t.deliver(deliveryCtx, c.ID, endpoint, mqttTopic, auth, req)
 	}
 	return nil
-}
-
-// resolveClients returns the affected receiver clients per the mapped
-// event's scope. scopeClient resolves the single named client;
-// scopeTenant fans out across the tenant's clients (and ONLY that
-// tenant's — the cross-tenant-no-leak guarantee). A lookup failure
-// returns no clients (fail-open: the revocation already happened).
-func (t *Transmitter) resolveClients(ctx context.Context, m mappedEvent) []*core.Client {
-	switch m.scope {
-	case scopeClient:
-		if m.affectedClientID == "" {
-			return nil
-		}
-		c, err := t.clients.Get(ctx, m.affectedClientID)
-		if err != nil || c == nil {
-			return nil
-		}
-		return []*core.Client{c}
-	case scopeTenant:
-		if t.tenantScoped == nil || m.tenantID == "" {
-			return nil
-		}
-		clients, err := t.tenantScoped.ListByTenant(ctx, m.tenantID)
-		if err != nil {
-			return nil
-		}
-		return clients
-	default:
-		return nil
-	}
 }
 
 // deliver supervises a single SET mint + POST in its own goroutine,

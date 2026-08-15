@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- User lifecycle transitions now emit OpenID CAEP/RISC Security Event Tokens
+  through the existing SSF transmitter: `admin_user_lifecycle_changed` maps to
+  `risc/account-disabled` + `caep/session-revoked` for non-active target states
+  and `risc/account-enabled` on reactivation, pushed async + best-effort to the
+  affected tenant's opted-in clients (receiver endpoints only from registered
+  client metadata; tenant events query only that tenant) — the standardized
+  event channel for resource servers that validate JWTs fully offline. Wiring
+  is `caep.WithTenantUserStore` on the transmitter (nil ⇒ lifecycle events
+  resolve to no receivers; the stock binary does not wire tenant membership),
+  the CAEP receive side is untouched, and delivery failures stay fail-open
+  (`caep_broadcast_failed`). Design: `docs/design/lifecycle-caep-events.md`.
 - `sso-ctl` audit tooling durable-store read paths and live-API export source:
   `audit-verify --dsn <sqlite|postgres>` and `audit-export --dsn <postgres>` read
   the audit store offline through a shared read-only accessor
