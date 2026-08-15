@@ -151,10 +151,18 @@ func TestNotary_StartStopsOnCancel(t *testing.T) {
 	store := NewMemoryCheckpointStore()
 	signer, _ := NewEd25519CheckpointSigner()
 	done := StartNotary(ctx, tip, store, signer, 20*time.Millisecond, nil, nil)
-	time.Sleep(50 * time.Millisecond)
-	latest, _ := store.Latest(ctx)
-	if latest == nil {
-		t.Fatal("loop did not checkpoint")
+	// Wait for at least one checkpoint by polling — race builds schedule the
+	// notary goroutine late under full-suite load, so a fixed sleep is flaky.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		latest, _ := store.Latest(ctx)
+		if latest != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("loop did not checkpoint")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	cancel()
 	select {
