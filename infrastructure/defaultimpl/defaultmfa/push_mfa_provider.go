@@ -153,6 +153,15 @@ func (p *PushMFAProvider) Verify(ctx context.Context, subjectID, method string, 
 func (p *PushMFAProvider) checkApproval(ctx context.Context, id, subjectID string, deadline time.Time) (bool, error) {
 	approval, err := p.store.Get(ctx, id)
 	if err != nil {
+		// A lazy-expired entry (ExpiresAt = maxWait*2) read as not-found
+		// while Verify is still polling means the approval outlived its
+		// window without a terminal status — report the timeout the caller
+		// is waiting for, not a store miss (which would leak the
+		// expiration mechanism to the user). Other store errors stay
+		// terminal and surface unchanged.
+		if errors.Is(err, ErrPushApprovalNotFound) && time.Since(deadline) > 0 {
+			return true, ErrPushApprovalTimeout
+		}
 		return true, err
 	}
 	if approval.SubjectID != subjectID {
