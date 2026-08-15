@@ -1,0 +1,138 @@
+# B7-R2 rerun: conformance harness fix + degraded-mode auto driver.
+#
+# Round 1 outcomes (2026-08-15):
+#   - B7-3 (make ci sweep): DONE, committed 5f6d13d0 — make ci green at HEAD
+#     (exit 0, 16/16 steps), report at docs/campaigns/reports/b7-ci-handoff-gate.md.
+#   - B7-1 (conformance evidence): agent verified a REAL harness blocker and
+#     committed b465301a — f585545e (gRPC fail-closed posture) refuses the
+#     stock plaintext :8081 listener, so the sso-server container exits;
+#     harness compose command lacks -grpc-listen/-grpc-insecure. This round
+#     FIXES the harness (test tooling, not production code) and reruns.
+#   - B7-2 (degradation driver): prompt rejected — @-inlined docs exceeded
+#     120 KiB. This round drops @-inlining (paths only).
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b7-r2.yaml
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative. Files are referenced by PATH — read them with
+#     your tools, do not expect them inlined.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report (table of commands
+#     with real results; never claim a test passed that you did not run).
+#   - Engineering budgets: no file over 500 lines, no function over 50 lines
+#     / cyclo 15, no new maintainability exemptions, no skipDirs /
+#     layerExemptions additions, no layer violations (architecture gate).
+#   - Update docs/config-reference.md + CHANGELOG.md in the same commit when
+#     a public contract changes (R2: yes; R1: no).
+#   - Commit with a conventional imperative message + AI co-author trailer.
+#     The post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库。任务：修复 OIDC conformance harness 的 gRPC
+    fail-closed 阻塞（前一轮 b465301a 已实证根因），随后真正重跑
+    headless 证据集并归档。
+
+    背景（已实证，勿重复诊断）：
+    - f585545e 引入 gRPC 传输 fail-closed 预检：默认 -grpc-listen :8081
+      且无 TLS 材料时拒绝启动（main.go validateGRPCTransportPosture /
+      decideGRPCTransport）。
+    - test/oidc-conformance/docker-compose.yml 的 sso-server command 只有
+      ["--config", "/etc/sso/conformance.yaml"]，无 gRPC 参数 → 容器
+      exited 1；run-headless.sh 的 --validate-only 调用同样被预检拦截。
+    - 本 harness 不需要 gRPC 面。main.go 明确：-grpc-listen 为空字符串
+      = 禁用监听器（"An empty listen (listener disabled) skips the
+      decision"），这是比 -grpc-insecure 更贴合 harness 的修复。
+
+    执行要求：
+    1. 修复 harness（test/oidc-conformance/ 下的测试工具，非生产代码）：
+       a. docker-compose.yml sso-server command 增加
+          "-grpc-listen", ""（空值禁用 gRPC 监听器）；
+       b. run-headless.sh 的 --validate-only 调用同步加
+          -grpc-listen ""（或等效），确保 validate 步骤不被预检拦截；
+       c. 保持镜像 pinned tag、healthcheck、端口、config.yaml 不变。
+    2. 运行 ./test/oidc-conformance/run-headless.sh --timeout 900，
+       如实报告每个阶段输出与最终统计（SUCCESS/FAIL 数与失败项）。
+    3. 归档：results/<commit>/ 下 plan/log/info/worktree 齐全（目录被
+       gitignore，仅本地留存即可，README 约定）；与既有 34ea1d3d 基线
+       （59 SUCCESS + 预期失败 VerifyClientManagementCredentials）对比。
+    4. 更新 docs/sso/oidc-conformance.md：把 b465301a 记录的 "Latest run
+       attempt (blocked)" 段替换/升级为真实运行结果（日期、commit、
+       统计、与基线对比）；官方 HTTPS 外部拓扑运行与 OIDF 列表的
+       remaining 边界声明不动。
+    5. 验证命令（必须实际运行并报告输出）：
+       cd test/oidc-conformance && ./run-headless.sh --timeout 900
+       go build ./... && go vet ./...
+       git status --porcelain（确认无生产代码变更）
+    6. conventional commit（imperative + AI co-author trailer；如 run 被
+       环境问题再次阻塞，如实报告并只提交 harness 修复 + 文档）。
+  output: docs/campaigns/reports/b7-oidc-conformance-evidence.md
+  timeout: 2400
+  validate: |
+    python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：实现降级模式自动转换驱动（promotes
+    docs/deferred-backlog.md "Automatic degraded-mode transitions" 的
+    Deferred decision），先写有界设计、再实现。
+
+    契约（先读，后实现；以下均为路径，用你的工具读取）：
+    - docs/deferred-backlog.md "Automatic degraded-mode transitions" 段
+    - docs/config-reference.md 的 degradation 小节（~第 704 行：
+      auto_read_only_on_store_loss 目前仅 "Honored as a boot-time log
+      acknowledgement"）
+    - platform/lifecycle/degradation/manager.go（Manager：SetMode 原子
+      转换 + OnChange hook 在锁外触发；无后台循环；注释明言 "a cluster
+      drives every replica via its own health loop or admin call"）
+    - platform/lifecycle/degradation/policy.go 与 mode.go（Policy/Mode
+      语义，本任务不触碰）
+    - config/config_snapshot.go:356-372（DegradationConfig；
+      AutoReadOnlyOnStoreLoss 为 INTENT 标志）
+    - cmd/sso-server/build_app_security.go wireDegradation（~335-352：
+      显式记录 "no auto-driver seam" 日志）
+    - cmd/sso-server/serverbuildplatform/build_governance.go:304
+      BuildDegradationManager（456 行文件，有余量；接线点候选）
+
+    第一步——设计文档（必须先写）：
+    docs/design/degradation-auto-driver.md，必须裁决并代码实证：
+    1. 探针源：复用哪个现有存储健康 seam（/readyz 探针依赖、storage
+       health 报告、或注入式健康检查 SPI）——必须代码实证，禁止虚构
+       接口；说明哪些 store 丢失触发 read_only。
+    2. 驱动循环：间隔配置（新配置键 vs 复用现有键，推荐新键如
+       degradation.auto_read_only.interval）、宽限期/滞回（瞬态抖动
+       不抖动模式）、恢复语义（健康恢复 → 回到 initial_mode）、优雅
+       停机（context 取消）。
+    3. 失败模式：探针自身错误/超时视为 fail-open（不误切 read_only），
+       按 AGENTS.md 信任与失效模式纪律；模式转换经 OnChange 进入审计
+       与指标（与现有 admin dr/mode 切换同一路径）。
+    4. 硬边界：不触碰 Policy/Mode 语义、不改变默认行为（未启用或未设
+       auto 标志 = 字节不变）、不加维护性豁免、不新增向上依赖
+       （degradation 包在 platform/lifecycle 层，探针依赖只能向下）。
+
+    第二步——实现（按设计；验收断言在设计中必须可测试）：
+    1. driver 放 platform/lifecycle/degradation/（如 driver.go +
+       driver_test.go，假探针注入测试：store 丢失 → read_only；恢复 →
+       复原；探针抖动 → 不转换；探针错误 → fail-open 不转换）。
+    2. 接线：cmd/sso-server/serverbuildplatform/build_governance.go 的
+       BuildDegradationManager（有余量）或新建 cmd 文件。注意
+       build_app_security.go 已到 500 行上限，禁止向其加行；wireDegradation
+       中的 "no auto-driver seam" 日志分支需要同步替换为启动 driver
+       的逻辑（可在同提交内将该文件裁回 500 行以内——若必须增行，
+       先拆分）。
+    3. 配置：新键（如 degradation.auto_read_only.interval）→
+       docs/config-reference.md 同步；CHANGELOG.md Added 同提交更新。
+    4. 测试：driver 单测（假探针）+ 一个接线级测试（test/ 或
+       cmd/sso-server 下，证明启用 auto 标志后 wire 出 driver 且
+       build_app_security.go 不超预算）；禁止 skip。
+    5. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./platform/lifecycle/degradation/... -count=1
+       go test ./cmd/sso-server/... -count=1 -run 'Degrad'
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+       python3 cli.py config-validate-all
+    6. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b7-degradation-auto-driver.md
+  timeout: 1800
+  validate: |
+    go build ./... && go vet ./... && go test ./platform/lifecycle/degradation/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
