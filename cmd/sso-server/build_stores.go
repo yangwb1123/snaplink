@@ -42,6 +42,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr erro
 	if err := b.wirePeerTrust(); err != nil {
 		return nil, err
 	}
+	b.wirePageCursorKey()
 	// The shared Redis client + Postgres pool must exist before any store
 	// builder runs, since stores may select backend:redis (hot) or
 	// backend:postgres (durable).
