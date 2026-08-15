@@ -31,12 +31,17 @@ services:
       # Bind-mounted so the harness pins the exact server configuration
       # under test. Validate it first with:
       #   docker compose run --rm --no-deps sso-server --validate-only
+      #   -grpc-listen "" --config /etc/sso/conformance.yaml
       - ./config.yaml:/etc/sso/conformance.yaml:ro
       # Persistent sqlite state (identity/oauth/password stores) so the
       # DCR-registered suite client + signup admin survive container
       # recreation; 0777 host dir because the distroless runtime is nonroot.
       - ./data:/data
-    command: ["--config", "/etc/sso/conformance.yaml"]
+    # gRPC plane disabled: the harness exercises only the HTTP OIDC surface,
+    # and the fail-closed gRPC transport preflight (f585545e) refuses a
+    # non-loopback plaintext listener without TLS material. Empty
+    # -grpc-listen is the listener-disabled branch of that decision.
+    command: ["--config", "/etc/sso/conformance.yaml", "-grpc-listen", ""]
     environment:
       - SSO_SERVER__ISSUER=http://sso-issuer:8180
       - SSO_LOGGING__LEVEL=debug

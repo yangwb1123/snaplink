@@ -27,7 +27,7 @@ SERVER_HTTP="http://127.0.0.1:8180"
 say() { printf '\n== %s\n' "$*"; }
 
 say "validating pinned server config"
-"${COMPOSE[@]}" run --rm --no-deps sso-server --validate-only --config /etc/sso/conformance.yaml >/dev/null
+"${COMPOSE[@]}" run --rm --no-deps sso-server --validate-only -grpc-listen "" --config /etc/sso/conformance.yaml >/dev/null
 
 say "starting harness"
 "${COMPOSE[@]}" up -d --build >/dev/null
