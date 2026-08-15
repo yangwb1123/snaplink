@@ -62,3 +62,25 @@ func (m *Metrics) ObserveRateLimitHit(tenant string) {
 	}
 	m.RateLimitHitsTotal.WithLabelValues(tenant).Inc()
 }
+
+// ObserveConditionalAccessDecision bumps the zero-trust CAP decision counter for
+// the resolved action ("allow" / "deny" / "require_step_up"). Nil-safe so the
+// server can fire it unconditionally whether or not metrics or the CAP engine
+// are wired. action is a bounded 3-value dimension (§5) — never a per-policy or
+// per-subject label.
+func (m *Metrics) ObserveConditionalAccessDecision(action string) {
+	if m == nil || m.ConditionalAccessDecisionsTotal == nil {
+		return
+	}
+	m.ConditionalAccessDecisionsTotal.WithLabelValues(action).Inc()
+}
+
+// ObserveSessionTrustStepUp bumps the zero-trust continuous-verification step-up
+// counter once per session the agent marks below-floor. Nil-safe so the agent
+// can fire it unconditionally whether or not metrics are wired.
+func (m *Metrics) ObserveSessionTrustStepUp() {
+	if m == nil || m.SessionTrustStepUpTotal == nil {
+		return
+	}
+	m.SessionTrustStepUpTotal.Inc()
+}

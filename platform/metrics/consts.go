@@ -117,6 +117,14 @@ const (
 	NameSigningKeyPrunedTotal   = "sso_signing_key_pruned_total"
 	NameSigningVerifyKeySetSize = "sso_signing_verify_key_set_size"
 	NameSigningUsageTotal       = "sso_signing_key_usage_total"
+
+	// gRPC-plane per-RPC observability (wired by the server's gRPC
+	// interceptors in interfaces/grpcserver; zero traffic when no gRPC
+	// interceptor is wired). grpc_service is bounded to the registered
+	// service set + "other" (registration closes before Serve), code_class
+	// to the fixed ok|client|server table in docs/observability.md.
+	NameGRPCRequestsTotal   = "sso_grpc_requests_total"
+	NameGRPCRequestDuration = "sso_grpc_request_duration_seconds"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by
@@ -156,7 +164,30 @@ const (
 	// LabelConnectionType is the B2B enterprise-connection protocol —
 	// domains/connections.ConnectionType's wire values, bounded to oidc | saml.
 	LabelConnectionType = "type"
+
+	// gRPC-plane labels (sso_grpc_* vectors). grpc_service is the full
+	// service name from the registered-service allowlist, or GRPCServiceOther;
+	// code_class is the fixed ok|client|server table.
+	LabelGRPCService   = "grpc_service"
+	LabelGRPCCodeClass = "code_class"
 )
+
+// gRPC code-class label values, bounded to the three fixed classes (§5). The
+// mapping table (which gRPC codes land in which class) is a const switch in
+// interfaces/grpcserver/metrics.go and is reproduced verbatim in
+// docs/observability.md — treat it as wire contract.
+const (
+	GRPCCodeClassOK     = "ok"
+	GRPCCodeClassClient = "client"
+	GRPCCodeClassServer = "server"
+)
+
+// GRPCServiceOther is the single fallback bucket every RPC method whose
+// service is NOT in the registered-service allowlist collapses to (including
+// a failed type assertion on the server handle), capping grpc_service label
+// cardinality at registered service count + 1. Mirrors sanitizeMethod's
+// "other" in the HTTP middleware.
+const GRPCServiceOther = "other"
 
 // TenantLabelUnknown is the sso_rate_limit_hits_total fallback bucket used
 // when no tenant resolver is wired at all (single-tenant deployments, or a

@@ -147,3 +147,45 @@ func (m *Metrics) ObserveSigningUsage(alg, kid string) {
 	}
 	m.SigningUsageTotal.WithLabelValues(alg, kid).Inc()
 }
+
+func registerSigningOpMetrics(factory promauto.Factory, m *Metrics) {
+	m.SigningKeyRotationsTotal = factory.NewCounter(
+		prometheus.CounterOpts{
+			Name: NameSigningKeyRotationsTotal,
+			Help: "Automatic signing-key rotations performed. Alert if it stops advancing while rotation is enabled (loop wedged) — RPs would keep verifying against an aging key.",
+		},
+	)
+
+	m.FAPIViolationsTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameFAPIViolationsTotal,
+			Help: "FAPI 2.0 baseline rule violations. Labels: rule (the 5 fapi:* ids — bounded), mode (inspection | enforce). The inspection-mode ramp-up dashboard: graph rate(...) by rule to see which RPs / requests fail which rule before flipping to enforce. Zero when the FAPI profile is off.",
+		},
+		[]string{LabelFAPIRule, LabelFAPIMode},
+	)
+
+	m.SigningOperationsTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameSigningOperationsTotal,
+			Help: "External (KMS/HSM) signing operations. Labels: alg (eddsa/es256/rs256/ps256), outcome (success/error). A rising error rate signals KMS outage or throttling; token issuance fails closed when signing errors. Zero when no external signer is wired.",
+		},
+		[]string{LabelAlg, LabelOutcome},
+	)
+
+	m.SigningDuration = factory.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    NameSigningDuration,
+			Help:    "External (KMS/HSM) signing round-trip latency in seconds, labeled by alg. DefBuckets (.005s-10s) cover the typical 5-50ms KMS RTT plus tail; alert on a p99 that threatens token-issuance latency.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{LabelAlg},
+	)
+
+	m.SigningBackendUp = factory.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: NameSigningBackendUp,
+			Help: "External (KMS/HSM) signing backend health: 1 if the last signing operation succeeded, 0 after a failure. Labeled by alg. Alert on 0 — it fires before /readyz drains the replica. Never set when no external signer is wired.",
+		},
+		[]string{LabelAlg},
+	)
+}

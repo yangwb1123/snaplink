@@ -39,6 +39,16 @@ type Metrics struct {
 	HTTPRequestsTotal   *prometheus.CounterVec
 	HTTPRequestDuration *prometheus.HistogramVec
 
+	// gRPC layer. Recorded by the per-RPC interceptors in
+	// interfaces/grpcserver (wired by the composition root, e.g.
+	// cmd/sso-server's grpcInterceptorOptions); zero traffic when no gRPC
+	// interceptor is wired, matching the opt-in pattern of every other
+	// vector. Labels: grpc_service (bounded to the registered service set +
+	// "other"), code_class (fixed ok|client|server table). Health and
+	// reflection probe RPCs are excluded by the interceptor.
+	GRPCRequestsTotal   *prometheus.CounterVec   // labels: grpc_service, code_class
+	GRPCRequestDuration *prometheus.HistogramVec // labels: grpc_service, code_class
+
 	// Auth flow.
 	LoginAttemptsTotal *prometheus.CounterVec // labels: provider, outcome
 	TokensIssuedTotal  *prometheus.CounterVec // labels: strategy
@@ -455,18 +465,6 @@ func (m *Metrics) SetFeatureGateEnabled(feature string, enabled bool) {
 	m.FeatureGateEnabled.WithLabelValues(feature).Set(v)
 }
 
-// ObserveConditionalAccessDecision bumps the zero-trust CAP decision counter for
-// the resolved action ("allow" / "deny" / "require_step_up"). Nil-safe so the
-// server can fire it unconditionally whether or not metrics or the CAP engine
-// are wired. action is a bounded 3-value dimension (§5) — never a per-policy or
-// per-subject label.
-func (m *Metrics) ObserveConditionalAccessDecision(action string) {
-	if m == nil || m.ConditionalAccessDecisionsTotal == nil {
-		return
-	}
-	m.ConditionalAccessDecisionsTotal.WithLabelValues(action).Inc()
-}
-
 // ObserveAuthHookExecution records bounded startup-registered hook names and
 // closed phase/outcome values. Nil-safe when metrics are not wired.
 func (m *Metrics) ObserveAuthHookExecution(phase, hook, outcome string, duration time.Duration) {
@@ -482,14 +480,4 @@ func (m *Metrics) ObserveNotificationDelivery(channel, outcome string) {
 		return
 	}
 	m.NotificationDeliveryFailed.WithLabelValues(channel).Inc()
-}
-
-// ObserveSessionTrustStepUp bumps the zero-trust continuous-verification step-up
-// counter once per session the agent marks below-floor. Nil-safe so the agent
-// can fire it unconditionally whether or not metrics are wired.
-func (m *Metrics) ObserveSessionTrustStepUp() {
-	if m == nil || m.SessionTrustStepUpTotal == nil {
-		return
-	}
-	m.SessionTrustStepUpTotal.Inc()
 }
