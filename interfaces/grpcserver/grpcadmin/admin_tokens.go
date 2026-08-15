@@ -14,6 +14,9 @@ import (
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/operations"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -68,20 +71,52 @@ func NewTokenAdminService(cfg TokenAdminConfig) *TokenAdminService {
 	}
 }
 
-// ListSessions applies offset pagination over a full ListAll/ListByUser(ctx)
-// scan. This proto has no order_by/filter fields, so the only thing to wire
-// beyond pagination is a fixed deterministic sort (id ascending) — required
-// because SessionManager backends are not contractually ordered. See
-// admin_paginate.go for why this bounds the RESPONSE but not the server-side
-// materialization.
+// ListSessions dispatches through runListPage (admin_paginate.go): keyset
+// pushdown when the session manager implements core.PaginatedSessionLister
+// (userID "" = ListAll, non-empty = ListByUser), else the legacy
+// ListAll/ListByUser(ctx) -> fixed id-ascending sort -> offset slice. This
+// proto has no order_by/filter fields, so the only thing to wire beyond
+// pagination is the fixed deterministic sort — required because
+// SessionManager backends are not contractually ordered.
 func (s *TokenAdminService) ListSessions(ctx context.Context, in *adminv1.ListSessionsRequest) (*adminv1.ListSessionsResponse, error) {
 	if s.sessions == nil {
 		return nil, status.Error(codes.Unimplemented, "session manager not configured")
 	}
+	userID := ""
+	if in != nil {
+		userID = in.UserId
+	}
+	var ext pageLister[*sso.Session]
+	if p, ok := s.sessions.(core.PaginatedSessionLister); ok {
+		ext = sessionPageLister{inner: p, userID: userID}
+	}
+	items, next, total, err := runListPage(ctx,
+		in.GetPageToken(), in.GetPageSize(), "", "",
+		ext,
+		func(ctx context.Context) ([]*sso.Session, error) { return s.listSessionsAll(ctx, userID) },
+		func(items []*sso.Session, _ string) ([]*sso.Session, error) {
+			sort.Slice(items, func(i, j int) bool { return core.CompareSessions(items[i], items[j]) < 0 })
+			return items, nil
+		},
+		nil, "list sessions: %v", nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &adminv1.ListSessionsResponse{
+		Sessions:      sessionTokens(items),
+		TotalSize:     total,
+		NextPageToken: next,
+	}, nil
+}
+
+// listSessionsAll materializes the session list, mapping an unsupported
+// backend to Unimplemented exactly as the pre-pagination path did.
+func (s *TokenAdminService) listSessionsAll(ctx context.Context, userID string) ([]*sso.Session, error) {
 	var all []*sso.Session
 	var err error
-	if in != nil && in.UserId != "" {
-		all, err = s.sessions.ListByUser(ctx, in.UserId)
+	if userID != "" {
+		all, err = s.sessions.ListByUser(ctx, userID)
 	} else {
 		all, err = s.sessions.ListAll(ctx)
 	}
@@ -91,26 +126,21 @@ func (s *TokenAdminService) ListSessions(ctx context.Context, in *adminv1.ListSe
 		}
 		return nil, status.Errorf(codes.Internal, "list sessions: %v", err)
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
-	offset, err := decodeOffset(in.GetPageToken())
-	if err != nil {
-		return nil, err
-	}
-	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(all))
-	out := &adminv1.ListSessionsResponse{
-		Sessions:      make([]*adminv1.SessionToken, 0, hi-lo),
-		TotalSize:     int32(len(all)),
-		NextPageToken: encodeOffset(hi, len(all)),
-	}
-	for _, sn := range all[lo:hi] {
-		out.Sessions = append(out.Sessions, &adminv1.SessionToken{
+	return all, nil
+}
+
+// sessionTokens projects sessions onto the wire SessionToken shape.
+func sessionTokens(items []*sso.Session) []*adminv1.SessionToken {
+	out := make([]*adminv1.SessionToken, 0, len(items))
+	for _, sn := range items {
+		out = append(out, &adminv1.SessionToken{
 			Id:            sn.ID,
 			UserId:        sn.UserID,
 			CreatedAtUnix: sn.CreatedAt.Unix(),
 			ExpiresAtUnix: sn.ExpiresAt.Unix(),
 		})
 	}
-	return out, nil
+	return out
 }
 
 func (s *TokenAdminService) Revoke(ctx context.Context, in *adminv1.RevokeRequest) (*adminv1.RevokeResponse, error) {
@@ -189,4 +219,115 @@ func generateTempToken(n int) (string, error) {
 		return "", fmt.Errorf("rand: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func NewOperationAdminService(store operations.Store) *OperationAdminService {
+	return &OperationAdminService{store: store}
+}
+
+func (s *OperationAdminService) GetOperation(
+	ctx context.Context, in *adminv1.GetOperationRequest,
+) (*adminv1.GetOperationResponse, error) {
+	if s.store == nil {
+		return nil, status.Error(codes.FailedPrecondition, "operation store not configured")
+	}
+	if in == nil || in.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "id required")
+	}
+	operation, err := s.store.Get(ctx, in.Id)
+	if errors.Is(err, operations.ErrNotFound) {
+		return nil, status.Error(codes.NotFound, "operation not found")
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get operation: %v", err)
+	}
+	return &adminv1.GetOperationResponse{Operation: operationToProto(operation)}, nil
+}
+
+// ListOperations lists durable operations with real pagination. Extension
+// path (store implements operations.PaginatedOperationStore): keyset pages
+// in the new deterministic id-ascending order. Fallback: today's store-order
+// list, now offset-paginated — the response ORDER is unchanged (only the
+// extension path reorders).
+func (s *OperationAdminService) ListOperations(
+	ctx context.Context, in *adminv1.ListOperationsRequest,
+) (*adminv1.ListOperationsResponse, error) {
+	if s.store == nil {
+		return nil, status.Error(codes.FailedPrecondition, "operation store not configured")
+	}
+	var ext pageLister[operations.Operation]
+	if p, ok := s.store.(operations.PaginatedOperationStore); ok {
+		ext = p
+	}
+	items, next, total, err := runListPage(ctx,
+		in.GetPageToken(), in.GetPageSize(), "", "",
+		ext,
+		func(ctx context.Context) ([]operations.Operation, error) {
+			items, err := s.store.List(ctx)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "list operations: %v", err)
+			}
+			return items, nil
+		},
+		func(items []operations.Operation, _ string) ([]operations.Operation, error) {
+			return items, nil // fallback keeps today's store order
+		},
+		nil, "list operations: %v", nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	out := &adminv1.ListOperationsResponse{
+		Operations:    make([]*adminv1.AdminOperation, 0, len(items)),
+		NextPageToken: next,
+		TotalSize:     total,
+	}
+	for _, operation := range items {
+		out.Operations = append(out.Operations, operationToProto(operation))
+	}
+	return out, nil
+}
+
+func operationToProto(operation operations.Operation) *adminv1.AdminOperation {
+	out := &adminv1.AdminOperation{
+		Id: operation.ID, Kind: operation.Kind, Target: operation.Target,
+		State: operation.State, CurrentStep: operation.CurrentStep,
+		ResultJson: append([]byte(nil), operation.ResultJSON...), Error: operation.Error,
+		CreatedAtUnix: operation.CreatedAt.Unix(), UpdatedAtUnix: operation.UpdatedAt.Unix(),
+		Steps:         make([]*adminv1.OperationStep, 0, len(operation.Steps)),
+		Compensations: make([]*adminv1.OperationStep, 0, len(operation.Compensations)),
+	}
+	for _, step := range operation.Steps {
+		out.Steps = append(out.Steps, operationStepToProto(step))
+	}
+	for _, step := range operation.Compensations {
+		out.Compensations = append(out.Compensations, operationStepToProto(step))
+	}
+	return out
+}
+
+func operationStepToProto(step operations.Step) *adminv1.OperationStep {
+	out := &adminv1.OperationStep{Name: step.Name, State: step.State, Error: step.Error}
+	if !step.StartedAt.IsZero() {
+		out.StartedAtUnix = step.StartedAt.Unix()
+	}
+	if !step.FinishedAt.IsZero() {
+		out.FinishedAtUnix = step.FinishedAt.Unix()
+	}
+	return out
+}
+
+func operationFailureError(operation operations.Operation, cause error) error {
+	st := status.Convert(cause)
+	withDetails, err := st.WithDetails(&errdetails.ErrorInfo{
+		Reason: "OPERATION_FAILED",
+		Metadata: map[string]string{
+			"operation_id":  operation.ID,
+			"operation_url": "/api/v1/admin/operations/" + operation.ID,
+		},
+	})
+	if err != nil {
+		return cause
+	}
+	return withDetails.Err()
 }

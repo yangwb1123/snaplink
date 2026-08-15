@@ -281,11 +281,73 @@ func (m *MemoryClientStore) ListDueForRotation(_ context.Context, olderThan time
 	return out, nil
 }
 
+// ListPage implements core.PaginatedClientStore: filter (shared core
+// matchers) -> sort (shared core comparators over a snapshot, so random map
+// iteration cannot leak into page order) -> keyset slice. totalHint is the
+// exact filtered count, so every existing TotalSize assertion holds on the
+// extension path.
+func (m *MemoryClientStore) ListPage(_ context.Context, q core.PageQuery) ([]*core.Client, []byte, int, error) {
+	m.mu.RLock()
+	clients := make([]*core.Client, 0, len(m.clients))
+	for _, c := range m.clients {
+		clients = append(clients, c)
+	}
+	m.mu.RUnlock()
+	field, value, ok := core.ParseFilterExpr(q.Filter)
+	if ok {
+		if err := core.ValidateClientFilter(field, value); err != nil {
+			return nil, nil, 0, err
+		}
+		filtered := clients[:0]
+		for _, c := range clients {
+			match, err := core.ClientMatches(c, field, value)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			if match {
+				filtered = append(filtered, c)
+			}
+		}
+		clients = filtered
+	}
+	keyID := func(c *core.Client) (string, string) { return core.ClientSortKey(c, q.OrderBy), c.ID }
+	core.SortKeyset(clients, q.Desc, keyID)
+	return core.KeysetSlice(clients, q, keyID)
+}
+
+// ListExpiringPage implements core.ClientExpiryLister: the windowed,
+// keyset-paginated counterpart of ListExpiring's fallback full-scan path.
+// Rows with a zero SecretExpiresAt (legacy/public clients) never match; the
+// window sort is (SecretExpiresAt, ID) ascending — the same deterministic
+// order the fallback imposes. The expiry timestamp's canonical RFC3339Nano
+// form makes the sort, the cursor search, and the cursor bytes agree.
+func (m *MemoryClientStore) ListExpiringPage(_ context.Context, cutoff time.Time, q core.PageQuery) ([]*core.Client, []byte, int, error) {
+	m.mu.RLock()
+	clients := make([]*core.Client, 0, len(m.clients))
+	for _, c := range m.clients {
+		clients = append(clients, c)
+	}
+	m.mu.RUnlock()
+	expiring := clients[:0]
+	for _, c := range clients {
+		if !c.SecretExpiresAt.IsZero() && !c.SecretExpiresAt.After(cutoff) {
+			expiring = append(expiring, c)
+		}
+	}
+	keyID := func(c *core.Client) (string, string) {
+		return c.SecretExpiresAt.UTC().Format(time.RFC3339Nano), c.ID
+	}
+	core.SortKeyset(expiring, false, keyID)
+	return core.KeysetSlice(expiring, q, keyID)
+}
+
 // Compile-time interface checks.
 var (
 	_ core.ClientStore                            = (*MemoryClientStore)(nil)
 	_ core.TenantScopedClientStore                = (*MemoryClientStore)(nil)
 	_ core.ClientStoreStats                       = (*MemoryClientStore)(nil)
+	_ core.PaginatedClientStore                   = (*MemoryClientStore)(nil)
+	_ core.ClientExpiryLister                     = (*MemoryClientStore)(nil)
 	_ clientrotation.ClientRotationLister         = (*MemoryClientStore)(nil)
 	_ clientrotation.ClientSecretOverlapRotator   = (*MemoryClientStore)(nil)
 	_ clientrotation.ClientSecretLifecycleRotator = (*MemoryClientStore)(nil)

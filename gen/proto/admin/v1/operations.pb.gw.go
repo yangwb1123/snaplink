@@ -74,6 +74,8 @@ func local_request_OperationAdminService_GetOperation_0(ctx context.Context, mar
 	return msg, metadata, err
 }
 
+var filter_OperationAdminService_ListOperations_0 = &utilities.DoubleArray{Encoding: map[string]int{}, Base: []int(nil), Check: []int(nil)}
+
 func request_OperationAdminService_ListOperations_0(ctx context.Context, marshaler runtime.Marshaler, client OperationAdminServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var (
 		protoReq ListOperationsRequest
@@ -81,6 +83,12 @@ func request_OperationAdminService_ListOperations_0(ctx context.Context, marshal
 	)
 	if req.Body != nil {
 		_, _ = io.Copy(io.Discard, req.Body)
+	}
+	if err := req.ParseForm(); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if err := runtime.PopulateQueryParameters(&protoReq, req.Form, filter_OperationAdminService_ListOperations_0); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 	msg, err := client.ListOperations(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
@@ -91,6 +99,12 @@ func local_request_OperationAdminService_ListOperations_0(ctx context.Context, m
 		protoReq ListOperationsRequest
 		metadata runtime.ServerMetadata
 	)
+	if err := req.ParseForm(); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if err := runtime.PopulateQueryParameters(&protoReq, req.Form, filter_OperationAdminService_ListOperations_0); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
 	msg, err := server.ListOperations(ctx, &protoReq)
 	return msg, metadata, err
 }

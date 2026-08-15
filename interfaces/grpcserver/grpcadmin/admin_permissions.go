@@ -41,13 +41,12 @@ func NewPermissionAdminService(prov permissions.Provider, recorder *audit.Record
 	return &PermissionAdminService{prov: prov, recorder: recorder, invalidateAuthzPolicy: invalidateAuthzPolicy}
 }
 
-// ListRoles applies offset pagination over a full ListAllRoles(ctx) scan.
-// This proto has no order_by/filter fields (unlike ListClients/ListUsers),
-// so the only thing to wire is a fixed deterministic sort (code ascending)
-// before slicing — MemoryProvider stores roles in a map, so without this the
-// per-page slice would be nondeterministic across calls, breaking the
-// two-page round trip. See admin_paginate.go for why this bounds the
-// RESPONSE but not the server-side materialization.
+// ListRoles dispatches through runListPage (admin_paginate.go): keyset
+// pushdown when the provider implements permissions.PaginatedPermissionProvider,
+// else the legacy ListAllRoles(ctx) -> fixed code-ascending sort -> offset
+// slice. This proto has no order_by/filter fields, so the only thing to wire
+// is the fixed deterministic sort — MemoryProvider stores roles in a map,
+// so without it the per-page slice would be nondeterministic across calls.
 func (s *PermissionAdminService) ListRoles(ctx context.Context, in *adminv1.ListRolesRequest) (*adminv1.ListRolesResponse, error) {
 	if s.prov == nil {
 		return nil, status.Error(codes.FailedPrecondition, "permission provider not configured")
@@ -55,22 +54,35 @@ func (s *PermissionAdminService) ListRoles(ctx context.Context, in *adminv1.List
 	if in == nil {
 		return nil, status.Error(codes.InvalidArgument, "request required")
 	}
-	roles, err := s.prov.ListAllRoles(ctx, in.ClientId)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list: %v", err)
+	var ext pageLister[permissions.Role]
+	if p, ok := s.prov.(permissions.PaginatedPermissionProvider); ok {
+		ext = rolePageLister{inner: p, clientID: in.ClientId}
 	}
-	sort.Slice(roles, func(i, j int) bool { return roles[i].Code < roles[j].Code })
-	offset, err := decodeOffset(in.GetPageToken())
+	items, next, total, err := runListPage(ctx,
+		in.GetPageToken(), in.GetPageSize(), "", "",
+		ext,
+		func(ctx context.Context) ([]permissions.Role, error) {
+			roles, err := s.prov.ListAllRoles(ctx, in.ClientId)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "list: %v", err)
+			}
+			return roles, nil
+		},
+		func(items []permissions.Role, _ string) ([]permissions.Role, error) {
+			sort.Slice(items, func(i, j int) bool { return permissions.CompareRoles(items[i], items[j]) < 0 })
+			return items, nil
+		},
+		nil, "list: %v", nil,
+	)
 	if err != nil {
 		return nil, err
 	}
-	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(roles))
 	out := &adminv1.ListRolesResponse{
-		Roles:         make([]*adminv1.Role, 0, hi-lo),
-		TotalSize:     int32(len(roles)),
-		NextPageToken: encodeOffset(hi, len(roles)),
+		Roles:         make([]*adminv1.Role, 0, len(items)),
+		TotalSize:     total,
+		NextPageToken: next,
 	}
-	for _, r := range roles[lo:hi] {
+	for _, r := range items {
 		out.Roles = append(out.Roles, roleToProto(r))
 	}
 	return out, nil
@@ -132,10 +144,12 @@ func (s *PermissionAdminService) RemoveRole(ctx context.Context, in *adminv1.Rem
 	return &adminv1.RemoveRoleResponse{}, nil
 }
 
-// ListAssignments applies offset pagination over a full ListAssignments(ctx)
-// scan. Same rationale as ListRoles: no order_by/filter on this proto, but a
-// fixed sort (user_id ascending) is still required for deterministic paging
-// since MemoryProvider's assignment map has no natural iteration order.
+// ListAssignments dispatches through runListPage (admin_paginate.go): keyset
+// pushdown when the provider implements permissions.PaginatedPermissionProvider,
+// else the legacy ListAssignments(ctx) -> fixed user_id-ascending sort ->
+// offset slice. Same rationale as ListRoles: no order_by/filter on this
+// proto, but a fixed sort is still required for deterministic paging since
+// MemoryProvider's assignment map has no natural iteration order.
 func (s *PermissionAdminService) ListAssignments(ctx context.Context, in *adminv1.ListAssignmentsRequest) (*adminv1.ListAssignmentsResponse, error) {
 	if s.prov == nil {
 		return nil, status.Error(codes.FailedPrecondition, "permission provider not configured")
@@ -143,22 +157,35 @@ func (s *PermissionAdminService) ListAssignments(ctx context.Context, in *adminv
 	if in == nil {
 		return nil, status.Error(codes.InvalidArgument, "request required")
 	}
-	as, err := s.prov.ListAssignments(ctx, in.ClientId)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list assignments: %v", err)
+	var ext pageLister[permissions.Assignment]
+	if p, ok := s.prov.(permissions.PaginatedPermissionProvider); ok {
+		ext = assignmentPageLister{inner: p, clientID: in.ClientId}
 	}
-	sort.Slice(as, func(i, j int) bool { return as[i].UserID < as[j].UserID })
-	offset, err := decodeOffset(in.GetPageToken())
+	items, next, total, err := runListPage(ctx,
+		in.GetPageToken(), in.GetPageSize(), "", "",
+		ext,
+		func(ctx context.Context) ([]permissions.Assignment, error) {
+			as, err := s.prov.ListAssignments(ctx, in.ClientId)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "list assignments: %v", err)
+			}
+			return as, nil
+		},
+		func(items []permissions.Assignment, _ string) ([]permissions.Assignment, error) {
+			sort.Slice(items, func(i, j int) bool { return permissions.CompareAssignments(items[i], items[j]) < 0 })
+			return items, nil
+		},
+		nil, "list assignments: %v", nil,
+	)
 	if err != nil {
 		return nil, err
 	}
-	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(as))
 	out := &adminv1.ListAssignmentsResponse{
-		Assignments:   make([]*adminv1.Assignment, 0, hi-lo),
-		TotalSize:     int32(len(as)),
-		NextPageToken: encodeOffset(hi, len(as)),
+		Assignments:   make([]*adminv1.Assignment, 0, len(items)),
+		TotalSize:     total,
+		NextPageToken: next,
 	}
-	for _, a := range as[lo:hi] {
+	for _, a := range items {
 		out.Assignments = append(out.Assignments, &adminv1.Assignment{UserId: a.UserID, Roles: a.Roles})
 	}
 	return out, nil

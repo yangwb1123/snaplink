@@ -205,33 +205,40 @@ func (s *ReleaseAdminService) Register(ctx context.Context, in *adminv1.Register
 	return &adminv1.RegisterReleaseResponse{Release: releaseToProto(r)}, nil
 }
 
-// List applies offset pagination over a full store.List(ctx) scan. This
-// proto has no order_by/filter fields, so the only thing to wire beyond
-// pagination is a fixed deterministic sort (id ascending) — imposed here
-// rather than assumed from the backing store (ReleaseStore.List's contract
-// only says implementations SHOULD return a stable order, not MUST). See
-// admin_paginate.go for why this bounds the RESPONSE but not the server-side
-// materialization.
+// List dispatches through runListPage (admin_paginate.go): keyset pushdown
+// when the store implements releases.PaginatedReleaseStore, else the legacy
+// List(ctx) -> fixed id-ascending sort -> offset slice. This proto has no
+// order_by/filter fields, so the only thing to wire beyond pagination is the
+// fixed deterministic sort — imposed here rather than assumed from the
+// backing store (ReleaseStore.List's contract only says implementations
+// SHOULD return a stable order, not MUST).
 func (s *ReleaseAdminService) List(ctx context.Context, in *adminv1.ListReleasesRequest) (*adminv1.ListReleasesResponse, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
-	all, err := s.store.List(ctx)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list: %v", err)
+	var ext pageLister[*releases.Release]
+	if p, ok := s.store.(releases.PaginatedReleaseStore); ok {
+		ext = p
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
-	offset, err := decodeOffset(in.GetPageToken())
+	items, next, total, err := runListPage(ctx,
+		in.GetPageToken(), in.GetPageSize(), "", "",
+		ext,
+		func(ctx context.Context) ([]*releases.Release, error) { return s.store.List(ctx) },
+		func(items []*releases.Release, _ string) ([]*releases.Release, error) {
+			sort.Slice(items, func(i, j int) bool { return releases.CompareReleases(items[i], items[j]) < 0 })
+			return items, nil
+		},
+		nil, "list: %v", nil,
+	)
 	if err != nil {
 		return nil, err
 	}
-	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(all))
 	out := &adminv1.ListReleasesResponse{
-		Items:         make([]*adminv1.Release, 0, hi-lo),
-		TotalSize:     int32(len(all)),
-		NextPageToken: encodeOffset(hi, len(all)),
+		Items:         make([]*adminv1.Release, 0, len(items)),
+		TotalSize:     total,
+		NextPageToken: next,
 	}
-	for _, r := range all[lo:hi] {
+	for _, r := range items {
 		out.Items = append(out.Items, releaseToProto(r))
 	}
 	return out, nil

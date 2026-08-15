@@ -232,6 +232,36 @@ func (m *MemorySessionManager) ListAll(_ context.Context) ([]*core.Session, erro
 	return out, nil
 }
 
+// ListPage implements core.PaginatedSessionLister: keyset pagination over a
+// snapshot, sorted by ID. userID "" = every session (the ListAll fallback,
+// including revoked/expired rows); non-empty = that user's ACTIVE sessions
+// (the ListByUser fallback semantics). totalHint is the exact row count.
+func (m *MemorySessionManager) ListPage(_ context.Context, userID string, q core.PageQuery) ([]*core.Session, []byte, int, error) {
+	m.mu.RLock()
+	sessions := make([]*core.Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		sessions = append(sessions, s)
+	}
+	m.mu.RUnlock()
+	var all []*core.Session
+	if userID == "" {
+		all = sessions
+	} else {
+		all = sessions[:0]
+		for _, s := range sessions {
+			if s.UserID == userID && !s.Revoked && !s.IsExpired() {
+				all = append(all, s)
+			}
+		}
+	}
+	keyID := func(s *core.Session) (string, string) { return s.ID, s.ID }
+	core.SortKeyset(all, q.Desc, keyID)
+	return core.KeysetSlice(all, q, keyID)
+}
+
+// Compile-time interface check.
+var _ core.PaginatedSessionLister = (*MemorySessionManager)(nil)
+
 func (m *MemorySessionManager) TrackActivity(_ context.Context, sessionID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

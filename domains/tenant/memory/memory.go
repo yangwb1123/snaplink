@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Store holds Tenants + Domains in process-local maps. Safe for
@@ -209,6 +210,58 @@ func (s *Store) DeleteDomain(_ context.Context, hostname string) error {
 
 func (s *Store) Close() error { return nil }
 
+// ListPage implements tenant.PaginatedTenantStore: filter (shared tenant
+// matchers) -> sort (shared comparators over a snapshot, so random map
+// iteration cannot leak into page order) -> keyset slice. totalHint is the
+// exact filtered count.
+func (s *Store) ListPage(_ context.Context, q core.PageQuery) ([]*tenant.Tenant, []byte, int, error) {
+	s.mu.RLock()
+	all := make([]*tenant.Tenant, 0, len(s.tenants))
+	for _, t := range s.tenants {
+		all = append(all, cloneTenant(t))
+	}
+	s.mu.RUnlock()
+	field, value, ok := core.ParseFilterExpr(q.Filter)
+	if ok {
+		if err := tenant.ValidateTenantFilter(field, value); err != nil {
+			return nil, nil, 0, err
+		}
+		filtered := all[:0]
+		for _, t := range all {
+			match, err := tenant.TenantMatches(t, field, value)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			if match {
+				filtered = append(filtered, t)
+			}
+		}
+		all = filtered
+	}
+	keyID := func(t *tenant.Tenant) (string, string) { return tenant.TenantSortKey(t, q.OrderBy), t.ID }
+	core.SortKeyset(all, q.Desc, keyID)
+	return core.KeysetSlice(all, q, keyID)
+}
+
+// ListDomainsPage implements tenant.PaginatedDomainStore: keyset
+// pagination over a snapshot sorted by hostname. tenantID "" = every domain
+// (the ListDomains fallback); non-empty = that tenant's domains (the
+// ListDomainsByTenant fallback). totalHint is the exact row count.
+func (s *Store) ListDomainsPage(_ context.Context, tenantID string, q core.PageQuery) ([]*tenant.Domain, []byte, int, error) {
+	s.mu.RLock()
+	all := make([]*tenant.Domain, 0, len(s.domains))
+	for _, d := range s.domains {
+		if tenantID == "" || d.TenantID == tenantID {
+			all = append(all, cloneDomain(d))
+		}
+	}
+	s.mu.RUnlock()
+	keyID := func(d *tenant.Domain) (string, string) { return d.Hostname, d.Hostname }
+	core.SortKeyset(all, q.Desc, keyID)
+	return core.KeysetSlice(all, q, keyID)
+}
+
+// Compile-time interface checks.
 // normalizeHost lowercases + strips a trailing dot so
 // "Acme.com" / "acme.com." / "acme.com" all resolve to the same
 // row. RFC 1035 says hostnames are case-insensitive.
@@ -266,5 +319,9 @@ func cloneDomain(d *tenant.Domain) *tenant.Domain {
 	return &cp
 }
 
-// Compile-time interface check.
-var _ tenant.Store = (*Store)(nil)
+// Compile-time interface checks.
+var (
+	_ tenant.Store                = (*Store)(nil)
+	_ tenant.PaginatedTenantStore = (*Store)(nil)
+	_ tenant.PaginatedDomainStore = (*Store)(nil)
+)

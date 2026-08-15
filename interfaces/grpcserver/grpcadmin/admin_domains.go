@@ -16,40 +16,56 @@ import (
 // receiver, same package) purely to stay under the 500-line file budget once
 // ListTenants grew filter/sort support; see the note left in admin_tenants.go.
 
-// ListDomains applies offset pagination over a full store scan (optionally
-// pre-narrowed to one tenant via ListDomainsByTenant). Unlike ListTenants,
-// this proto has no order_by/filter fields, so there is nothing to wire
-// beyond a fixed deterministic sort (hostname ascending) — imposed here
-// rather than assumed from the backing store, mirroring why sortClients/
-// sortUsers always run even when order_by is empty.
+// ListDomains dispatches through runListPage (admin_paginate.go): keyset
+// pushdown when the store implements tenant.PaginatedDomainStore (optionally
+// pre-narrowed to one tenant), else the legacy full-scan path with a fixed
+// deterministic hostname-ascending sort. Unlike ListTenants, this proto has
+// no order_by/filter fields, so there is nothing to wire beyond the fixed
+// sort — imposed here rather than assumed from the backing store, mirroring
+// why sortClients/sortUsers always run even when order_by is empty.
 func (s *TenantAdminService) ListDomains(ctx context.Context, in *adminv1.ListDomainsRequest) (*adminv1.ListDomainsResponse, error) {
 	if s.store == nil {
 		return nil, status.Error(codes.FailedPrecondition, "tenant store not configured")
 	}
-	var (
-		all []*tenant.Domain
-		err error
+	tenantID := ""
+	if in != nil {
+		tenantID = in.TenantId
+	}
+	var ext pageLister[*tenant.Domain]
+	if p, ok := s.store.(tenant.PaginatedDomainStore); ok {
+		ext = domainPageLister{inner: p, tenantID: tenantID}
+	}
+	items, next, total, err := runListPage(ctx,
+		in.GetPageToken(), in.GetPageSize(), "", "",
+		ext,
+		func(ctx context.Context) ([]*tenant.Domain, error) {
+			var all []*tenant.Domain
+			var err error
+			if tenantID != "" {
+				all, err = s.store.ListDomainsByTenant(ctx, tenantID)
+			} else {
+				all, err = s.store.ListDomains(ctx)
+			}
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "list domains: %v", err)
+			}
+			return all, nil
+		},
+		func(items []*tenant.Domain, _ string) ([]*tenant.Domain, error) {
+			sort.Slice(items, func(i, j int) bool { return tenant.CompareDomains(items[i], items[j]) < 0 })
+			return items, nil
+		},
+		nil, "list domains: %v", nil,
 	)
-	if in != nil && in.TenantId != "" {
-		all, err = s.store.ListDomainsByTenant(ctx, in.TenantId)
-	} else {
-		all, err = s.store.ListDomains(ctx)
-	}
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list domains: %v", err)
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].Hostname < all[j].Hostname })
-	offset, err := decodeOffset(in.GetPageToken())
 	if err != nil {
 		return nil, err
 	}
-	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(all))
 	out := &adminv1.ListDomainsResponse{
-		Domains:       make([]*adminv1.Domain, 0, hi-lo),
-		TotalSize:     int32(len(all)),
-		NextPageToken: encodeOffset(hi, len(all)),
+		Domains:       make([]*adminv1.Domain, 0, len(items)),
+		TotalSize:     total,
+		NextPageToken: next,
 	}
-	for _, d := range all[lo:hi] {
+	for _, d := range items {
 		out.Domains = append(out.Domains, domainToProto(d))
 	}
 	return out, nil

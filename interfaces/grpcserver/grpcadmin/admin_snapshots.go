@@ -83,55 +83,44 @@ func (s *SnapshotAdminService) Export(ctx context.Context, in *adminv1.ExportSna
 	}, nil
 }
 
-// List applies offset pagination over a full storage.List(ctx) name scan.
+// List dispatches through runListPage (admin_paginate.go): keyset pushdown
+// when the storage implements snapshot.PaginatedSnapshotStorage, else the
+// legacy List(ctx) name scan -> fixed name-ascending sort -> offset slice.
 // This proto has no order_by/filter fields, so the only thing to wire beyond
-// pagination is a fixed deterministic sort (name ascending) — Storage.List
-// documents "arbitrary order". The (potentially expensive) per-item
-// Get+PeekEnvelope only runs for the PAGE window, not every name, mirroring
-// how ListClients/ListUsers only proto-convert the sliced window.
+// pagination is the fixed deterministic sort — Storage.List documents
+// "arbitrary order". The (potentially expensive) per-item Get+PeekEnvelope
+// only runs for the PAGE window, not every name, mirroring how
+// ListClients/ListUsers only proto-convert the sliced window.
 func (s *SnapshotAdminService) List(ctx context.Context, in *adminv1.ListSnapshotsRequest) (*adminv1.ListSnapshotsResponse, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
-	names, err := s.storage.List(ctx)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list: %v", err)
+	var ext pageLister[string]
+	if p, ok := s.storage.(snapshot.PaginatedSnapshotStorage); ok {
+		ext = p
 	}
-	sort.Strings(names)
-	offset, err := decodeOffset(in.GetPageToken())
+	items, next, total, err := runListPage(ctx,
+		in.GetPageToken(), in.GetPageSize(), "", "",
+		ext,
+		func(ctx context.Context) ([]string, error) { return s.storage.List(ctx) },
+		func(items []string, _ string) ([]string, error) {
+			sort.Strings(items)
+			return items, nil
+		},
+		nil, "list: %v", nil,
+	)
 	if err != nil {
 		return nil, err
 	}
-	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(names))
-	out := &adminv1.ListSnapshotsResponse{
-		Items:         make([]*adminv1.SnapshotMeta, 0, hi-lo),
-		TotalSize:     int32(len(names)),
-		NextPageToken: encodeOffset(hi, len(names)),
+	metas, err := s.snapshotMetas(ctx, items)
+	if err != nil {
+		return nil, err
 	}
-	for _, name := range names[lo:hi] {
-		raw, err := s.storage.Get(ctx, name)
-		if err != nil {
-			return nil, mapSnapshotError(err, "get "+name)
-		}
-		env, err := snapshot.PeekEnvelope(raw)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "peek %s: %v", name, err)
-		}
-		// Body-derived fields (taken_at_unix, source_namespace,
-		// bootstrap_applied_version) live inside the (potentially encrypted)
-		// body and are intentionally left zero here. Operators should call
-		// Get to populate them. kind comes from the envelope HEADER, so it
-		// is available without decryption.
-		out.Items = append(out.Items, &adminv1.SnapshotMeta{
-			SnapshotId:          env.SnapshotID,
-			SchemaVersion:       snapshot.SchemaVersion,
-			Codec:               env.Codec,
-			EncryptionAlgorithm: env.Algorithm,
-			SizeBytes:           int64(len(raw)),
-			Kind:                env.Kind,
-		})
-	}
-	return out, nil
+	return &adminv1.ListSnapshotsResponse{
+		Items:         metas,
+		TotalSize:     total,
+		NextPageToken: next,
+	}, nil
 }
 
 func (s *SnapshotAdminService) Get(ctx context.Context, in *adminv1.GetSnapshotRequest) (*adminv1.GetSnapshotResponse, error) {

@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const fileExt = ".snap"
@@ -122,6 +123,25 @@ func (s *Storage) List(_ context.Context) ([]string, error) {
 	return out, nil
 }
 
+// ListPage implements snapshot.PaginatedSnapshotStorage: readdir + keyset
+// pagination over names sorted ascending (the fixed sort both the fallback
+// path and this page share). totalHint is the exact row count.
+func (s *Storage) ListPage(_ context.Context, q core.PageQuery) ([]string, []byte, int, error) {
+	names, err := s.List(context.Background())
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	keyID := func(n string) (string, string) { return n, n }
+	core.SortKeyset(names, q.Desc, keyID)
+	return core.KeysetSlice(names, q, keyID)
+}
+
+// Compile-time interface checks.
+var (
+	_ snapshot.Storage                  = (*Storage)(nil)
+	_ snapshot.PaginatedSnapshotStorage = (*Storage)(nil)
+)
+
 func (s *Storage) Delete(_ context.Context, name string) error {
 	clean, err := sanitize(name)
 	if err != nil {
@@ -163,5 +183,8 @@ func sanitize(name string) (string, error) {
 	return out, nil
 }
 
-// Compile-time interface check.
-var _ snapshot.Storage = (*Storage)(nil)
+// Compile-time interface checks.
+var (
+	_ snapshot.Storage                  = (*Storage)(nil)
+	_ snapshot.PaginatedSnapshotStorage = (*Storage)(nil)
+)

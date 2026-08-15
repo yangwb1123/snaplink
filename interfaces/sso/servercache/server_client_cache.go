@@ -231,6 +231,29 @@ func (c *ClientStoreCache) ListDueForRotation(ctx context.Context, olderThan tim
 	return nil, core.ErrUnsupportedOperation
 }
 
+// ListPage forwards to the inner store's core.PaginatedClientStore
+// extension when present, preserving the admin keyset-pagination pushdown
+// through the decorator (uncached — admin listing, not the hot path).
+// ErrUnsupportedOperation when the inner store lacks the extension, which
+// runListPage treats as "extension absent" and falls back silently.
+func (c *ClientStoreCache) ListPage(ctx context.Context, q core.PageQuery) ([]*core.Client, []byte, int, error) {
+	if p, ok := c.inner.(core.PaginatedClientStore); ok {
+		return p.ListPage(ctx, q)
+	}
+	return nil, nil, 0, core.ErrUnsupportedOperation
+}
+
+// ListExpiringPage forwards to the inner store's core.ClientExpiryLister
+// extension when present (uncached — same rationale as ListPage).
+// ErrUnsupportedOperation when absent, which ListExpiring treats as
+// "extension absent" and falls back to the full-scan path.
+func (c *ClientStoreCache) ListExpiringPage(ctx context.Context, cutoff time.Time, q core.PageQuery) ([]*core.Client, []byte, int, error) {
+	if l, ok := c.inner.(core.ClientExpiryLister); ok {
+		return l.ListExpiringPage(ctx, cutoff, q)
+	}
+	return nil, nil, 0, core.ErrUnsupportedOperation
+}
+
 // getFresh returns a CLONE of the cached client when a non-expired entry
 // exists. The clone means the caller can never mutate the cached snapshot.
 func (c *ClientStoreCache) getFresh(clientID string) (*core.Client, bool) {

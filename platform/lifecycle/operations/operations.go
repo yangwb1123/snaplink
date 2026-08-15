@@ -9,6 +9,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const (
@@ -102,6 +104,29 @@ func (s *MemoryStore) List(_ context.Context) ([]Operation, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
 }
+
+// ListPage implements operations.PaginatedOperationStore: keyset pagination
+// over a snapshot sorted by ID ascending — the extension path's new
+// deterministic order, deliberately different from List()'s creation-time
+// order (the fallback keeps today's store order; see the SPI doc).
+// totalHint is the exact row count.
+func (s *MemoryStore) ListPage(_ context.Context, q core.PageQuery) ([]Operation, []byte, int, error) {
+	s.mu.RLock()
+	all := make([]Operation, 0, len(s.items))
+	for _, operation := range s.items {
+		all = append(all, operation)
+	}
+	s.mu.RUnlock()
+	keyID := func(o Operation) (string, string) { return o.ID, o.ID }
+	core.SortKeyset(all, q.Desc, keyID)
+	return core.KeysetSlice(all, q, keyID)
+}
+
+// Compile-time interface checks.
+var (
+	_ Store                   = (*MemoryStore)(nil)
+	_ PaginatedOperationStore = (*MemoryStore)(nil)
+)
 
 func Start(ctx context.Context, store Store, kind, target string) (Operation, error) {
 	now := time.Now().UTC()

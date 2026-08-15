@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/yangwb1123/snaplink/platform/releases"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Store holds Releases in a process-local map plus a "current" pointer.
@@ -61,6 +62,22 @@ func (s *Store) List(_ context.Context) ([]*releases.Release, error) {
 	return out, nil
 }
 
+// ListPage implements releases.PaginatedReleaseStore: keyset pagination
+// over a snapshot sorted by ID (the fixed sort both the fallback path and
+// this page share). totalHint is the exact row count.
+func (s *Store) ListPage(_ context.Context, q core.PageQuery) ([]*releases.Release, []byte, int, error) {
+	s.mu.RLock()
+	all := make([]*releases.Release, 0, len(s.items))
+	for _, r := range s.items {
+		cp := *r
+		all = append(all, &cp)
+	}
+	s.mu.RUnlock()
+	keyID := func(r *releases.Release) (string, string) { return r.ID, r.ID }
+	core.SortKeyset(all, q.Desc, keyID)
+	return core.KeysetSlice(all, q, keyID)
+}
+
 func (s *Store) Delete(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -102,5 +119,8 @@ func (s *Store) ClearCurrent(_ context.Context) error {
 	return nil
 }
 
-// Compile-time interface check.
-var _ releases.ReleaseStore = (*Store)(nil)
+// Compile-time interface checks.
+var (
+	_ releases.ReleaseStore          = (*Store)(nil)
+	_ releases.PaginatedReleaseStore = (*Store)(nil)
+)

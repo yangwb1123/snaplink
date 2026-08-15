@@ -3,6 +3,8 @@ package permissions
 import (
 	"context"
 	"errors"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"strings"
 	"time"
 )
 
@@ -213,4 +215,33 @@ func (r *Resource) EffectiveRequireMode() RequireMode {
 		return RequireAny
 	}
 	return r.RequireMode
+}
+
+// PaginatedPermissionProvider is an OPTIONAL extension a permissions.Provider
+// MAY implement to push ListRoles/ListAssignments' pagination down into the
+// backend instead of the grpcadmin fallback's full ListAllRoles/
+// ListAssignments() -> sort -> offset slice. clientID-scoped like the base
+// Provider methods. Same optional-extension pattern as
+// core.PaginatedClientStore: callers type-assert, absence degrades to the
+// base List methods.
+//
+// The two List methods share one interface (both RPCs type-assert it); each
+// sorts by the entity's fixed key — role code, assignment user_id — since
+// neither proto exposes order_by/filter.
+type PaginatedPermissionProvider interface {
+	ListRolesPage(ctx context.Context, clientID string, q core.PageQuery) ([]Role, []byte, int, error)
+	ListAssignmentsPage(ctx context.Context, clientID string, q core.PageQuery) ([]Assignment, []byte, int, error)
+}
+
+// CompareRoles orders two roles by code (unique within a client's scope, so
+// no tiebreaker is needed) — the fixed sort both the fallback path and the
+// memory-store ListRolesPage use.
+func CompareRoles(a, b Role) int {
+	return strings.Compare(a.Code, b.Code)
+}
+
+// CompareAssignments orders two assignments by user_id (unique within a
+// client's scope, so no tiebreaker is needed).
+func CompareAssignments(a, b Assignment) int {
+	return strings.Compare(a.UserID, b.UserID)
 }

@@ -1,0 +1,129 @@
+# Next implementation batch (B5): backlog adjudications and approved designs.
+#
+# Direction set (each has a committed contract):
+#   1. SMTP implicit TLS (port 465) — adjudicated deferred follow-up in
+#      infrastructure/defaultimpl/emailsmtp (transport.go/config.go comments)
+#      and docs/deferred-backlog.md "SMTP transport".
+#   2. gRPC plane observability + TLS defaults — docs/design/
+#      grpcserver-observability-tls.md (+ protocol/qa reviews).
+#   3. grpcadmin List keyset pagination — docs/design/
+#      admin-list-keyset-pagination.md.
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b5.yaml
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report. Never claim a test
+#     passed that you did not run.
+#   - Keep the engineering budgets: no file over 500 lines, no function over
+#     50 lines / cyclo 15, no new maintainability exemptions, no skipDirs /
+#     layerExemptions additions. Update docs/config-reference.md + CHANGELOG.md
+#     when a config key or contract changes.
+#   - Commit your changes with a conventional imperative message + AI
+#     co-author trailer (per AGENTS.md). Never commit binaries. The
+#     post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库（OAuth2/OIDC SSO SDK + sso-server）。任务：实现已裁决的
+    SMTP implicit TLS 支持（deferred follow-up）。
+
+    契约（先读，后实现）：
+    - @/home/u1/workspace/demo/snaplink/docs/deferred-backlog.md 的
+      "SMTP transport" 段（Implicit TLS on port 465 is not supported;
+      require TLS at the relay/edge when plaintext fallback is unacceptable）。
+    - @/home/u1/workspace/demo/snaplink/infrastructure/defaultimpl/emailsmtp/transport.go
+      与 config.go 顶部注释：裁决范围是 v1 只补 implicit TLS（465，
+      crypto/tls.Dial 分支 keyed on cfg.Port==465），STARTTLS(587)/明文(25)
+      行为保持现状不回归。
+
+    实现要求：
+    1. transport 层加 implicit TLS 支持：端口 465（或显式 TLS 模式配置）时
+       用 crypto/tls.Dial 建立 TLS 连接再走 SMTP 会话；STARTTLS 仍由
+       net/smtp.SendMail 自动协商（现状不变）。TLS 配置（ServerName、
+       MinVersion）按部署契约设置，禁止 InsecureSkipVerify 默认值。
+    2. 配置：新增/明确 smtp 的 TLS 相关配置键（如 tls_mode 或按 port 自动
+       判定，二选一并向 config-reference 说明），保持现有键兼容；
+       smtp.enabled=false / 空 host 行为字节不变。
+    3. 测试：扩展 transport_test.go —— implicit TLS 分支（mock TLS SMTP
+       服务或 dial 注入）、465 端口自动启用、非 465 行为不回归、TLS 握手
+       失败 fail-closed（不降级明文）。禁止跳过测试。
+    4. 契约同步：docs/config-reference.md 的 smtp 小节 + CHANGELOG.md
+       （Added）同一提交内更新。
+    5. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./infrastructure/defaultimpl/emailsmtp/... -count=1
+       go test ./test/ -run 'SendCode|Email' -count=1
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    6. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b5-smtp-implicit-tls.md
+  timeout: 1500
+  validate: |
+    go test ./infrastructure/defaultimpl/emailsmtp/... -count=1 && go build ./... && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：实现 gRPC 面的运维可观测性 + TLS 默认
+    （已评审的设计，contract 见下）。
+
+    契约（先读，后实现）：
+    - @/home/u1/workspace/demo/snaplink/docs/design/grpcserver-observability-tls.md
+      （设计主文档，含逐条现状验证与决策）
+    - @/home/u1/workspace/demo/snaplink/docs/design/grpcserver-observability-tls-protocol-review.md
+      与 -qa-review.md（评审结论若与主文档冲突，以评审修正为准）
+
+    实现范围（按设计）：
+    1. gRPC listener 注册 health service（grpc_health_v1）与 reflection，
+       零新增外部依赖（grpc 模块内自带）。
+    2. per-RPC 可观测性拦截器：指标（RPC 名/状态/耗时）与追踪（trace_id
+       贯穿），与现有 Recovery/adminMW 拦截器的顺序按设计的 Decision 4。
+    3. TLS 默认 fail-closed：gRPC listener 的 TLS 行为按设计决策（如
+       -grpc-listen 暴露明文时的默认策略），不得静默降级。
+    4. 保持 wire 兼容：proto/gRPC 服务签名不变；既有
+       interfaces/grpcserver 测试不破坏（除非设计明确要求修改）。
+    5. 测试：health/reflection 可用性、拦截器指标与追踪注入、TLS
+       fail-closed 判定；禁止跳过。
+    6. 契约同步：docs/observability.md（如涉及）+ CHANGELOG.md 同提交更新。
+    7. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./interfaces/grpcserver/... -count=1
+       go test ./cmd/sso-server/ -count=1
+       go test ./test/ -count=1
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    8. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b5-grpc-observability-tls.md
+  timeout: 1800
+  validate: |
+    go test ./interfaces/grpcserver/... -count=1 && go test ./cmd/sso-server/ -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：实现 grpcadmin List RPC 的 keyset 分页改造
+    （已设计，contract 见下）。
+
+    契约（先读，后实现）：
+    - @/home/u1/workspace/demo/snaplink/docs/design/admin-list-keyset-pagination.md
+      （Scope/硬约束/验收断言齐全）
+
+    硬约束（设计文档 §Hard constraints + AGENTS.md，违反即失败）：
+    1. interfaces/grpcserver/grpcadmin 处于 10 个非测试文件上限：新代码只进
+       现有文件（admin_paginate.go 优先），禁止新建包内文件、禁止加豁免。
+    2. 零破坏 wire：page_token 保持 "Opaque cursor" 语义、total_size 保持
+       "Approximate"；proto 字段只允许 additive（ListExpiring/ListOperations
+       的 page 字段），不改名不删字段。
+    3. 无新 Err*、无新 config 键。
+    4. keyset 下推按设计：可选分页 Store SPI + List() 回退；MAC 绑定游标
+       令牌（版本化、filter/order 绑定）；TotalSize 与全量物化解耦。
+    5. 测试：每类 RPC（有 SPI / 无 SPI 回退 / ListExpiring 窗口）的
+       分页正确性 + 游标防篡改 + 与既有测试兼容；禁止跳过。
+    6. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./interfaces/grpcserver/... -count=1
+       go test ./interfaces/sso/ -count=1
+       go test ./cmd/sso-server/ -count=1
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    7. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b5-admin-keyset-pagination.md
+  timeout: 1800
+  validate: |
+    go test ./interfaces/grpcserver/... -count=1 && go build ./... && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}

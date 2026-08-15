@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"sort"
-	"strconv"
-	"strings"
 	"time"
 
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/caep"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security/clientrotation"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -89,53 +88,94 @@ func (s *ClientAdminService) notifyClientDeleted(ctx context.Context, client *ss
 	}
 }
 
-// List applies filter -> sort -> offset pagination over a full store.List(ctx)
-// scan. See admin_paginate.go for why this bounds the RESPONSE but not the
-// server-side materialization.
+// List dispatches through runListPage (admin_paginate.go): keyset pushdown
+// when the store implements core.PaginatedClientStore, else the legacy
+// List(ctx) -> filter -> sort -> offset-slice path. The TotalSize hint
+// resolver implements the D7 sourcing rules: exact SPI hint wins, a -1 hint
+// with no filter falls back to ClientStoreStats.Stats(), else 0 (honest
+// unknown — never a full scan just to count).
 func (s *ClientAdminService) List(ctx context.Context, in *adminv1.ListClientsRequest) (*adminv1.ListClientsResponse, error) {
 	if s.store == nil {
 		return nil, status.Error(codes.FailedPrecondition, "client store not configured")
 	}
-	all, err := s.store.List(ctx)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list: %v", err)
+	var ext pageLister[*sso.Client]
+	if p, ok := s.store.(core.PaginatedClientStore); ok {
+		ext = p
 	}
-	all, err = filterClients(all, in.GetFilter())
+	items, next, total, err := runListPage(ctx,
+		in.GetPageToken(), in.GetPageSize(), in.GetOrderBy(), in.GetFilter(),
+		ext,
+		func(ctx context.Context) ([]*sso.Client, error) { return s.store.List(ctx) },
+		func(items []*sso.Client, orderBy string) ([]*sso.Client, error) {
+			return s.filterAndSortClients(items, in.GetFilter(), orderBy)
+		},
+		validateListSpecClient,
+		"list: %v",
+		func(ctx context.Context, hint int) int32 { return s.clientListHint(ctx, in.GetFilter(), hint) },
+	)
 	if err != nil {
 		return nil, err
 	}
-	if err = sortClients(all, in.GetOrderBy()); err != nil {
-		return nil, err
-	}
-	offset, err := decodeOffset(in.GetPageToken())
+	return clientsResponse(items, next, total), nil
+}
+
+// filterAndSortClients applies the admin filter expression and order spec to
+// a fully-materialized page fallback (the non-keyset path).
+func (s *ClientAdminService) filterAndSortClients(items []*sso.Client, filter, orderBy string) ([]*sso.Client, error) {
+	items, err := filterClients(items, filter)
 	if err != nil {
 		return nil, err
 	}
-	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(all))
+	if err := sortClients(items, orderBy); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// clientListHint resolves a store totalHint into TotalSize, falling back to a
+// cheap Stats count for the unfiltered list (D7 sourcing rules).
+func (s *ClientAdminService) clientListHint(ctx context.Context, filter string, hint int) int32 {
+	if hint >= 0 {
+		return int32(hint)
+	}
+	if filter == "" {
+		if st, ok := s.store.(core.ClientStoreStats); ok {
+			if count, _, err := st.Stats(ctx); err == nil {
+				return int32(count)
+			}
+		}
+	}
+	return 0
+}
+
+// clientsResponse projects a page of clients onto the wire response.
+func clientsResponse(items []*sso.Client, next string, total int32) *adminv1.ListClientsResponse {
 	out := &adminv1.ListClientsResponse{
-		Clients:       make([]*adminv1.Client, 0, hi-lo),
-		TotalSize:     int32(len(all)),
-		NextPageToken: encodeOffset(hi, len(all)),
+		Clients:       make([]*adminv1.Client, 0, len(items)),
+		TotalSize:     total,
+		NextPageToken: next,
 	}
-	for _, c := range all[lo:hi] {
+	for _, c := range items {
 		out.Clients = append(out.Clients, clientToProto(c, false))
 	}
-	return out, nil
+	return out
 }
 
 // filterClients narrows all to rows matching expr, or returns all unchanged
-// when expr is empty. Unrecognized fields and unparseable expressions both
-// reach clientMatches' default case, which errors — see parseAdminFilter.
+// when expr is empty, via the shared core matcher (ParseFilterExpr +
+// ClientMatches) — the fallback's semantics AND error strings, single-sourced
+// with the memory store's ListPage. Unrecognized fields and unparseable
+// expressions both error — see core.ParseFilterExpr.
 func filterClients(all []*sso.Client, expr string) ([]*sso.Client, error) {
-	field, value, ok := parseAdminFilter(expr)
+	field, value, ok := core.ParseFilterExpr(expr)
 	if !ok {
 		return all, nil
 	}
 	out := make([]*sso.Client, 0, len(all))
 	for _, c := range all {
-		match, err := clientMatches(c, field, value)
+		match, err := core.ClientMatches(c, field, value)
 		if err != nil {
-			return nil, err
+			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 		}
 		if match {
 			out = append(out, c)
@@ -144,56 +184,22 @@ func filterClients(all []*sso.Client, expr string) ([]*sso.Client, error) {
 	return out, nil
 }
 
-// clientMatches evaluates one filter field against a client. Users field set
-// is documented separately in admin_users.go — the two entities intentionally
-// support different filter fields (Client has no email/created_at).
-func clientMatches(c *sso.Client, field, value string) (bool, error) {
-	switch strings.ToLower(field) {
-	case "id":
-		return c.ID == value, nil
-	case "name":
-		return strings.Contains(strings.ToLower(c.Name), strings.ToLower(value)), nil
-	case "active":
-		want, err := strconv.ParseBool(value)
-		if err != nil {
-			return false, status.Errorf(codes.InvalidArgument, "invalid filter value for active: %q", value)
-		}
-		return c.Active == want, nil
-	default:
-		return false, status.Errorf(codes.InvalidArgument, "unsupported filter field %q", field)
-	}
-}
-
 // sortClients orders all in place by order_by (default: id ascending, the
 // MANDATORY stable sort that makes offset paging deterministic over the
-// memory store's random map iteration).
+// memory store's random map iteration). Field validation + comparison come
+// from core so the fallback and the extension store cannot drift.
 func sortClients(all []*sso.Client, orderBy string) error {
 	field, desc := parseOrderBy(orderBy)
-	less, err := clientLess(field)
-	if err != nil {
-		return err
+	if err := core.ValidateClientOrderBy(field); err != nil {
+		return status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 	sort.SliceStable(all, func(i, j int) bool {
 		if desc {
-			return less(all[j], all[i])
+			return core.CompareClients(all[j], all[i], field) < 0
 		}
-		return less(all[i], all[j])
+		return core.CompareClients(all[i], all[j], field) < 0
 	})
 	return nil
-}
-
-// clientLess returns the comparator for one order_by field. 'created_at'
-// aliases to the id default because core.Client has no CreatedAt field
-// (unlike core.User) — documented asymmetry, see admin_users.go userLess.
-func clientLess(field string) (func(a, b *sso.Client) bool, error) {
-	switch strings.ToLower(field) {
-	case "", "id", "created_at":
-		return func(a, b *sso.Client) bool { return a.ID < b.ID }, nil
-	case "name":
-		return func(a, b *sso.Client) bool { return a.Name < b.Name }, nil
-	default:
-		return nil, status.Errorf(codes.InvalidArgument, "unsupported order_by field %q", field)
-	}
 }
 
 func (s *ClientAdminService) Get(ctx context.Context, in *adminv1.GetClientRequest) (*adminv1.GetClientResponse, error) {
@@ -480,4 +486,8 @@ func timeFromUnix(value int64) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(value, 0).UTC()
+}
+
+func validateListSpecClient(filter, orderBy string) error {
+	return validateListSpec(filter, orderBy, core.ValidateClientFilter, core.ValidateClientOrderBy)
 }

@@ -2,9 +2,11 @@ package snapshot
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Codec converts a Snapshot to and from its on-the-wire byte form. The
@@ -84,3 +86,13 @@ func (c *JSONCodec) Unmarshal(data []byte) (*Snapshot, error) {
 
 // Compile-time interface check.
 var _ Codec = (*JSONCodec)(nil)
+
+// PaginatedSnapshotStorage is an OPTIONAL extension a Storage MAY implement
+// to push List's pagination down into the backend instead of the grpcadmin
+// fallback's full List() -> sort.Strings -> offset slice. Same
+// optional-extension pattern as core.PaginatedClientStore: callers
+// type-assert, absence degrades to List(). Items are snapshot NAME strings
+// sorted ascending (the proto exposes no order_by/filter).
+type PaginatedSnapshotStorage interface {
+	ListPage(ctx context.Context, q core.PageQuery) ([]string, []byte, int, error)
+}

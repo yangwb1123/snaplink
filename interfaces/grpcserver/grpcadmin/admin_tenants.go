@@ -70,54 +70,70 @@ func NewTenantAdminService(store tenant.Store, recorder *audit.Recorder, invalid
 
 // ---------- Tenant CRUD ----------
 
-// ListTenants applies filter -> sort -> offset pagination over a full
-// s.store.ListTenants(ctx) scan. See admin_paginate.go for why this bounds
-// the RESPONSE but not the server-side materialization; mirrors
+// ListTenants dispatches through runListPage (admin_paginate.go): keyset
+// pushdown when the store implements tenant.PaginatedTenantStore, else the
+// legacy ListTenants(ctx) -> filter -> sort -> offset-slice path; mirrors
 // ClientAdminService.List / UserAdminService.List exactly.
 func (s *TenantAdminService) ListTenants(ctx context.Context, in *adminv1.ListTenantsRequest) (*adminv1.ListTenantsResponse, error) {
 	if s.store == nil {
 		return nil, status.Error(codes.FailedPrecondition, "tenant store not configured")
 	}
-	all, err := s.store.ListTenants(ctx)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list tenants: %v", err)
+	var ext pageLister[*tenant.Tenant]
+	if p, ok := s.store.(tenant.PaginatedTenantStore); ok {
+		ext = p
 	}
-	all, err = filterTenants(all, in.GetFilter())
+	items, next, total, err := runListPage(ctx,
+		in.GetPageToken(), in.GetPageSize(), in.GetOrderBy(), in.GetFilter(),
+		ext,
+		func(ctx context.Context) ([]*tenant.Tenant, error) {
+			items, err := s.store.ListTenants(ctx)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "list tenants: %v", err)
+			}
+			return items, nil
+		},
+		func(items []*tenant.Tenant, orderBy string) ([]*tenant.Tenant, error) {
+			items, err := filterTenants(items, in.GetFilter())
+			if err != nil {
+				return nil, err
+			}
+			if err := sortTenants(items, orderBy); err != nil {
+				return nil, err
+			}
+			return items, nil
+		},
+		validateListSpecTenant,
+		"list tenants: %v",
+		nil,
+	)
 	if err != nil {
 		return nil, err
 	}
-	if err = sortTenants(all, in.GetOrderBy()); err != nil {
-		return nil, err
-	}
-	offset, err := decodeOffset(in.GetPageToken())
-	if err != nil {
-		return nil, err
-	}
-	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(all))
 	out := &adminv1.ListTenantsResponse{
-		Tenants:       make([]*adminv1.Tenant, 0, hi-lo),
-		TotalSize:     int32(len(all)),
-		NextPageToken: encodeOffset(hi, len(all)),
+		Tenants:       make([]*adminv1.Tenant, 0, len(items)),
+		TotalSize:     total,
+		NextPageToken: next,
 	}
-	for _, t := range all[lo:hi] {
+	for _, t := range items {
 		out.Tenants = append(out.Tenants, tenantToProto(t))
 	}
 	return out, nil
 }
 
 // filterTenants narrows all to rows matching expr, or returns all unchanged
-// when expr is empty. Field set: id/slug/status (exact) + name (substring) —
-// the fields a Tenant carries that make sense as filter keys.
+// when expr is empty, via the shared tenant matcher. Field set: id/slug/status
+// (exact) + name (substring) — the fields a Tenant carries that make sense
+// as filter keys.
 func filterTenants(all []*tenant.Tenant, expr string) ([]*tenant.Tenant, error) {
-	field, value, ok := parseAdminFilter(expr)
+	field, value, ok := core.ParseFilterExpr(expr)
 	if !ok {
 		return all, nil
 	}
 	out := make([]*tenant.Tenant, 0, len(all))
 	for _, t := range all {
-		match, err := tenantMatches(t, field, value)
+		match, err := tenant.TenantMatches(t, field, value)
 		if err != nil {
-			return nil, err
+			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 		}
 		if match {
 			out = append(out, t)
@@ -126,52 +142,23 @@ func filterTenants(all []*tenant.Tenant, expr string) ([]*tenant.Tenant, error) 
 	return out, nil
 }
 
-// tenantMatches evaluates one filter field against a tenant.
-func tenantMatches(t *tenant.Tenant, field, value string) (bool, error) {
-	switch strings.ToLower(field) {
-	case "id":
-		return t.ID == value, nil
-	case "slug":
-		return t.Slug == value, nil
-	case "name":
-		return strings.Contains(strings.ToLower(t.Name), strings.ToLower(value)), nil
-	case "status":
-		return string(t.Status) == value, nil
-	default:
-		return false, status.Errorf(codes.InvalidArgument, "unsupported filter field %q", field)
-	}
-}
-
 // sortTenants orders all in place by order_by (default: id ascending, the
 // MANDATORY stable sort that makes offset paging deterministic regardless of
-// the backing store's own return order).
+// the backing store's own return order). Field validation + comparison come
+// from the tenant package so the fallback and the extension store cannot
+// drift.
 func sortTenants(all []*tenant.Tenant, orderBy string) error {
 	field, desc := parseOrderBy(orderBy)
-	less, err := tenantLess(field)
-	if err != nil {
-		return err
+	if err := tenant.ValidateTenantOrderBy(field); err != nil {
+		return status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 	sort.SliceStable(all, func(i, j int) bool {
 		if desc {
-			return less(all[j], all[i])
+			return tenant.CompareTenants(all[j], all[i], field) < 0
 		}
-		return less(all[i], all[j])
+		return tenant.CompareTenants(all[i], all[j], field) < 0
 	})
 	return nil
-}
-
-// tenantLess returns the comparator for one order_by field.
-func tenantLess(field string) (func(a, b *tenant.Tenant) bool, error) {
-	switch strings.ToLower(field) {
-	case "", "id":
-		return func(a, b *tenant.Tenant) bool { return a.ID < b.ID }, nil
-	case "slug":
-		return func(a, b *tenant.Tenant) bool { return a.Slug < b.Slug }, nil
-	case "name":
-		return func(a, b *tenant.Tenant) bool { return a.Name < b.Name }, nil
-	default:
-		return nil, status.Errorf(codes.InvalidArgument, "unsupported order_by field %q", field)
-	}
 }
 
 func (s *TenantAdminService) GetTenant(ctx context.Context, in *adminv1.GetTenantRequest) (*adminv1.GetTenantResponse, error) {
@@ -482,3 +469,7 @@ func validateTenantRegions(home string, allowed []string) error {
 
 // domainToProto / protoToDomain live in admin_domains.go alongside the
 // Domain CRUD methods that use them.
+
+func validateListSpecTenant(filter, orderBy string) error {
+	return validateListSpec(filter, orderBy, tenant.ValidateTenantFilter, tenant.ValidateTenantOrderBy)
+}

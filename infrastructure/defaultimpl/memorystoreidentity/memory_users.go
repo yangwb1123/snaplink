@@ -215,3 +215,40 @@ func (p *MemoryUserProvider) Delete(_ context.Context, id string) error {
 	}
 	return nil
 }
+
+// ListPage implements core.PaginatedUserProvider: filter (shared core
+// matchers) -> sort (shared core comparators over a snapshot, so random map
+// iteration cannot leak into page order) -> keyset slice. totalHint is the
+// exact filtered count. created_at sort keys use the canonical RFC3339Nano
+// form, so the sort, the cursor search, and the cursor bytes all agree.
+func (p *MemoryUserProvider) ListPage(_ context.Context, q core.PageQuery) ([]*core.User, []byte, int, error) {
+	p.mu.RLock()
+	users := make([]*core.User, 0, len(p.users))
+	for _, u := range p.users {
+		users = append(users, u)
+	}
+	p.mu.RUnlock()
+	field, value, ok := core.ParseFilterExpr(q.Filter)
+	if ok {
+		if err := core.ValidateUserFilter(field, value); err != nil {
+			return nil, nil, 0, err
+		}
+		filtered := users[:0]
+		for _, u := range users {
+			match, err := core.UserMatches(u, field, value)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			if match {
+				filtered = append(filtered, u)
+			}
+		}
+		users = filtered
+	}
+	keyID := func(u *core.User) (string, string) { return core.UserSortKey(u, q.OrderBy), u.ID }
+	core.SortKeyset(users, q.Desc, keyID)
+	return core.KeysetSlice(users, q, keyID)
+}
+
+// Compile-time interface check.
+var _ core.PaginatedUserProvider = (*MemoryUserProvider)(nil)

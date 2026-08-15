@@ -4,6 +4,8 @@ import (
 	"context"
 	"slices"
 	"sync"
+
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // MemoryProvider is a process-local Provider backed by static role/menu maps.
@@ -307,6 +309,45 @@ func filterMenus(in MenuTree, perms []Permission) MenuTree {
 	return FilterMenuTree(in, perms)
 }
 
+// ListRolesPage implements permissions.PaginatedPermissionProvider: keyset
+// pagination over a snapshot sorted by code (the fixed sort both the
+// fallback path and this page share), clientID-scoped like ListAllRoles.
+// totalHint is the exact row count.
+func (m *MemoryProvider) ListRolesPage(_ context.Context, clientID string, q core.PageQuery) ([]Role, []byte, int, error) {
+	m.mu.RLock()
+	defs := m.rolesByClient[clientID]
+	out := make([]Role, 0, len(defs))
+	for _, r := range defs {
+		out = append(out, r)
+	}
+	m.mu.RUnlock()
+	keyID := func(r Role) (string, string) { return r.Code, r.Code }
+	core.SortKeyset(out, q.Desc, keyID)
+	return core.KeysetSlice(out, q, keyID)
+}
+
+// ListAssignmentsPage implements permissions.PaginatedPermissionProvider:
+// keyset pagination over a snapshot sorted by user_id (the fixed sort both
+// the fallback path and this page share), clientID-scoped like
+// ListAssignments. totalHint is the exact row count.
+func (m *MemoryProvider) ListAssignmentsPage(_ context.Context, clientID string, q core.PageQuery) ([]Assignment, []byte, int, error) {
+	m.mu.RLock()
+	out := make([]Assignment, 0)
+	for userID, byClient := range m.assignmentsByUser {
+		if roles, ok := byClient[clientID]; ok && len(roles) > 0 {
+			out = append(out, Assignment{UserID: userID, Roles: append([]string(nil), roles...)})
+		}
+	}
+	m.mu.RUnlock()
+	keyID := func(a Assignment) (string, string) { return a.UserID, a.UserID }
+	core.SortKeyset(out, q.Desc, keyID)
+	return core.KeysetSlice(out, q, keyID)
+}
+
 // Compile-time check that MemoryProvider satisfies the optional
 // GroupMembershipWriter extension (drives SCIM Group membership).
 var _ GroupMembershipWriter = (*MemoryProvider)(nil)
+
+// Compile-time check that MemoryProvider satisfies the optional pagination
+// extension (keyset pushdown for the admin List RPCs).
+var _ PaginatedPermissionProvider = (*MemoryProvider)(nil)

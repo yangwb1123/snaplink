@@ -39,5 +39,17 @@ message AdminOperation {
 
 message GetOperationRequest { string id = 1; }
 message GetOperationResponse { AdminOperation operation = 1; }
-message ListOperationsRequest {}
-message ListOperationsResponse { repeated AdminOperation operations = 1; }
+message ListOperationsRequest {
+  // Opaque cursor from the previous response. Empty on the first page.
+  string page_token = 1;
+  // Max items per page — server clamps to a system maximum (default 100).
+  // 0 means "use the server default".
+  int32 page_size = 2;
+}
+message ListOperationsResponse {
+  repeated AdminOperation operations = 1;
+  // Opaque cursor for the next page. Empty when there are no more results.
+  string next_page_token = 2;
+  // Approximate total count of operations (for UI display).
+  int32 total_size = 3;
+}

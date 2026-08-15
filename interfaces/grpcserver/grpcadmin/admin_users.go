@@ -9,6 +9,7 @@ import (
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -27,53 +28,63 @@ func NewUserAdminService(users sso.UserProvider, sessions sso.SessionManager, re
 	return &UserAdminService{users: users, sessions: sessions, recorder: recorder}
 }
 
-// List applies filter -> sort -> offset pagination over a full
-// s.users.List(ctx) scan. See admin_paginate.go for why this bounds the
-// RESPONSE but not the server-side materialization.
+// List dispatches through runListPage (admin_paginate.go): keyset pushdown
+// when the user provider implements core.PaginatedUserProvider, else the
+// legacy List(ctx) -> filter -> sort -> offset-slice path.
 func (s *UserAdminService) List(ctx context.Context, in *adminv1.ListUsersRequest) (*adminv1.ListUsersResponse, error) {
 	if s.users == nil {
 		return nil, status.Error(codes.FailedPrecondition, "user provider not configured")
 	}
-	all, err := s.users.List(ctx)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list: %v", err)
+	var ext pageLister[*sso.User]
+	if p, ok := s.users.(core.PaginatedUserProvider); ok {
+		ext = p
 	}
-	all, err = filterUsers(all, in.GetFilter())
+	items, next, total, err := runListPage(ctx,
+		in.GetPageToken(), in.GetPageSize(), in.GetOrderBy(), in.GetFilter(),
+		ext,
+		func(ctx context.Context) ([]*sso.User, error) { return s.users.List(ctx) },
+		func(items []*sso.User, orderBy string) ([]*sso.User, error) {
+			items, err := filterUsers(items, in.GetFilter())
+			if err != nil {
+				return nil, err
+			}
+			if err := sortUsers(items, orderBy); err != nil {
+				return nil, err
+			}
+			return items, nil
+		},
+		validateListSpecUser,
+		"list: %v",
+		nil,
+	)
 	if err != nil {
 		return nil, err
 	}
-	if err = sortUsers(all, in.GetOrderBy()); err != nil {
-		return nil, err
-	}
-	offset, err := decodeOffset(in.GetPageToken())
-	if err != nil {
-		return nil, err
-	}
-	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(all))
 	out := &adminv1.ListUsersResponse{
-		Users:         make([]*adminv1.User, 0, hi-lo),
-		TotalSize:     int32(len(all)),
-		NextPageToken: encodeOffset(hi, len(all)),
+		Users:         make([]*adminv1.User, 0, len(items)),
+		TotalSize:     total,
+		NextPageToken: next,
 	}
-	for _, u := range all[lo:hi] {
+	for _, u := range items {
 		out.Users = append(out.Users, userToProto(u))
 	}
 	return out, nil
 }
 
 // filterUsers narrows all to rows matching expr, or returns all unchanged
-// when expr is empty. Field set is the STABLE proto-package contract:
-// id/provider/external_id (exact) + name/email (substring).
+// when expr is empty, via the shared core matcher. Field set is the STABLE
+// proto-package contract: id/provider/external_id (exact) + name/email
+// (substring).
 func filterUsers(all []*sso.User, expr string) ([]*sso.User, error) {
-	field, value, ok := parseAdminFilter(expr)
+	field, value, ok := core.ParseFilterExpr(expr)
 	if !ok {
 		return all, nil
 	}
 	out := make([]*sso.User, 0, len(all))
 	for _, u := range all {
-		match, err := userMatches(u, field, value)
+		match, err := core.UserMatches(u, field, value)
 		if err != nil {
-			return nil, err
+			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 		}
 		if match {
 			out = append(out, u)
@@ -82,57 +93,22 @@ func filterUsers(all []*sso.User, expr string) ([]*sso.User, error) {
 	return out, nil
 }
 
-// userMatches evaluates one filter field against a user.
-func userMatches(u *sso.User, field, value string) (bool, error) {
-	switch strings.ToLower(field) {
-	case "id":
-		return u.ID == value, nil
-	case "provider":
-		return u.Provider == value, nil
-	case "external_id":
-		return u.ExternalID == value, nil
-	case "name":
-		return strings.Contains(strings.ToLower(u.Name), strings.ToLower(value)), nil
-	case "email":
-		return strings.Contains(strings.ToLower(u.Email), strings.ToLower(value)), nil
-	default:
-		return false, status.Errorf(codes.InvalidArgument, "unsupported filter field %q", field)
-	}
-}
-
 // sortUsers orders all in place by order_by (default: id ascending, the
 // MANDATORY stable sort that makes offset paging deterministic over the
-// memory store's random map iteration).
+// memory store's random map iteration). Field validation + comparison come
+// from core so the fallback and the extension store cannot drift.
 func sortUsers(all []*sso.User, orderBy string) error {
 	field, desc := parseOrderBy(orderBy)
-	less, err := userLess(field)
-	if err != nil {
-		return err
+	if err := core.ValidateUserOrderBy(field); err != nil {
+		return status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 	sort.SliceStable(all, func(i, j int) bool {
 		if desc {
-			return less(all[j], all[i])
+			return core.CompareUsers(all[j], all[i], field) < 0
 		}
-		return less(all[i], all[j])
+		return core.CompareUsers(all[i], all[j], field) < 0
 	})
 	return nil
-}
-
-// userLess returns the comparator for one order_by field. Unlike
-// clientLess, 'created_at' maps to the real core.User.CreatedAt field here
-// (core.User has one; core.Client does not) — the documented order_by
-// asymmetry between the two List RPCs.
-func userLess(field string) (func(a, b *sso.User) bool, error) {
-	switch strings.ToLower(field) {
-	case "", "id":
-		return func(a, b *sso.User) bool { return a.ID < b.ID }, nil
-	case "created_at":
-		return func(a, b *sso.User) bool { return a.CreatedAt.Before(b.CreatedAt) }, nil
-	case "provider":
-		return func(a, b *sso.User) bool { return a.Provider < b.Provider }, nil
-	default:
-		return nil, status.Errorf(codes.InvalidArgument, "unsupported order_by field %q", field)
-	}
 }
 
 func (s *UserAdminService) Get(ctx context.Context, in *adminv1.GetUserRequest) (*adminv1.GetUserResponse, error) {
@@ -303,4 +279,78 @@ func sessionToProto(s *sso.Session) *adminv1.Session {
 		ExpiresAtUnix: s.ExpiresAt.Unix(),
 		Revoked:       s.Revoked,
 	}
+}
+
+func parseAdminFilter(expr string) (field, value string, ok bool) {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return "", "", false
+	}
+	if idx := strings.Index(expr, ":"); idx >= 0 {
+		return strings.TrimSpace(expr[:idx]), strings.TrimSpace(expr[idx+1:]), true
+	}
+	if parts := strings.SplitN(expr, " eq ", 2); len(parts) == 2 {
+		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
+	}
+	return "", expr, true
+}
+
+// parseOrderBy strips a leading '-' (descending) from an order_by field.
+func parseOrderBy(s string) (field string, desc bool) {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "-") {
+		return strings.TrimSpace(s[1:]), true
+	}
+	return s, false
+}
+
+// --- Keyset pagination dispatch (extension path) ---
+//
+// Every List RPC shrinks to: nil-check -> clamp page size -> runListPage ->
+// proto-convert the returned window. runListPage takes the store's optional
+// pagination SPI when implemented (keyset pushdown with a MAC-bound cursor
+// token), and otherwise runs today's listAll -> filter/sort -> offset-slice
+// path byte-identically. All new pagination code lives in this file to stay
+// at the package's 10-file fan-out cap; the codec lives in shared/security.
+
+// pageLister is the uniform grpcadmin-side shape of every optional
+// pagination SPI (core.PaginatedClientStore, tenant.PaginatedTenantStore,
+// ...): one concrete, non-generic method per entity.
+type pageLister[T any] interface {
+	ListPage(ctx context.Context, q core.PageQuery) ([]T, []byte, int, error)
+}
+
+// sessionPageLister adapts the userID-scoped core.PaginatedSessionLister to
+// pageLister. userID "" = every session (ListAll); non-empty = that user's
+// (ListByUser).
+type sessionPageLister struct {
+	inner  core.PaginatedSessionLister
+	userID string
+}
+
+// validateListSpec runs the row-independent spec check every extension path
+// shares: filter field membership + ParseBool, then order_by membership.
+// The validator closures come from the entity home packages (single-sourced
+// error strings, byte-identical to the fallback matchers' output). nil
+// validators = entity has no filter/order_by surface (sessions, domains,
+// roles, assignments, releases, snapshots, operations).
+func validateListSpec(filter, orderBy string, validateFilter func(field, value string) error, validateOrder func(field string) error) error {
+	if validateFilter != nil {
+		if field, value, ok := core.ParseFilterExpr(filter); ok {
+			if err := validateFilter(field, value); err != nil {
+				return status.Errorf(codes.InvalidArgument, "%v", err)
+			}
+		}
+	}
+	if validateOrder != nil {
+		field, _ := parseOrderBy(orderBy)
+		if err := validateOrder(field); err != nil {
+			return status.Errorf(codes.InvalidArgument, "%v", err)
+		}
+	}
+	return nil
+}
+
+func validateListSpecUser(filter, orderBy string) error {
+	return validateListSpec(filter, orderBy, core.ValidateUserFilter, core.ValidateUserOrderBy)
 }

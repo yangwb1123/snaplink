@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/interfaces/cors"
 	"github.com/yangwb1123/snaplink/internal/auth/login"
 	"github.com/yangwb1123/snaplink/platform/audit"
@@ -37,6 +38,16 @@ func WithCORS(policy cors.Policy) Option {
 // (and adapters can claim it) without importing shared/core. Placed here,
 // not in aliases.go, which sits at the per-file line budget.
 type GatedRegistrar = core.GatedRegistrar
+
+// Admin keyset-pagination SPI re-exports (aliases.go is at its line budget;
+// contracts in shared/core/pagination.go + domains/tenant/pagination.go).
+type PageQuery = core.PageQuery
+type PaginatedClientStore = core.PaginatedClientStore
+type ClientExpiryLister = core.ClientExpiryLister
+type PaginatedUserProvider = core.PaginatedUserProvider
+type PaginatedSessionLister = core.PaginatedSessionLister
+type PaginatedTenantStore = tenant.PaginatedTenantStore
+type PaginatedDomainStore = tenant.PaginatedDomainStore
 
 const KeyAccessToken = core.KeyAccessToken
 const KeyACR = core.KeyACR
