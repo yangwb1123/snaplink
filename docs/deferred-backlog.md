@@ -193,12 +193,17 @@ design. No automatic translation or precedence model is promised.
 
 ### Automatic degraded-mode transitions
 
-**Status: Deferred decision.**
+**Status: Implemented (opt-in).**
 
-The degradation manager and admin mode endpoint exist. Continuous storage
-health currently remains pull-based; `auto_read_only_on_store_loss` records
-operator intent but has no in-process driver. An external controller may drive
-the mode endpoint.
+The degradation manager, admin mode endpoint, and the in-process auto driver
+now exist. With `degradation.auto_read_only_on_store_loss: true` the server
+polls its wired storage-health sources (every store with a Ping, audit sinks
+excluded — audit is fail-open by contract) and drops to `read_only` after
+`degradation.auto_read_only.grace` of continuous loss, restoring the configured
+`initial_mode` on recovery. Each replica still runs its own pull-based health
+loop; cross-replica coordination (a cluster-wide decision) remains an external
+controller's job via the same mode endpoint. See
+[design/degradation-auto-driver.md](design/degradation-auto-driver.md).
 
 ## Baseline maintenance rule
 

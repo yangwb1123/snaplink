@@ -328,10 +328,9 @@ func (b *appBuilder) wireSessionTrustDecay() {
 }
 
 // wireDegradation builds the degraded-service Manager and wires
-// sso.WithDegradationManager, mounting the admin /api/v1/admin/dr/mode read+toggle.
-// The manager holds no background loop of its own — the admin endpoint (and any
-// external health loop calling SetMode) is the operator's toggle seam. No-op when
-// the degradation section is disabled.
+// sso.WithDegradationManager, mounting the admin /api/v1/admin/dr/mode
+// read+toggle; with auto_read_only_on_store_loss it also arms the automatic
+// read_only driver. No-op when the degradation section is disabled.
 func (b *appBuilder) wireDegradation() error {
 	mgr, err := serverbuildplatform.BuildDegradationManager(b.cfg.Degradation)
 	if err != nil {
@@ -343,12 +342,13 @@ func (b *appBuilder) wireDegradation() error {
 	b.degradationMgr = mgr
 	b.opts = append(b.opts, sso.WithDegradationManager(mgr))
 	if b.cfg.Degradation.AutoReadOnlyOnStoreLoss {
-		// No continuous storage-health push loop exists in cmd today (health is
-		// pull-based via /readyz + the storage-health admin report), so there is
-		// no clean seam to auto-drive SetMode. Surface the intent: an operator or
-		// external health loop drives read_only via the mounted dr/mode endpoint.
-		b.logger.Info("degradation: auto_read_only_on_store_loss set — no auto-driver seam; drive SetMode(read_only) via POST /api/v1/admin/dr/mode",
-			"initial_mode", mgr.Mode())
+		// Auto driver: polls the storage-health sources, drives SetMode(read_only)
+		// after the grace window — see serverbuildplatform.BuildDegradationAutoDriver.
+		if drv := serverbuildplatform.BuildDegradationAutoDriver(b.cfg.Degradation, mgr, b.storageHealthSources, b.logger); drv != nil {
+			ctx, cancel := context.WithCancel(context.Background())
+			b.autoReadOnlyCancel, b.autoReadOnlyDone = cancel, drv.Run(ctx)
+			b.logger.Info("degradation: auto read_only driver armed", "interval", drv.Interval(), "grace", drv.Grace(), "stores", drv.StoreCount())
+		}
 		return nil
 	}
 	b.logger.Info("degradation: degraded-service gate enabled", "initial_mode", mgr.Mode())

@@ -491,6 +491,7 @@ func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.tokenUsageRecorder = b.tokenUsageRecorder
 	a.tokenAnomalySweepCancel, a.tokenAnomalySweepDone = b.tokenAnomalySweepCancel, b.tokenAnomalySweepDone
 	a.degradationMgr = b.degradationMgr
+	a.autoReadOnlyCancel, a.autoReadOnlyDone = b.autoReadOnlyCancel, b.autoReadOnlyDone
 	a.userAutoDeprovisionCancel, a.userAutoDeprovisionDone = b.userAutoDeprovisionCancel, b.userAutoDeprovisionDone
 	a.clientSecretScanCancel, a.clientSecretScanDone = b.clientSecretScanCancel, b.clientSecretScanDone
 	if b.tenantQuotaRuntime != nil {

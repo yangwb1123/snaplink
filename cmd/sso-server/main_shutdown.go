@@ -317,6 +317,8 @@ func shutdownSchedulers(ctx context.Context, a *app, logger spi.Logger) {
 		"config drift detection loop did not exit cleanly")
 	stopScheduler(ctx, logger, a.breakGlassCancel, a.breakGlassDone,
 		"break-glass sweeper did not exit cleanly")
+	stopScheduler(ctx, logger, a.autoReadOnlyCancel, a.autoReadOnlyDone,
+		"auto read_only driver did not exit cleanly")
 	stopScheduler(ctx, logger, a.continuousVerifyCancel, a.continuousVerifyDone,
 		"continuous-verification agent did not exit cleanly")
 	stopScheduler(ctx, logger, a.capConvergenceCancel, a.capConvergenceDone,

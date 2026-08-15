@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Automatic degraded-mode transitions: with
+  `degradation.auto_read_only_on_store_loss: true`, `sso-server` now runs an
+  in-process driver that polls its wired storage-health sources (the same Ping
+  probes behind the admin `/storage-health` report; audit sinks excluded
+  because audit is fail-open by contract) and drops to `read_only` after a
+  store has been continuously unhealthy for
+  `degradation.auto_read_only.grace` (hysteresis — transient probe jitter
+  never flaps the mode), restoring the configured `degradation.initial_mode`
+  when health returns. Transitions flow through the same audit + metric path
+  as the admin `POST /api/v1/admin/dr/mode` toggle. New keys:
+  `degradation.auto_read_only.interval` (poll cadence, default 30s) and
+  `degradation.auto_read_only.grace` (default 60s); `<=0` on either takes the
+  package default.
 - SMTP implicit TLS: the built-in email sender now establishes the TLS
   connection before the first SMTP verb on port `465` (auto-selected) or with
   `smtp.tls_mode: implicit`; STARTTLS (`587`) and plaintext (`25`) behavior is

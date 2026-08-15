@@ -214,12 +214,13 @@ type appBuilder struct {
 	tokenAnomalySweepCancel context.CancelFunc
 	tokenAnomalySweepDone   <-chan struct{}
 
-	// degradationMgr is the disaster-recovery degraded-service Manager
-	// (degradation.enabled). It has no background loop — the admin
-	// /api/v1/admin/dr/mode endpoints wired by WithDegradationManager drive it —
-	// so it carries no cancel/done pair; retained only so the *app can expose the
-	// current posture (and a future health loop can call SetMode). Nil when off.
-	degradationMgr *sso.DegradationManager
+	// degradationMgr is the DR degraded-service Manager (degradation.enabled),
+	// nil when off. The auto read_only driver (auto_read_only_on_store_loss)
+	// polls the storage-health sources and drives SetMode via the SAME OnChange
+	// path as the admin dr/mode toggle (audit + metric gauge).
+	degradationMgr     *sso.DegradationManager
+	autoReadOnlyCancel context.CancelFunc
+	autoReadOnlyDone   <-chan struct{}
 
 	userAutoDeprovisionInterval time.Duration
 	userAutoDeprovisionCancel   context.CancelFunc

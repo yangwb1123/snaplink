@@ -377,10 +377,12 @@ type app struct {
 	tokenAnomalySweepDone   <-chan struct{}
 
 	// degradationMgr is the DR degraded-service Manager (degradation.enabled),
-	// nil when off. No shutdown handle — the manager owns no goroutine; its only
-	// runtime surface is the admin /api/v1/admin/dr/mode toggle. Held so the mode
-	// is inspectable and an external health loop can drive SetMode.
-	degradationMgr *sso.DegradationManager
+	// nil when off. Held so the mode is inspectable and an external health loop
+	// can drive SetMode. The auto read_only driver's loop (auto flag) stops via
+	// autoReadOnlyCancel/Done through stopScheduler; both nil when off.
+	degradationMgr     *sso.DegradationManager
+	autoReadOnlyCancel context.CancelFunc
+	autoReadOnlyDone   <-chan struct{}
 
 	// userAutoDeprovisionCancel/Done stop the domains/userlifecycle
 	// dormancy-sweep loop (user_lifecycle.auto_deprovision.enabled); nil/zero

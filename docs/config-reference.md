@@ -695,13 +695,15 @@ The detection-to-response bridge (`domains/threataction`, `sso.WithThreatExecuto
 
 ## Degraded-Service Modes
 
-Disaster-recovery degraded-service control plane (`platform/lifecycle/degradation`, `sso.WithDegradationManager`). Disabled by default: an absent section installs no gate and mounts no route (byte-identical). An enabled-but-`normal` build is a pass-through (one atomic load per request).
+Disaster-recovery degraded-service control plane (`platform/lifecycle/degradation`, `sso.WithDegradationManager`). Disabled by default: an absent section installs no gate and mounts no route (byte-identical). An enabled-but-`normal` build is a pass-through (one atomic load per request). With `auto_read_only_on_store_loss` the section additionally arms the automatic read_only driver described below (each replica runs its own pull-based loop; an external controller can still drive the mode endpoint).
 
 | Key | Effect |
 |---|---|
 | `degradation.enabled` | Builds the degraded-service `Manager` and wires `sso.WithDegradationManager`, mounting the admin `GET`/`POST /api/v1/admin/dr/mode` read+toggle. The enforcement middleware sheds the request classes the active mode names with `503` + `Retry-After` (probes always pass) |
 | `degradation.initial_mode` | Boot posture: `normal` (default) \| `read_only` \| `auth_only` \| `local_only` \| `maintenance`. An unrecognized value fails loud at boot |
-| `degradation.auto_read_only_on_store_loss` | Operator INTENT flag. cmd has no continuous storage-health push loop today (health is pull-based via `/readyz` + the storage-health admin report), so there is no clean auto-driver seam — the manager is EXPOSED for an operator or external health loop to drive `SetMode(read_only)` via `POST /api/v1/admin/dr/mode`. Honored as a boot-time log acknowledgement |
+| `degradation.auto_read_only_on_store_loss` | Operator INTENT flag: arms the in-process auto driver, which polls the wired storage-health sources (every store exposing a `Ping`, audit sinks excluded — audit errors are fail-open by contract) and calls `SetMode(read_only)` after a store has been continuously unhealthy for the grace window; a healthy sweep restores `initial_mode`. Transitions travel the SAME `OnChange` path as the admin dr/mode toggle (audit event + metric gauge). A deployment with no watchable store (memory-only) arms nothing and keeps booting |
+| `degradation.auto_read_only.interval` | Auto-driver poll cadence; `<=0` takes the package default 30s (`degradation.DefaultAutoInterval`). Probe timeouts are bounded to half the interval, capped at 3s — a hung probe is fail-open and never drives a transition |
+| `degradation.auto_read_only.grace` | Continuous-unhealthy window a store must sustain before the driver flips `read_only` (hysteresis: a transient probe jitter never flaps the mode); `<=0` takes the package default 60s (`degradation.DefaultAutoGrace`). A probe that errors or times out is indeterminate (fail-open) — it neither starts nor extends the window |
 
 ## Break-glass
 
