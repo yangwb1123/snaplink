@@ -1,0 +1,200 @@
+# B10 implementation batch: postgres audit test race + lifecycle→CAEP events
+# + config governance apply endpoint.
+#
+# Direction set (baseline verified 2026-08-15 at HEAD c6b17447):
+#   1. Postgres audit test race — pre-existing flake surfaced by the B9
+#      finalize report: infrastructure/postgres/audit_test.go has
+#      t.Parallel() tests (lines 25/65-66/102-103) that TRUNCATE the
+#      shared audit_events table (line 18 helper) → cross-test
+#      truncation races under a live SSO_TEST_POSTGRES_DSN.
+#   2. User-lifecycle → CAEP/SSF lifecycle event channel —
+#      docs/deferred-backlog.md "User lifecycle" open boundary: "A
+#      standardized event channel for resource servers that validate
+#      JWTs fully offline remains future work." The CAEP/SSF transmitter
+#      (protocols/caep/broadcaster.go: audit event → SET, MetaAffectedClient/
+#      MetaSubject) and the LifecycleEventBus (domains/userlifecycle/bus.go
+#      with On/OnAsync states) exist but are not connected.
+#   3. Config governance apply endpoint — docs/deferred-backlog.md
+#      "Declarative multi-cluster configuration governance" (Partial by
+#      design): diff-only is implemented (platform/configaudit:
+#      running/applied/diff/cluster-diff/history routes, diff/digest/drift/
+#      redact + memory/sqlite store); applying peer configuration is not.
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b10.yaml
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative. Files are referenced by PATH — read them with
+#     your tools, do not expect them inlined.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report (table of commands
+#     with real results; never claim a test passed that you did not run).
+#   - Engineering budgets: no file over 500 lines, no function over 50 lines
+#     / cyclo 15, no new maintainability exemptions, no skipDirs /
+#     layerExemptions additions, no layer violations (architecture gate).
+#   - Update docs/config-reference.md + docs/openapi.yaml + CHANGELOG.md in
+#     the same commit when a public contract changes (B10-2/B10-3: yes;
+#     B10-1: no).
+#   - Commit with a conventional imperative message + AI co-author trailer.
+#     The post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库。任务：修复 postgres 审计测试的并行 TRUNCATE
+    竞态（B9 收尾报告发现的预存在 flake）。
+
+    现状（已实证）：
+    - infrastructure/postgres/audit_test.go：多个测试带 t.Parallel()
+      （第 25 行 helper 内、TestAudit_QueryFilterOrderAndFacets :65-66、
+      TestAudit_PruneAndLastHash :102-103），且 helper 第 18 行对共享表
+      audit_events 执行 TRUNCATE → 在真实 postgres（SSO_TEST_POSTGRES_DSN）
+      下并行测试互相清空对方数据，随机失败；无 DSN 时（默认 skip）不可见。
+    - 本机 docker 容器 docker-db_postgres-1 运行中（IP 172.18.0.9:5432，
+      postgres 用户，scram-sha-256；B9 用过
+      postgres://postgres:difyai123456@172.18.0.9:5432/sso_test?sslmode=disable
+      ——以实际可达为准，可自建库）。
+
+    执行要求：
+    1. 先复现：SSO_TEST_POSTGRES_DSN=... go test ./infrastructure/postgres/
+       -run 'TestAudit_' -count=10 -race -v，如实记录失败样本（报告须
+       含复现输出）。
+    2. 修复（选择最小且根治的方案，报告说明选择理由）：
+       - 移除共享表测试的 t.Parallel()（推荐：这些测试本就顺序化更
+         稳妥），或
+       - 每测试独立表/独立 schema，或
+       - 包级串行化互斥。
+       不得用 sleep/重试掩盖；不得跳过测试。
+    3. 验证（必须实际运行并报告输出）：
+       SSO_TEST_POSTGRES_DSN=... go test ./infrastructure/postgres/
+         -run 'TestAudit_' -count=10 -race -v
+       SSO_TEST_POSTGRES_DSN=... go test ./infrastructure/postgres/ -count=1
+       go build ./... && go vet ./...
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    4. 硬边界：不改生产代码（audit_test.go 及必要 helper 之外零改动）；
+       无 DSN 时测试保持原 skip 语义；零豁免。
+    5. conventional commit（imperative + AI co-author trailer；test 前缀
+       或 fix 前缀按实际改动定）。
+  output: docs/campaigns/reports/b10-postgres-audit-race.md
+  timeout: 1200
+  validate: |
+    go build ./... && go vet ./... && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：把用户生命周期转换接进 CAEP/SSF 事件通道
+    （deferred-backlog "User lifecycle" 的 future-work 边界：
+    "A standardized event channel for resource servers that validate
+    JWTs fully offline remains future work"），先写有界设计、再实现。
+
+    契约（先读，后实现，契约优先于本提示）：
+    - docs/deferred-backlog.md "User lifecycle" 段
+    - protocols/caep/broadcaster.go（CAEP 发射器：审计事件→SET 映射
+      mapAuditEvent；MetaAffectedClient/MetaSubject；接收端地址只来自
+      客户端已注册元数据 AttrReceiverEndpoint，防外渗；只发给受影响
+      客户端）
+    - protocols/caep/receiver.go 与 receiver_receive.go（SSF 接收侧，
+      事件类型解析）
+    - domains/userlifecycle/bus.go（LifecycleEventBus：State + On/
+      OnAsync 反应钩子）与 protocols/lifecyclereactions/revoke_on_archive.go
+      （现有反应示例：迁移撤销）
+    - 现有审计事件：userlifecycle 转换的审计事件类型（grep
+      userlifecycle 的 audit 事件，确认事件名与元数据现状）
+    - AGENTS.md §3 信任与失效模式：CAEP 只发给受影响客户端、接收端
+      端点来自校验过的客户端属性、发射失败 fail-open（审计记录）
+
+    第一步——设计文档（必须先写）：
+    docs/design/lifecycle-caep-events.md，必须裁决：
+    1. 事件类型：选用标准 CAEP 事件（如 account-status-changed）还是
+       自定义 snaplink 事件 URI；SET 的 subject（sub_id）与受影响
+       客户端（MetaAffectedClient）如何从转换上下文推导（租户维度：
+       "tenant events query only that tenant"）。
+    2. 接线点：LifecycleEventBus 反应（On/OnAsync）里发射 vs 在
+       userlifecycle 审计事件路径上挂发射器——以复用既有广播器
+       （审计事件→SET 映射）为判据，给出证据；避免与现有
+       revoke_on_archive 反应重叠/双重发射。
+    3. 失败模式：发射失败 fail-open + 审计（EventCAEPBroadcastFailed
+       既有路径）；反应不得阻塞转换主流程（OnAsync 或异步语义）。
+    4. 硬边界：不触碰 CAEP 接收侧、不改变现有撤销反应语义、不新增
+       wire 配置键（或如确需，说明并同步 config-reference）、零豁免、
+       不新增向上依赖。
+    5. 验收断言（可测试）：转换→受影响客户端收到 SET；非受影响
+       客户端零事件；发射失败→审计事件 + 转换成功（fail-open）；
+       租户隔离。
+
+    第二步——实现（按设计）：
+    1. 接线 + 事件映射 + 审计元数据；复用既有发射路径（禁止新建
+       第二发射通道）。
+    2. 测试（禁止 skip）：单测（bus→发射器假接收端）+ 集成测试
+       （wire userlifecycle + CAEP transmitter，断言受影响客户端收到
+       且仅受影响客户端收到；失败注入 fail-open）。
+    3. 文档同步：feature-matrix.md 用户生命周期行（若声明边界）、
+       CHANGELOG.md Added；deferred-backlog 该段边界更新。
+    4. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./protocols/caep/... ./domains/userlifecycle/... ./protocols/lifecyclereactions/... -count=1
+       go test ./test/ -run 'Lifecycle|CAEP|SSF' -count=1
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    5. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b10-lifecycle-caep-events.md
+  timeout: 1800
+  validate: |
+    go build ./... && go vet ./... && go test ./protocols/caep/... ./domains/userlifecycle/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：实现配置治理的 apply 端点（promotes
+    deferred-backlog "Declarative multi-cluster configuration governance"
+    的 Partial 边界：applying peer configuration），先写有界设计、再
+    实现。diff-only 行为保持 fail-open 且非变更（现状不变）。
+
+    契约（先读，后实现，契约优先于本提示）：
+    - docs/deferred-backlog.md "Declarative multi-cluster configuration
+      governance" 段（已实现：POST /api/v1/admin/config/cluster-diff、
+      SSOConfigDrift CRD/reconciler 只读对比、secret 引用与状态上报；
+      未承诺：Applying peer configuration、canary、GitOps 回滚——需
+      权威/审批模型、secret 脱敏规则、回滚语义、split-brain 处理）
+    - platform/configaudit/（mount.go 路由清单：running/applied/diff/
+      cluster-diff/history；handlers.go；store.go Store 接口；diff.go
+      ConfigDiff；digest.go；drift.go；redact.go 脱敏；memory.go 与
+      sqlite/ 存储）
+    - cmd/sso-server/build_app.go:305（cluster-diff 的 admin:read scope
+      接线先例；apply 属写操作 → admin:write，参照既有 admin 写路由）
+    - AGENTS.md §2/§3：管理面用 admin:read/admin:write；审计元数据经
+      audit.SetMeta；新端点 → docs/openapi.yaml 同提交
+
+    第一步——设计文档（必须先写）：
+    docs/design/config-apply-mode.md，必须裁决：
+    1. 权威模型：谁可 apply（admin:write + 显式审批标志如
+       ?approve=true 或双端点 apply-dry-run→apply-commit 两段式——
+       以最小表面 + 防误操作为判据）；审批与审计记录。
+    2. 目标语义：apply 的输入（peer diff 结果 vs 完整配置快照 vs
+       etcd 配置源修订）、写路径（configaudit.Store 的新 Apply 方法 vs
+       复用现有存储）、成功后 running/applied/history 三视图如何更新。
+    3. 回滚语义：事务性写入（失败不残留半态）、保留前版本、显式
+       rollback 端点（或设计裁决不需要）；失败模式分类。
+    4. split-brain 防护：apply 前比较 peer 指纹/配置源修订，冲突 →
+       409 拒绝（数字证据：cluster-diff 现有 digest 机制复用）。
+    5. secret 脱敏：apply 输入/响应/审计记录绝不回显 secret（复用
+       redact.go；测试证明明文扫描失败）。
+    6. 硬边界：diff-only 路径逐字节不变；未启用 configaudit store 时
+       行为不变；零豁免；不新增向上依赖（configaudit 在 platform 层）。
+    7. 验收断言（可测试）：apply 成功→applied/history 更新+审计事件；
+       无审批→403/400；冲突→409；回滚恢复前版本；secret 不回显；
+       diff-only 回归全绿。
+
+    第二步——实现（按设计）：
+    1. Store.Apply（或等效）+ handler + 路由（admin:write）+ openapi
+       同步 + 审计事件类型登记（auditreport 分类，如新增）。
+    2. 测试（禁止 skip）：memory store 全断言 + sqlite store 同套
+       （如适用）+ diff-only 回归 + secret 扫描测试。
+    3. 文档同步：docs/openapi.yaml、docs/config-reference.md（如新增
+       配置键）、docs/error-codes.md（如新增 Err*）、CHANGELOG.md。
+    4. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./platform/configaudit/... -count=1
+       go test ./interfaces/sso/... -run 'Config' -count=1
+       python3 cli.py check-routes && python3 cli.py sdk-surface check
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    5. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b10-config-apply.md
+  timeout: 2400
+  validate: |
+    go build ./... && go vet ./... && go test ./platform/configaudit/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
