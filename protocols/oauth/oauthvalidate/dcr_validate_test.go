@@ -7,6 +7,10 @@ import (
 
 var testSupportedGrants = []string{"authorization_code", "client_credentials", "refresh_token"}
 
+// testSupportedIDTokenAlgs is the wired id_token signing set the validator
+// tests accept (the server's DCR path passes its live SigningAlgValues).
+var testSupportedIDTokenAlgs = []string{"EdDSA", "ES256", "RS256", "PS256"}
+
 var testDCRPolicy = &DCRPolicy{
 	AllowedAuthenticators: []string{"password", "totp"},
 }
@@ -28,6 +32,33 @@ func TestValidateDCRMetadata(t *testing.T) {
 			},
 			policy:  &DCRPolicy{},
 			wantErr: false,
+		},
+		{
+			name: "wired id_token_signed_response_alg accepted",
+			req: &DCRMetadata{
+				RedirectURIs:             []string{"https://example.com/cb"},
+				IDTokenSignedResponseAlg: "RS256",
+			},
+			policy:  &DCRPolicy{},
+			wantErr: false,
+		},
+		{
+			name: "unwired id_token_signed_response_alg rejected",
+			req: &DCRMetadata{
+				RedirectURIs:             []string{"https://example.com/cb"},
+				IDTokenSignedResponseAlg: "HS256",
+			},
+			policy:  &DCRPolicy{},
+			wantErr: true,
+		},
+		{
+			name: "alg none rejected",
+			req: &DCRMetadata{
+				RedirectURIs:             []string{"https://example.com/cb"},
+				IDTokenSignedResponseAlg: "none",
+			},
+			policy:  &DCRPolicy{},
+			wantErr: true,
 		},
 		{
 			name: "valid client credentials client",
@@ -157,7 +188,7 @@ func TestValidateDCRMetadata(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := ValidateDCRMetadata(tc.req, tc.policy, testSupportedGrants, "authorization_code")
+			err := ValidateDCRMetadata(tc.req, tc.policy, testSupportedGrants, "authorization_code", testSupportedIDTokenAlgs)
 			if tc.wantErr {
 				if err == nil {
 					t.Error("ValidateDCRMetadata() expected error, got nil")

@@ -11,7 +11,7 @@ import (
 func validateEnc(t *testing.T, m *DCRMetadata) error {
 	t.Helper()
 	m.RedirectURIs = []string{"https://rp.example/cb"}
-	return ValidateDCRMetadata(m, &DCRPolicy{}, core.SupportedGrants, core.GrantAuthorizationCode)
+	return ValidateDCRMetadata(m, &DCRPolicy{}, core.SupportedGrants, core.GrantAuthorizationCode, []string{"EdDSA", "ES256", "RS256", "PS256"})
 }
 
 func TestDCREncryption_EncDefaultsWhenAlgSet(t *testing.T) {

@@ -70,7 +70,7 @@ func FuzzValidateDCRMetadata(f *testing.F) {
 
 		// The contract under test: this MUST NOT panic for any input.
 		// An error return is fine and expected for most malformed metadata.
-		_ = ValidateDCRMetadata(req, policy, supportedGrants, "authorization_code")
+		_ = ValidateDCRMetadata(req, policy, supportedGrants, "authorization_code", []string{"EdDSA", "ES256"})
 	})
 }
 

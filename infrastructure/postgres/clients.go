@@ -90,11 +90,16 @@ const clientSchemaV4 = `
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS secret_expires_at BIGINT NOT NULL DEFAULT 0;
 `
 
+const clientSchemaV5 = `
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS id_token_signed_response_alg TEXT NOT NULL DEFAULT '';
+`
+
 var clientMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: clientSchema},
 	{Version: 2, Name: "secret_rotation_and_trust_score", SQL: clientSchemaV2},
 	{Version: 3, Name: "client_secret_overlap", SQL: clientSchemaV3},
 	{Version: 4, Name: "client_secret_expiry", SQL: clientSchemaV4},
+	{Version: 5, Name: "client_id_token_signed_response_alg", SQL: clientSchemaV5},
 }
 
 // Statements derived once from clientColumns so the INSERT / upsert / UPDATE /

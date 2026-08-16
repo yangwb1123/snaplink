@@ -103,6 +103,7 @@ func (b *appBuilder) seedClients(clientStore sso.ClientStore) error {
 			DeviceCodeTTL:                    c.DeviceCodeTTL,
 			DeviceCodePollInterval:           c.DeviceCodePollInterval,
 			UserinfoSignedResponseAlg:        c.UserinfoSignedResponseAlg,
+			IDTokenSignedResponseAlg:         c.IDTokenSignedResponseAlg,
 			BackchannelLogoutURI:             c.BackchannelLogoutURI,
 			SubjectType:                      c.SubjectType,
 			SectorIdentifierURI:              c.SectorIdentifierURI,
@@ -113,8 +114,7 @@ func (b *appBuilder) seedClients(clientStore sso.ClientStore) error {
 			ConsentRefreshInterval:           c.ConsentRefreshInterval,
 		}
 		// Validate the CAEP receiver endpoint (https) at boot; plaintext would
-		// exfiltrate revocation SETs. Same anti-exfil rule the
-		// admin gRPC path enforces.
+		// exfiltrate revocation SETs (same anti-exfil rule as the admin gRPC path).
 		if ep := c.Attributes[caep.AttrReceiverEndpoint]; ep != "" {
 			if err := caep.ValidateReceiverEndpoint(ep); err != nil {
 				return fmt.Errorf("client %q caep_receiver_endpoint: %w", c.ID, err)

@@ -15573,6 +15573,14 @@ components:
         id_token_encrypted_response_enc: { type: string }
         userinfo_encrypted_response_alg: { type: string }
         userinfo_encrypted_response_enc: { type: string }
+        id_token_signed_response_alg:
+          type: string
+          description: |
+            OIDC Core §3.1.3.1 / RFC 7591 §2 — the JWS algorithm the AS
+            uses to sign THIS client's ID Tokens. Empty = the server's
+            default issuer. The value must be one the server actually
+            signs with (its `id_token_signing_alg_values_supported`);
+            anything else is rejected with 400 invalid_client_metadata.
 
     ClientMetadata:
       type: object
@@ -16791,6 +16799,12 @@ components:
         id_token_encrypted_response_enc: { type: string }
         userinfo_encrypted_response_alg: { type: string }
         userinfo_encrypted_response_enc: { type: string }
+        id_token_signed_response_alg:
+          type: string
+          description: |
+            OIDC Core §3.1.3.1 / RFC 7591 §2 — the JWS algorithm the AS
+            uses to sign THIS client's ID Tokens. Empty = the server's
+            default issuer.
 
     User:
       type: object

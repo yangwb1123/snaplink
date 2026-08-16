@@ -100,6 +100,7 @@ func TestSQLiteClients_SecurityFieldsSurviveRestart(t *testing.T) {
 		IDTokenEncryptedResponseEnc:  "A256GCM",
 		UserinfoEncryptedResponseAlg: "ECDH-ES",
 		UserinfoEncryptedResponseEnc: "A128GCM",
+		IDTokenSignedResponseAlg:     "RS256",
 		Federation:                   true,
 	}
 	if err := st.Add(context.Background(), in); err != nil {
@@ -148,6 +149,9 @@ func TestSQLiteClients_SecurityFieldsSurviveRestart(t *testing.T) {
 	if out.IDTokenEncryptedResponseAlg != "RSA-OAEP-256" || out.IDTokenEncryptedResponseEnc != "A256GCM" ||
 		out.UserinfoEncryptedResponseAlg != "ECDH-ES" || out.UserinfoEncryptedResponseEnc != "A128GCM" {
 		t.Errorf("JWE alg/enc round-trip failed: %+v", out)
+	}
+	if out.IDTokenSignedResponseAlg != "RS256" {
+		t.Errorf("IDTokenSignedResponseAlg round-trip failed: got %q want RS256", out.IDTokenSignedResponseAlg)
 	}
 	if !out.Federation {
 		t.Errorf("Federation round-trip failed: got false want true")

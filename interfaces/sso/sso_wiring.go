@@ -26,6 +26,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/sse"
 	"github.com/yangwb1123/snaplink/protocols/caep"
 	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/i18n"
 	"github.com/yangwb1123/snaplink/shared/security"
@@ -38,21 +39,28 @@ type wiringState struct {
 	tokenIssuers          map[string]TokenIssuer // strategy name -> issuer
 	defaultTokenStrategy  string
 	tenantTokenStrategies map[string]string // tenant id -> strategy (issuer) name
-	userProvider          UserProvider
-	clientStore           ClientStore
-	sessionMgr            SessionManager
-	maxSessionsPerUser    int // 0 = unlimited (backward compatible)
-	router                Router
-	logger                spi.Logger
-	auditor               *audit.Recorder
-	caepTransmitter       *caep.Transmitter
-	caepStreamStore       caep.StreamStore
-	auditAPI              bool
-	sseBroker             *sse.Broker
-	sseHeartbeat          time.Duration
-	requestIDMW           bool
-	panicRecovery         bool
-	compressionEnabled    bool
+	// idTokenIssuerAlgs routes clients that declare an
+	// id_token_signed_response_alg to the issuer wired for that alg
+	// (WithIDTokenIssuerAlg). Consulted only when a client sets the field;
+	// empty map = default id_token issuer resolution unchanged. The wired
+	// issuers MUST also be registered via WithTokenIssuer so their public
+	// keys land in the aggregated JWKS and id_token_hint validation works.
+	idTokenIssuerAlgs  map[string]oidc.IDTokenIssuer
+	userProvider       UserProvider
+	clientStore        ClientStore
+	sessionMgr         SessionManager
+	maxSessionsPerUser int // 0 = unlimited (backward compatible)
+	router             Router
+	logger             spi.Logger
+	auditor            *audit.Recorder
+	caepTransmitter    *caep.Transmitter
+	caepStreamStore    caep.StreamStore
+	auditAPI           bool
+	sseBroker          *sse.Broker
+	sseHeartbeat       time.Duration
+	requestIDMW        bool
+	panicRecovery      bool
+	compressionEnabled bool
 	// accessLogPolicy installs the always-on INFO access log (Decision 1 of
 	// docs/design/middleware-observability-unified.md); nil = not installed —
 	// the SDK default, byte-identical when the option is absent. It replaced

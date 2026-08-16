@@ -87,4 +87,12 @@ ALTER TABLE clients ADD COLUMN secret_overlap_until INTEGER NOT NULL DEFAULT 0;`
 		Version: 6,
 		SQL:     `ALTER TABLE clients ADD COLUMN secret_expires_at INTEGER NOT NULL DEFAULT 0;`,
 	},
+	{
+		// v7: per-client id_token signing algorithm (OIDC Core §3.1.3.1 /
+		// RFC 7591 §2 id_token_signed_response_alg). Empty default keeps
+		// existing rows on the server's default id_token issuer,
+		// byte-identical.
+		Version: 7,
+		SQL:     `ALTER TABLE clients ADD COLUMN id_token_signed_response_alg TEXT NOT NULL DEFAULT '';`,
+	},
 }

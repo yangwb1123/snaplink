@@ -30,6 +30,13 @@ type DCRMetadata struct {
 	IDTokenEncryptedResponseEnc  string
 	UserinfoEncryptedResponseAlg string
 	UserinfoEncryptedResponseEnc string
+
+	// IDTokenSignedResponseAlg is the OIDC Core §3.1.3.1 / RFC 7591 §2
+	// client metadata naming the JWS algorithm the AS uses to sign THIS
+	// client's ID Tokens. Validated against the server's wired signing
+	// set (validateIDTokenSigningAlg) — an alg the AS cannot actually
+	// produce is rejected at registration, never accepted-then-broken.
+	IDTokenSignedResponseAlg string
 }
 
 // supportedJWEResponseAlgs / supportedJWEResponseEncs enumerate the
@@ -60,25 +67,9 @@ const DefaultJWEResponseEnc = "A256GCM"
 // (typically core.GrantAuthorizationCode); the redirect_uris-required
 // rule §2 only fires when this is present in or defaults from the
 // request's grant_types.
-func ValidateDCRMetadata(req *DCRMetadata, policy *DCRPolicy, supportedGrants []string, authzCodeGrant string) error {
-	// redirect_uris is REQUIRED for grant_type=authorization_code
-	// (the default), OPTIONAL for client_credentials-only clients
-	// (per §2 — "redirect_uris is OPTIONAL ... If the grant types
-	// supported include authorization_code or implicit, then this
-	// metadata REQUIRED").
-	wantsCodeFlow := len(req.GrantTypes) == 0 ||
-		slices.Contains(req.GrantTypes, authzCodeGrant)
-	if wantsCodeFlow && len(req.RedirectURIs) == 0 {
-		return ErrDCR("redirect_uris required for authorization_code flow")
-	}
-
-	if slices.Contains(req.RedirectURIs, "") {
-		return ErrDCR("empty redirect_uri")
-	}
-	for _, redirectURI := range req.RedirectURIs {
-		if !safeRedirectURI(redirectURI) {
-			return ErrDCR("unsafe redirect_uri: " + redirectURI)
-		}
+func ValidateDCRMetadata(req *DCRMetadata, policy *DCRPolicy, supportedGrants []string, authzCodeGrant string, supportedIDTokenAlgs []string) error {
+	if err := validateRedirectURIs(req, authzCodeGrant); err != nil {
+		return err
 	}
 
 	switch req.TokenEndpointAuthMethod {
@@ -108,6 +99,47 @@ func ValidateDCRMetadata(req *DCRMetadata, policy *DCRPolicy, supportedGrants []
 		return err
 	}
 
+	if err := validateIDTokenSigningAlg(req, supportedIDTokenAlgs); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateIDTokenSigningAlg rejects an id_token_signed_response_alg the
+// AS cannot produce: the value must be empty (server default issuer) or in
+// the server's wired signing set — the SAME set discovery advertises as
+// id_token_signing_alg_values_supported — so a client can never register
+// an alg that issuance would fail to honor. "none" and any other JWS
+// value outside the wired set are rejected here (and "none" can never be
+// wired: the SDK option whitelists security.AsymmetricJWSAlgs only).
+func validateIDTokenSigningAlg(req *DCRMetadata, supported []string) error {
+	if req.IDTokenSignedResponseAlg == "" {
+		return nil
+	}
+	if !slices.Contains(supported, req.IDTokenSignedResponseAlg) {
+		return ErrDCR("unsupported id_token_signed_response_alg: " + req.IDTokenSignedResponseAlg)
+	}
+	return nil
+}
+
+// validateRedirectURIs enforces RFC 7591 §2 redirect_uris rules:
+// REQUIRED for grant_type=authorization_code (the default), OPTIONAL for
+// client_credentials-only clients, every entry non-empty and safe.
+func validateRedirectURIs(req *DCRMetadata, authzCodeGrant string) error {
+	wantsCodeFlow := len(req.GrantTypes) == 0 ||
+		slices.Contains(req.GrantTypes, authzCodeGrant)
+	if wantsCodeFlow && len(req.RedirectURIs) == 0 {
+		return ErrDCR("redirect_uris required for authorization_code flow")
+	}
+	if slices.Contains(req.RedirectURIs, "") {
+		return ErrDCR("empty redirect_uri")
+	}
+	for _, redirectURI := range req.RedirectURIs {
+		if !safeRedirectURI(redirectURI) {
+			return ErrDCR("unsafe redirect_uri: " + redirectURI)
+		}
+	}
 	return nil
 }
 

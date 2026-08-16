@@ -201,6 +201,7 @@ func buildRegisteredClient(req *DCRRequest, policy *DCRPolicy, id, secret, regTo
 		IDTokenEncryptedResponseEnc:  req.IDTokenEncryptedResponseEnc,
 		UserinfoEncryptedResponseAlg: req.UserinfoEncryptedResponseAlg,
 		UserinfoEncryptedResponseEnc: req.UserinfoEncryptedResponseEnc,
+		IDTokenSignedResponseAlg:     req.IDTokenSignedResponseAlg,
 	}
 	if !public {
 		client.SecretExpiresAt = clientrotation.ExpiresAt(time.Now(), clientrotation.DefaultLifetime)
@@ -243,6 +244,7 @@ func buildDCRResponse(req *DCRRequest, client *core.Client, ctx core.HandlerCont
 		IDTokenEncryptedResponseEnc:  client.IDTokenEncryptedResponseEnc,
 		UserinfoEncryptedResponseAlg: client.UserinfoEncryptedResponseAlg,
 		UserinfoEncryptedResponseEnc: client.UserinfoEncryptedResponseEnc,
+		IDTokenSignedResponseAlg:     client.IDTokenSignedResponseAlg,
 	}
 }
 
@@ -336,5 +338,6 @@ func buildUpdatedClient(req *DCRRequest, client *core.Client, rotation ratRotati
 	updated.IDTokenEncryptedResponseEnc = req.IDTokenEncryptedResponseEnc
 	updated.UserinfoEncryptedResponseAlg = req.UserinfoEncryptedResponseAlg
 	updated.UserinfoEncryptedResponseEnc = req.UserinfoEncryptedResponseEnc
+	updated.IDTokenSignedResponseAlg = req.IDTokenSignedResponseAlg
 	return &updated
 }

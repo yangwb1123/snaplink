@@ -1,6 +1,9 @@
 package config
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type KeysConfig struct {
 	Signing              SigningConfig              `yaml:"signing"`
@@ -135,6 +138,27 @@ type KeyRotationConfig struct {
 	// = log error + INERT (§2 fail-safe — always widens, never narrows
 	// the verify window). cmd knob: keys.rotation.coordinated_cutover.
 	CoordinatedCutover bool `yaml:"coordinated_cutover"`
+}
+
+// canonicalSigningAlg maps the keys.signing.alg YAML value (lowercase
+// aliases) to the JWS algorithm name the signing issuer emits. "" and the
+// Ed25519 aliases default to EdDSA; unsupported values fall through to a
+// distinctive sentinel so the caller's error message names the mismatch.
+// Mirrors serverbuildsign.BuildSigningIssuer's switch and backs the
+// clients[].id_token_signed_response_alg boot gate.
+func canonicalSigningAlg(alg string) string {
+	switch strings.ToLower(strings.TrimSpace(alg)) {
+	case "", "eddsa", "ed25519":
+		return "EdDSA"
+	case "es256", "ecdsa":
+		return "ES256"
+	case "rs256", "rsa":
+		return "RS256"
+	case "ps256":
+		return "PS256"
+	default:
+		return strings.ToUpper(alg)
+	}
 }
 
 // ClusterConfig wires cross-replica coordination via cluster.Bus. The

@@ -196,6 +196,16 @@ type Client struct {
 	// access token's signature.
 	UserinfoSignedResponseAlg string `json:"userinfo_signed_response_alg,omitempty" yaml:"userinfo_signed_response_alg,omitempty"`
 
+	// IDTokenSignedResponseAlg is the OIDC Core §3.1.3.1 / RFC 7591 §2
+	// client metadata naming the JWS algorithm the AS signs THIS client's
+	// ID Tokens with. Empty (default) = the server's default id_token
+	// issuer (unchanged behavior). When set, the per-alg issuer wired via
+	// WithIDTokenIssuerAlg mints this client's id_tokens; DCR and static-
+	// config validation reject an alg outside the wired set, and issuance
+	// fails closed (id_token omitted, never signed with another key) if
+	// the issuer is ever absent at runtime.
+	IDTokenSignedResponseAlg string `json:"id_token_signed_response_alg,omitempty" yaml:"id_token_signed_response_alg,omitempty"`
+
 	// IDTokenEncryptedResponseAlg / IDTokenEncryptedResponseEnc are
 	// the OIDC Core §2 / §10.2 client metadata naming the JWE key-
 	// management (`alg`) + content-encryption (`enc`) algorithms the

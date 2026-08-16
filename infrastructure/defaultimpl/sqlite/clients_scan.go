@@ -59,6 +59,7 @@ func clientWriteArgs(c *sso.Client, secret, rat string) ([]any, error) {
 		boolToInt(c.RequireSignedRequestObject), boolToInt(c.RequirePAR),
 		int64(c.DeviceCodeTTL), int64(c.DeviceCodePollInterval),
 		c.UserinfoSignedResponseAlg,
+		c.IDTokenSignedResponseAlg,
 		c.IDTokenEncryptedResponseAlg, c.IDTokenEncryptedResponseEnc,
 		c.UserinfoEncryptedResponseAlg, c.UserinfoEncryptedResponseEnc,
 		c.BackchannelLogoutURI, c.SubjectType, c.SectorIdentifierURI,
@@ -149,6 +150,7 @@ type clientScanRow struct {
 	rat                                                    string
 	refreshTTL, accessTTL, dcTTL, dcPoll                   int64
 	userinfoSigAlg                                         string
+	idtSignedAlg                                           string
 	idtEncAlg, idtEncEnc, uiEncAlg, uiEncEnc               string
 	bclURI, subjectType, sectorURI, fclURI                 string
 	secretRotatedAtUnixNs                                  int64
@@ -171,6 +173,7 @@ func (r *clientScanRow) scanInto(s scanner) error {
 		&r.requireSROInt, &r.requirePARInt,
 		&r.dcTTL, &r.dcPoll,
 		&r.userinfoSigAlg,
+		&r.idtSignedAlg,
 		&r.idtEncAlg, &r.idtEncEnc, &r.uiEncAlg, &r.uiEncEnc,
 		&r.bclURI, &r.subjectType, &r.sectorURI, &r.fclURI,
 		&r.federationInt, &r.attrsBlob, &r.secretRotatedAtUnixNs,
@@ -199,6 +202,7 @@ func (r *clientScanRow) scalars() {
 	c.DeviceCodeTTL = time.Duration(r.dcTTL)
 	c.DeviceCodePollInterval = time.Duration(r.dcPoll)
 	c.UserinfoSignedResponseAlg = r.userinfoSigAlg
+	c.IDTokenSignedResponseAlg = r.idtSignedAlg
 	c.IDTokenEncryptedResponseAlg = r.idtEncAlg
 	c.IDTokenEncryptedResponseEnc = r.idtEncEnc
 	c.UserinfoEncryptedResponseAlg = r.uiEncAlg

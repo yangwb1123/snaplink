@@ -47,11 +47,20 @@ type ClientConfig struct {
 	DeviceCodeTTL             time.Duration `yaml:"device_code_ttl,omitempty"`
 	DeviceCodePollInterval    time.Duration `yaml:"device_code_poll_interval,omitempty"`
 	UserinfoSignedResponseAlg string        `yaml:"userinfo_signed_response_alg,omitempty"`
-	BackchannelLogoutURI      string        `yaml:"backchannel_logout_uri,omitempty"`
-	SubjectType               string        `yaml:"subject_type,omitempty"`
-	SectorIdentifierURI       string        `yaml:"sector_identifier_uri,omitempty"`
-	FrontchannelLogoutURI     string        `yaml:"frontchannel_logout_uri,omitempty"`
-	JWKS                      []ClientJWK   `yaml:"jwks,omitempty"`
+	// IDTokenSignedResponseAlg mirrors
+	// sso.Client.IDTokenSignedResponseAlg (OIDC Core §3.1.3.1 / RFC 7591 §2
+	// `id_token_signed_response_alg`): the JWS algorithm the AS signs THIS
+	// client's ID Tokens with. Empty = the server's default id_token
+	// issuer (unchanged behavior). The value MUST match the wired signing
+	// alg (keys.signing.alg) — config validation rejects anything else at
+	// boot, matching the DCR rule that a client can only register an alg
+	// the AS can actually produce.
+	IDTokenSignedResponseAlg string      `yaml:"id_token_signed_response_alg,omitempty"`
+	BackchannelLogoutURI     string      `yaml:"backchannel_logout_uri,omitempty"`
+	SubjectType              string      `yaml:"subject_type,omitempty"`
+	SectorIdentifierURI      string      `yaml:"sector_identifier_uri,omitempty"`
+	FrontchannelLogoutURI    string      `yaml:"frontchannel_logout_uri,omitempty"`
+	JWKS                     []ClientJWK `yaml:"jwks,omitempty"`
 
 	// Per-client consent policy (operator-provisioned; never DCR-settable).
 	// SkipConsent bypasses the consent gate for trusted first-party clients;

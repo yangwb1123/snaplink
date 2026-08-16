@@ -32,6 +32,7 @@ uses the APIs below and is normally reverse-proxied beside the server.
 | Key | Effect |
 |---|---|
 | `clients[].login_page_uri` | Absolute hosted-login URL used after a verified upstream OIDC/SAML callback. Required for federated RP authorization: Snaplink redirects here with a fresh one-use `login_transaction_id` in the fragment, then the page POSTs it to `/auth/login` to resume the original post-PAR/JAR request through policy, MFA, consent, and response delivery. Must be HTTPS, except HTTP loopback URLs used for local development. Missing or unsafe values make `authorization_request_passthrough_supported=false` and federated kickoff fails closed. |
+| `clients[].id_token_signed_response_alg` | OIDC Core §3.1.3.1 / RFC 7591 §2 per-client ID-token signing algorithm (`id_token_encrypted_response_alg`'s signing sibling; design `docs/design/per-client-id-token-alg.md`). Empty (default) = the server's default issuer, byte-identical. When set, this client's ID tokens are signed with the named JWS algorithm; the value MUST equal the wired signing alg (`keys.signing.alg` — the cmd wires exactly one issuer) or config validation fails at boot, mirroring the DCR rule that a client may only register an alg the AS can actually produce. Product-level FAPI 2.0 unblock: an RS256 login client can coexist with ES256/PS256 FAPI clients. |
 
 ## Server
 

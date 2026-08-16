@@ -20,10 +20,53 @@ func TestValidateConfiguredClientsLoginPageURI(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateConfiguredClients([]ClientConfig{{ID: "portal", LoginPageURI: test.uri}})
+			err := validateConfiguredClients(&Config{Clients: []ClientConfig{{ID: "portal", LoginPageURI: test.uri}}})
 			if test.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "login_page_uri") {
 					t.Fatalf("err=%v, want login_page_uri validation error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validateConfiguredClients() error = %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateConfiguredClients_IDTokenSignedResponseAlg covers the static-
+// config gate for clients[].id_token_signed_response_alg: the value must
+// equal the JWS algorithm the wired signing issuer produces
+// (canonicalSigningAlg(keys.signing.alg)); any other value — including
+// "none" — fails config validation at boot, mirroring the DCR rule.
+func TestValidateConfiguredClients_IDTokenSignedResponseAlg(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		signAlg string // keys.signing.alg
+		client  ClientConfig
+		wantErr bool
+	}{
+		{name: "empty alg always ok", signAlg: "", client: ClientConfig{ID: "a"}, wantErr: false},
+		{name: "matches default eddsa", signAlg: "", client: ClientConfig{ID: "a", IDTokenSignedResponseAlg: "EdDSA"}, wantErr: false},
+		{name: "matches eddsa alias", signAlg: "eddsa", client: ClientConfig{ID: "a", IDTokenSignedResponseAlg: "EdDSA"}, wantErr: false},
+		{name: "matches es256", signAlg: "es256", client: ClientConfig{ID: "a", IDTokenSignedResponseAlg: "ES256"}, wantErr: false},
+		{name: "matches rs256", signAlg: "rs256", client: ClientConfig{ID: "a", IDTokenSignedResponseAlg: "RS256"}, wantErr: false},
+		{name: "matches ps256", signAlg: "ps256", client: ClientConfig{ID: "a", IDTokenSignedResponseAlg: "PS256"}, wantErr: false},
+		{name: "unwired alg rejected", signAlg: "es256", client: ClientConfig{ID: "a", IDTokenSignedResponseAlg: "RS256"}, wantErr: true},
+		{name: "alg none rejected", signAlg: "", client: ClientConfig{ID: "a", IDTokenSignedResponseAlg: "none"}, wantErr: true},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateConfiguredClients(&Config{
+				Keys:    KeysConfig{Signing: SigningConfig{Alg: tc.signAlg}},
+				Clients: []ClientConfig{tc.client},
+			})
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "id_token_signed_response_alg") {
+					t.Fatalf("err=%v, want id_token_signed_response_alg validation error", err)
 				}
 				return
 			}

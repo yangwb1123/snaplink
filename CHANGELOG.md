@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Per-client ID-token signing algorithm (`id_token_signed_response_alg`,
+  OIDC Core §3.1.3.1 / RFC 7591 §2; design
+  `docs/design/per-client-id-token-alg.md`): `core.Client.IDTokenSignedResponseAlg`
+  names the JWS algorithm the AS signs a given RP's ID Tokens with, selected
+  via the new SDK option `sso.WithIDTokenIssuerAlg(alg, issuer)` (whitelisted to
+  `security.AsymmetricJWSAlgs` — EdDSA / ES256-512 / RS256 / PS256; `none` and
+  anything unwired panic at construction). Resolution in
+  `idTokenIssuerForClient` prefers the per-client alg, then falls back to the
+  unchanged per-tenant/shared issuer path (byte-identical default when no
+  client sets the field). DCR accepts and stores the field and rejects an
+  unwired alg with 400 `invalid_client_metadata` (validated against the same
+  set discovery advertises); static config gains `clients[].id_token_signed_response_alg`
+  (boot-validated against `keys.signing.alg`); discovery's
+  `id_token_signing_alg_values_supported` is the union of the default issuer's
+  algs and the wired per-alg map. Fail-closed at issuance: an unwired alg
+  omits id_token rather than sign with another key. Persisted in sqlite
+  (migration v7) + postgres (schema v5). Product-level FAPI 2.0 conformance
+  unblock per `docs/campaigns/reports/b11-fapi-conformance.md` / the archived
+  `test/oidc-conformance/results/39ecdf7a-fapi/BLOCKER.md`: an RS256-only
+  login client can coexist with ES256/PS256 FAPI clients on one issuer.
 - Always-on structured access log (`interfaces/middleware.AccessLogger`, design
   `docs/design/middleware-observability-unified.md` Decision 1 + 2): one INFO
   `"access"` record per request with a fixed low-cardinality field set

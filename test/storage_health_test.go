@@ -138,14 +138,15 @@ func TestStorageHealth_ReportsReachableWithSchema(t *testing.T) {
 		t.Errorf("clients reachable = %v, want true", clients["reachable"])
 	}
 	sv, _ := clients["schema_versions"].(map[string]any)
-	// clients sits at v6: v2 added the security-load-bearing fields (JWKS /
+	// clients sits at v7: v2 added the security-load-bearing fields (JWKS /
 	// AllowedResources / AllowedRequestURIs / RegistrationAccessToken / JWE
 	// alg-enc / Federation / PostLogoutRedirectURIs); v3 added
 	// secret_rotated_at backing scheduled client-secret rotation; v4 added
 	// client_trust_score / client_trust_set_at backing OAuth client trust
-	// scoring; v5 added previous-secret overlap; v6 added secret expiry.
-	if v, _ := sv["clients"].(float64); int(v) != 6 {
-		t.Errorf("clients schema_versions[clients] = %v, want 6", sv)
+	// scoring; v5 added previous-secret overlap; v6 added secret expiry; v7
+	// added id_token_signed_response_alg (per-client id_token signing alg).
+	if v, _ := sv["clients"].(float64); int(v) != 7 {
+		t.Errorf("clients schema_versions[clients] = %v, want 7", sv)
 	}
 	if _, ok := clients["ping_latency_ms"]; !ok {
 		t.Errorf("clients missing ping_latency_ms: %v", clients)

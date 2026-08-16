@@ -52,6 +52,13 @@ type RegisterDeps interface {
 	// un-rotated registration access token) until the cache expires. Nil-safe on
 	// *sso.Server when no cache/bus is wired.
 	InvalidateClientCache(clientID string)
+
+	// IDTokenSigningAlgValues returns the JWS algs this server can actually
+	// sign ID Tokens with — the same set discovery advertises as
+	// id_token_signing_alg_values_supported. DCR validation (RFC 7591 §2
+	// id_token_signed_response_alg) accepts only values in this set so a
+	// client can never register an alg issuance would fail to honor.
+	IDTokenSigningAlgValues(ctx context.Context) []string
 }
 
 // DCRRequest mirrors the RFC 7591 §2 client metadata subset this
@@ -82,6 +89,13 @@ type DCRRequest struct {
 	IDTokenEncryptedResponseEnc  string `json:"id_token_encrypted_response_enc"`
 	UserinfoEncryptedResponseAlg string `json:"userinfo_encrypted_response_alg"`
 	UserinfoEncryptedResponseEnc string `json:"userinfo_encrypted_response_enc"`
+
+	// IDTokenSignedResponseAlg is the OIDC Core §3.1.3.1 / RFC 7591 §2
+	// client metadata naming the JWS algorithm the AS signs this client's
+	// ID Tokens with. Empty = the server's default issuer. The value MUST
+	// be in the server's wired signing set (validated by
+	// validateDCRRequest against the same set discovery advertises).
+	IDTokenSignedResponseAlg string `json:"id_token_signed_response_alg"`
 }
 
 type DCRJWKS struct {
@@ -122,11 +136,14 @@ type DCRResponse struct {
 	IDTokenEncryptedResponseEnc  string `json:"id_token_encrypted_response_enc,omitempty"`
 	UserinfoEncryptedResponseAlg string `json:"userinfo_encrypted_response_alg,omitempty"`
 	UserinfoEncryptedResponseEnc string `json:"userinfo_encrypted_response_enc,omitempty"`
+	IDTokenSignedResponseAlg     string `json:"id_token_signed_response_alg,omitempty"`
 }
 
 // validateDCRRequest adapts the wire DTO to DCRMetadata and runs the
-// shared policy validation against the canonical grant set.
-func validateDCRRequest(req *DCRRequest, policy *DCRPolicy) error {
+// shared policy validation against the canonical grant set. supportedIDTokenAlgs
+// is the server's live wired id_token signing set (what discovery advertises);
+// an id_token_signed_response_alg outside it is rejected with 400.
+func validateDCRRequest(req *DCRRequest, policy *DCRPolicy, supportedIDTokenAlgs []string) error {
 	normalizeDCRDefaults(req)
 	meta := &DCRMetadata{
 		RedirectURIs:                 req.RedirectURIs,
@@ -143,8 +160,9 @@ func validateDCRRequest(req *DCRRequest, policy *DCRPolicy) error {
 		IDTokenEncryptedResponseEnc:  req.IDTokenEncryptedResponseEnc,
 		UserinfoEncryptedResponseAlg: req.UserinfoEncryptedResponseAlg,
 		UserinfoEncryptedResponseEnc: req.UserinfoEncryptedResponseEnc,
+		IDTokenSignedResponseAlg:     req.IDTokenSignedResponseAlg,
 	}
-	if err := ValidateDCRMetadata(meta, policy, core.SupportedGrants, core.GrantAuthorizationCode); err != nil {
+	if err := ValidateDCRMetadata(meta, policy, core.SupportedGrants, core.GrantAuthorizationCode, supportedIDTokenAlgs); err != nil {
 		return err
 	}
 	// Copy back the canonical (enc-defaulted) values so the persisted
@@ -202,7 +220,7 @@ func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBodyDesc(ErrInvalidClientMetadata, err.Error()))
 		return
 	}
-	if err := validateDCRRequest(&req, policy); err != nil {
+	if err := validateDCRRequest(&req, policy, d.IDTokenSigningAlgValues(ctx.Request().Context())); err != nil {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBodyDesc(ErrInvalidClientMetadata, err.Error()))
 		return
 	}
@@ -274,7 +292,7 @@ func HandleRegistrationPut(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBodyDesc(ErrInvalidClientMetadata, err.Error()))
 		return
 	}
-	if err := validateDCRRequest(&req, d.DCRPolicy()); err != nil {
+	if err := validateDCRRequest(&req, d.DCRPolicy(), d.IDTokenSigningAlgValues(ctx.Request().Context())); err != nil {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBodyDesc(ErrInvalidClientMetadata, err.Error()))
 		return
 	}
@@ -459,5 +477,6 @@ func projectClientToDCRResponse(c *core.Client, ctx core.HandlerContext) DCRResp
 		IDTokenEncryptedResponseEnc:  c.IDTokenEncryptedResponseEnc,
 		UserinfoEncryptedResponseAlg: c.UserinfoEncryptedResponseAlg,
 		UserinfoEncryptedResponseEnc: c.UserinfoEncryptedResponseEnc,
+		IDTokenSignedResponseAlg:     c.IDTokenSignedResponseAlg,
 	}
 }

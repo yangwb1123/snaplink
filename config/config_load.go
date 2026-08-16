@@ -180,7 +180,7 @@ func (c *Config) validate() error {
 	if c.Server.Issuer == sso.DefaultIssuer {
 		return fmt.Errorf("config: server.issuer must not equal the SDK sentinel %q — set it to your canonical public URL (e.g. https://sso.example.com) or accept the cmd default %q", sso.DefaultIssuer, DefaultServerIssuer)
 	}
-	if err := validateConfiguredClients(c.Clients); err != nil {
+	if err := validateConfiguredClients(c); err != nil {
 		return err
 	}
 	if c.Backup.Keep < 0 {
@@ -203,13 +203,23 @@ func (c *Config) validateLogging() error {
 	return nil
 }
 
-func validateConfiguredClients(clients []ClientConfig) error {
-	for _, client := range clients {
+func validateConfiguredClients(c *Config) error {
+	// The JWS name the server's own signing issuer actually produces for
+	// keys.signing.alg (same mapping serverbuildsign.BuildSigningIssuer
+	// uses). clients[].id_token_signed_response_alg may only name THIS alg:
+	// the cmd wires exactly one signing issuer, so any other value would be
+	// registered-but-never-honored (id_token omitted at issuance).
+	wiredAlg := canonicalSigningAlg(c.Keys.Signing.Alg)
+	for _, client := range c.Clients {
 		if client.ID == "" {
 			return errors.New("config: client.id required")
 		}
 		if client.LoginPageURI != "" && !sso.IsFederatedLoginPageURIValid(client.LoginPageURI) {
 			return fmt.Errorf("config: client %q login_page_uri must be HTTPS or loopback HTTP", client.ID)
+		}
+		if client.IDTokenSignedResponseAlg != "" && client.IDTokenSignedResponseAlg != wiredAlg {
+			return fmt.Errorf("config: client %q id_token_signed_response_alg %q is not the wired signing alg %q",
+				client.ID, client.IDTokenSignedResponseAlg, wiredAlg)
 		}
 	}
 	return nil
