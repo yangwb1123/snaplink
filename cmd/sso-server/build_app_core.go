@@ -172,6 +172,10 @@ func (b *appBuilder) wireSigningIssuer() error {
 		// (anti alg-confusion); discovery also reflects this set.
 		sso.WithSupportedSigningAlgs(signingAlg),
 	)
+	// Additional per-client id_token signing keys (keys.id_token_algs).
+	if b.opts, err = serverbuildsign.BuildIDTokenAlgOptions(b.opts, cfg, b.redis, b.metricsRegistry, logger); err != nil {
+		return err
+	}
 	logger.Info("signing issuer configured", "alg", signingAlg)
 	b.registerIdentityHealth()
 	return nil
@@ -183,16 +187,6 @@ func (b *appBuilder) wireSigningIssuer() error {
 // probe trips /readyz when wedged; nil (in-process key) silently no-ops. Each
 // SQLite store's DB() handle drives migrate.Status; memory backends contribute
 // nothing.
-func (b *appBuilder) registerIdentityHealth() {
-	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "external-signer", b.externalSigner)
-	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-identity-clients", b.clientStore)
-	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-identity-users", b.userProvider)
-	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-identity-sessions", b.sessionMgr)
-	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-identity-clients", b.clientStore)
-	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-identity-users", b.userProvider)
-	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-identity-sessions", b.sessionMgr)
-}
-
 // wireAudit builds the audit recorder + sink stack (primary, webhook fan-out,
 // async wrap), the retention scheduler, and the audit API + readiness wiring.
 func (b *appBuilder) wireAudit() error {

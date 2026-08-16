@@ -28,6 +28,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unblock per `docs/campaigns/reports/b11-fapi-conformance.md` / the archived
   `test/oidc-conformance/results/39ecdf7a-fapi/BLOCKER.md`: an RS256-only
   login client can coexist with ES256/PS256 FAPI clients on one issuer.
+- Config-facing per-client id_token signing keys
+  (`keys.id_token_algs`, design
+  `docs/design/per-client-id-token-alg.md` Decision 1 + 2): the
+  `sso-server` binary can now wire ADDITIONAL dedicated id_token signing
+  issuers (the config form of `sso.WithIDTokenIssuerAlg`) — each entry
+  (`alg` required eddsa/es256/rs256/ps256, optional `key_file`/`external`)
+  serves clients that declare `id_token_signed_response_alg` with THAT
+  algorithm while `keys.signing.alg` keeps signing everything else. Boot
+  gate rejects an alg equal to the primary or a duplicate entry; the
+  issuer's public key lands in the aggregated `/.well-known/jwks.json` and
+  discovery advertises the union. Empty (default) = byte-identical
+  behavior. This is what operationalizes the B12-1 FAPI unblock on the
+  sso-server binary: `test/oidc-conformance/config-fapi.yaml` wires
+  `id_token_algs: [{alg: rs256}]` so the suite's RS256 login client
+  coexists with the ES256 FAPI clients.
 - Always-on structured access log (`interfaces/middleware.AccessLogger`, design
   `docs/design/middleware-observability-unified.md` Decision 1 + 2): one INFO
   `"access"` record per request with a fixed low-cardinality field set

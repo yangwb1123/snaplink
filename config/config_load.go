@@ -183,6 +183,9 @@ func (c *Config) validate() error {
 	if err := validateConfiguredClients(c); err != nil {
 		return err
 	}
+	if err := validateIDTokenAlgs(c); err != nil {
+		return err
+	}
 	if c.Backup.Keep < 0 {
 		return fmt.Errorf("config: backup.keep must be >= 0 (0 disables retention), got %d", c.Backup.Keep)
 	}

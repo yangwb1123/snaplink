@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
 	"github.com/yangwb1123/snaplink/config"
 )
 
@@ -204,4 +205,20 @@ func detectCgroupMemoryLimit() int64 {
 		}
 	}
 	return 0
+}
+
+// registerIdentityHealth registers the /readyz checks + storage-health sources
+// for the external signer and the identity stores. The external KMS/HSM signer
+// is a runtime dependency the in-process key path never had, so its passive
+// probe trips /readyz when wedged; nil (in-process key) silently no-ops. Each
+// SQLite store's DB() handle drives migrate.Status; memory backends contribute
+// nothing.
+func (b *appBuilder) registerIdentityHealth() {
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "external-signer", b.externalSigner)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-identity-clients", b.clientStore)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-identity-users", b.userProvider)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-identity-sessions", b.sessionMgr)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-identity-clients", b.clientStore)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-identity-users", b.userProvider)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-identity-sessions", b.sessionMgr)
 }
