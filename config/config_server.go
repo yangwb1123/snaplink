@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
@@ -206,9 +207,114 @@ type HTTP2Config struct {
 	Enabled bool `yaml:"enabled"`
 }
 
-// LoggingConfig controls the embedded logger.
+// LoggingConfig controls the embedded logger and the always-on access log.
 type LoggingConfig struct {
-	Level string `yaml:"level"` // debug | info | error
+	Level     string          `yaml:"level"` // debug | info | error
+	AccessLog AccessLogConfig `yaml:"access_log"`
+}
+
+// AccessLogConfig controls the always-on INFO access log
+// (interfaces/middleware.AccessLogger). Enabled is tri-state: nil (absent)
+// means ON — the sso-server default, so "default config produces access
+// logs" without changing SDK assembly semantics; false explicitly removes
+// the middleware from the chain (zero added overhead). Body capture is a
+// separate, deliberate per-deployment posture: zero values never capture
+// bodies.
+type AccessLogConfig struct {
+	Enabled *bool               `yaml:"enabled"`
+	Body    AccessLogBodyConfig `yaml:"body"`
+}
+
+// AccessLogBodyConfig maps 1:1 onto middleware.BodyLogPolicy; zero values
+// keep the no-bodies posture.
+type AccessLogBodyConfig struct {
+	Paths         []string `yaml:"paths"`           // exact-path allowlist; empty = no path eligible
+	AllowAllPaths bool     `yaml:"allow_all_paths"` // deprecated escape hatch (old logBodies=true)
+	SampleRate    float64  `yaml:"sample_rate"`     // 0 = body capture never happens
+	MaxBodyBytes  int64    `yaml:"max_body_bytes"`  // 0 = default 4096
+}
+
+// validate rejects a misconfigured access-log block loudly at boot. An
+// allowlist combined with the AllowAllPaths escape hatch is ambiguous
+// (the operator asked for both bounded and unbounded capture); sample_rate
+// outside [0,1] and a negative byte cap are arithmetic errors.
+func (c AccessLogConfig) validate() error {
+	if len(c.Body.Paths) > 0 && c.Body.AllowAllPaths {
+		return fmt.Errorf("config: logging.access_log.body: allow_all_paths cannot be combined with a populated paths allowlist")
+	}
+	if c.Body.SampleRate < 0 || c.Body.SampleRate > 1 {
+		return fmt.Errorf("config: logging.access_log.body.sample_rate must be within [0,1], got %v", c.Body.SampleRate)
+	}
+	if c.Body.MaxBodyBytes < 0 {
+		return fmt.Errorf("config: logging.access_log.body.max_body_bytes must be >= 0, got %d", c.Body.MaxBodyBytes)
+	}
+	return nil
+}
+
+// enabled reports the tri-state access-log switch: nil (absent) means ON —
+// the sso-server default; only an explicit false removes the middleware.
+func (c AccessLogConfig) enabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+// bodyPolicy maps the config block onto the SDK body-capture policy.
+func (c AccessLogConfig) bodyPolicy() sso.BodyLogPolicy {
+	return sso.BodyLogPolicy{
+		Paths:         c.Body.Paths,
+		AllowAllPaths: c.Body.AllowAllPaths,
+		SampleRate:    c.Body.SampleRate,
+		MaxBodyBytes:  c.Body.MaxBodyBytes,
+	}
+}
+
+// accessLogOptions returns the always-on access-log option when enabled.
+// Absent (nil) or explicit true enables it — the sso-server default; only
+// logging.access_log.enabled: false removes the middleware entirely (the
+// tri-state keeps "absent" distinguishable from "explicitly off").
+func (c *Config) accessLogOptions() []sso.Option {
+	if !c.Logging.AccessLog.enabled() {
+		return nil
+	}
+	return []sso.Option{sso.WithAccessLogging(c.Logging.AccessLog.bodyPolicy())}
+}
+
+// securityMiddlewareOptions maps the security.* blocks onto their sso.WithX
+// options. Each block is opt-in via its own section; absent / disabled blocks
+// omit the corresponding sso.WithX call so the middleware is not wired.
+func (c *Config) securityMiddlewareOptions() []sso.Option {
+	var opts []sso.Option
+	if c.Security.BodyLimit.MaxBytes > 0 {
+		opts = append(opts, sso.WithBodyLimit(c.Security.BodyLimit.MaxBytes))
+	}
+	if c.Security.RateLimit.Enabled {
+		opts = append(opts, sso.WithRateLimit(c.Security.RateLimit.toPolicy()))
+	}
+	// Unlike the block above, ClientRegistrationRateLimit has NO "enabled"
+	// gate: omitting the section (or leaving PerSec/Burst at 0) is not
+	// "disabled" — sso.NewServer already seeds a conservative built-in
+	// limiter, so there is nothing to wire here in that case. Only an
+	// EXPLICIT override (Disabled, or a custom PerSec+Burst) needs an
+	// Option call.
+	if opt, ok := c.Security.ClientRegistrationRateLimit.serverOption(); ok {
+		opts = append(opts, opt)
+	}
+	if c.Security.CORS.Enabled && len(c.Security.CORS.AllowedOrigins) > 0 {
+		opts = append(opts, sso.WithCORS(c.Security.CORS.toPolicy()))
+	}
+	return opts
+}
+
+// backupOptions maps the backup.* blocks onto their sso.WithX options; only
+// a populated section wires an Option call.
+func (c *Config) backupOptions() []sso.Option {
+	var opts []sso.Option
+	if c.Backup.Dir != "" {
+		opts = append(opts, sso.WithBackupDir(c.Backup.Dir))
+	}
+	if c.Backup.Keep > 0 {
+		opts = append(opts, sso.WithBackupRetention(c.Backup.Keep))
+	}
+	return opts
 }
 
 // credentialFormOnlyOptions returns the opt-in strict credential wire

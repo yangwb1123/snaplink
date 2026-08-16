@@ -103,6 +103,18 @@ server:
 
 logging:
   level: info
+  # Always-on structured access log: one INFO "access" record per request
+  # (method/path/status/duration_ms/client_ip/request_id/trace_id). On by
+  # default; set enabled: false to remove the middleware entirely. Body
+  # capture is a separate deliberate debugging posture — zero values never
+  # capture bodies, and captured bodies are redacted.
+  # access_log:
+  #   enabled: true
+  #   body:
+  #     paths: []             # exact-path allowlist; empty = no path eligible
+  #     allow_all_paths: false  # deprecated escape hatch (old logBodies=true)
+  #     sample_rate: 0        # 0 = body capture never happens
+  #     max_body_bytes: 4096  # per-captured-field cap; 0 = default 4096
 
 # Identity-domain persistence (User + Client + Session stores). memory
 # keeps the simple bootstrap story but loses DCR-registered clients +

@@ -80,12 +80,11 @@ func TestSecurityConfig_ServerOptionsWiresThree(t *testing.T) {
 		t.Fatalf("LoadFromSources: %v", err)
 	}
 	opts := cfg.ServerOptions()
-	// Baseline is just WithIssuer (the three legacy TTL/base-url
-	// options were dropped — they were deprecated no-ops). With
-	// SecurityConfig populated we add WithBodyLimit + WithRateLimit
-	// + WithCORS, so the total should be exactly 4.
-	if len(opts) != 4 {
-		t.Errorf("ServerOptions returned %d opts, want 4 (issuer + 3 security)", len(opts))
+	// Baseline is WithIssuer + the always-on access log (default-on via
+	// logging.access_log). With SecurityConfig populated we add WithBodyLimit
+	// + WithRateLimit + WithCORS, so the total should be exactly 5.
+	if len(opts) != 5 {
+		t.Errorf("ServerOptions returned %d opts, want 5 (issuer + access log + 3 security)", len(opts))
 	}
 }
 
@@ -102,8 +101,9 @@ func TestSecurityConfig_EmptyBlockAppliesBodyLimitDefault(t *testing.T) {
 			cfg.Security.BodyLimit.MaxBytes, DefaultBodyLimitBytes)
 	}
 	opts := cfg.ServerOptions()
-	if len(opts) != 2 {
-		t.Errorf("got %d opts; expected exactly 2 (WithIssuer + WithBodyLimit default)", len(opts))
+	// WithIssuer + the always-on access log + WithBodyLimit(default).
+	if len(opts) != 3 {
+		t.Errorf("got %d opts; expected exactly 3 (WithIssuer + access log + WithBodyLimit default)", len(opts))
 	}
 }
 
@@ -117,7 +117,8 @@ func TestSecurityConfig_NegativeBodyLimitIsUnlimited(t *testing.T) {
 		t.Errorf("negative body_limit normalized to %d, want 0 (unlimited)", cfg.Security.BodyLimit.MaxBytes)
 	}
 	opts := cfg.ServerOptions()
-	if len(opts) != 1 {
-		t.Errorf("got %d opts; expected exactly 1 (just WithIssuer, body limit unwired)", len(opts))
+	// WithIssuer + the always-on access log (body limit unwired).
+	if len(opts) != 2 {
+		t.Errorf("got %d opts; expected exactly 2 (WithIssuer + access log, body limit unwired)", len(opts))
 	}
 }

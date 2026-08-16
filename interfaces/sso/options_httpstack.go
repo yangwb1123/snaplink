@@ -220,17 +220,6 @@ func WithCompression() Option {
 	return func(s *Server) { s.compressionEnabled = true }
 }
 
-// WithRequestLogging enables debug-level request/response logging.
-// When logBodies is true, request and response bodies are included in
-// the log output (use with caution — bodies may contain secrets).
-// Default is disabled (zero overhead).
-func WithRequestLogging(logBodies bool) Option {
-	return func(s *Server) {
-		s.debugRequestLogging = true
-		s.debugRequestLogBodies = logBodies
-	}
-}
-
 // WithIdempotentStore wires an idempotency cache for the /token endpoint.
 // When set, the server checks for an Idempotency-Key header on token
 // requests and, after authenticating the client and sender constraint, caches

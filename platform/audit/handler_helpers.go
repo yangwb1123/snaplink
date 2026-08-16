@@ -2,7 +2,6 @@ package audit
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/domains/tenant"
@@ -120,21 +119,6 @@ func SetMeta(e *Event, key, val string) {
 // ClientIP extracts the apparent client IP using the standard
 // precedence: X-Forwarded-For (first hop) → X-Real-IP → RemoteAddr
 // (port stripped). Only trust forwarded headers behind a known edge.
-func ClientIP(r *http.Request) string {
-	if info, ok := peertrust.RequestInfoFrom(r); ok && info.ClientIP != "" {
-		return info.ClientIP
-	}
-	if h := r.Header.Get("X-Forwarded-For"); h != "" {
-		if i := strings.IndexByte(h, ','); i > 0 {
-			return strings.TrimSpace(h[:i])
-		}
-		return strings.TrimSpace(h)
-	}
-	if h := r.Header.Get("X-Real-IP"); h != "" {
-		return h
-	}
-	if i := strings.LastIndexByte(r.RemoteAddr, ':'); i > 0 {
-		return r.RemoteAddr[:i]
-	}
-	return r.RemoteAddr
-}
+// Delegates to the shared-kernel implementation (peertrust.ClientIP) so
+// the audit event path and the access log share one byte-identical rule.
+func ClientIP(r *http.Request) string { return peertrust.ClientIP(r) }

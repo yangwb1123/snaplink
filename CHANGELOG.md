@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Always-on structured access log (`interfaces/middleware.AccessLogger`, design
+  `docs/design/middleware-observability-unified.md` Decision 1 + 2): one INFO
+  `"access"` record per request with a fixed low-cardinality field set
+  (`method`, `path` — never `RawQuery`, `status` — default 200, `duration_ms`,
+  `client_ip` — canonical `peertrust.ClientIP` with `audit.ClientIP` delegating
+  to the one shared implementation, `request_id`, `trace_id`). `BodyLogPolicy`
+  controls OPTIONAL request/response body capture behind an exact-path
+  allowlist, a per-deployment `sample_rate`, a per-field byte cap, and a
+  redaction vocabulary (exact-match + substring heuristic, replacement literal
+  exactly `[redacted]`); the zero value never captures bodies, so credentials
+  stay structurally impossible to log. The middleware sits inside trusted
+  proxies (validated `client_ip`) and outside rate limiting (429 rejections
+  leave access evidence); probes (`/livez`, `/readyz`, `/metrics`) bypass via
+  the probe mux. SDK default is off (`sso.WithAccessLogging`); `sso-server`
+  enables it by default via the new `logging.access_log.*` config block
+  (tri-state `enabled`, body keys map 1:1 onto the policy, loud boot
+  validation, not hot-reloadable). `sso.WithRequestLogging(bool)` is replaced
+  by the policy signature — the old name is kept as a deprecated alias and
+  `BodyLogPolicy{AllowAllPaths: true}` reproduces `logBodies=true`; the DEBUG
+  `middleware.RequestLogger` and its `debugRequestLogging` fields are deleted.
 - OIDC-conformance harness FAPI variant (`test/oidc-conformance/`):
   `config-fapi.yaml` (FAPI 2.0 Security Profile, inspection mode, PAR
   enabled, ES256 signing) plus `--fapi` in `run-headless.sh`

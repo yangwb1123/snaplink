@@ -270,3 +270,55 @@ returned are instrumented with this seam:
 
 A rootless span here (no parent) is expected, not a bug: it means the
 triggering request already returned before the background work ran.
+
+## Access log
+
+`interfaces/middleware.AccessLogger` (design
+`docs/design/middleware-observability-unified.md`, Decision 1) emits exactly
+one INFO `"access"` record per request with a fixed, low-cardinality field
+set:
+
+| Field | Source | Notes |
+|---|---|---|
+| `method` | `r.Method` | |
+| `path` | `r.URL.Path` | never `RawQuery` — query strings can carry `code`/`token` |
+| `status` | captured status code | default 200 when the handler never calls `WriteHeader` |
+| `duration_ms` | wall-clock since middleware entry | includes rate-limit wait, matches operator intuition for "slow request" |
+| `client_ip` | `peertrust.ClientIP(r)` | validated real IP under trusted proxies; legacy first-hop fallback otherwise (one implementation shared with audit `ClientIP`) |
+| `request_id` | `X-Request-Id` request header | populated by the tracing middleware when installed; empty otherwise |
+| `trace_id` | `core.TraceIDFromContext` | populated by the tracing middleware when installed; empty otherwise |
+
+Chain slot (inside trusted proxies, outside rate limiting):
+
+```
+/metrics, /livez, /readyz                         ← outside ratelimit
+trustedProxies → access-log → ratelimit → bodyLimit → metrics → CORS → router
+```
+
+- Outside rate limiting so a 429 rejection is logged with its status — a
+  flood that gets rate-limited still leaves access evidence (mirrors how the
+  metrics recorder counts 4xx statuses).
+- Inside trusted proxies so `client_ip` is the validated real IP, not a
+  forgeable raw XFF value (the same invariant rate limiting relies on).
+- Probes `/livez` `/readyz` `/metrics` are served by `buildProbeMux` outside
+  the whole chain, so they never produce access records — zero code.
+
+Body capture is OPTIONAL and strictly policy-gated (`BodyLogPolicy`): the
+zero value never reads or logs a body (credentials are structurally
+impossible to log). Capture requires an exact-path allowlist (or the
+deprecated `AllowAllPaths` escape hatch), an explicit `sample_rate > 0`, and
+is bounded by `max_body_bytes` and a redaction engine — credential-shaped
+keys (exact vocabulary + substring heuristic on
+`secret`/`password`/`token`/`assertion`/`code`, case-insensitive) are
+replaced with exactly `[redacted]` in form-urlencoded and JSON bodies at any
+nesting depth; other content types pass through capped raw bytes. Operators
+who need DEBUG verbosity still have `logging.level: debug`; the access log is
+no longer behind that switch. `sso-server` enables the access log by default
+(`logging.access_log.enabled`, tri-state); SDK embedders opt in via
+`sso.WithAccessLogging` — `sso.WithRequestLogging(bool)` is deprecated and
+now takes the policy (`BodyLogPolicy{AllowAllPaths: true}` reproduces the old
+`logBodies=true` posture).
+
+`client_ip` extraction moved to `shared/security/peertrust.ClientIP`
+(peertrust owns the proxy-boundary trust decision); `audit.ClientIP`
+delegates to it — byte-identical behavior, one implementation.

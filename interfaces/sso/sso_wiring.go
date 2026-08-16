@@ -53,8 +53,12 @@ type wiringState struct {
 	requestIDMW           bool
 	panicRecovery         bool
 	compressionEnabled    bool
-	debugRequestLogging   bool // when set, logs requests/responses at DEBUG level
-	debugRequestLogBodies bool // when also set, includes bodies in that log output
+	// accessLogPolicy installs the always-on INFO access log (Decision 1 of
+	// docs/design/middleware-observability-unified.md); nil = not installed —
+	// the SDK default, byte-identical when the option is absent. It replaced
+	// the DEBUG-gated RequestLogger fields (WithRequestLogging now takes the
+	// body policy; the DEBUG path was deleted per the design's Decision 2/3).
+	accessLogPolicy *middleware.BodyLogPolicy
 	// credentialFormOnly gates the strict credential wire (B4-4,
 	// WithCredentialFormOnly): when true, /token, /token/introspect,
 	// /token/revoke and /par accept ONLY application/x-www-form-urlencoded
@@ -271,6 +275,27 @@ type wiringState struct {
 	approvalStore       admingovernance.ApprovalStore
 	changeRegistry      *admingovernance.Registry
 	approvalActionTypes admingovernance.RequiredActionTypes
+}
+
+// BodyLogPolicy re-exports the access-log body-capture policy for
+// WithAccessLogging / WithRequestLogging callers. Lives here beside the
+// accessLogPolicy field it feeds (aliases.go is at the line budget).
+type BodyLogPolicy = middleware.BodyLogPolicy
+
+// WithAccessLogging installs the always-on INFO access log: one fixed-field
+// record per request (method, path, status, duration_ms, client_ip,
+// request_id, trace_id). policy controls only OPTIONAL body capture; its
+// zero value never captures bodies (the default — credentials stay
+// structurally impossible to log). sso-server enables this by default via
+// logging.access_log (see config-reference.md).
+func WithAccessLogging(policy middleware.BodyLogPolicy) Option {
+	return func(s *Server) { s.accessLogPolicy = &policy }
+}
+
+// Deprecated: use WithAccessLogging; logBodies=true maps to
+// BodyLogPolicy{AllowAllPaths: true}.
+func WithRequestLogging(policy middleware.BodyLogPolicy) Option {
+	return WithAccessLogging(policy)
 }
 
 // newBackgroundHandlerContext adapts a plain context.Context into a

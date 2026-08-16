@@ -377,13 +377,21 @@ func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
 		s.rateLimitStore = ratelimit.NewPolicyStore(s.resolvedRateLimitPolicy())
 		inner = ratelimit.DynamicMiddleware(s.rateLimitStore)(inner)
 	}
+	if s.accessLogPolicy != nil {
+		// Access log sits just inside trustedProxies (validated client_ip)
+		// and just outside rate limiting (429 rejections leave evidence).
+		inner = middleware.AccessLogger(s.logger, *s.accessLogPolicy)(inner)
+	}
 	if s.trustedProxies != nil {
 		// TrustedProxies sits just outside the rate limiter so that
 		// KeyByClientIP — called inside the rate-limit middleware — sees
 		// the validated real client IP from the request context rather than
 		// the raw X-Forwarded-For header. It must wrap BEFORE rate limiting;
 		// placing it after would let the limiter bucket on an unvalidated
-		// (forgeable) IP value.
+		// (forgeable) IP value. It also wraps OUTSIDE the access logger so
+		// the access record's client_ip is the validated real IP, and the
+		// request pointer the logger holds is the same one the router
+		// mutates (trace context propagates back up through the pointer).
 		inner = s.trustedProxies.Middleware(inner)
 	}
 	if s.metrics != nil {
@@ -430,8 +438,8 @@ func (s *Server) SetRateLimitPolicy(p ratelimit.Policy) bool {
 }
 
 // wrapInnerMiddlewares applies the innermost slice of the chain in the exact
-// order it ran inline in buildMiddlewareChain: request/response debug logging,
-// then security headers, CORS, compression, and body limiting.
+// order it ran inline in buildMiddlewareChain: security headers, CORS,
+// compression, and body limiting.
 //
 // Security headers wrap the router innermost so they fire during response
 // writing — after inner handlers have set their own headers (Cache-Control:
@@ -442,9 +450,6 @@ func (s *Server) SetRateLimitPolicy(p ratelimit.Policy) bool {
 // traverse routing, but still get counted by metrics and rate-limited like
 // any other request — defensive against preflight floods.
 func (s *Server) wrapInnerMiddlewares(inner http.Handler) http.Handler {
-	if s.debugRequestLogging {
-		inner = middleware.RequestLogger(s.logger, s.debugRequestLogBodies)(inner)
-	}
 	if s.securityHeadersEnabled {
 		inner = handler.SecurityHeaders(s.resolvedSecurityHeadersPolicy())(inner)
 	}

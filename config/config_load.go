@@ -167,11 +167,8 @@ func (c *Config) validate() error {
 	if err := c.validateFeatureConfig(); err != nil {
 		return err
 	}
-	level := strings.ToLower(c.Logging.Level)
-	switch level {
-	case "debug", "info", "error":
-	default:
-		return fmt.Errorf("config: invalid logging.level %q", c.Logging.Level)
+	if err := c.validateLogging(); err != nil {
+		return err
 	}
 	// Reject the SDK's internal sentinel. resolveIssuer + the OIDC
 	// discovery renderer treat sso.DefaultIssuer as "fall back to
@@ -188,6 +185,20 @@ func (c *Config) validate() error {
 	}
 	if c.Backup.Keep < 0 {
 		return fmt.Errorf("config: backup.keep must be >= 0 (0 disables retention), got %d", c.Backup.Keep)
+	}
+	return nil
+}
+
+// validateLogging validates the logging block: the level switch and the
+// always-on access-log posture (tri-state enabled flag + body policy).
+func (c *Config) validateLogging() error {
+	switch strings.ToLower(c.Logging.Level) {
+	case "debug", "info", "error":
+	default:
+		return fmt.Errorf("config: invalid logging.level %q", c.Logging.Level)
+	}
+	if err := c.Logging.AccessLog.validate(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -310,33 +321,10 @@ func (c *Config) ServerOptions() []sso.Option {
 	if c.Server.DefaultTokenStrategy != "" {
 		opts = append(opts, sso.WithDefaultTokenStrategy(c.Server.DefaultTokenStrategy))
 	}
-	// Security middleware — body limit + rate limit + CORS. Each
-	// opt-in via its own block; absent / disabled blocks omit the
-	// corresponding sso.WithX call so the middleware is not wired.
-	if c.Security.BodyLimit.MaxBytes > 0 {
-		opts = append(opts, sso.WithBodyLimit(c.Security.BodyLimit.MaxBytes))
-	}
-	if c.Security.RateLimit.Enabled {
-		opts = append(opts, sso.WithRateLimit(c.Security.RateLimit.toPolicy()))
-	}
-	// Unlike the block above, ClientRegistrationRateLimit has NO "enabled"
-	// gate: omitting the section (or leaving PerSec/Burst at 0) is not
-	// "disabled" — sso.NewServer already seeds a conservative built-in
-	// limiter, so there is nothing to wire here in that case. Only an
-	// EXPLICIT override (Disabled, or a custom PerSec+Burst) needs an
-	// Option call.
-	if opt, ok := c.Security.ClientRegistrationRateLimit.serverOption(); ok {
-		opts = append(opts, opt)
-	}
-	if c.Security.CORS.Enabled && len(c.Security.CORS.AllowedOrigins) > 0 {
-		opts = append(opts, sso.WithCORS(c.Security.CORS.toPolicy()))
-	}
-	if c.Backup.Dir != "" {
-		opts = append(opts, sso.WithBackupDir(c.Backup.Dir))
-	}
-	if c.Backup.Keep > 0 {
-		opts = append(opts, sso.WithBackupRetention(c.Backup.Keep))
-	}
+	opts = append(opts, c.securityMiddlewareOptions()...)
+	opts = append(opts, c.backupOptions()...)
+	// Always-on access log: on by default unless explicitly disabled.
+	opts = append(opts, c.accessLogOptions()...)
 	// Only wired when the operator touched at least one feature_gates key —
 	// an all-nil FeatureGatesConfig is functionally identical to omitting
 	// the option (every gate already defaults to on), so skipping the call

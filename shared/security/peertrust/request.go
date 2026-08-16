@@ -3,6 +3,7 @@ package peertrust
 import (
 	"context"
 	"net/http"
+	"strings"
 )
 
 // RequestInfo is the canonical proxy-boundary result for one HTTP request.
@@ -38,4 +39,30 @@ func RequestInfoFrom(r *http.Request) (RequestInfo, bool) {
 func ForwardedHeadersTrusted(r *http.Request) bool {
 	info, ok := RequestInfoFrom(r)
 	return !ok || info.ForwardedHeadersTrusted
+}
+
+// ClientIP extracts the apparent client IP with the documented precedence:
+// the canonical proxy-boundary result when a trusted-proxy middleware
+// evaluated the request, else X-Forwarded-For (first hop) → X-Real-IP →
+// RemoteAddr (port stripped). Only honor forwarded headers behind a known
+// edge — RequestInfoFrom carries that verdict; the fallbacks below preserve
+// the legacy first-hop trust contract when no trust gate is installed.
+// One implementation, shared by the audit event path and the access log.
+func ClientIP(r *http.Request) string {
+	if info, ok := RequestInfoFrom(r); ok && info.ClientIP != "" {
+		return info.ClientIP
+	}
+	if h := r.Header.Get("X-Forwarded-For"); h != "" {
+		if i := strings.IndexByte(h, ','); i > 0 {
+			return strings.TrimSpace(h[:i])
+		}
+		return strings.TrimSpace(h)
+	}
+	if h := r.Header.Get("X-Real-IP"); h != "" {
+		return h
+	}
+	if i := strings.LastIndexByte(r.RemoteAddr, ':'); i > 0 {
+		return r.RemoteAddr[:i]
+	}
+	return r.RemoteAddr
 }

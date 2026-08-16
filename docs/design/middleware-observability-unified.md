@@ -1,6 +1,6 @@
 # Design: unified observability for `interfaces/middleware` (access log + single trace/audit source)
 
-Status: proposed. Scope: `interfaces/middleware`, `interfaces/sso` (assembly),
+Status: committed (implemented scope: Decision 1 AccessLogger + Decision 2 slot + BodyLogPolicy + the capture/redaction/sampling machinery the BodyLogPolicy contract requires, plus the Decision 9 config surface. Decision 7 `Correlation` and Decision 8 span-first `EventFromRequest` — the "unified OTel correlation" half — are NOT implemented yet: the legacy `Tracing`/`RequestID` middleware and the header-parse audit path remain installed, so `request_id`/`trace_id` in the access record are populated by that legacy surface exactly as the Decision 1 field table describes ("empty when no correlation middleware installed"). Drift rulings vs this document: `interfaces/middleware` is at its 10-file ceiling, so `accesslog.go` does not exist — `AccessLogger`/`BodyLogPolicy`/redaction live in the existing `request_log.go`; `WithRequestLogging` is repurposed to the policy signature and `WithAccessLogging` is added, per Decision 3/9; the DEBUG `RequestLogger` and its `debugRequestLogging` fields are deleted, per Decision 2/3). Scope: `interfaces/middleware`, `interfaces/sso` (assembly),
 `cmd/sso-server`, `cmd/sso-minimal`, `config`, `platform/tracing`,
 `platform/audit`. Direction 3 of the middleware observability requirements:
 replace "DEBUG-gated request logging + two independent propagation chains"

@@ -98,6 +98,12 @@ func serverOptions(
 		sso.WithMaxScopeCount(maxScopeCount),
 		sso.WithPanicRecovery(true),
 		sso.WithSecurityHeaders(),
+		// Always-on INFO access log (fixed fields, zero-value body policy =
+		// no bodies): the small editions are real servers with trivial log
+		// volume, so the production-observability gain (evidence during
+		// incidents) outweighs one INFO line per request. Same contract as
+		// sso-server's logging.access_log default.
+		sso.WithAccessLogging(sso.BodyLogPolicy{}),
 		sso.WithLogger(newJSONLogger(os.Stderr)),
 		sso.WithTenantStore(tenantStore),
 		sso.WithFeatureGates(featureGatesForEdition(cfg.Edition)),
