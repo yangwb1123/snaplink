@@ -1,0 +1,218 @@
+# B11 implementation batch: operator config-apply mode + FAPI conformance run
+# + always-on access log.
+#
+# Direction set (baseline verified 2026-08-15 at HEAD 38aaf539):
+#   1. SSOConfigDrift operator apply-mode — B10-3 added the server-side
+#      POST /api/v1/admin/config/apply (approve=true, admin:write) and
+#      /rollback endpoints; the operator reconciler
+#      (cmd/sso-operator/controller/ssoconfigdrift_controller.go) is still
+#      explicitly report-only (doc.go non-goals: no apply, no canary, no
+#      remediation). This direction connects the two.
+#   2. FAPI 2.0 conformance run — the stock binary enables FAPI via
+#      oauth.compliance.profile: fapi_2 (cmd/sso-server/build_app_oidc.go:
+#      309-318, Inspection|Enforce); the OIDF harness README allowlist
+#      already admits the fapi module "when FAPI wiring is enabled"; the
+#      harness (run-headless.sh, config.yaml, docker-compose.yml,
+#      drive_test.py) currently runs the basic plan only.
+#   3. Always-on structured access log — docs/design/
+#      middleware-observability-unified.md (Status: proposed, 567 lines):
+#      Decision 1 (AccessLogger, always-on INFO, fixed low-cardinality
+#      fields) + Decision 2 (BodyLogPolicy; zero value = never capture).
+#      Current state: DEBUG-gated WithRequestLogging
+#      (interfaces/sso/options_httpstack.go:227) + request_log.go capture.
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b11.yaml
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative. Files are referenced by PATH — read them with
+#     your tools, do not expect them inlined.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report (table of commands
+#     with real results; never claim a test passed that you did not run).
+#   - Engineering budgets: no file over 500 lines, no function over 50 lines
+#     / cyclo 15, no new maintainability exemptions, no skipDirs /
+#     layerExemptions additions, no layer violations (nested modules with
+#     their own go.mod are outside the root gate).
+#   - Update docs/config-reference.md + docs/openapi.yaml + CHANGELOG.md in
+#     the same commit when a public contract changes.
+#   - Commit with a conventional imperative message + AI co-author trailer.
+#     The post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库。任务：为 SSOConfigDrift operator 增加 apply 模式
+    （连接 B10-3 落地的服务端 apply/rollback 端点），先写有界设计、再
+    实现。默认 report-only 行为必须逐字节不变。
+
+    契约（先读，后实现，契约优先于本提示）：
+    - cmd/sso-operator/doc.go（non-goals：no apply, no canary, no
+      remediation——本任务推进 apply，canary/remediation 仍为非目标）
+    - cmd/sso-operator/controller/ssoconfigdrift_controller.go（当前
+      reconcile：fetch A 的 running config → POST B 的 cluster-diff →
+      Status 记录 RFC 6902 patch 摘要；fail-open 纪律；shortRequeue）
+    - cmd/sso-operator/controller/http.go（fetchRunningConfig/
+      postClusterDiff；runningConfigPath/clusterDiffPath 常量）
+    - cmd/sso-operator/apiv1alpha1/（SSOConfigDriftSpec：ClusterEndpoint
+      + PollInterval；token 只经 Secret 引用，CR 永不内联凭据）
+    - B10-3 服务端端点（读 platform/configaudit/mount.go 与 handlers.go）：
+      POST /api/v1/admin/config/apply（?approve=true + admin:write、
+      split-brain digest 409、secret 脱敏、事务版本链）与 POST
+      /api/v1/admin/config/rollback（409 config_apply_no_previous）
+    - AGENTS.md §3：管理面 admin:read/admin:write；审计元数据经
+      audit.SetMeta；fail-open 纪律
+
+    第一步——设计文档（必须先写）：
+    docs/design/operator-config-apply.md，必须裁决：
+    1. 权威模型：CR 上如何 opt-in apply（Spec 字段 vs 注解——以
+       "默认零行为变化 + 显式审批"为判据）；审批语义（annotation
+       approve? 字段组合?）；谁可改（RBAC 注解/字段命名）。
+    2. 时序：reconcile 循环中 apply 的触发条件（diff 非空 + 已审批 +
+       opt-in）、节流（不每轮打 apply；与 PollInterval 关系）、失败
+       重试（沿用 shortRequeue 还是长间隔）。
+    3. 结果上报：Status 的 apply 结果/回滚结果字段（成功/冲突/拒绝/
+       失败 + 时间戳 + 摘要）；与既有 drift patch 摘要并存。
+    4. 回滚：operator 是否驱动 rollback（何种条件下），还是留给运维
+       手工——以最小表面为判据并说明。
+    5. 安全边界：token 仍只经 Secret 引用；apply 请求体（peer 快照）
+       不含 secret（复用服务端脱敏，operator 侧不做冗余存储）；失败
+       模式 fail-open（apply 失败不阻塞后续 drift 报告）。
+    6. 硬边界：未 opt-in 的 CR reconcile 路径逐字节不变；零豁免；
+       嵌套模块自身 go.mod 不新增依赖（除非必要且说明）。
+    7. 验收断言（可测试）：opt-in+审批 → apply 被调用（假服务端断言
+       请求形状）；未 opt-in → 零 apply 调用；未审批 → 不 apply；
+       冲突 409 → Status 记录；apply 失败 → fail-open 继续报告。
+
+    第二步——实现（按设计）：
+    1. CRD 类型（apiv1alpha1）字段 + DeepCopy 方法同步（手写，遵循
+       现有机械形状）+ crd-ssoconfigdrift.yaml 同步。
+    2. controller：apply 路径（复用 http.go 模式；新常量 applyPath/
+       rollbackPath 按需）+ Status 上报。
+    3. 测试（禁止 skip）：controller 测试（假 httptest 服务端：opt-in
+       矩阵、审批矩阵、409/失败注入、未 opt-in 零调用断言）+ 现有
+       truthiness/parity 测试全绿。
+    4. 文档同步：cmd/sso-operator/doc.go（non-goals 更新为"no canary,
+      no remediation；apply 为 opt-in"）、README（如存在）、
+      CHANGELOG.md（根模块 Added 条目，嵌套模块变更亦记）。
+    5. 验证命令（必须实际运行并报告输出）：
+       cd cmd/sso-operator && go build ./... && go vet ./... && go test ./... -count=1
+       （必要时 -race）
+       cd /home/u1/workspace/demo/snaplink && go build ./... && go vet ./...
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    6. conventional commit（imperative + AI co-author trailer；feat
+       前缀）。
+  output: docs/campaigns/reports/b11-operator-config-apply.md
+  timeout: 1800
+  validate: |
+    go build ./... && go vet ./... && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：FAPI 2.0 conformance headless 运行
+    （延续 B7-1/B8-1 的 OIDF 证据链；B9-3 证据包已声明 fapi 为
+    未覆盖模块——"when FAPI wiring is enabled"）。
+
+    契约（先读，后执行）：
+    - test/oidc-conformance/README.md（模块 allowlist：fapi ✅ "FAPI 2.0
+      code profile only, when FAPI wiring is enabled"）
+    - test/oidc-conformance/run-headless.sh（--issuer-https 参数先例；
+      归档 results/<commit>[-https]/ 约定）
+    - test/oidc-conformance/config.yaml（被测服务器配置）
+    - cmd/sso-server/build_app_oidc.go:309-318（oauth.compliance.profile
+      = fapi_2，mode Inspection|Enforce）
+    - docs/sso/oidc-conformance.md（证据包结构；剩余阻塞清单）
+
+    执行要求：
+    1. FAPI 变体：为被测服务器加 FAPI 接线——独立配置变体（如
+       config-fapi.yaml 或 compose profile/环境变量注入
+       oauth.compliance.profile=fapi_2），不得改变默认 basic 拓扑
+       （默认路径逐字节不变，先跑一次基础 validate 证明）。
+       模式选择：Inspection 起步（Enforce 若通过则可选记录），设计
+       理由写进报告。
+    2. 运行：驱动套件 fapi 模块（模块名以套件实际为准，如
+       oidcc-fapi2-*；drive_test.py 登录流程复用）；如实报告每个阶段
+       输出与统计；若 FAPI 模块因客户端认证方法等要求失败，精确记录
+       失败步骤与原因（不得虚构通过），并把阻塞点写入报告与证据包。
+    3. 归档：results/<commit>-fapi/（plan/log/info/config/commit/
+       worktree；gitignore 本地留存）；与 basic 计划结果对比。
+    4. 文档同步（同提交）：README.md allowlist 行更新为"已实测"或
+       保留"requires wiring"并注明实测结果；docs/sso/oidc-conformance.md
+       证据表增补 FAPI 运行记录；CHANGELOG.md（如 harness 脚本/配置
+       有可见变更）。
+    5. 硬边界：不修改生产代码；不改模块 allowlist 语义；harness 保持
+       CI 外；镜像保持 pinned。
+    6. 验证命令（必须实际运行并报告输出）：
+       cd test/oidc-conformance && ./run-headless.sh --module <fapi模块名> --timeout 900
+       （以及为证明默认拓扑未变的
+       ./run-headless.sh --timeout 900 若时间允许，或 compose config
+       对比）
+       go build ./... && go vet ./...
+       git status --porcelain
+    7. conventional commit（imperative + AI co-author trailer；如无
+       harness 变更则 docs 前缀）。
+  output: docs/campaigns/reports/b11-fapi-conformance.md
+  timeout: 2400
+  validate: |
+    python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：实现 always-on 结构化访问日志（设计文档
+    middleware-observability-unified.md 的 Decision 1 + Decision 2），
+    先核实设计引用的代码证据、再实现。Decision 3+（统一 OTel 关联）
+    不在本任务范围。
+
+    契约（先读，后实现，契约优先于本提示）：
+    - docs/design/middleware-observability-unified.md（Status: proposed；
+      只实现 Decision 1 AccessLogger + Decision 2 BodyLogPolicy；字段表
+      以设计为准：method/path/status/duration_ms/client_ip/request_id/
+      trace_id；path 永不含 RawQuery；零值策略=永不捕获 body）
+    - interfaces/middleware/request_log.go（现有 DEBUG 请求日志的响应
+      捕获器——本任务的天然归宿）
+    - interfaces/sso/options_httpstack.go:227（WithRequestLogging
+      DEBUG-gated 现状；新日志为 always-on INFO，与 debug 模式的关系
+      在设计中裁决：保留兼容 vs 替换）
+    - shared/core（HeaderRequestID/TraceIDFromContext 现有工具）
+    - peertrust.ClientIP 或等价 peer-trust 上下文（设计 Decision 1
+      要求 client_ip 来源——代码实证存在性，不存在则按设计裁决并在
+      报告中说明）
+    - cmd/sso-server/（装配点：中间件顺序与文档化 middleware order，
+      AGENTS.md 要求探针在限流外、顺序不变）
+
+    第一步——设计核实与裁决（写入实现注释或小型设计补充）：
+    1. 逐条核实设计 Decision 1/2 引用的代码（文件:行）现状，漂移处
+       以当前代码为准并在报告列出。
+    2. 文件预算：interfaces/middleware 恰在 10 个非测试 .go 文件上限
+       ——禁止新增文件；AccessLogger 并入 request_log.go（其已有状态码
+       捕获）或设计裁决的其他既有文件；BodyLogPolicy 类型同处。
+    3. 兼容性：WithRequestLogging（DEBUG body 日志）与新的 always-on
+       INFO 访问日志的关系——保留原 debug 能力（默认关）还是替换；
+       默认行为变化必须逐字节可测（无 policy = 永不捕获 body；
+       DEBUG 开关现状不变或按设计裁决并说明）。
+    4. 装配：cmd/sso-server 与 cmd/sso-minimal（及 cmd/sso-prototype）
+       是否装配 AccessLogger——以"生产可观测性增益 vs 日志量"权衡，
+       设计裁决；探针路径（/livez /readyz /metrics）是否豁免由裁决
+       说明（设计若已定则以设计为准）。
+    5. 验收断言（可测试）：每个请求恰好一条 INFO access 记录；字段
+       固定低基数；query 含 code/token 时不入 path 字段（结构性不可
+       能记录凭据的测试）；body 捕获仅当 policy 显式允许；status
+       默认 200；duration_ms 存在。
+
+    第二步——实现（按设计）：
+    1. AccessLogger + BodyLogPolicy（并入 request_log.go）+ 既有 DEBUG
+       路径兼容 + 装配（按裁决）。
+    2. 测试（禁止 skip）：middleware 单测（字段集、query 剥离、body
+       策略、默认 200、凭据不可能性）+ 装配级测试（真实服务器请求
+       → 日志断言）。
+    3. 文档同步：config-reference.md（如新增配置键）、CHANGELOG.md
+       Added；设计文档状态若推进为 committed 则注明实现范围
+       （Decision 1+2）。
+    4. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./interfaces/middleware/... -count=1
+       go test ./interfaces/sso/... -count=1 -run 'Log|Request'
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+       go test ./test/ -run 'Log|Middleware' -count=1
+    5. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b11-access-logger.md
+  timeout: 1800
+  validate: |
+    go build ./... && go vet ./... && go test ./interfaces/middleware/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
