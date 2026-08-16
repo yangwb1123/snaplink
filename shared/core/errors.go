@@ -302,6 +302,18 @@ const (
 	ErrChangeActionTypeNotAllowed = "change_action_type_not_allowed"
 	ErrChangeSelfApproval         = "change_self_approval"
 	ErrChangeNotPending           = "change_not_pending"
+	// Config apply/rollback (POST /api/v1/admin/config/apply and
+	// .../rollback — platform/configaudit, the declared peer-config baseline
+	// write path). ErrConfigApplyApprovalRequired is the misoperation barrier:
+	// every apply/rollback MUST carry ?approve=true or the request is refused
+	// before any state is touched. ErrConfigApplyConflict is the split-brain
+	// rejection: the submitted peer snapshot's recomputed digest does not match
+	// the caller-supplied fingerprint (stale or mixed-source submission).
+	// ErrConfigApplyNoPrevious is returned by rollback when no baseline exists
+	// or the latest baseline has no predecessor to restore.
+	ErrConfigApplyApprovalRequired = "config_apply_approval_required"
+	ErrConfigApplyConflict         = "config_apply_conflict"
+	ErrConfigApplyNoPrevious       = "config_apply_no_previous"
 	// ErrUnsupportedVersion is returned (400) when a request's Accept-Version
 	// header names a version this deployment does not support (see
 	// interfaces/middleware.AcceptVersion, ADR-0008). Only checked when

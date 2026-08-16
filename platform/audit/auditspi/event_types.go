@@ -302,6 +302,8 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventAdminWebhookSubscriptionCreated:     {}, EventAdminWebhookSubscriptionDeleted: {},
 	EventAdminChangeProposed: {}, EventAdminChangeApproved: {}, EventAdminChangeRejected: {},
 	EventAdminChangeApplied: {}, EventAdminChangeApplyFailed: {},
+	// config apply/rollback (declared peer-config baseline write path)
+	EventAdminConfigApplied: {}, EventAdminConfigRolledBack: {},
 	EventAdminWriteQuotaExceeded: {}, EventAdminIPDenied: {},
 	// system / platform (event_types_system.go)
 	EventBootstrapStepApplied: {}, EventBootstrapStepSkipped: {}, EventBootstrapStepFailed: {},

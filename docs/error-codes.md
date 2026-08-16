@@ -466,6 +466,9 @@ falls through to the same 401/403 the rest of `/api/v1/admin/*` uses.
 |-------------------------------|------|-------------------------------------------------------------------------------------------------------|
 | `config_audit_not_available`  | 501  | `.../running`\|`.../applied`\|`.../diff` hit with no `WithConfigSnapshots` wired, or `.../history` hit with no `WithConfigAuditStore` wired |
 | `invalid_request`             | 400  | `.../history?since=` is not RFC3339, or `?limit=` is not an integer                                    |
+| `config_apply_approval_required` | 400  | `POST .../config/apply` or `.../config/rollback` (the declared peer-config baseline write path, `platform/configaudit`) issued without `?approve=true` — the mandatory misoperation barrier, refused before any state is touched |
+| `config_apply_conflict`       | 409  | `POST .../config/apply`: the server-recomputed sha256 of the submitted peer snapshot does not match the supplied `digest` — a stale or mixed-source submission (split-brain guard), nothing recorded |
+| `config_apply_no_previous`    | 409  | `POST .../config/rollback`: no applied baseline exists, or the latest baseline has no predecessor to restore |
 
 ---
 

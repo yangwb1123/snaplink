@@ -10,7 +10,10 @@
 //
 //   - Store + MemoryStore (+ configaudit/sqlite) persist a config_history
 //     of {actor, resource, resource_id, patch, reason} entries — see
-//     docs/expansion-volume2-2026-07-01.md §3.
+//     docs/expansion-volume2-2026-07-01.md §3 — and versioned applied-config
+//     baselines (Store.Apply/Applied/Rollback, the declared peer-config
+//     baseline write path behind POST /api/v1/admin/config/apply and
+//     .../rollback; see docs/design/config-apply-mode.md).
 //   - Diff computes a minimal RFC 6902 JSON Patch (add/replace/remove only)
 //     between two config snapshots for the running-vs-applied admin
 //     endpoint. See Diff's doc for the documented array/type-change limits.

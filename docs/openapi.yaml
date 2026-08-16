@@ -5792,6 +5792,163 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/config/apply:
+    post:
+      tags: [admin]
+      summary: Declare a peer cluster's config snapshot as this cluster's new applied-config baseline (admin:write, ?approve=true).
+      description: |
+        The write counterpart of `POST .../config/cluster-diff`: the caller
+        supplies a PEER cluster's config snapshot (typically that peer's own
+        `GET .../config/running` body) plus the peer config's canonical
+        sha256 digest (`configaudit.Digest`'s sorted-key canonicalization —
+        the same fingerprint the cross-replica drift loop broadcasts) and a
+        mandatory `reason`. The server recomputes the digest over the RAW
+        snapshot and compares it byte-wise to the supplied one — a mismatch
+        is a hard 409 `config_apply_conflict` (split-brain: stale or
+        mixed-source submission) and nothing is recorded. Only the REDACTED
+        snapshot is stored, as a versioned baseline (previous versions are
+        retained for rollback), and a `config_history` entry
+        (`resource="config"`) is appended in the SAME transaction — a
+        failure leaves no half-state. After success, `GET .../config/applied`
+        serves the new baseline and `GET .../config/diff` diffs against it.
+        The live `running` view is never mutated by apply.
+
+        POST is a mutation, so the admin middleware requires `admin:write`
+        (the default HTTP scope for a non-GET admin path — no `SetMethodScope`
+        override, the exact opposite of cluster-diff's read downgrade). The
+        write is additionally gated by the mandatory `?approve=true` query
+        flag: without it the request is refused 400
+        `config_apply_approval_required` before any state is touched
+        (misoperation barrier). Every apply emits `admin_config_applied`
+        (apply_id / peer_digest / prev_id metadata only — never snapshot
+        content) and records the operator's actor + reason in history.
+        Mounted only when BOTH `WithConfigSnapshots` AND
+        `WithConfigAuditStore` are wired; otherwise 404. See
+        `docs/design/config-apply-mode.md`.
+      operationId: postConfigApply
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: approve
+          in: query
+          required: true
+          description: "Must be `true` — the mandatory explicit-approval flag."
+          schema: { type: string, example: "true" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigApplyRequest"
+      responses:
+        "200":
+          description: The new applied baseline (redacted), version id, predecessor, and the redacted informational patch vs this cluster's running config.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigApplyResponse"
+        "400":
+          description: "`config_apply_approval_required` (missing ?approve=true), or `invalid_request` for a missing `snapshot`/`digest`/`reason` or a malformed body."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Bearer lacks the `admin:write` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "`config_apply_conflict` — the recomputed snapshot digest does not match the supplied `digest` (stale or mixed-source submission)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: "`config_audit_not_available` — no store wired (belt-and-braces guard; the route is unmounted in that case)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/config/rollback:
+    post:
+      tags: [admin]
+      summary: Re-declare the previous applied-config baseline as the new latest (admin:write, ?approve=true).
+      description: |
+        Reverses the latest `POST .../config/apply`: a NEW append-only
+        version whose snapshot is the previous version's snapshot becomes
+        the latest, so `GET .../config/applied` and the diff revert to that
+        baseline. The history entry's patch is the reverse of the reverted
+        apply, and the audit trail records `admin_config_rolled_back`
+        (metadata only). Stored baselines are redacted, so a rolled-back
+        snapshot restores secret-shaped leaves as `"***"` — re-supply real
+        values via the next apply. 409 `config_apply_no_previous` when no
+        baseline exists or the latest version has no predecessor. Same
+        gates as apply: mandatory `?approve=true` (400
+        `config_apply_approval_required` without it) and mandatory `reason`.
+        admin:write by the default HTTP scope rule; mounted only when BOTH
+        `WithConfigSnapshots` AND `WithConfigAuditStore` are wired.
+      operationId: postConfigRollback
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: approve
+          in: query
+          required: true
+          description: "Must be `true` — the mandatory explicit-approval flag."
+          schema: { type: string, example: "true" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigRollbackRequest"
+      responses:
+        "200":
+          description: The restored baseline (redacted), its version id, predecessor, and the redacted informational patch vs running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigApplyResponse"
+        "400":
+          description: "`config_apply_approval_required`, or `invalid_request` for a missing `reason` / malformed body."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Bearer lacks the `admin:write` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "`config_apply_no_previous` — no baseline, or the latest baseline has no predecessor to restore."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: "`config_audit_not_available` — no store wired (belt-and-braces guard; the route is unmounted in that case)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/config/history:
     get:
       tags: [admin]
@@ -15665,6 +15822,59 @@ components:
         snapshot:
           type: object
           additionalProperties: true
+
+    ConfigApplyRequest:
+      type: object
+      required: [snapshot, digest, reason]
+      description: |
+        A peer cluster's config snapshot to declare as this cluster's new
+        applied-config baseline, plus its canonical sha256 digest
+        (`configaudit.Digest`'s sorted-key JSON canonicalization — the drift
+        loop's fingerprint) and a mandatory operator reason. The server
+        recomputes the digest over the RAW snapshot and rejects the write
+        with 409 on a mismatch. The snapshot is REDACTED before storage;
+        secret-shaped leaves are never persisted or echoed.
+      properties:
+        snapshot:
+          type: object
+          additionalProperties: true
+        digest:
+          type: string
+          description: sha256 hex over the canonical sorted-key JSON form of `snapshot`.
+        reason:
+          type: string
+          description: Mandatory ticket/incident reference.
+
+    ConfigRollbackRequest:
+      type: object
+      required: [reason]
+      description: Mandatory operator reason for the rollback.
+      properties:
+        reason:
+          type: string
+
+    ConfigApplyResponse:
+      type: object
+      required: [applied, version]
+      description: |
+        The result of an apply or rollback: the REDACTED applied baseline,
+        the new version id, its predecessor (empty for the first apply), and
+        the redacted informational patch from the baseline to this cluster's
+        running config (omitted when the running snapshot fails).
+      properties:
+        applied:
+          type: object
+          additionalProperties: true
+          description: The redacted applied snapshot.
+        version:
+          type: string
+        prev_version:
+          type: string
+          description: Empty on the first apply.
+        patch:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConfigPatchOp"
 
     ConfigHistoryEntry:
       type: object

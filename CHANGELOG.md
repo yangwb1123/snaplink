@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Config apply mode (`POST /api/v1/admin/config/apply` + `.../rollback`, admin:write):
+  the declared peer-config baseline write path promoting the deferred-backlog
+  "Declarative multi-cluster configuration governance" Partial boundary.
+  An operator applies a peer cluster's config snapshot as this cluster's new
+  applied baseline, verified against its sha256 digest (split-brain guard —
+  mismatch is 409 `config_apply_conflict`), gated by mandatory `?approve=true`
+  (400 `config_apply_approval_required` otherwise) and a mandatory `reason`.
+  The write is transactional (`configaudit.Store.Apply`/`Rollback` — baseline
+  + `config_history` entry in one write, sqlite via a new `config_applied`
+  table, memory in-process), stores ONLY redacted snapshots, retains every
+  version for rollback, and emits `admin_config_applied`/
+  `admin_config_rolled_back` audit events (metadata only: apply_id,
+  peer_digest, prev_id — never snapshot content), both classified in the
+  SOC2 report's CC6.3 bucket. After apply, `GET .../config/applied` serves
+  the new baseline and `.../config/diff` diffs against it; the running view
+  and every diff-only endpoint are byte-identical until the first apply, and
+  the routes are unmounted (404) unless both `WithConfigSnapshots` and
+  `WithConfigAuditStore` are wired. Design:
+  `docs/design/config-apply-mode.md`.
 - User lifecycle transitions now emit OpenID CAEP/RISC Security Event Tokens
   through the existing SSF transmitter: `admin_user_lifecycle_changed` maps to
   `risc/account-disabled` + `caep/session-revoked` for non-active target states

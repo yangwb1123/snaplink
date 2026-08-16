@@ -182,16 +182,26 @@ Implemented:
 - `SSOConfigDrift` CRD/reconciler for periodic, report-only comparison.
 - Secret references and status reporting within the operator's namespace
   permissions.
+- `POST /api/v1/admin/config/apply` and `.../config/rollback` — the
+  declared peer-config baseline write path: an operator applies a peer
+  cluster's snapshot (verified against its sha256 digest — split-brain
+  guard) as this cluster's new applied baseline, gated by `admin:write` +
+  mandatory `?approve=true`; the write is transactional (baseline +
+  `config_history` entry in one write), stores only redacted snapshots,
+  retains every version for rollback, and emits
+  `admin_config_applied`/`admin_config_rolled_back` audit events (metadata
+  only). Design: `docs/design/config-apply-mode.md`.
 
 Not committed:
 
-- Applying peer configuration.
 - Canary rollout or automated remediation.
 - GitOps reconciliation.
 
-These require an explicit authority/approval model, secret-redaction rules,
-rollback semantics and split-brain handling. Diff-only behavior remains
-fail-open and non-mutating.
+The apply path carries the authority/approval model, secret-redaction
+rules, rollback semantics and split-brain handling the boundary requires;
+canary/GitOps still need their own rollout-ordering and source-of-truth
+models. Diff-only behavior remains fail-open and non-mutating (the apply
+path records a declared baseline, it never mutates live runtime config).
 
 ### Verifiable credentials
 

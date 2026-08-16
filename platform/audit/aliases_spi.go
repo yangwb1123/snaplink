@@ -47,6 +47,8 @@ const (
 	EventAdminChangeApproved                 = auditspi.EventAdminChangeApproved
 	EventAdminChangeProposed                 = auditspi.EventAdminChangeProposed
 	EventAdminChangeRejected                 = auditspi.EventAdminChangeRejected
+	EventAdminConfigApplied                  = auditspi.EventAdminConfigApplied
+	EventAdminConfigRolledBack               = auditspi.EventAdminConfigRolledBack
 	EventAdminIPDenied                       = auditspi.EventAdminIPDenied
 	EventAdminWriteQuotaExceeded             = auditspi.EventAdminWriteQuotaExceeded
 	EventAdminDeviceSecretsRevoked           = auditspi.EventAdminDeviceSecretsRevoked
