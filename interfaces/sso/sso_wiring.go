@@ -58,7 +58,10 @@ type wiringState struct {
 	auditAPI           bool
 	sseBroker          *sse.Broker
 	sseHeartbeat       time.Duration
-	requestIDMW        bool
+	// requestIDMW (legacy WithTracingMiddleware toggle) deleted with the
+	// legacy Tracing/RequestID middleware surface (Decision 7 removal
+	// list): correlation now lives in the single outer-chain
+	// middleware.Correlation wrapper, gated by WithTracing only.
 	panicRecovery      bool
 	compressionEnabled bool
 	// accessLogPolicy installs the always-on INFO access log (Decision 1 of

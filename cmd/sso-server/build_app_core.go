@@ -154,8 +154,7 @@ func (b *appBuilder) wireSigningIssuer() error {
 	b.opts = append(cfg.ServerOptions(),
 		sso.WithRouter(sso.NewStdRouter()),
 		sso.WithLogger(logger),
-		sso.WithTracingMiddleware(),   // legacy request-id middleware (not OTel)
-		sso.WithTracing("sso-server"), // OTel HTTP-span middleware; no-op until tracing.Init activates
+		sso.WithTracing("sso-server"), // single correlation switch: span tree + X-Trace-Id/X-Request-Id + audit trace_id; no-op until tracing.Init activates
 		sso.WithTokenIssuer(sso.TokenStrategyJWT, jwtIssuer),
 		sso.WithTokenIssuer(sso.TokenStrategySession, sessionIssuer),
 		sso.WithUserProvider(b.userProvider),
@@ -181,12 +180,6 @@ func (b *appBuilder) wireSigningIssuer() error {
 	return nil
 }
 
-// registerIdentityHealth registers the /readyz checks + storage-health sources
-// for the external signer and the identity stores. The external KMS/HSM signer
-// is a runtime dependency the in-process key path never had, so its passive
-// probe trips /readyz when wedged; nil (in-process key) silently no-ops. Each
-// SQLite store's DB() handle drives migrate.Status; memory backends contribute
-// nothing.
 // wireAudit builds the audit recorder + sink stack (primary, webhook fan-out,
 // async wrap), the retention scheduler, and the audit API + readiness wiring.
 func (b *appBuilder) wireAudit() error {

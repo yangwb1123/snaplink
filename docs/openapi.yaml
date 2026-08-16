@@ -17071,13 +17071,17 @@ components:
         trace_id:
           type: string
           description: >-
-            Present only when the Tracing middleware populated a W3C trace ID
-            for the request and the handler emits its error envelope via one
-            of the trace-id-aware helpers (interfaces/sso's errorBody /
-            authzErrorBody family). Same value as the X-Trace-Id response
-            header — lets a client hand support one identifier that
-            correlates to server-side audit/trace records. Omitted (not an
-            empty string) when no trace context is available.
+            Present only when a real OTel provider is active and the
+            correlation middleware (WithTracing → middleware.Correlation,
+            design docs/design/middleware-observability-unified.md Decision
+            7/8) stamped the request's span trace ID on the context, AND the
+            handler emits its error envelope via one of the trace-id-aware
+            helpers (interfaces/sso's errorBody / authzErrorBody family).
+            Same value as the X-Trace-Id response header — lets a client
+            hand support one identifier that correlates to server-side
+            audit/trace records. Omitted (not an empty string) when no
+            trace context is available (no provider = the deliberate
+            no-tracing state; X-Request-Id is unaffected).
           example: 4bf92f3577b34da6a3ce929d0e0e4736
 
     TenantMembership:

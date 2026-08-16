@@ -220,6 +220,17 @@ func initTracing(cfg *config.Config, logger spi.Logger) func(context.Context) er
 		logger.Error("tracing init failed; continuing without traces", "error", err)
 		return func(context.Context) error { return nil }
 	}
+	// The correlation middleware (WithTracing) is always installed in
+	// sso-server; without an OTLP endpoint the global provider stays the
+	// no-op default and the whole span-side surface (X-Trace-Id,
+	// Traceparent, audit/access-log trace_id) is empty by design (Decision
+	// 7/12 of docs/design/middleware-observability-unified.md). spi.Logger
+	// has no Warn level, so a boot-time Info note is the closest channel —
+	// deliberate no-tracing deployments get a one-line reminder, not an
+	// error. X-Request-Id and audit RequestID keep working either way.
+	if !tracing.Active() {
+		logger.Info("tracing configured but no OTLP endpoint: X-Trace-Id and audit trace_id will be empty (set OTEL_EXPORTER_OTLP_ENDPOINT); X-Request-Id still works")
+	}
 	return tracingShutdown
 }
 

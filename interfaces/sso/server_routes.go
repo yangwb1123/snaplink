@@ -15,7 +15,6 @@ import (
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/wasmauthz"
 	"github.com/yangwb1123/snaplink/platform/metrics"
-	"github.com/yangwb1123/snaplink/platform/tracing"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
 
@@ -103,14 +102,15 @@ func (s *Server) Mount() {
 }
 
 // mountMiddleware lazily creates the router and installs the global middleware
-// chain (request-id/tracing, tenant, geo, region) in the order the audit
-// enrichment pipeline expects.
+// chain (tenant, geo, region) in the order the audit enrichment pipeline
+// expects. The request-id/trace correlation middleware is NOT Use()-registered
+// anymore — it moved to the outer chain (buildMiddlewareChain) so every
+// request (mounted route or not) gets identical correlation headers (Decision
+// 7 removal list: server_routes.go:113 `router.Use(TracingMiddleware())`
+// deleted).
 func (s *Server) mountMiddleware() {
 	if s.router == nil {
 		s.router = NewStdRouter()
-	}
-	if s.requestIDMW {
-		s.router.Use(TracingMiddleware())
 	}
 	if s.tenantStore != nil {
 		// Tenant resolves before geo so the audit enrichment
@@ -398,11 +398,14 @@ func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
 		inner = metrics.Middleware(s.metrics)(inner)
 	}
 	if s.tracingOperation != "" {
-		// Tracing wraps outermost so the span covers the full request
+		// Correlation wraps outermost so the span covers the full request
 		// lifecycle including time spent in metrics / ratelimit /
 		// bodyLimit middlewares — useful when debugging "where did the
-		// 200ms go" on a slow request.
-		inner = tracing.Middleware(s.tracingOperation)(inner)
+		// 200ms go" on a slow request. It replaces the raw otelhttp wrap
+		// (Decision 7): the OTel span is now the single correlation source
+		// that stamps X-Trace-Id/X-Request-Id/Traceparent and the request
+		// context trace_id, feeding the access log and audit events.
+		inner = middleware.Correlation(s.tracingOperation)(inner)
 	}
 	inner = s.wrapPanicRecovery(inner)
 	return inner

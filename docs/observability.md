@@ -241,16 +241,37 @@ Middleware stack (probes registered OUTSIDE):
 
 ```
 /metrics, /livez, /readyz                         ← outside ratelimit
-tracing → ratelimit → bodyLimit → metrics → CORS → router
+correlation → metrics → trustedProxies → access-log → ratelimit → bodyLimit → CORS → router
 ```
 
-`Tracing` stamps the W3C trace ID onto the request context
-(`core.WithTraceID`, read back via `core.TraceIDFromContext`) as well
-as the `X-Trace-Id` response header. Error responses written through
-`interfaces/sso`'s `errorBody`/`authzErrorBody`/`authzErrorBodyDesc`
-helpers also surface it as `trace_id` in the JSON body (see
+`middleware.Correlation` (installed by `WithTracing`, design
+`docs/design/middleware-observability-unified.md` Decision 7) is the ONE
+correlation point: it wraps the otelhttp span and stamps the W3C trace ID
+onto the request context (`core.WithTraceID`, read back via
+`core.TraceIDFromContext`), the `X-Trace-Id` response header, and the
+`Traceparent` response header (set explicitly from the live span — otelhttp
+v0.68.0 does not inject response headers). Error responses written through
+`interfaces/sso`'s `errorBody`/`authzErrorBody`/`authzErrorBodyDesc` helpers
+surface the same value as `trace_id` in the JSON body (see
 `docs/error-codes.md`) so a client can correlate a failed request to
 audit/trace records without inspecting response headers.
+
+The OTel span is the only propagation source: with a real provider
+(`tracing.Init` + OTLP endpoint) audit events and access-log records carry
+the span's trace id; with the SDK's no-op provider the span context is
+invalid, so `X-Trace-Id`/`Traceparent`/audit `trace_id` are empty — the
+honest "no tracing" state (a deliberate change from the legacy middleware,
+which minted its own traceparent). `X-Request-Id` keeps working in every
+shape: preserved from the incoming header or generated as 32-hex, stamped
+on the response and the request header (the audit `RequestID` + access-log
+`request_id` source). `sso-server` logs a boot-time Info note when tracing is
+wired but no OTLP endpoint is configured.
+
+Audit correlation is span-first (Decision 8): `audit.EventFromRequest` reads
+the live span (`TraceID`/`SpanID`/`ParentSpanID` from the span's actual
+parent), falling back to the incoming `Traceparent` header only for callers
+outside the middleware chain (embedded SDK users who propagate manually).
+The legacy `X-Parent-Span-Id` header surface is removed.
 
 ### Async-path spans
 
@@ -285,14 +306,14 @@ set:
 | `status` | captured status code | default 200 when the handler never calls `WriteHeader` |
 | `duration_ms` | wall-clock since middleware entry | includes rate-limit wait, matches operator intuition for "slow request" |
 | `client_ip` | `peertrust.ClientIP(r)` | validated real IP under trusted proxies; legacy first-hop fallback otherwise (one implementation shared with audit `ClientIP`) |
-| `request_id` | `X-Request-Id` request header | populated by the tracing middleware when installed; empty otherwise |
-| `trace_id` | `core.TraceIDFromContext` | populated by the tracing middleware when installed; empty otherwise |
+| `request_id` | `X-Request-Id` request header | populated by the correlation middleware (`WithTracing` → `middleware.Correlation`); empty when it is not installed |
+| `trace_id` | `core.TraceIDFromContext` | the OTel span's trace id (single correlation source, Decision 7/8); empty when no provider is active |
 
 Chain slot (inside trusted proxies, outside rate limiting):
 
 ```
 /metrics, /livez, /readyz                         ← outside ratelimit
-trustedProxies → access-log → ratelimit → bodyLimit → metrics → CORS → router
+correlation → metrics → trustedProxies → access-log → ratelimit → bodyLimit → CORS → router
 ```
 
 - Outside rate limiting so a 429 rejection is logged with its status — a

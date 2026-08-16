@@ -1,13 +1,18 @@
 package sso
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/platform/tracing"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestHandleHealth(t *testing.T) {
@@ -86,7 +91,7 @@ func TestErrorBody_NoTraceContext(t *testing.T) {
 }
 
 // TestErrorBody_WithTraceContext proves errorBody surfaces the request's
-// trace ID (as stashed by middleware.Tracing via core.WithTraceID) in the
+// trace ID (as stashed by middleware.Correlation via core.WithTraceID) in the
 // error envelope for client-side debugging correlation.
 func TestErrorBody_WithTraceContext(t *testing.T) {
 	t.Parallel()
@@ -104,22 +109,31 @@ func TestErrorBody_WithTraceContext(t *testing.T) {
 	}
 }
 
-// TestErrorBody_EndToEndViaTracingMiddleware drives a real handler through
-// middleware.Tracing() (the middleware that populates the trace ID on the
-// request context in production) to prove the wiring holds end-to-end, not
-// just when a test hand-crafts the context.
-func TestErrorBody_EndToEndViaTracingMiddleware(t *testing.T) {
-	t.Parallel()
+// TestErrorBody_EndToEndViaCorrelationMiddleware drives a real handler
+// through middleware.Correlation (Decision 7: the OTel span is the only
+// propagation source) to prove the wiring holds end-to-end, not just when
+// a test hand-crafts the context. Runs with a REAL provider (in-memory
+// exporter) — the no-op provider yields invalid span contexts and thus an
+// empty trace_id, which is the deliberate no-tracing contract, not the
+// regression this test guards.
+func TestErrorBody_EndToEndViaCorrelationMiddleware(t *testing.T) {
+	exp := tracetest.NewInMemoryExporter()
+	shutdown, err := tracing.Init(context.Background(), tracing.WithExporter(exp))
+	if err != nil {
+		t.Fatalf("tracing.Init: %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+	t.Cleanup(func() { otel.SetTracerProvider(trace.NewNoopTracerProvider()) })
 
 	s := &Server{}
 	s.issuer = "https://sso.example.com"
 
 	r := httptest.NewRequest("GET", "/authz-policy-bundle", nil)
 	w := httptest.NewRecorder()
-	ctx := core.NewContext(w, r)
-
-	middleware.Tracing()(ctx) // populates core.WithTraceID on the request context
-	s.handleAuthzPolicyBundle(ctx)
+	wrapped := middleware.Correlation("test")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.handleAuthzPolicyBundle(core.NewContext(w, r))
+	}))
+	wrapped.ServeHTTP(w, r)
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 (no permissions provider wired)", w.Code)
@@ -128,7 +142,12 @@ func TestErrorBody_EndToEndViaTracingMiddleware(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
+	// errorBody surfaces core.TraceIDFromContext — the Correlation middleware
+	// stamps it from the live span, so it must equal the X-Trace-Id header.
 	if body["trace_id"] == "" {
-		t.Errorf("response body = %v, want non-empty trace_id after Tracing middleware ran", body)
+		t.Errorf("response body = %v, want non-empty trace_id after Correlation middleware ran", body)
+	}
+	if got := w.Header().Get(core.HeaderTraceID); body["trace_id"] != got {
+		t.Errorf("error-body trace_id = %q, want X-Trace-Id header %q (single source)", body["trace_id"], got)
 	}
 }

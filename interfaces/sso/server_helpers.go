@@ -319,11 +319,9 @@ func (s *Server) dispatchLoginAnomaly(ctx HandlerContext, tenantID, subjectID, c
 	if info, ok := GeoFromHandlerContext(ctx); ok {
 		event.Geo = info
 	}
-	if tp := r.Header.Get(HeaderTraceparent); tp != "" {
-		if tc, err := tracer.ParseTraceparent(tp); err == nil {
-			event.TraceID = tc.TraceID
-		}
-	}
+	// Span-first (same rule as audit.EventFromRequest, Decision 8): the OTel
+	// span is the single trace-correlation source.
+	event.TraceID = requestTraceID(r)
 	s.anomalyRunner.Dispatch(r.Context(), event)
 }
 

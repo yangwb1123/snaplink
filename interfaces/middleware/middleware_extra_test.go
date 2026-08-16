@@ -9,7 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yangwb1123/snaplink/platform/tracing"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // fakeTokenIssuer is a real in-package core.TokenIssuer test double used to
@@ -247,139 +252,140 @@ func TestLogger_EmitsMethodAndPath(t *testing.T) {
 	}
 }
 
-// --- Tracing / RequestID ------------------------------------------------
+// --- Correlation (Decision 7: single correlation point) ----------------
 
-func TestTracing_GeneratesRequestID(t *testing.T) {
-	t.Parallel()
-
+// TestCorrelation_NoProvider_RequestIDOnly proves the no-provider contract:
+// the request-id surface keeps working byte-identically (preserve or
+// generate 32-hex) while the span-derived headers (X-Trace-Id, Traceparent)
+// stay absent — the honest "no tracing" state (Decision 12).
+func TestCorrelation_NoProvider_RequestIDOnly(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	Tracing()(core.NewContext(w, r))
+	wrapped := Correlation("test")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Inside the wrapped handler the span context is invalid (no
+		// provider): no trace id on the context, no span headers.
+		if got := core.TraceIDFromContext(r.Context()); got != "" {
+			t.Errorf("context trace_id = %q, want empty without a provider", got)
+		}
+	}))
+	wrapped.ServeHTTP(w, r)
 
 	got := w.Header().Get(core.HeaderRequestID)
 	if got == "" {
 		t.Fatal("response X-Request-Id is empty; want a generated id")
 	}
-	// Generated id is hex of requestIDBytes → 32 chars.
 	if len(got) != requestIDBytes*2 {
 		t.Errorf("generated request id len = %d, want %d", len(got), requestIDBytes*2)
 	}
-	// The same id is mirrored into the request header for audit helpers.
 	if r.Header.Get(core.HeaderRequestID) != got {
 		t.Errorf("request header id = %q, want it to match response %q", r.Header.Get(core.HeaderRequestID), got)
 	}
+	if got := w.Header().Get(core.HeaderTraceID); got != "" {
+		t.Errorf("X-Trace-Id = %q, want absent without a provider", got)
+	}
+	if got := w.Header().Get(core.HeaderTraceparent); got != "" {
+		t.Errorf("Traceparent = %q, want absent without a provider", got)
+	}
 }
 
-func TestTracing_PreservesIncomingRequestID(t *testing.T) {
-	t.Parallel()
-
+func TestCorrelation_PreservesIncomingRequestID(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	const incoming = "client-supplied-correlation-id"
 	r.Header.Set(core.HeaderRequestID, incoming)
-	Tracing()(core.NewContext(w, r))
+	wrapped := Correlation("test")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	wrapped.ServeHTTP(w, r)
 
 	if got := w.Header().Get(core.HeaderRequestID); got != incoming {
 		t.Errorf("response request id = %q, want preserved %q", got, incoming)
 	}
 }
 
-func TestTracing_StartsFreshTraceWhenNoneIncoming(t *testing.T) {
-	t.Parallel()
+// TestCorrelation_WithProvider_StampsSpanHeaders drives the middleware with
+// a REAL provider (in-memory exporter) and asserts the whole correlation
+// contract on one response: X-Trace-Id == the request span's trace id, a
+// parseable Traceparent carrying the same trace id + the span id, and the
+// context trace_id visible to inner handlers. This is the regression
+// boundary for "the wrapper sets Traceparent explicitly from sc" — otelhttp
+// v0.68.0 does not inject response headers (verified upstream).
+func TestCorrelation_WithProvider_StampsSpanHeaders(t *testing.T) {
+	exp := tracetest.NewInMemoryExporter()
+	shutdown, err := tracing.Init(context.Background(), tracing.WithExporter(exp))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+	// Reset the global provider so other tests in this package keep the
+	// no-op default (tracing.Init does not restore it on shutdown).
+	t.Cleanup(func() { otel.SetTracerProvider(trace.NewNoopTracerProvider()) })
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	Tracing()(core.NewContext(w, r))
+	var ctxTraceID string
+	var ctxSpanID string
+	wrapped := Correlation("test")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctxTraceID = core.TraceIDFromContext(r.Context())
+		ctxSpanID = trace.SpanFromContext(r.Context()).SpanContext().SpanID().String()
+	}))
+	wrapped.ServeHTTP(w, r)
+
+	tid := w.Header().Get(core.HeaderTraceID)
+	if tid == "" {
+		t.Fatal("X-Trace-Id is empty; want the span trace id")
+	}
+	if len(tid) != 32 {
+		t.Errorf("X-Trace-Id = %q, want 32-hex trace id", tid)
+	}
+	if ctxTraceID != tid {
+		t.Errorf("context trace_id = %q, want X-Trace-Id %q (single source)", ctxTraceID, tid)
+	}
 
 	tp := w.Header().Get(core.HeaderTraceparent)
 	if tp == "" {
-		t.Fatal("response traceparent is empty; want a freshly started trace")
+		t.Fatal("Traceparent is empty; want the wrapper to set it from the span")
 	}
-	tc, err := tracer.ParseTraceparent(tp)
-	if err != nil {
-		t.Fatalf("emitted traceparent %q does not parse: %v", tp, err)
+	parts := strings.Split(tp, "-")
+	if len(parts) != 4 || parts[0] != "00" {
+		t.Fatalf("Traceparent %q not a 4-segment v00 header", tp)
 	}
-	if tc.TraceID == "" || tc.SpanID == "" {
-		t.Errorf("fresh trace missing ids: %+v", tc)
+	if parts[1] != tid {
+		t.Errorf("Traceparent trace id = %q, want %q", parts[1], tid)
 	}
-	// A brand-new root trace has no parent span, so the request header is unset.
-	if got := r.Header.Get(core.HeaderParentSpanID); got != "" {
-		t.Errorf("parent span id = %q, want empty for a root trace", got)
+	if parts[2] == "" || parts[2] != ctxSpanID {
+		t.Errorf("Traceparent span id = %q, want the live span %q", parts[2], ctxSpanID)
+	}
+
+	// The span really ran and exported.
+	if tp, ok := otel.GetTracerProvider().(*sdktrace.TracerProvider); ok {
+		_ = tp.ForceFlush(context.Background())
+	}
+	if got := len(exp.GetSpans()); got == 0 {
+		t.Fatal("expected at least one exported span from the Correlation-wrapped request")
 	}
 }
 
-func TestTracing_PropagatesIncomingTraceAsParent(t *testing.T) {
-	t.Parallel()
+// TestCorrelation_WithProvider_HonorsIncomingTraceparent proves the span
+// (and thus X-Trace-Id/Traceparent) preserves an incoming traceparent's
+// trace id — the propagation contract the legacy middleware used to own.
+func TestCorrelation_WithProvider_HonorsIncomingTraceparent(t *testing.T) {
+	exp := tracetest.NewInMemoryExporter()
+	shutdown, err := tracing.Init(context.Background(), tracing.WithExporter(exp))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+	t.Cleanup(func() { otel.SetTracerProvider(trace.NewNoopTracerProvider()) })
 
-	// W3C traceparent: version-traceid(32)-spanid(16)-flags(2).
 	const inTrace = "0af7651916cd43dd8448eb211c80319c"
 	const inSpan = "b7ad6b7169203331"
-	incoming := "00-" + inTrace + "-" + inSpan + "-01"
-
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.Header.Set(core.HeaderTraceparent, incoming)
-	Tracing()(core.NewContext(w, r))
+	r.Header.Set(core.HeaderTraceparent, "00-"+inTrace+"-"+inSpan+"-01")
+	wrapped := Correlation("test")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	wrapped.ServeHTTP(w, r)
 
-	out := w.Header().Get(core.HeaderTraceparent)
-	tc, err := tracer.ParseTraceparent(out)
-	if err != nil {
-		t.Fatalf("emitted traceparent %q does not parse: %v", out, err)
-	}
-	// Trace id is preserved across the hop; a fresh span is minted here.
-	if tc.TraceID != inTrace {
-		t.Errorf("trace id = %q, want preserved %q", tc.TraceID, inTrace)
-	}
-	if tc.SpanID == inSpan {
-		t.Errorf("span id %q must be fresh, not the incoming span", tc.SpanID)
-	}
-	// The incoming span becomes our parent, surfaced on the request header.
-	if got := r.Header.Get(core.HeaderParentSpanID); got != inSpan {
-		t.Errorf("parent span id = %q, want incoming span %q", got, inSpan)
-	}
-	// Request header traceparent is rewritten to our fresh span so downstream
-	// calls see us as the parent.
-	if r.Header.Get(core.HeaderTraceparent) != out {
-		t.Errorf("request traceparent = %q, want rewritten %q", r.Header.Get(core.HeaderTraceparent), out)
-	}
-}
-
-func TestTracing_MalformedIncomingTraceparent_StartsFresh(t *testing.T) {
-	t.Parallel()
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	// Garbage traceparent must be ignored, not propagated as a parent.
-	r.Header.Set(core.HeaderTraceparent, "not-a-valid-traceparent")
-	Tracing()(core.NewContext(w, r))
-
-	out := w.Header().Get(core.HeaderTraceparent)
-	tc, err := tracer.ParseTraceparent(out)
-	if err != nil {
-		t.Fatalf("emitted traceparent %q does not parse: %v", out, err)
-	}
-	if tc.ParentSpanID != "" {
-		t.Errorf("parent span id = %q, want empty (malformed input ignored)", tc.ParentSpanID)
-	}
-	if got := r.Header.Get(core.HeaderParentSpanID); got != "" {
-		t.Errorf("parent span id header = %q, want empty", got)
-	}
-}
-
-func TestRequestID_AliasesTracing(t *testing.T) {
-	t.Parallel()
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	// RequestID is a back-compat alias of Tracing; it must do the full tracing
-	// work (request id + traceparent), not just an id.
-	RequestID()(core.NewContext(w, r))
-
-	if w.Header().Get(core.HeaderRequestID) == "" {
-		t.Error("RequestID() did not set X-Request-Id")
-	}
-	if w.Header().Get(core.HeaderTraceparent) == "" {
-		t.Error("RequestID() did not set Traceparent (should alias Tracing)")
+	if got := w.Header().Get(core.HeaderTraceID); got != inTrace {
+		t.Errorf("X-Trace-Id = %q, want preserved trace %q", got, inTrace)
 	}
 }
 

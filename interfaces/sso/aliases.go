@@ -43,8 +43,7 @@ const (
 var AuthMiddleware = middleware.Auth
 var CORS = middleware.CORS
 var LoggerMiddleware = middleware.Logger
-var TracingMiddleware = middleware.Tracing
-var RequestIDMiddleware = middleware.RequestID
+var CorrelationMiddleware = middleware.Correlation
 var RecoverMiddleware = middleware.Recover
 
 // --- BuildInfo re-export (moved to core/) ---

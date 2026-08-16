@@ -481,20 +481,5 @@ func WithAuditAPI() Option {
 	return func(s *Server) { s.auditAPI = true }
 }
 
-// WithTracingMiddleware installs TracingMiddleware ahead of all routes.
-// It propagates W3C Traceparent (trace_id + span chaining) and X-Request-Id
-// (single-hop correlation) so audit events automatically pick them up.
-func WithTracingMiddleware() Option {
-	return func(s *Server) { s.requestIDMW = true }
-}
-
-// WithRequestIDMiddleware is a back-compat alias for WithTracingMiddleware.
-// New code should call WithTracingMiddleware directly.
-//
-// Deprecated: use WithTracingMiddleware. The middleware was renamed once
-// it grew W3C Traceparent propagation alongside the original X-Request-Id
-// stamping; the name is kept here so existing call sites still compile.
-func WithRequestIDMiddleware() Option { return WithTracingMiddleware() }
-
 // WithPermissionProvider enables the per-user permission/role/menu lookup
 // endpoints. Without this option, those endpoints respond 501.

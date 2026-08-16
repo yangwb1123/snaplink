@@ -25,10 +25,11 @@ func buildHandler(cfg composition.RuntimeConfig) (http.Handler, error) {
 }
 
 // minimalExtraOptions wires the minimal-only surfaces: the ID-token issuer
-// (OIDC) and the request-tracing middleware.
+// (OIDC) and the single correlation/tracing switch (Decision 7: WithTracing
+// installs middleware.Correlation — the OTel span + X-Request-Id wrapper).
 func minimalExtraOptions(issuer *defaultimpl.Ed25519JWTIssuer) []sso.Option {
 	return []sso.Option{
 		sso.WithIDTokenIssuer(issuer),
-		sso.WithTracingMiddleware(),
+		sso.WithTracing("sso-minimal"),
 	}
 }

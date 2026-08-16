@@ -250,6 +250,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run ends at the suite's static-client step (12 SUCCESS + 1 FAILURE); see
   `docs/campaigns/reports/b12-fapi-conformance.md` and the archived
   `results/<commit>-fapi/BLOCKER.md`.
+- Unified OTel correlation (design `docs/design/middleware-observability-unified.md`
+  Decision 7 + 8): `middleware.Correlation` is now the ONE middleware tying a
+  request to a trace and a request ID — it wraps the otelhttp span and stamps
+  `X-Trace-Id`/`X-Request-Id`/`Traceparent` response headers, the request
+  context `trace_id` (`core.WithTraceID`), and a preserved-or-generated 32-hex
+  `X-Request-Id`. The legacy `Tracing`/`RequestID` middleware and its
+  traceparent parse/format/rewrite, `WithTracingMiddleware`/
+  `WithRequestIDMiddleware`, the `requestIDMW` field, and the router-level
+  `Use(TracingMiddleware())` install are deleted; `WithTracing(operation)` is
+  the single switch (span tree + audit correlation + trace headers + error-body
+  `trace_id`). Audit events are span-first: `audit.EventFromRequest` reads the
+  live span's `TraceID`/`SpanID`/`ParentSpanID` (from the span's actual
+  parent, via the new `platform/tracing.ParentSpanID` seam) and falls back to
+  the incoming `Traceparent` header only for callers outside the middleware
+  chain; the legacy `X-Parent-Span-Id` header is removed. The access log and
+  audit events now share the span's trace id by identity — one correlation
+  source. Deliberate behavior change (documented in the design's "What could
+  break" item 1): with no OTLP endpoint configured the no-op provider yields
+  invalid span contexts, so `X-Trace-Id`/`Traceparent` and audit/access-log
+  `trace_id` are empty (the honest no-tracing state); `X-Request-Id` and audit
+  `RequestID` keep working. `sso-server` logs a boot-time note when tracing is
+  wired without an endpoint. The login-anomaly dispatch uses the same
+  span-first trace id (`requestTraceID`).
 - Removed the embedded frontend bundles from the SDK and `sso-server`.
   Hosted login, admin, self-service, developer, and setup UIs are now separate
   frontend projects served through a reverse proxy; this repository is an

@@ -17,6 +17,10 @@ import (
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/internal/composition"
+	"github.com/yangwb1123/snaplink/platform/tracing"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const testVerifier = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDEFGHIJK"
@@ -103,6 +107,18 @@ func TestPKCEIsRequired(t *testing.T) {
 }
 
 func TestWrongAndUnknownCredentialsAreIndistinguishable(t *testing.T) {
+	// A REAL provider: the error-body trace_id comes from the live OTel span
+	// (Decision 7/8) — without a provider it is honestly absent (Decision 12),
+	// and this test guards the oracle WITH correlation active. The global
+	// provider is restored in cleanup; this test runs sequentially.
+	exp := tracetest.NewInMemoryExporter()
+	shutdown, err := tracing.Init(context.Background(), tracing.WithExporter(exp))
+	if err != nil {
+		t.Fatalf("tracing.Init: %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+	t.Cleanup(func() { otel.SetTracerProvider(trace.NewNoopTracerProvider()) })
+
 	server, cfg := testServer(t)
 	known := loginPayload(cfg, pkceChallenge(testVerifier), "S256")
 	known["credential"] = map[string]string{"username": cfg.User.Username, "password": "wrong"}

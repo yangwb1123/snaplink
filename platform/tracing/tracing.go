@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
@@ -37,6 +38,13 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 )
+
+// active reports whether Init installed a REAL (exporting) TracerProvider.
+// Read by cmd/sso-server at boot to warn operators whose WithTracing
+// middleware is installed but whose global provider is the no-op default
+// (design mitigation: "tracing configured but no OTLP endpoint — X-Trace-Id
+// and audit trace_id will be empty").
+var active atomic.Bool
 
 // Config holds the SDK init knobs. All fields optional; sensible
 // defaults defer to OTEL_* env vars where applicable.
@@ -127,6 +135,10 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 		return nil, err
 	}
 	if noop {
+		// No exporter could be resolved: leave the global provider as the
+		// no-op default and report inactive so boot code can warn that
+		// X-Trace-Id / audit trace_id will be empty.
+		active.Store(false)
 		return func(context.Context) error { return nil }, nil
 	}
 
@@ -141,6 +153,7 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 		sdktrace.WithSampler(buildSampler(cfg)),
 	)
 	otel.SetTracerProvider(tp)
+	active.Store(true)
 
 	// W3C TraceContext + Baggage propagators — the standard pair every
 	// service in a polyglot deployment expects. Without registering,
@@ -214,6 +227,13 @@ func buildSampler(cfg *Config) sdktrace.Sampler {
 	}
 	return sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.SampleRate))
 }
+
+// Active reports whether the global TracerProvider is a REAL exporting one
+// (Init registered it) rather than the SDK no-op default. false means the
+// WithTracing/Correlation middleware runs but every span context is
+// invalid: X-Trace-Id/Traceparent response headers and audit/access-log
+// trace IDs are empty. X-Request-Id is unaffected.
+func Active() bool { return active.Load() }
 
 // Middleware wraps an http.Handler so every request creates a span.
 // Incoming W3C traceparent headers are honored as the parent span;

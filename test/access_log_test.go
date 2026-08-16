@@ -21,6 +21,10 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/tracing"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // accessLogLine is one captured Info() call.
@@ -93,6 +97,19 @@ func newAccessLogHarness(t *testing.T) (*httptest.Server, *infoCapture) {
 		}),
 	)
 
+	// A REAL provider (in-memory exporter) — the Decision 7/8 acceptance
+	// requires the access-record trace_id and the X-Trace-Id response
+	// header to equal the OTel span's trace id; the no-op provider would
+	// leave them empty (the honest no-tracing contract, covered by
+	// TestAccessLog_NoProvider_EmptyTraceID).
+	exp := tracetest.NewInMemoryExporter()
+	shutdown, err := tracing.Init(context.Background(), tracing.WithExporter(exp))
+	if err != nil {
+		t.Fatalf("tracing.Init: %v", err)
+	}
+	t.Cleanup(func() { _ = shutdown(context.Background()) })
+	t.Cleanup(func() { otel.SetTracerProvider(trace.NewNoopTracerProvider()) })
+
 	opts := []sso.Option{
 		sso.WithIssuer("access-log-test"),
 		sso.WithUserProvider(users),
@@ -102,7 +119,7 @@ func newAccessLogHarness(t *testing.T) (*httptest.Server, *infoCapture) {
 		sso.WithTokenIssuer("jwt", issuer),
 		sso.WithDefaultTokenStrategy("jwt"),
 		sso.WithLogger(logger),
-		sso.WithTracingMiddleware(), // request_id/trace_id population
+		sso.WithTracing("access-log-test"), // single correlation switch (Decision 7)
 		sso.WithAccessLogging(sso.BodyLogPolicy{}),
 		sso.WithMetrics(metrics.New()),
 	}
@@ -125,8 +142,11 @@ func newAccessLogHarness(t *testing.T) (*httptest.Server, *infoCapture) {
 
 // TestAccessLog_FullChainExactlyOneRecordPerRequest asserts the always-on
 // contract end to end: fixed field set present, request_id/trace_id
-// populated by the tracing middleware, client_ip = validated real IP under
-// XFF spoofing (trusted-proxy gate), and path never carries the query.
+// populated by the correlation middleware, client_ip = validated real IP
+// under XFF spoofing (trusted-proxy gate), and path never carries the
+// query. The trace_id on the access record must equal the X-Trace-Id
+// response header — the OTel span is the single correlation source
+// (Decision 7/8), so the log line joins the span tree by identity.
 func TestAccessLog_FullChainExactlyOneRecordPerRequest(t *testing.T) {
 	hs, logger := newAccessLogHarness(t)
 
@@ -139,7 +159,11 @@ func TestAccessLog_FullChainExactlyOneRecordPerRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET discovery: %v", err)
 	}
-	_ = resp.Body.Close()
+	defer resp.Body.Close()
+	respHeaderTraceID := resp.Header.Get("X-Trace-Id")
+	if respHeaderTraceID == "" {
+		t.Fatal("X-Trace-Id response header missing — a real provider is wired")
+	}
 
 	records := logger.accessRecords()
 	if len(records) != 1 {
@@ -165,10 +189,65 @@ func TestAccessLog_FullChainExactlyOneRecordPerRequest(t *testing.T) {
 		t.Errorf("client_ip = %v, want validated 203.0.113.9 (XFF honored only via trusted proxy)", got)
 	}
 	if got, _ := rec.field("request_id"); got == "" {
-		t.Error("request_id should be populated by the tracing middleware")
+		t.Error("request_id should be populated by the correlation middleware")
 	}
-	if got, _ := rec.field("trace_id"); got == "" {
-		t.Error("trace_id should be populated by the tracing middleware")
+	logTraceID, _ := rec.field("trace_id")
+	if logTraceID == "" {
+		t.Error("trace_id should be populated by the correlation middleware")
+	}
+	// Same-source assertion: access log trace_id == X-Trace-Id header ==
+	// the OTel span's trace id (the span is the only propagation source).
+	if logTraceID != respHeaderTraceID {
+		t.Errorf("access record trace_id = %v, want X-Trace-Id header %q (single source)", logTraceID, respHeaderTraceID)
+	}
+	if s, ok := logTraceID.(string); !ok || len(s) != 32 {
+		t.Errorf("access record trace_id = %v, want a 32-hex OTel trace id", logTraceID)
+	}
+}
+
+// TestAccessLog_NoProvider_EmptyTraceID pins the no-OTel contract: without
+// a provider the correlation middleware still stamps X-Request-Id, but the
+// span-derived trace_id on the access record is empty — the honest state
+// (Decision 12). Built with a fresh harness that does NOT install a provider.
+func TestAccessLog_NoProvider_EmptyTraceID(t *testing.T) {
+	logger := &infoCapture{}
+
+	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("access-log-test"))
+	users := defaultimpl.NewMemoryUserProvider()
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{ID: "al-app", AllowedAuthenticators: []string{authenticators.MethodPassword}, TokenStrategy: "jwt", Active: true})
+	srv := sso.NewServer(
+		sso.WithIssuer("access-log-test"),
+		sso.WithUserProvider(users),
+		sso.WithClientStore(clients),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithLogger(logger),
+		sso.WithTracing("access-log-test"),
+		sso.WithAccessLogging(sso.BodyLogPolicy{}),
+	)
+	hs := httptest.NewServer(srv.Handler())
+	t.Cleanup(hs.Close)
+
+	resp, err := hs.Client().Get(hs.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatalf("GET discovery: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	records := logger.accessRecords()
+	if len(records) != 1 {
+		t.Fatalf("expected one access record, got %d", len(records))
+	}
+	if got, _ := records[0].field("trace_id"); got != "" {
+		t.Errorf("trace_id = %v, want empty without a provider", got)
+	}
+	if got, _ := records[0].field("request_id"); got == "" {
+		t.Error("request_id should still be populated without a provider")
+	}
+	if got := resp.Header.Get("X-Trace-Id"); got != "" {
+		t.Errorf("X-Trace-Id header = %q, want absent without a provider", got)
 	}
 }
 

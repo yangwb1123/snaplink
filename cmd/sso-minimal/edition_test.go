@@ -19,7 +19,8 @@ func TestMinimalAddsOIDCAndTracing(t *testing.T) {
 	if tokens["id_token"] == nil {
 		t.Fatalf("minimal token response = %v", tokens)
 	}
-	assertTracingHeaders(t, server.URL+sso.PathHealth, true)
+	assertTracingHeaders(t, server.URL+sso.PathHealth, false)
+	assertRequestIDHeader(t, server.URL+sso.PathHealth, true)
 }
 
 func TestMinimalRequiresOpenidScope(t *testing.T) {
@@ -50,6 +51,13 @@ func TestMinimalServesUserInfoAndEndSession(t *testing.T) {
 	}
 }
 
+// assertTracingHeaders asserts the FULL legacy header set (X-Request-Id +
+// Traceparent). After Decision 7 (docs/design/middleware-observability-unified.md)
+// the Traceparent response header is emitted ONLY when a real OTel provider
+// is active (no-op provider → invalid span → no Traceparent, no X-Trace-Id).
+// The edition tests run without a provider, so `want` is always false here;
+// the X-Request-Id surface (which works without a provider) is asserted
+// separately via assertRequestIDHeader.
 func assertTracingHeaders(t *testing.T, endpoint string, want bool) {
 	t.Helper()
 	resp, err := http.Get(endpoint)
@@ -62,6 +70,22 @@ func assertTracingHeaders(t *testing.T, endpoint string, want bool) {
 	if hasHeaders != want {
 		t.Fatalf("tracing headers present = %v, want %v: %v",
 			hasHeaders, want, resp.Header)
+	}
+}
+
+// assertRequestIDHeader asserts X-Request-Id presence/absence — the
+// correlation surface that works even without an OTel provider (Decision
+// 7/12: the request-id contract survives every tracing shape).
+func assertRequestIDHeader(t *testing.T, endpoint string, want bool) {
+	t.Helper()
+	resp, err := http.Get(endpoint)
+	if err != nil {
+		t.Fatalf("health request: %v", err)
+	}
+	defer resp.Body.Close()
+	has := resp.Header.Get(sso.HeaderRequestID) != ""
+	if has != want {
+		t.Fatalf("X-Request-Id present = %v, want %v: %v", has, want, resp.Header)
 	}
 }
 

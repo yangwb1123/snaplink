@@ -100,8 +100,6 @@ func TestRcovOptions_KitchenSink(t *testing.T) {
 		sso.WithSubjectClientIndex(defaultimpl.NewMemorySubjectClientIndex()),
 		sso.WithMeshExtAuthz("/mesh/ext-authz"),
 		sso.WithAuditAPI(),
-		sso.WithTracingMiddleware(),
-		sso.WithRequestIDMiddleware(),
 
 		// Discovery / metadata.
 		sso.WithOperatorMetadata("https://policy", "https://tos", "https://docs"),

@@ -15,9 +15,28 @@ import (
 	"github.com/yangwb1123/snaplink/platform/lifecycle/notification"
 	"github.com/yangwb1123/snaplink/platform/sse"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const ctxKeyAuthHookSkipMFA = "auth_hook_skip_mfa"
+
+// requestTraceID returns the request's OTel trace ID, span-first (Decision
+// 8 of docs/design/middleware-observability-unified.md): the live span is
+// the single trace-correlation source; the traceparent header is only a
+// fallback for callers outside the middleware chain (embedded SDK users who
+// propagate manually). Empty when no provider is active — the anomaly then
+// joins nothing, the honest no-tracing state.
+func requestTraceID(r *http.Request) string {
+	if sc := trace.SpanFromContext(r.Context()).SpanContext(); sc.IsValid() && sc.HasTraceID() {
+		return sc.TraceID().String()
+	}
+	if tp := r.Header.Get(core.HeaderTraceparent); tp != "" {
+		if tc, err := tracer.ParseTraceparent(tp); err == nil {
+			return tc.TraceID
+		}
+	}
+	return ""
+}
 
 type notificationState struct {
 	notificationStore           core.NotificationStore

@@ -1,6 +1,7 @@
 package audit_test
 
 import (
+	"context"
 	"net/http/httptest"
 	"testing"
 
@@ -8,8 +9,12 @@ import (
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/geo"
+	"github.com/yangwb1123/snaplink/platform/tracing"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security/peertrust"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestSetMeta_LazyAllocAndSkipEmpty(t *testing.T) {
@@ -95,17 +100,20 @@ func TestEventFromRequest_TracingHeaders(t *testing.T) {
 	t.Parallel()
 	r := httptest.NewRequest("POST", "/token", nil)
 	r.Header.Set(core.HeaderRequestID, "req-123")
-	r.Header.Set(core.HeaderParentSpanID, "parent-span")
 	r.Header.Set("User-Agent", "ua")
 	r.Header.Set(core.HeaderTraceparent, "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
 	ctx := core.NewContext(httptest.NewRecorder(), r)
 
+	// No live span in this context: the header fallback applies — trace
+	// ids come from the traceparent, and ParentSpanID stays empty (Decision
+	// 8: parent ids come from the span's ACTUAL parent, never the legacy
+	// X-Parent-Span-Id header).
 	e := audit.EventFromRequest(ctx)
 	if e.RequestID != "req-123" {
 		t.Fatalf("request id = %q", e.RequestID)
 	}
-	if e.ParentSpanID != "parent-span" {
-		t.Fatalf("parent span = %q", e.ParentSpanID)
+	if e.ParentSpanID != "" {
+		t.Fatalf("parent span = %q, want empty (span-first; header fallback carries no parent)", e.ParentSpanID)
 	}
 	if e.UserAgent != "ua" {
 		t.Fatalf("ua = %q", e.UserAgent)
@@ -113,6 +121,93 @@ func TestEventFromRequest_TracingHeaders(t *testing.T) {
 	if e.TraceID != "0af7651916cd43dd8448eb211c80319c" || e.SpanID != "b7ad6b7169203331" {
 		t.Fatalf("traceparent not parsed: trace=%q span=%q", e.TraceID, e.SpanID)
 	}
+}
+
+// TestEventFromRequest_SpanWinsOverHostileHeaders is the span-first
+// precedence proof (design "what could break" item 3): a live request span
+// wins over headers, even deliberately hostile ones.
+func TestEventFromRequest_SpanWinsOverHostileHeaders(t *testing.T) {
+	exp := tracetest.NewInMemoryExporter()
+	shutdown, err := tracing.Init(context.Background(), tracing.WithExporter(exp))
+	if err != nil {
+		t.Fatalf("tracing.Init: %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+	t.Cleanup(func() { otel.SetTracerProvider(trace.NewNoopTracerProvider()) })
+
+	// A real recording span (parented to a fake remote trace to also prove
+	// ParentSpanID): run the request inside it.
+	const inTrace = "4bf92f3577b34da6a3ce929d0e0e4736"
+	const inSpan = "00f067aa0ba902b7"
+	parentCtx := trace.ContextWithRemoteSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    mustTraceID(t, inTrace),
+		SpanID:     mustSpanID(t, inSpan),
+		TraceFlags: trace.FlagsSampled,
+		Remote:     true,
+	}))
+	spanCtx, span := tracing.StartSpan(parentCtx, "audit-test")
+	defer span.End()
+	r := httptest.NewRequest("POST", "/token", nil)
+	r = r.WithContext(spanCtx)
+	r.Header.Set(core.HeaderRequestID, "req-123")
+	r.Header.Set(core.HeaderTraceparent, "00-deadbeefdeadbeefdeadbeefdeadbeef-b7ad6b7169203331-01")
+	ctx := core.NewContext(httptest.NewRecorder(), r)
+
+	e := audit.EventFromRequest(ctx)
+	if e.TraceID != inTrace {
+		t.Errorf("TraceID = %q, want the span's trace %q (span wins over hostile header)", e.TraceID, inTrace)
+	}
+	if e.SpanID != span.SpanContext().SpanID().String() {
+		t.Errorf("SpanID = %q, want the live span %q", e.SpanID, span.SpanContext().SpanID().String())
+	}
+	if e.ParentSpanID != inSpan {
+		t.Errorf("ParentSpanID = %q, want the real parent %q", e.ParentSpanID, inSpan)
+	}
+}
+
+// TestEventFromRequest_RootSpanHasNoParent proves a root trace yields an
+// empty ParentSpanID (the honest "no parent" state, not a garbage value).
+func TestEventFromRequest_RootSpanHasNoParent(t *testing.T) {
+	exp := tracetest.NewInMemoryExporter()
+	shutdown, err := tracing.Init(context.Background(), tracing.WithExporter(exp))
+	if err != nil {
+		t.Fatalf("tracing.Init: %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+	t.Cleanup(func() { otel.SetTracerProvider(trace.NewNoopTracerProvider()) })
+
+	_, span := tracing.StartSpan(context.Background(), "audit-root-test")
+	defer span.End()
+	r := httptest.NewRequest("POST", "/token", nil)
+	r = r.WithContext(trace.ContextWithSpan(r.Context(), span))
+	ctx := core.NewContext(httptest.NewRecorder(), r)
+
+	e := audit.EventFromRequest(ctx)
+	if e.TraceID == "" || e.SpanID == "" {
+		t.Fatalf("root span ids missing: trace=%q span=%q", e.TraceID, e.SpanID)
+	}
+	if e.ParentSpanID != "" {
+		t.Errorf("ParentSpanID = %q, want empty for a root span", e.ParentSpanID)
+	}
+}
+
+// mustTraceID / mustSpanID parse hex ids, failing the test on garbage.
+func mustTraceID(t *testing.T, s string) trace.TraceID {
+	t.Helper()
+	id, err := trace.TraceIDFromHex(s)
+	if err != nil {
+		t.Fatalf("TraceIDFromHex(%q): %v", s, err)
+	}
+	return id
+}
+
+func mustSpanID(t *testing.T, s string) trace.SpanID {
+	t.Helper()
+	id, err := trace.SpanIDFromHex(s)
+	if err != nil {
+		t.Fatalf("SpanIDFromHex(%q): %v", s, err)
+	}
+	return id
 }
 
 func TestEventFromRequest_MalformedTraceparentIgnored(t *testing.T) {
