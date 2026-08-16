@@ -93,6 +93,16 @@ keys:
     # ES256 (FAPI 2.0-approved ECDSA; the suite's JwtDecoder accepts it and
     # the FAPI2 SP discovery check requires an approved ID-token alg).
     alg: es256
+  # Additional per-client id_token signing key (keys.id_token_algs -> the
+  # SDK's WithIDTokenIssuerAlg): the suite's OWN admin-login client decodes
+  # ID tokens with Spring Security's hard-coded RS256
+  # OidcIdTokenDecoderFactory (see results/39ecdf7a-fapi/BLOCKER.md), so
+  # run-headless.sh registers that login client with
+  # id_token_signed_response_alg: RS256 and this dedicated RS256 key signs
+  # its ID tokens — while the FAPI test clients stay on the ES256 primary.
+  # FAPI 2.0 SP forbids RS256 only for the FAPI clients themselves.
+  id_token_algs:
+    - alg: rs256
 
 feature_gates:
   oidc: true

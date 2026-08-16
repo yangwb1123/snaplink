@@ -29,7 +29,7 @@ the only supported profile set; anything else must not be run or claimed.
 | `session` | ✅ | Session management (`check_session_iframe`) |
 | `logout` | ✅ | RP-initiated logout |
 | `jarm` | ✅ | Requires `oauth.jar`/JARM wiring; opt-in |
-| `fapi` | ✅* | FAPI 2.0 code profile (`--fapi`); **run blocked** at suite login — the pinned suite's own login decoder is RS256-only (Spring `OidcIdTokenDecoderFactory` default), while the FAPI 2.0 SP requires a non-RS256 ID-token alg (PS256/ES256/EdDSA); the product-level unblock (per-client `id_token_signed_response_alg`) is not yet merged at HEAD (see `docs/campaigns/reports/b12-fapi-conformance.md`); see `docs/sso/oidc-conformance.md` §2 and the archived blocker record |
+| `fapi` | ⚠️ | FAPI 2.0 code profile (`--fapi`); login + plan creation now work (per-client `id_token_signed_response_alg` RS256 login client via `keys.id_token_algs`), but the `fapi2-security-profile-final-happy-flow` module stops at its **static-client** step: the suite's FAPI2 SP FINAL server tests hardcode a static client whose per-test callback redirect (`https://localhost:8443/test/{testId}/callback`) requires wildcard redirect-URI registration the server does not support (see `docs/campaigns/reports/b12-fapi-conformance.md`; archived `results/<commit>-fapi/BLOCKER.md`) |
 | `ciba` | ✅ | Only when a CIBA store is wired |
 | `implicit` | ❌ | Runtime rejects `id_token` response types |
 | `hybrid` | ❌ | Runtime rejects `code id_token` response types |
@@ -50,18 +50,29 @@ MODULE=oidcc-config-certification-test ./run-headless.sh
 ```
 
 `--fapi` mounts `config-fapi.yaml` (`oauth.compliance.profile=fapi_2` in
-inspection mode, PAR enabled, ES256 signing), creates the
+inspection mode, PAR enabled, ES256 signing plus a dedicated RS256
+per-client id_token key via `keys.id_token_algs`), creates the
 `fapi2-security-profile-final-test-plan` plain_fapi / private_key_jwt /
 DPoP / unsigned-PAR / plain-response variant and runs the
-`fapi2-security-profile-final-happy-flow` module. The default invocation is
+`fapi2-security-profile-final-happy-flow` module. The login client is
+registered via DCR with `id_token_signed_response_alg: RS256` because the
+pinned suite's own admin-login decoder is Spring Security's hard-coded-RS256
+`OidcIdTokenDecoderFactory` (see `results/39ecdf7a-fapi/BLOCKER.md`); the
+RS256 key in `config-fapi.yaml` serves exactly that client while the FAPI
+test clients stay on the ES256 primary. The default invocation is
 byte-identical to the committed behavior (`CONFORMANCE_CONFIG` defaults to
 `config.yaml`; verified by `docker compose --env-file config.env config`).
-As of commit `39ecdf7a` the FAPI run is **blocked at the suite's own OIDC
-login** (see the `results/<commit>-fapi/BLOCKER.md` record and
-`docs/sso/oidc-conformance.md` §2): the pinned suite validates its login
-ID token with an RS256-only decoder while the FAPI 2.0 SP requires
-PS256/ES256/EdDSA, so the run cannot reach plan creation. Do not report a
-FAPI pass on the basis of this harness until that conflict is resolved.
+
+Status as of `07832dda`: the suite login now succeeds and the FAPI plan is
+created (56 modules), but the `fapi2-security-profile-final-happy-flow`
+module stops at its first client step (`GetStaticClientConfiguration`): the
+suite's FAPI2 SP FINAL server tests hardcode a STATIC client configuration
+(the plan exposes no `client_registration` variant), and that client's
+callback redirect is per-test (`https://localhost:8443/test/{testId}/callback`),
+which a pre-registered exact-match redirect URI cannot cover. See
+`docs/sso/oidc-conformance.md` §2 and the archived
+`results/<commit>-fapi/BLOCKER.md`. Do not report a FAPI pass on the basis
+of this harness until that is resolved.
 
 The script builds the harness, registers the suite's OIDC login client via
 DCR plus an admin signup user on the server under test, creates the Basic

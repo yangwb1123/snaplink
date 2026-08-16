@@ -70,7 +70,13 @@ if [ -n "${FAPI:-}" ]; then
   # proceeds while every FAPI violation is audited (see config-fapi.yaml).
   CONFIG_FILE="config-fapi.yaml"
   PLAN_NAME="fapi2-security-profile-final-test-plan"
-  PLAN_VARIANT='{"fapi_profile":"plain_fapi","openid":"openid_connect","fapi_request_method":"unsigned","fapi_response_mode":"plain_response","client_auth_type":"private_key_jwt","sender_constrain":"dpop","authorization_request_type":"simple"}'
+  # fapi_request_method/fapi_response_mode are INTENTIONALLY absent: the
+  # FAPI2 SP planinfo already bakes unsigned-PAR + plain-response into every
+  # module's variant, so repeating them here makes the suite reject the plan
+  # with 400 "Variant 'fapi_request_method' has been set by user, but test
+  # plan already sets this variant for module ...". The remaining keys pick
+  # plain_fapi / private_key_jwt / DPoP / simple authorization-request type.
+  PLAN_VARIANT='{"fapi_profile":"plain_fapi","openid":"openid_connect","client_auth_type":"private_key_jwt","sender_constrain":"dpop","authorization_request_type":"simple"}'
   MODULE="fapi2-security-profile-final-happy-flow"
   ARCHIVE_SUFFIX="${ARCHIVE_SUFFIX}-fapi"
 fi
@@ -149,8 +155,19 @@ if [ -n "${ISSUER_HTTPS:-}" ]; then
 fi
 
 say "registering suite login client (DCR)"
+# Only the FAPI variant declares id_token_signed_response_alg: RS256 — the
+# suite's own admin-login decoder is Spring Security's hard-coded-RS256
+# OidcIdTokenDecoderFactory (see results/39ecdf7a-fapi/BLOCKER.md), and the
+# FAPI variant wires a dedicated RS256 id_token signing key (keys.id_token_algs
+# in config-fapi.yaml) so this plain-OIDC client is served RS256 while the
+# FAPI test clients stay on the ES256 primary — RS256 is forbidden only for
+# the FAPI clients themselves, never for this login client. The default
+# (basic) run keeps the byte-identical payload (no per-client alg, which its
+# EdDSA signing cannot serve anyway).
+IDTOKEN_ALG_FIELD=""
+if [ -n "${FAPI:-}" ]; then IDTOKEN_ALG_FIELD=',"id_token_signed_response_alg":"RS256"'; fi
 REG="$(curl -sf -X POST "$SERVER_HTTP/register" -H 'Content-Type: application/json' \
-  -d '{"client_name":"conformance-suite","redirect_uris":["https://localhost:8443/login/oauth2/code/gitlab"],"grant_types":["authorization_code"],"response_types":["code"],"token_endpoint_auth_method":"client_secret_post"}')"
+  -d "{\"client_name\":\"conformance-suite\",\"redirect_uris\":[\"https://localhost:8443/login/oauth2/code/gitlab\"],\"grant_types\":[\"authorization_code\"],\"response_types\":[\"code\"],\"token_endpoint_auth_method\":\"client_secret_post\"${IDTOKEN_ALG_FIELD}}")"
 CLIENT_ID="$(python3 -c "import json,sys; print(json.loads('''$REG''')['client_id'])")"
 CLIENT_SECRET="$(python3 -c "import json,sys; print(json.loads('''$REG''')['client_secret'])")"
 

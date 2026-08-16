@@ -53,6 +53,7 @@ Basic certification plan (`oidcc-basic-certification-test-plan`) with the
 | HTTP fallback re-run (B12-2) | 2026-08-16 | `78bb614f` | HTTP issuer | **59 SUCCESS + 1 FAILURE**; 3 WARNING | `results/78bb614f/` | `./run-headless.sh --timeout 900` |
 | HTTPS milestone | 2026-08-15 | `7400ba0c` | HTTPS issuer (self-signed local proxy) | **60 SUCCESS + 0 FAILURE**; 3 WARNING | `results/7400ba0c-https/` | `./run-headless.sh --timeout 900 --issuer-https` |
 | FAPI 2.0 SP attempt | 2026-08-16 | `39ecdf7a` | HTTP issuer, FAPI variant (`--fapi`) | **blocked** — no plan created, no module ran (see the blocker note below) | `results/39ecdf7a-fapi/` | `./run-headless.sh --fapi --timeout 600` |
+| FAPI 2.0 SP run (B12-3) | 2026-08-16 | `07832dda` | HTTP issuer, FAPI variant (`--fapi`) | login OK, plan created (56 modules), happy-flow module **12 SUCCESS + 1 FAILURE** (`GetStaticClientConfiguration`), INTERRUPTED (see the FAPI note below) | `results/07832dda-fapi/` | `./run-headless.sh --fapi --timeout 1200` |
 
 FAPI 2.0 attempt (blocked): the `--fapi` run passed config validation, the
 harness start, DCR registration of the suite login client and the admin
@@ -82,6 +83,31 @@ plan was re-run at `78bb614f` with a byte-identical result (59 SUCCESS + 1
 FAILURE; 3 WARNING — see the evidence row above), proving zero regression.
 The blocker record is `docs/campaigns/reports/b12-fapi-conformance.md`;
 the FAPI run proceeds once B12-1 lands.
+
+FAPI 2.0 run (B12-3, 2026-08-16, `07832dda`): B12-1 landed (per-client
+`id_token_signed_response_alg`), so the harness registers the suite login
+client via DCR with `id_token_signed_response_alg: RS256` and the FAPI
+variant config wires a dedicated RS256 id_token key
+(`keys.id_token_algs`, the config-facing form of `sso.WithIDTokenIssuerAlg`).
+The suite login now succeeds (the hard-coded-RS256 Spring decoder gets
+RS256), the `fapi2-security-profile-final-test-plan` is created (56
+modules) with the plain_fapi / private_key_jwt / DPoP / unsigned-PAR /
+plain-response variant, and the `fapi2-security-profile-final-happy-flow`
+module runs — the first FAPI module ever to execute against this harness.
+It passes its discovery/JWKS/key checks (12 SUCCESS, including the suite's
+`FAPI2FinalEnsureMinimumServerKeyLength`, and the aggregated JWKS serves
+both the ES256 primary and the RS256 per-client key) and then stops with 1
+FAILURE at `GetStaticClientConfiguration`: the suite's FAPI2 SP FINAL
+server tests hardcode a STATIC client configuration (the plan exposes no
+`client_registration` variant), and that client's callback redirect is
+per-test (`https://localhost:8443/test/{testId}/callback`), which
+snaplink's exact-match redirect-URI registration cannot cover. The module
+ends INTERRUPTED. Next step: wildcard redirect-URI registration support
+(opt-in per client, exact-match default preserved) is the product change
+that would let the suite's static FAPI client be registered — a separate,
+security-sensitive design decision, out of scope here. Archive
+`results/07832dda-fapi/` contains plan/log/info/config/commit/worktree +
+`BLOCKER.md`.
 
 Notes:
 

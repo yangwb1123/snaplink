@@ -238,6 +238,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Developer guide, release process, security policy documentation
 
 ### Changed
+- FAPI 2.0 conformance harness progress (`test/oidc-conformance`): the
+  `--fapi` run now registers the suite login client via DCR with
+  `id_token_signed_response_alg: RS256` (served by the dedicated
+  `keys.id_token_algs` RS256 key in `config-fapi.yaml`), unblocking the
+  suite's own admin login (Spring's hard-coded-RS256
+  `OidcIdTokenDecoderFactory`), and the FAPI plan-variant no longer repeats
+  the plan-intrinsic `fapi_request_method`/`fapi_response_mode` keys (the
+  suite rejects plans that set them twice). The
+  `fapi2-security-profile-final-happy-flow` module now executes — its first
+  run ends at the suite's static-client step (12 SUCCESS + 1 FAILURE); see
+  `docs/campaigns/reports/b12-fapi-conformance.md` and the archived
+  `results/<commit>-fapi/BLOCKER.md`.
 - Removed the embedded frontend bundles from the SDK and `sso-server`.
   Hosted login, admin, self-service, developer, and setup UIs are now separate
   frontend projects served through a reverse proxy; this repository is an
