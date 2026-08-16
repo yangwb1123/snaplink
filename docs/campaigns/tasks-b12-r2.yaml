@@ -1,0 +1,170 @@
+# B12-R2 rerun: finalize the preserved per-client id_token alg + OTel
+# correlation work, then run the FAPI suite with the feature present.
+#
+# Round 1 outcomes (2026-08-15/16):
+#   - B12-1 (per-client id_token alg): agent TIMED OUT (2400s) after a
+#     complete implementation (29 files, +691/−91: config, sqlite+postgres
+#     clients, DCR validation, discovery advertisement, wiring, openapi,
+#     config-reference, CHANGELOG). Worktree preserved; go build/vet PASS.
+#   - B12-2 (FAPI conformance): fallback executed honestly (c2871772):
+#     harness variant verified intact, basic plan zero-regression rerun
+#     (59+1 at results/78bb614f/), blocker recorded. The real FAPI run
+#     awaits B12-1 at HEAD.
+#   - B12-3 (OTel correlation): agent TIMED OUT (1800s) after an
+#     implementation (cmd/sso-minimal/app.go, cmd/sso-server/main_wiring.go,
+#     interfaces/middleware/*, platform/tracing/*, ...). Worktree
+#     preserved; the combined B12-1+B12-3 worktree compiles.
+#
+# IMPORTANT: B12-1 and B12-3 changes coexist in ONE worktree. Task R2-A
+# commits ONLY its direction's files (path-scoped git add); task R2-C
+# commits the remainder. Do NOT git add -A. Leave the other direction's
+# files untouched.
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b12-r2.yaml --reuse
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative. Files are referenced by PATH — read them with
+#     your tools, do not expect them inlined.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report. Never claim a test
+#     passed that you did not run.
+#   - Commit with a conventional imperative message + AI co-author trailer.
+#     The post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库。任务：收尾上一轮超时但实现已保留的
+    per-client id_token 签名算法工作（B12-1；29 文件 +691/−91，编译
+    通过）。你的工作是核验、跑全门禁、**只提交本方向的文件**、提交。
+
+    现状（已核验）：
+    - 工作树中 B12-1 文件（以 git status/diff 逐文件确认为准）：
+      shared/core/types.go（Client.IDTokenSignedResponseAlg 字段）、
+      config/config_client.go(+_test)/config_keys.go/config_load.go、
+      cmd/sso-server/build_app_core.go 与 client_config_test.go、
+      infrastructure/defaultimpl/sqlite/clients*.go(+_test 迁移)、
+      infrastructure/postgres/clients*.go、
+      interfaces/sso/{server_discovery_cache,server_discovery_config,
+      server_helpers,sso_wiring}.go、
+      protocols/oauth/oauthvalidate/dcr_validate*.go(+_test) 与
+      dcr_validate_encryption_test.go、docs/openapi.yaml、
+      docs/config-reference.md、CHANGELOG.md。
+    - 工作树中还有 B12-3（OTel 关联）的文件——**禁止触碰、禁止提交**。
+    - go build ./... && go vet ./... 已 PASS（两方向共存编译）。
+
+    契约（原始任务）：
+    - docs/campaigns/reports/b11-fapi-conformance.md 的 BLOCKER 段与
+      test/oidc-conformance/results/39ecdf7a-fapi/BLOCKER.md
+    - 设计裁决文件 docs/design/per-client-id-token-alg.md（若上一轮已
+      写；未写则按实现推断并补齐）
+    - AGENTS.md §3 已接受 JWS 算法（EdDSA/ES256-512/RS256/PS256；
+      none 拒绝）
+
+    执行要求：
+    1. 通读保留实现（勿重写）：Client 字段 + DCR 注册字段（RFC 7591
+       id_token_signed_response_alg）+ 静态配置键 + 校验（未知 alg
+       拒绝）+ 签发选择（多签发器 map；默认单签发器逐字节不变）+
+       discovery 广告；sqlite/postgres 客户端存储迁移；openapi/
+       config-reference 同步。发现缺口 → 小步修复并报告根因。
+    2. 全部验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./interfaces/sso/... ./protocols/oauth/... ./protocols/oidc/... -count=1
+       go test ./config/... ./infrastructure/defaultimpl/... -count=1
+       go test ./test/ -run 'OIDC|Register|IDToken' -count=1
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+       python3 cli.py check-routes && python3 cli.py sdk-surface check
+       gofmt -l 本方向文件
+    3. 提交：**路径限定 git add**（仅本方向文件；B12-3 文件原样保留），
+       conventional commit（imperative + AI co-author trailer）。
+    4. 硬边界：零豁免；新文件 ≤500 行、函数 ≤50 行/cyclo ≤15；
+       interfaces/sso 保持 60 文件上限。
+  output: docs/campaigns/reports/b12-per-client-id-token-alg.md
+  timeout: 1800
+  validate: |
+    go build ./... && go vet ./... && go test ./interfaces/sso/... ./protocols/oauth/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：完成 FAPI 2.0 conformance 运行——前置
+    B12-R2-A 已把 per-client id_token alg 合并到 HEAD。
+
+    契约（先读，后执行）：
+    - docs/campaigns/reports/b12-fapi-conformance.md（fallback 报告；
+      "下一步"段：登录客户端 DCR 加 id_token_signed_response_alg:
+      RS256 → ./run-headless.sh --fapi --timeout 1200）
+    - test/oidc-conformance/{run-headless.sh,config-fapi.yaml,
+      docker-compose.yml}（变体机制；默认拓扑字节不变纪律）
+    - B12-R2-A 提交的 per-client id_token alg（如已合并；先 git log/
+       grep 确认 HEAD 有 IDTokenSignedResponseAlg）
+
+    执行要求：
+    1. 确认 HEAD 有 per-client id_token alg（grep
+       IDTokenSignedResponseAlg + 读 B12-R2-A 报告）。若缺失：按
+       fallback 执行（验证 harness 完好 + basic 复跑 + 阻塞如实记录，
+       不虚构），报告即结束。
+    2. 若有：
+       a. harness 套件登录客户端 DCR 注册增加
+          id_token_signed_response_alg: RS256（登录客户端是普通 OIDC
+          客户端，RS256 不违反 FAPI 约束；如设计裁决有其他取值按
+          设计）；
+       b. 运行 ./run-headless.sh --fapi --timeout 1200，如实报告每
+          阶段输出与最终统计（plan 创建、模块执行、SUCCESS/FAIL 数
+          与失败项明细）；
+       c. 归档 results/<commit>-fapi/（plan/log/info/config/commit/
+          worktree；gitignore 本地留存）；与 basic 计划对比；
+       d. 文档同步（同提交）：README fapi 行更新为实测结果、
+          docs/sso/oidc-conformance.md 证据表增补 FAPI 记录、
+          CHANGELOG（如 harness 变更可见）。
+    3. 验证命令（必须实际运行并报告输出）：
+       cd test/oidc-conformance && <FAPI 运行命令>
+       cd /home/u1/workspace/demo/snaplink && go build ./... && go vet ./...
+       git status --porcelain
+    4. conventional commit（imperative + AI co-author trailer；如无
+       harness 变更则 docs 前缀）。
+  output: docs/campaigns/reports/b12-fapi-conformance.md
+  timeout: 2400
+  validate: |
+    go build ./... && go vet ./... && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：收尾上一轮超时但实现已保留的 OTel 统一
+    关联工作（B12-3；设计 Decision 7/8）。你的工作是核验、跑全门禁、
+    **只提交本方向的文件**（B12-R2-A 已提交其方向文件）、提交。
+
+    现状（已核验）：
+    - 工作树中 B12-3 文件（以 git status/diff 逐文件确认为准）：
+      cmd/sso-minimal/{app.go,edition_test.go,flow_test.go}、
+      cmd/sso-server/main_wiring.go、interfaces/middleware/*、
+      platform/tracing/*、docs/observability.md、docs/design/
+      middleware-observability-unified.md、CHANGELOG.md（若 R2-A 未
+      改则含 CHANGELOG；逐文件确认归属）。
+    - B12-R2-A 已提交的文件（per-client id_token alg）禁止改动。
+    - go build ./... && go vet ./... 已 PASS。
+
+    契约（原始任务）：
+    - docs/design/middleware-observability-unified.md Decision 7/8
+      （Correlation 中间件：OTel span 为唯一传播源、X-Trace-Id/
+      X-Request-Id 响应头、core.WithTraceID、入站 X-Request-Id 保留
+      或 32-hex 生成、audit 关联同源）
+    - 10 文件上限：interfaces/middleware 恰 10 个非测试 .go——Correlation
+      必须并入既有文件（验证上一轮是否守约）
+
+    执行要求：
+    1. 通读保留实现（勿重写）：Correlation 中间件并入文件、装配
+       （探针豁免与中间件顺序不变）、request-id 路径迁移、audit 关联
+       同源（Decision 8 边界按设计）；发现缺口 → 小步修复并报告根因。
+    2. 全部验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./interfaces/middleware/... ./platform/tracing/... -count=1
+       go test ./interfaces/sso/... -count=1 -run 'Trace|Correl|Log'
+       go test ./test/ -run 'Trace|Correl|Log' -count=1
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+       gofmt -l 本方向文件
+    3. 提交：**路径限定 git add**（仅本方向文件），conventional commit
+       （imperative + AI co-author trailer）。
+    4. 硬边界：零豁免；interfaces/middleware 保持 ≤10 非测试 .go 文件；
+       request_log.go ≤500 行（如超限按预算拆分并说明）。
+  output: docs/campaigns/reports/b12-otel-correlation.md
+  timeout: 1800
+  validate: |
+    go build ./... && go vet ./... && go test ./interfaces/middleware/... ./platform/tracing/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
