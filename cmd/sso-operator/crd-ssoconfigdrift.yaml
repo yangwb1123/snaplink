@@ -37,9 +37,12 @@ spec:
         openAPIV3Schema:
           type: object
           description: >-
-            SSOConfigDrift declares a read-only comparison of two SSO
-            clusters' running config. Reconciling it NEVER writes to either
-            cluster — see the operator's doc.go for the full scope.
+            SSOConfigDrift declares a comparison of two SSO clusters'
+            running config, reported in Status — plus, when spec.apply is
+            enabled AND the sso.snaplink.io/apply-approve annotation is
+            present AND drift is detected, a single declared-baseline write
+            to cluster B's /api/v1/admin/config/apply. Reconciling a
+            non-opted-in CR never writes to either cluster.
             SECURITY: bearerSecretRef resolves to a Secret in THIS
             namespace with no further access check — RBAC granting write
             access to this resource MUST be no broader than RBAC granting
@@ -51,6 +54,9 @@ spec:
               required:
                 - clusterA
                 - clusterB
+              x-kubernetes-validations:
+                - rule: '!has(self.apply) || !self.apply.enabled || (has(self.apply.reason) && self.apply.reason != "")'
+                  message: 'spec.apply.reason is required when spec.apply.enabled is true'
               properties:
                 clusterA:
                   type: object
@@ -114,6 +120,33 @@ spec:
                   description: >-
                     Go duration string (e.g. "5m", "30s"). Empty or
                     unparseable falls back to a 5m default.
+                apply:
+                  type: object
+                  description: >-
+                    Opt-in for the declared-baseline write path: when
+                    enabled AND the approval annotation
+                    (sso.snaplink.io/apply-approve: "true") is present AND
+                    drift is detected, the controller POSTs cluster A's
+                    (server-redacted) running snapshot to cluster B's
+                    /api/v1/admin/config/apply?approve=true. The zero value
+                    (disabled) keeps this CR report-only. See
+                    docs/design/operator-config-apply.md.
+                  properties:
+                    enabled:
+                      type: boolean
+                      description: >-
+                        Master switch for apply mode. False (the default)
+                        keeps the CR byte-identical to the report-only
+                        behavior — nothing in the binary writes to either
+                        cluster.
+                    reason:
+                      type: string
+                      description: >-
+                        Mandatory operator justification forwarded verbatim
+                        to the server's apply endpoint. Required when
+                        enabled is true — enforced by the admission rule
+                        above and re-checked by the controller before any
+                        HTTP call.
             status:
               type: object
               properties:
@@ -129,3 +162,38 @@ spec:
                 observedGeneration:
                   type: integer
                   format: int64
+                apply:
+                  type: object
+                  description: >-
+                    Outcome of the most recent apply attempt. Empty until an
+                    apply is attempted (opt-in + approval + drift); it
+                    coexists with the drift fields — an apply failure never
+                    suppresses the drift report (fail-open).
+                  properties:
+                    state:
+                      type: string
+                      enum: [applied, conflict, rejected, failed]
+                      description: >-
+                        applied: server recorded the baseline; conflict:
+                        409 split-brain refusal; rejected: 400 or a
+                        controller-side refusal (blank reason); failed:
+                        transport/5xx. Empty = never attempted.
+                    lastAttemptAt:
+                      type: string
+                      format: date-time
+                    versionID:
+                      type: string
+                      description: >-
+                        The new applied-baseline version from the server on
+                        success — the rollback target for a human issuing
+                        .../config/rollback manually.
+                    digest:
+                      type: string
+                      description: >-
+                        sha256 hex of the submitted snapshot (a hash, never
+                        content).
+                    message:
+                      type: string
+                      description: >-
+                        Token-free summary: the server's own error text or a
+                        success line naming the recorded version.

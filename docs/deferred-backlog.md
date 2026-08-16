@@ -179,7 +179,18 @@ or operator integration rather than a protocol-handler responsibility.
 Implemented:
 
 - `POST /api/v1/admin/config/cluster-diff`.
-- `SSOConfigDrift` CRD/reconciler for periodic, report-only comparison.
+- `SSOConfigDrift` CRD/reconciler for periodic comparison, report-only by
+  default, with an opt-in apply mode: when `spec.apply.enabled` AND the
+  one-shot approval annotation (`sso.snaplink.io/apply-approve: "true"`)
+  AND a non-empty diff are present, the reconciler POSTs cluster A's
+  (server-redacted) running snapshot to cluster B's
+  `/api/v1/admin/config/apply?approve=true` (with its canonical digest and
+  `spec.apply.reason`) and records the outcome in `status.apply`. The
+  approval is consumed after one successful apply (at most one apply per
+  approval, latency ≤ PollInterval), an apply failure never suppresses the
+  drift report (fail-open), and the operator never drives rollback — that
+  stays a manual server call, with `status.apply.versionID` naming the
+  exact rollback target. Design: `docs/design/operator-config-apply.md`.
 - Secret references and status reporting within the operator's namespace
   permissions.
 - `POST /api/v1/admin/config/apply` and `.../config/rollback` — the
@@ -196,12 +207,16 @@ Not committed:
 
 - Canary rollout or automated remediation.
 - GitOps reconciliation.
+- Operator-driven rollback (manual only, see the operator apply-mode
+  design).
 
 The apply path carries the authority/approval model, secret-redaction
 rules, rollback semantics and split-brain handling the boundary requires;
 canary/GitOps still need their own rollout-ordering and source-of-truth
-models. Diff-only behavior remains fail-open and non-mutating (the apply
-path records a declared baseline, it never mutates live runtime config).
+models, and operator-driven rollback lacks an operator-observable trigger
+(the drift report compares running configs, which apply never changes).
+Diff-only behavior remains fail-open and non-mutating (the apply path
+records a declared baseline, it never mutates live runtime config).
 
 ### Verifiable credentials
 

@@ -4,9 +4,10 @@ package controller
 // controller's unexported admin-path constants to the root module's owned
 // constants, so a deploy-tree literal can never silently drift from what
 // sso-server actually mounts (shared/core PathAPIPrefix +
-// PathAdminConfigRunning / PathAdminConfigClusterDiff). Test-only: the
-// root import is exercised solely by this file, so the operator binary
-// stays root-free and the out-of-process module posture is preserved.
+// PathAdminConfigRunning / PathAdminConfigClusterDiff / PathAdminConfigApply).
+// Test-only: the root import is exercised solely by this file, so the
+// operator binary stays root-free and the out-of-process module posture is
+// preserved.
 
 import (
 	"testing"
@@ -22,5 +23,9 @@ func TestAdminPathConstsMatchRootOwnedConstants(t *testing.T) {
 	wantClusterDiff := core.PathAPIPrefix + core.PathAdminConfigClusterDiff
 	if clusterDiffPath != wantClusterDiff {
 		t.Errorf("clusterDiffPath = %q, want %q (root-owned consts)", clusterDiffPath, wantClusterDiff)
+	}
+	wantApply := core.PathAPIPrefix + core.PathAdminConfigApply
+	if applyPath != wantApply {
+		t.Errorf("applyPath = %q, want %q (root-owned consts)", applyPath, wantApply)
 	}
 }

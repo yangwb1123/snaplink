@@ -47,6 +47,31 @@ type ClusterEndpoint struct {
 	BearerSecretRef corev1.SecretKeySelector `json:"bearerSecretRef"`
 }
 
+// ApplySpec opts an SSOConfigDrift into the declared-baseline write path:
+// when Enabled AND the one-shot approval annotation
+// (sso.snaplink.io/apply-approve: "true") is present AND the last diff was
+// non-empty, the controller POSTs cluster A's (already server-redacted)
+// running snapshot to cluster B's /api/v1/admin/config/apply?approve=true.
+// The zero value (Enabled=false) keeps the CR report-only and byte-identical
+// to the pre-apply-mode behavior — see docs/design/operator-config-apply.md
+// Decision 1 for the full authority model.
+type ApplySpec struct {
+	// Enabled turns on apply mode. False (the zero value) means nothing in
+	// this binary ever issues a write against either cluster, regardless of
+	// annotations or drift.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Reason is the mandatory operator justification forwarded verbatim to
+	// the server's apply endpoint (a blank reason is refused server-side as
+	// invalid_request — "an unexplained governance mutation is itself an
+	// audit finding"). Required when Enabled is true: enforced at admission
+	// by the CRD's CEL rule and re-checked by the controller before any HTTP
+	// call (docs/design/operator-config-apply.md Decision 1).
+	// +optional
+	Reason string `json:"reason,omitempty"`
+}
+
 // SSOConfigDriftSpec declares the two clusters to compare and how often.
 type SSOConfigDriftSpec struct {
 	// ClusterA is the SOURCE cluster: its running config is fetched via
@@ -64,6 +89,12 @@ type SSOConfigDriftSpec struct {
 	// unparseable falls back to DefaultPollInterval — see its doc comment.
 	// +optional
 	PollInterval string `json:"pollInterval,omitempty"`
+
+	// Apply opts this CR into the declared-baseline write path (POST
+	// /api/v1/admin/config/apply on cluster B). The zero value (disabled)
+	// keeps this CR report-only.
+	// +optional
+	Apply ApplySpec `json:"apply,omitempty"`
 }
 
 // SSOConfigDriftStatus reports the outcome of the most recent reconcile.
@@ -95,11 +126,59 @@ type SSOConfigDriftStatus struct {
 	// most recently applied Spec (standard controller-runtime idiom).
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Apply reports the most recent apply attempt, or stays empty (omitted)
+	// while none has been attempted. It coexists with the drift fields: an
+	// apply failure never suppresses the drift report (fail-open). See
+	// docs/design/operator-config-apply.md Decision 3 for the state
+	// mapping.
+	// +optional
+	Apply ApplyStatus `json:"apply,omitempty"`
 }
 
-// SSOConfigDrift is the Schema for the ssoconfigdrifts API — a declarative,
-// read-only request to compare two SSO clusters' running config and report
-// (never apply) the resulting drift.
+// ApplyStatus reports the outcome of the most recent apply attempt, or the
+// zero value when none has been attempted. The state values mirror the
+// server's failure table (docs/design/config-apply-mode.md Decision 3) plus
+// the controller-side blank-reason rejection.
+type ApplyStatus struct {
+	// State is one of "applied", "conflict", "rejected", "failed". Empty
+	// means no apply has been attempted.
+	// +optional
+	State string `json:"state,omitempty"`
+
+	// LastAttemptAt is when the most recent apply attempt completed
+	// (successfully or not).
+	// +optional
+	LastAttemptAt metav1.Time `json:"lastAttemptAt,omitempty"`
+
+	// VersionID is the new applied-config baseline version returned by the
+	// server on success — the exact rollback target for a human issuing
+	// POST .../config/rollback manually (the operator never drives
+	// rollback; see docs/design/operator-config-apply.md Decision 4).
+	// +optional
+	VersionID string `json:"versionID,omitempty"`
+
+	// Digest is the sha256 hex of the snapshot submitted in the last
+	// attempt (a hash, never snapshot content) — cross-checks the
+	// configaudit digest broadcast and evidences what was submitted.
+	// +optional
+	Digest string `json:"digest,omitempty"`
+
+	// Message is a short summary: the server's own token-free error text on
+	// failure, or a success line naming the recorded version. NEVER a
+	// bearer token or snapshot content — see doc.go's "never log/persist
+	// tokens" invariant.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// SSOConfigDrift is the Schema for the ssoconfigdrifts API — a declarative
+// request to compare two SSO clusters' running config and report the
+// resulting drift in Status; report-only by default, with an opt-in,
+// one-shot-approved apply mode (Spec.Apply + the
+// sso.snaplink.io/apply-approve annotation) that records cluster B's
+// declared applied-config baseline. See doc.go and
+// docs/design/operator-config-apply.md.
 //
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -163,6 +242,7 @@ func (in *SSOConfigDriftSpec) DeepCopyInto(out *SSOConfigDriftSpec) {
 	*out = *in
 	in.ClusterA.DeepCopyInto(&out.ClusterA)
 	in.ClusterB.DeepCopyInto(&out.ClusterB)
+	in.Apply.DeepCopyInto(&out.Apply)
 }
 
 // DeepCopy returns a deep copy of SSOConfigDriftSpec.
@@ -175,10 +255,42 @@ func (in *SSOConfigDriftSpec) DeepCopy() *SSOConfigDriftSpec {
 	return out
 }
 
+// DeepCopyInto copies every field of ApplySpec (all value fields).
+func (in *ApplySpec) DeepCopyInto(out *ApplySpec) {
+	*out = *in
+}
+
+// DeepCopy returns a deep copy of ApplySpec.
+func (in *ApplySpec) DeepCopy() *ApplySpec {
+	if in == nil {
+		return nil
+	}
+	out := new(ApplySpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
 // DeepCopyInto copies every field of SSOConfigDriftStatus.
 func (in *SSOConfigDriftStatus) DeepCopyInto(out *SSOConfigDriftStatus) {
 	*out = *in
 	in.LastCheckedAt.DeepCopyInto(&out.LastCheckedAt)
+	in.Apply.DeepCopyInto(&out.Apply)
+}
+
+// DeepCopyInto copies every field of ApplyStatus, including the timestamp.
+func (in *ApplyStatus) DeepCopyInto(out *ApplyStatus) {
+	*out = *in
+	in.LastAttemptAt.DeepCopyInto(&out.LastAttemptAt)
+}
+
+// DeepCopy returns a deep copy of ApplyStatus.
+func (in *ApplyStatus) DeepCopy() *ApplyStatus {
+	if in == nil {
+		return nil
+	}
+	out := new(ApplyStatus)
+	in.DeepCopyInto(out)
+	return out
 }
 
 // DeepCopy returns a deep copy of SSOConfigDriftStatus.

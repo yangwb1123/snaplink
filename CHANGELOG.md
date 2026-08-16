@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `sso-operator` apply mode for `SSOConfigDrift` (nested module
+  `cmd/sso-operator`): a CR that opts in via `spec.apply.enabled` AND
+  carries the one-shot approval annotation
+  (`sso.snaplink.io/apply-approve: "true"`) AND has a non-empty diff gets
+  exactly one `POST .../config/apply?approve=true` per reconcile-approval
+  pair — cluster A's already-server-redacted running snapshot, its
+  canonical sha256 digest (byte-identical to `configaudit.Digest`, pinned
+  by a known-answer test), and the mandatory `spec.apply.reason`. The
+  outcome lands in `status.apply` (state applied/conflict/rejected/failed,
+  lastAttemptAt, versionID, digest, message) and coexists with the drift
+  fields: an apply failure is fail-open (recorded, never suppresses the
+  drift report) and keeps the approval pending for the 30s retry;
+  success consumes the annotation (at most one apply per approval — no
+  auto-remediation). Report-only CRs are byte-identical to before, the
+  CRD gains the `apply` schema block + a CEL reason-when-enabled rule,
+  and rollback stays manual (the operator never drives it; `versionID`
+  names the target). Design: `docs/design/operator-config-apply.md`.
 - Config apply mode (`POST /api/v1/admin/config/apply` + `.../rollback`, admin:write):
   the declared peer-config baseline write path promoting the deferred-backlog
   "Declarative multi-cluster configuration governance" Partial boundary.

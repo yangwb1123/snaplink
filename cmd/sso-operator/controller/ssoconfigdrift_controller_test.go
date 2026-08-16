@@ -49,10 +49,18 @@ func newScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-// buildReconciler seeds a fake client with a CR pointed at the two given
-// httptest servers plus their bearer-token Secrets, and returns a
+// buildReconciler seeds a fake client with a report-only CR pointed at the
+// two given httptest servers plus their bearer-token Secrets, and returns a
 // Reconciler ready to run against it.
 func buildReconciler(t *testing.T, serverA, serverB *httptest.Server, pollInterval string) (*Reconciler, types.NamespacedName) {
+	t.Helper()
+	return buildReconcilerCustom(t, serverA, serverB, pollInterval, drift.ApplySpec{}, nil)
+}
+
+// buildReconcilerCustom is buildReconciler plus an apply-mode spec and
+// approval annotation (and optionally a pre-seeded status), for the apply
+// tests — the report-only callers above keep the zero-value defaults.
+func buildReconcilerCustom(t *testing.T, serverA, serverB *httptest.Server, pollInterval string, apply drift.ApplySpec, annotations map[string]string) (*Reconciler, types.NamespacedName) {
 	t.Helper()
 	scheme := newScheme(t)
 
@@ -65,7 +73,7 @@ func buildReconciler(t *testing.T, serverA, serverB *httptest.Server, pollInterv
 		Data:       map[string][]byte{tokenBKey: []byte("token-b-secret-value")},
 	}
 	cr := &drift.SSOConfigDrift{
-		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace, Annotations: annotations},
 		Spec: drift.SSOConfigDriftSpec{
 			ClusterA: drift.ClusterEndpoint{
 				BaseURL:         serverA.URL,
@@ -76,6 +84,7 @@ func buildReconciler(t *testing.T, serverA, serverB *httptest.Server, pollInterv
 				BearerSecretRef: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "cluster-b-token"}, Key: tokenBKey},
 			},
 			PollInterval: pollInterval,
+			Apply:        apply,
 		},
 	}
 
