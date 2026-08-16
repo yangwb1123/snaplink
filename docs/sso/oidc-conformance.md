@@ -33,7 +33,7 @@ archival contract is the harness README's Evidence section). Every basic/HTTPS
 archive contains `plan.json`, `oidcc-server.log.json`,
 `oidcc-server.info.json`, `config.yaml` (byte-identical pinned config, md5
 `932b860b…`), `commit.txt` and `worktree.txt`; `commit.txt` matches the
-archive name in all four runs. The FAPI archive (`results/39ecdf7a-fapi/`)
+archive name in all five runs. The FAPI archive (`results/39ecdf7a-fapi/`)
 contains config/discovery/jwks/suite-login-failure/commit/worktree plus a
 `BLOCKER.md` root-cause record — no plan/log/info because the run was
 blocked before plan creation (§2 note).
@@ -50,6 +50,7 @@ Basic certification plan (`oidcc-basic-certification-test-plan`) with the
 | HTTP baseline (initial) | 2026-07-31 | `34ea1d3d` | HTTP issuer `http://sso-issuer:8180` | **59 SUCCESS + 1 FAILURE**; 2 WARNING | `results/34ea1d3d/` | `./run-headless.sh --timeout 900` |
 | HTTP baseline (post gRPC fix) | 2026-08-15 | `af3bc485` | HTTP issuer | **59 SUCCESS + 1 FAILURE**; 3 WARNING | `results/af3bc485/` | `./run-headless.sh --timeout 900` |
 | HTTP same-commit re-run | 2026-08-15 | `7400ba0c` | HTTP issuer | **59 SUCCESS + 1 FAILURE**; 3 WARNING | `results/7400ba0c/` | `./run-headless.sh --timeout 900` |
+| HTTP fallback re-run (B12-2) | 2026-08-16 | `78bb614f` | HTTP issuer | **59 SUCCESS + 1 FAILURE**; 3 WARNING | `results/78bb614f/` | `./run-headless.sh --timeout 900` |
 | HTTPS milestone | 2026-08-15 | `7400ba0c` | HTTPS issuer (self-signed local proxy) | **60 SUCCESS + 0 FAILURE**; 3 WARNING | `results/7400ba0c-https/` | `./run-headless.sh --timeout 900 --issuer-https` |
 | FAPI 2.0 SP attempt | 2026-08-16 | `39ecdf7a` | HTTP issuer, FAPI variant (`--fapi`) | **blocked** — no plan created, no module ran (see the blocker note below) | `results/39ecdf7a-fapi/` | `./run-headless.sh --fapi --timeout 600` |
 
@@ -72,6 +73,15 @@ Consequently **no FAPI module has ever run against this harness** — the
 record (`BLOCKER.md`); the recommended unblock (separate RS256 issuer for
 the suite's own login, or per-client `id_token_signed_response_alg`) is
 described there.
+
+B12-2 fallback (2026-08-16): the per-client `id_token_signed_response_alg`
+unblock was implemented in the B12-1 worktree but not merged at HEAD
+`78bb614f`, so the FAPI run was not attempted (contract fallback — no
+fabricated result). The harness variant was verified intact and the basic
+plan was re-run at `78bb614f` with a byte-identical result (59 SUCCESS + 1
+FAILURE; 3 WARNING — see the evidence row above), proving zero regression.
+The blocker record is `docs/campaigns/reports/b12-fapi-conformance.md`;
+the FAPI run proceeds once B12-1 lands.
 
 Notes:
 

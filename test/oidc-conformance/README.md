@@ -29,7 +29,7 @@ the only supported profile set; anything else must not be run or claimed.
 | `session` | ✅ | Session management (`check_session_iframe`) |
 | `logout` | ✅ | RP-initiated logout |
 | `jarm` | ✅ | Requires `oauth.jar`/JARM wiring; opt-in |
-| `fapi` | ✅* | FAPI 2.0 code profile (`--fapi`); **run blocked** at suite login — the pinned suite's own login decoder is RS256-only (Spring `OidcIdTokenDecoderFactory` default), while the FAPI 2.0 SP requires a non-RS256 ID-token alg (PS256/ES256/EdDSA); see `docs/sso/oidc-conformance.md` §2 and the archived blocker record |
+| `fapi` | ✅* | FAPI 2.0 code profile (`--fapi`); **run blocked** at suite login — the pinned suite's own login decoder is RS256-only (Spring `OidcIdTokenDecoderFactory` default), while the FAPI 2.0 SP requires a non-RS256 ID-token alg (PS256/ES256/EdDSA); the product-level unblock (per-client `id_token_signed_response_alg`) is not yet merged at HEAD (see `docs/campaigns/reports/b12-fapi-conformance.md`); see `docs/sso/oidc-conformance.md` §2 and the archived blocker record |
 | `ciba` | ✅ | Only when a CIBA store is wired |
 | `implicit` | ❌ | Runtime rejects `id_token` response types |
 | `hybrid` | ❌ | Runtime rejects `code id_token` response types |
