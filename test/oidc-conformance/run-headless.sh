@@ -2,12 +2,13 @@
 # Headless OIDC conformance run for the snaplink sso-server.
 #
 # Builds the harness, registers the suite's OIDC login client + admin user
-# against the server under test, creates the Basic-certification plan with
-# the discovery configuration, runs the oidcc-server module through a
-# headless Chrome (auto-fulfilling the JSON logins), and archives the result
-# under results/<commit>/.
+# against the server under test, creates the certification plan with the
+# discovery configuration, runs the requested test module through a headless
+# Chrome (auto-fulfilling the JSON logins), and archives the result under
+# results/<commit>[-https][-fapi]/.
 #
-# Usage: ./run-headless.sh [--module oidcc-server] [--timeout 450] [--issuer-https]
+# Usage: ./run-headless.sh [--module oidcc-server] [--timeout 450]
+#                          [--issuer-https] [--fapi]
 #
 # --issuer-https runs the HTTPS issuer topology: an nginx issuer-proxy
 # terminates the self-signed cert on host 8181 and the issuer URL becomes
@@ -15,6 +16,13 @@
 # VerifyClientManagementCredentials) apply. The default (no flag) keeps the
 # HTTP topology byte-identical to the committed behavior. Evidence is
 # archived under results/<commit>[-https]/.
+#
+# --fapi runs the FAPI 2.0 Security Profile variant: mounts config-fapi.yaml
+# (oauth.compliance.profile=fapi_2 inspection + PAR + es256 signing), creates
+# the fapi2-security-profile-final-test-plan with the plain_fapi /
+# private_key_jwt / DPoP / unsigned-PAR / plain-response variant, runs the
+# fapi2-security-profile-final-happy-flow module and archives under
+# results/<commit>-fapi/. The default basic topology is unchanged.
 #
 # Requires: docker compose v2, google-chrome, python3 (websocket-client),
 # openssl; --issuer-https additionally requires keytool (JDK) to build the
@@ -25,6 +33,16 @@ cd "$(dirname "$0")"
 MODULE="${MODULE:-oidcc-server}"
 TIMEOUT="${TIMEOUT:-450}"
 ISSUER_HTTPS=""
+FAPI=""
+ARCHIVE_SUFFIX=""
+# CONFORMANCE_CONFIG selects the server config variant mounted at
+# /etc/sso/conformance.yaml (default config.yaml — byte-identical to the
+# committed behavior; --fapi switches it to config-fapi.yaml).
+CONFIG_FILE="${CONFIG_FILE:-config.yaml}"
+# PLAN_NAME + PLAN_VARIANT select the OIDF plan and its variant; the basic
+# defaults reproduce the committed discovery+dynamic-client Basic plan.
+PLAN_NAME="${PLAN_NAME:-oidcc-basic-certification-test-plan}"
+PLAN_VARIANT="${PLAN_VARIANT:-{\"server_metadata\":\"discovery\",\"client_registration\":\"dynamic_client\"}}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --module) MODULE="$2"; shift 2 ;;
@@ -32,14 +50,37 @@ while [ $# -gt 0 ]; do
     --timeout) TIMEOUT="$2"; shift 2 ;;
     --timeout=*) TIMEOUT="${1#*=}"; shift ;;
     --issuer-https) ISSUER_HTTPS=1; shift ;;
+    --fapi) FAPI=1; shift ;;
+    --config) CONFIG_FILE="$2"; shift 2 ;;
+    --config=*) CONFIG_FILE="${1#*=}"; shift ;;
+    --plan) PLAN_NAME="$2"; shift 2 ;;
+    --plan=*) PLAN_NAME="${1#*=}"; shift ;;
+    --variant) PLAN_VARIANT="$2"; shift 2 ;;
+    --variant=*) PLAN_VARIANT="${1#*=}"; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
+if [ -n "${FAPI:-}" ]; then
+  # FAPI 2.0 Security Profile variant: independent server config + the
+  # OIDF FAPI2 SP final plan (plain_fapi, private_key_jwt client auth,
+  # DPoP sender-constraining, unsigned PAR, plain response mode) and its
+  # happy-flow module. The OIDF plan's DEFAULT request method is unsigned
+  # PAR; snaplink's compliance profile runs in inspection mode so the run
+  # proceeds while every FAPI violation is audited (see config-fapi.yaml).
+  CONFIG_FILE="config-fapi.yaml"
+  PLAN_NAME="fapi2-security-profile-final-test-plan"
+  PLAN_VARIANT='{"fapi_profile":"plain_fapi","openid":"openid_connect","fapi_request_method":"unsigned","fapi_response_mode":"plain_response","client_auth_type":"private_key_jwt","sender_constrain":"dpop","authorization_request_type":"simple"}'
+  MODULE="fapi2-security-profile-final-happy-flow"
+  ARCHIVE_SUFFIX="${ARCHIVE_SUFFIX}-fapi"
+fi
+# Compose interpolation picks up the config variant for the sso-server
+# mount (./${CONFORMANCE_CONFIG:-config.yaml}).
+export CONFORMANCE_CONFIG="${CONFIG_FILE}"
+
 ISSUER_HOST="sso-issuer"
 ISSUER_PORT="8180"
 ISSUER_SCHEME="http"
-ARCHIVE_SUFFIX=""
 # Must stay in sync with the pinned tag in docker-compose.yml (used to
 # extract the JVM default truststore for the --issuer-https run).
 SUITE_IMAGE="registry.gitlab.com/openid/conformance-suite:release-v5.2.1"
@@ -47,7 +88,7 @@ COMPOSE=(docker compose --env-file config.env)
 if [ -n "${ISSUER_HTTPS:-}" ]; then
   ISSUER_PORT="8181"
   ISSUER_SCHEME="https"
-  ARCHIVE_SUFFIX="-https"
+  ARCHIVE_SUFFIX="${ARCHIVE_SUFFIX}-https"
   # Compose interpolation picks these up for the sso-server issuer and the
   # suite's OIDC provider config + JVM TLS truststore.
   export ISSUER_URL="${ISSUER_SCHEME}://${ISSUER_HOST}:${ISSUER_PORT}"
@@ -170,21 +211,31 @@ done
 curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/currentuser" | python3 -c \
   "import json,sys; assert json.load(sys.stdin).get('isAdmin'), 'suite login failed: not admin'"
 
-say "creating the Basic certification plan (discovery + dynamic client)"
-curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/plan/info/oidcc-basic-certification-test-plan" \
+say "creating the ${PLAN_NAME} plan"
+curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/plan/info/${PLAN_NAME}" \
   > /tmp/planinfo.json
+# Per-module config override: the FAPI 2.0 SP plan needs a discovery URL and
+# a resource URL for the sender-constrained access-token call; the Basic plan
+# needs only the discovery URL.
+if [ "${PLAN_NAME}" = "fapi2-security-profile-final-test-plan" ]; then
+  OVERRIDE_JSON="{\"fapi2-security-profile-final-happy-flow\": {\"server\": {\"discoveryUrl\": \"${DISCOVERY_URL}\"}, \"resource\": {\"resourceUrl\": \"http://sso-server:8080/userinfo\"}}}"
+else
+  OVERRIDE_JSON="{\"oidcc-server\": {\"server\": {\"discoveryUrl\": \"${DISCOVERY_URL}\"}}}"
+fi
+export OVERRIDE_JSON
 PLAN_BODY="$(python3 - <<PY
-import json
+import json, os
 info = json.load(open("/tmp/planinfo.json"))
 body = {
   "modules": info["modules"],
-  "override": {"oidcc-server": {"server": {"discoveryUrl": "$DISCOVERY_URL"}}},
+  "override": json.loads(os.environ["OVERRIDE_JSON"]),
 }
 print(json.dumps(body))
 PY
 )"
+VARIANT_ENC="$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "${PLAN_VARIANT}")"
 PLAN_ID="$(curl -sk -b "$COOKIE_JAR" -X POST \
-  "$SUITE_BASE/api/plan?planName=oidcc-basic-certification-test-plan&variant=%7B%22server_metadata%22%3A%22discovery%22%2C%22client_registration%22%3A%22dynamic_client%22%7D" \
+  "$SUITE_BASE/api/plan?planName=${PLAN_NAME}&variant=${VARIANT_ENC}" \
   -H 'Content-Type: application/json' -d "$PLAN_BODY" \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")"
 say "plan id: $PLAN_ID"
@@ -209,10 +260,10 @@ say "archiving evidence"
 COMMIT="$(cd ../.. && git rev-parse --short HEAD)"
 OUT="$(pwd)/results/${COMMIT}${ARCHIVE_SUFFIX}"
 mkdir -p "$OUT"
-curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/log/${TEST_ID}" > "$OUT/oidcc-server.log.json"
-curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/info/${TEST_ID}" > "$OUT/oidcc-server.info.json"
+curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/log/${TEST_ID}" > "$OUT/${MODULE}.log.json"
+curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/info/${TEST_ID}" > "$OUT/${MODULE}.info.json"
 curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/plan/${PLAN_ID}" > "$OUT/plan.json"
-cp config.yaml "$OUT/config.yaml"
+cp "${CONFIG_FILE}" "$OUT/config.yaml"
 (cd ../.. && git rev-parse HEAD > "$OUT/commit.txt" 2>/dev/null || true)
 (cd ../.. && git status --porcelain > "$OUT/worktree.txt" 2>/dev/null || true)
 echo "artifacts in results/${COMMIT}${ARCHIVE_SUFFIX}/"

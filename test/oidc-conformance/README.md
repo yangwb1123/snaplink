@@ -29,7 +29,7 @@ the only supported profile set; anything else must not be run or claimed.
 | `session` | ✅ | Session management (`check_session_iframe`) |
 | `logout` | ✅ | RP-initiated logout |
 | `jarm` | ✅ | Requires `oauth.jar`/JARM wiring; opt-in |
-| `fapi` | ✅ | FAPI 2.0 code profile only, when FAPI wiring is enabled |
+| `fapi` | ✅* | FAPI 2.0 code profile (`--fapi`); **run blocked** at suite login — the pinned suite's own login decoder is RS256-only (Spring `OidcIdTokenDecoderFactory` default), while the FAPI 2.0 SP requires a non-RS256 ID-token alg (PS256/ES256/EdDSA); see `docs/sso/oidc-conformance.md` §2 and the archived blocker record |
 | `ciba` | ✅ | Only when a CIBA store is wired |
 | `implicit` | ❌ | Runtime rejects `id_token` response types |
 | `hybrid` | ❌ | Runtime rejects `code id_token` response types |
@@ -45,8 +45,23 @@ Prerequisites: Docker with compose v2, google-chrome, python3
 ```bash
 ./run-headless.sh                # HTTP issuer topology; archives results/<commit>/
 ./run-headless.sh --issuer-https # HTTPS issuer topology; archives results/<commit>-https/
+./run-headless.sh --fapi         # FAPI 2.0 SP variant; archives results/<commit>-fapi/
 MODULE=oidcc-config-certification-test ./run-headless.sh
 ```
+
+`--fapi` mounts `config-fapi.yaml` (`oauth.compliance.profile=fapi_2` in
+inspection mode, PAR enabled, ES256 signing), creates the
+`fapi2-security-profile-final-test-plan` plain_fapi / private_key_jwt /
+DPoP / unsigned-PAR / plain-response variant and runs the
+`fapi2-security-profile-final-happy-flow` module. The default invocation is
+byte-identical to the committed behavior (`CONFORMANCE_CONFIG` defaults to
+`config.yaml`; verified by `docker compose --env-file config.env config`).
+As of commit `39ecdf7a` the FAPI run is **blocked at the suite's own OIDC
+login** (see the `results/<commit>-fapi/BLOCKER.md` record and
+`docs/sso/oidc-conformance.md` §2): the pinned suite validates its login
+ID token with an RS256-only decoder while the FAPI 2.0 SP requires
+PS256/ES256/EdDSA, so the run cannot reach plan creation. Do not report a
+FAPI pass on the basis of this harness until that conflict is resolved.
 
 The script builds the harness, registers the suite's OIDC login client via
 DCR plus an admin signup user on the server under test, creates the Basic

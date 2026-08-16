@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- OIDC-conformance harness FAPI variant (`test/oidc-conformance/`):
+  `config-fapi.yaml` (FAPI 2.0 Security Profile, inspection mode, PAR
+  enabled, ES256 signing) plus `--fapi` in `run-headless.sh`
+  (plan `fapi2-security-profile-final-test-plan`, variant plain_fapi /
+  private_key_jwt / DPoP / unsigned-PAR / plain-response, module
+  `fapi2-security-profile-final-happy-flow`) and PAR-aware logins in
+  `drive_test.py`. The default basic topology is unchanged
+  (`CONFORMANCE_CONFIG` defaults to `config.yaml`; verified via
+  `docker compose --env-file config.env config`). The first FAPI run is
+  archived under `results/39ecdf7a-fapi/` and is **blocked at the suite's
+  own login**: the pinned OIDF suite validates its login ID token with an
+  RS256-only decoder (Spring `OidcIdTokenDecoderFactory` default) while
+  the FAPI 2.0 SP requires PS256/ES256/EdDSA — no FAPI module has run yet;
+  see `docs/sso/oidc-conformance.md` §2 and the archived `BLOCKER.md`.
 - `sso-operator` apply mode for `SSOConfigDrift` (nested module
   `cmd/sso-operator`): a CR that opts in via `spec.apply.enabled` AND
   carries the one-shot approval annotation

@@ -1,0 +1,102 @@
+# FAPI 2.0 Security Profile conformance server configuration.
+#
+# Independent config variant for the OIDF FAPI 2.0 headless run
+# (run-headless.sh --fapi). Byte-identical to config.yaml EXCEPT for the
+# three deltas documented below; the default basic topology always mounts
+# config.yaml (see docker-compose.yml's ${CONFORMANCE_CONFIG:-config.yaml}).
+#
+# Deltas vs config.yaml:
+#  1. keys.signing.alg: es256 — the FAPI 2.0 SP allows only PS256/ES256/
+#     EdDSA/Ed25519 for ID tokens (the suite's
+#     FAPI2CheckDiscEndpointIdTokenSigningAlgValuesSupported check), and
+#     snaplink's own FAPI signing-alg rule rejects RSA-PKCS1.
+#  2. oauth.par.enabled: true — FAPI 2.0 SP mandates pushed authorization
+#     requests (RFC 9126); the default config does not wire the PAR store.
+#  3. oauth.compliance.profile: fapi_2 + inspection_only: true — the FAPI
+#     compliance validator runs in Inspection mode: violations are audited
+#     (fapi_compliance_violation events + sso_fapi_violations_total metric)
+#     but requests proceed. Enforce mode is deliberately NOT used here:
+#     (a) the harness's own suite-login OIDC client authenticates with
+#     client_secret_post and does not use PAR — enforce would lock the
+#     harness out of the suite UI; (b) the OIDF FAPI2 SP final plan's
+#     DEFAULT variant is unsigned PAR (fapi_request_method=unsigned) while
+#     snaplink's enforce mode additionally requires a signed request object
+#     (JAR) for every request, so enforce would reject the suite's happy
+#     path itself. Inspection is the ramp-up posture: it produces the
+#     per-RP compliance-gap evidence without blocking the run.
+
+version: 1
+
+server:
+  issuer: http://sso-issuer:8180  # canonical URL; the suite container resolves
+                                  # it via extra_hosts host-gateway, a browser
+                                  # via a hosts entry or curl --resolve
+  listen: ":8080"                 # inside the container / compose network
+  default_token_strategy: jwt
+  http2:
+    enabled: true
+
+identity:
+  backend: sqlite
+  sqlite:
+    dsn: "file:/data/sso.db?_journal=WAL"  # /tmp is the writable scratch dir in the distroless nonroot runtime
+
+oauth:
+  backend: sqlite
+  sqlite:
+    dsn: "file:/data/sso-oauth.db?_journal=WAL"
+  auth_code:
+    enabled: true
+    ttl: 5m
+  par:
+    enabled: true
+  compliance:
+    # FAPI 2.0 Security Profile, inspection (audit-only) mode — see the
+    # header comment for why enforce is not used for this run.
+    profile: fapi_2
+    inspection_only: true
+
+
+self_service:
+  # The conformance suite provisions its test users through the public
+  # signup endpoint.
+  signup: true
+  password:
+    backend: sqlite
+    sqlite:
+      dsn: "file:/data/sso-pw.db?_journal=WAL"
+
+client_registration:
+  # The conformance suite registers its own test clients via RFC 7591.
+  # Open registration is acceptable ONLY inside this isolated harness
+  # network; never enable it in a production topology.
+  enabled: true
+  allow_open_registration: true
+  default_active: true
+  default_token_strategy: jwt
+
+authenticators:
+  password:
+    enabled: true
+
+oidc:
+  response_encryption:
+    backend: ""        # JARM/encryption modules are exercised via client JWKS
+
+bootstrap:
+  # The harness needs no seeded admin/console client; disabling skips the
+  # seed_admin_role step (which would require a permissions provider).
+  disabled: true
+
+keys:
+  signing:
+    # ES256 (FAPI 2.0-approved ECDSA; the suite's JwtDecoder accepts it and
+    # the FAPI2 SP discovery check requires an approved ID-token alg).
+    alg: es256
+
+feature_gates:
+  oidc: true
+  admin_api: false   # conformance harness needs no admin surface
+
+logging:
+  level: debug

@@ -1,7 +1,7 @@
 # OIDC Conformance — Certification-Readiness Evidence Kit
 
 Last verified against the code and the archived run artifacts on
-2026-08-15 at HEAD `d89e682e`. Every count in this document was re-read
+2026-08-16 at HEAD `39ecdf7a`. Every count in this document was re-read
 from the archives listed in [§2](#2-evidence-table); the reproduction
 commands were re-checked against `test/oidc-conformance/run-headless.sh`
 and the harness [README](../../test/oidc-conformance/README.md).
@@ -28,12 +28,15 @@ of the OIDF suite's `oidcc-server` module. The harness is not part of
 ## 2. Evidence table
 
 All archives live under
-`test/oidc-conformance/results/<commit>[-https]/` (git-ignored; the
-archival contract is the harness README's Evidence section). Every archive
-contains `plan.json`, `oidcc-server.log.json`, `oidcc-server.info.json`,
-`config.yaml` (byte-identical pinned config, md5 `932b860b…`),
-`commit.txt` and `worktree.txt`; `commit.txt` matches the archive name in
-all four runs.
+`test/oidc-conformance/results/<commit>[-https][-fapi]/` (git-ignored; the
+archival contract is the harness README's Evidence section). Every basic/HTTPS
+archive contains `plan.json`, `oidcc-server.log.json`,
+`oidcc-server.info.json`, `config.yaml` (byte-identical pinned config, md5
+`932b860b…`), `commit.txt` and `worktree.txt`; `commit.txt` matches the
+archive name in all four runs. The FAPI archive (`results/39ecdf7a-fapi/`)
+contains config/discovery/jwks/suite-login-failure/commit/worktree plus a
+`BLOCKER.md` root-cause record — no plan/log/info because the run was
+blocked before plan creation (§2 note).
 
 All runs pin the suite image
 `registry.gitlab.com/openid/conformance-suite:release-v5.2.1` (suite
@@ -48,6 +51,27 @@ Basic certification plan (`oidcc-basic-certification-test-plan`) with the
 | HTTP baseline (post gRPC fix) | 2026-08-15 | `af3bc485` | HTTP issuer | **59 SUCCESS + 1 FAILURE**; 3 WARNING | `results/af3bc485/` | `./run-headless.sh --timeout 900` |
 | HTTP same-commit re-run | 2026-08-15 | `7400ba0c` | HTTP issuer | **59 SUCCESS + 1 FAILURE**; 3 WARNING | `results/7400ba0c/` | `./run-headless.sh --timeout 900` |
 | HTTPS milestone | 2026-08-15 | `7400ba0c` | HTTPS issuer (self-signed local proxy) | **60 SUCCESS + 0 FAILURE**; 3 WARNING | `results/7400ba0c-https/` | `./run-headless.sh --timeout 900 --issuer-https` |
+| FAPI 2.0 SP attempt | 2026-08-16 | `39ecdf7a` | HTTP issuer, FAPI variant (`--fapi`) | **blocked** — no plan created, no module ran (see the blocker note below) | `results/39ecdf7a-fapi/` | `./run-headless.sh --fapi --timeout 600` |
+
+FAPI 2.0 attempt (blocked): the `--fapi` run passed config validation, the
+harness start, DCR registration of the suite login client and the admin
+signup, then **failed at the suite's own admin login** on all eight
+retries: the pinned suite (`release-v5.2.1`) validates its login ID token
+with Spring Security's default `OidcIdTokenDecoderFactory`, whose
+`jwsAlgorithmResolver` is hard-coded to **RS256**, while the FAPI 2.0
+Security Profile requires a non-RS256 ID-token alg (the suite's own
+`FAPI2CheckDiscEndpointIdTokenSigningAlgValuesSupported` demands ≥1 of
+PS256/ES256/EdDSA/Ed25519 in discovery). Snaplink correctly signs ES256 in
+the FAPI variant, and the suite rejects that login ID token with
+`invalid_id_token: Signed JWT rejected: Another algorithm expected, or no
+matching key(s) found`. A control decode using the suite's jars proves the
+token itself verifies; the rejection is the factory's RS256-only resolver.
+Consequently **no FAPI module has ever run against this harness** — the
+`fapi` allowlist row below must not be reported as passing. The archive
+`results/39ecdf7a-fapi/` contains the run-time evidence and a root-cause
+record (`BLOCKER.md`); the recommended unblock (separate RS256 issuer for
+the suite's own login, or per-client `id_token_signed_response_alg`) is
+described there.
 
 Notes:
 
@@ -152,7 +176,7 @@ archived runs.
 | `session` | ✅ | ⚠️ not run | session-management plan (`check_session_iframe`); not part of the archived plan. |
 | `logout` | ✅ | ⚠️ not run | RP-initiated logout plan; not part of the archived plan. |
 | `jarm` | ✅* | ❌ not run | requires `oauth.jar`/JARM wiring (opt-in); no archive exists. |
-| `fapi` | ✅* | ❌ not run | FAPI 2.0 code profile only, when FAPI wiring is enabled; no archive exists. |
+| `fapi` | ✅* | ⚠️ blocked | `--fapi` harness wiring exists (plan/variant/module + config variant) and the run reaches suite login, then blocks: the pinned suite's RS256-only login decoder rejects the FAPI-required ES256 ID token. No plan created, no module ran. Evidence + root cause: `results/39ecdf7a-fapi/` (see §2). |
 | `ciba` | ✅* | ❌ not run | only when a CIBA store is wired; no archive exists. |
 | `implicit` | ❌ | — | runtime rejects `id_token` response types; must never be selected. |
 | `hybrid` | ❌ | — | runtime rejects `code id_token` response types; must never be selected. |

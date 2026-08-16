@@ -29,10 +29,13 @@ services:
       - "8180:8080"
     volumes:
       # Bind-mounted so the harness pins the exact server configuration
-      # under test. Validate it first with:
+      # under test. CONFORMANCE_CONFIG selects the config variant (default
+      # config.yaml — byte-identical to the committed behavior; the FAPI
+      # run uses config-fapi.yaml via run-headless.sh --fapi). Validate
+      # it first with:
       #   docker compose run --rm --no-deps sso-server --validate-only
       #   -grpc-listen "" --config /etc/sso/conformance.yaml
-      - ./config.yaml:/etc/sso/conformance.yaml:ro
+      - ./${CONFORMANCE_CONFIG:-config.yaml}:/etc/sso/conformance.yaml:ro
       # Persistent sqlite state (identity/oauth/password stores) so the
       # DCR-registered suite client + signup admin survive container
       # recreation; 0777 host dir because the distroless runtime is nonroot.

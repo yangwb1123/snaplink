@@ -15,9 +15,10 @@ CDP_PORT = 9237
 BASE = "https://localhost:8443"
 
 class CDP:
-    def __init__(self, ws_url):
+    def __init__(self, ws_url, test_id):
         self.ws = websocket.create_connection(ws_url, timeout=120)
         self.msg_id = 0
+        self.test_id = test_id
 
     def send(self, method, params=None):
         self.msg_id += 1
@@ -37,12 +38,26 @@ class CDP:
         rid = params["requestId"]
         if url.startswith(ISSUER + "/auth/login"):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
-            code = self._login(q)
+            code, state = self._login(q)
             if code:
-                redir = q["redirect_uri"][0]
-                state = q.get("state", [""])[0]
-                sep = "&" if "?" in redir else "?"
-                target = f"{redir}{sep}code={code}&state={state}"
+                if "redirect_uri" in q:
+                    # Plain authorization request: redirect_uri/state ride the
+                    # URL (OIDC Core default / basic oidcc-server flow).
+                    redir = q["redirect_uri"][0]
+                    state = q.get("state", [""])[0]
+                    sep = "&" if "?" in redir else "?"
+                    target = f"{redir}{sep}code={code}&state={state}"
+                else:
+                    # FAPI 2.0 PAR flow: the browser URL carries only
+                    # client_id + request_uri (RFC 9126); redirect_uri/state
+                    # live inside the pushed request, which snaplink echoes
+                    # state back from (the code response carries state). The
+                    # suite's callback for this test is at
+                    # /test/<test_id>/callback and FAPI2-SP-FINAL requires
+                    # the RFC 9207 iss parameter in the response.
+                    redir = f"{BASE}/test/{self.test_id}/callback"
+                    target = (f"{redir}?code={code}&state={state}"
+                              f"&iss={urllib.parse.quote(ISSUER, safe='')}")
                 print(f"[login] fulfilled -> {target[:90]}", flush=True)
                 self._raw("Fetch.fulfillRequest", {"requestId": rid, "responseCode": 302,
                     "responseHeaders": [{"name": "Location", "value": target}]})
@@ -62,17 +77,23 @@ class CDP:
                 self._paused(msg["params"])
 
     def _login(self, q):
+        # For a FAPI 2.0 PAR authorization URL the pushed request is
+        # consumed by posting request_uri straight to /auth/login; the
+        # response echoes state (merged from the PAR) alongside the code.
         body = {
             "provider": "password",
             "client_id": q["client_id"][0],
-            "redirect_uri": q["redirect_uri"][0],
-            "response_type": q.get("response_type", ["code"])[0],
-            "scope": q.get("scope", ["openid"])[0].split(),
             "credential": {"username": USER, "password": PASSWORD},
         }
-        for k in ("state", "nonce", "code_challenge", "code_challenge_method"):
-            if k in q:
-                body[k] = q[k][0]
+        if "request_uri" in q:
+            body["request_uri"] = q["request_uri"][0]
+        else:
+            body["redirect_uri"] = q["redirect_uri"][0]
+            body["response_type"] = q.get("response_type", ["code"])[0]
+            body["scope"] = q.get("scope", ["openid"])[0].split()
+            for k in ("state", "nonce", "code_challenge", "code_challenge_method"):
+                if k in q:
+                    body[k] = q[k][0]
         # The issuer's TLS is terminated by the local nginx proxy; the
         # browser side uses an unverified SSL context (self-signed cert).
         parts = urllib.parse.urlparse(ISSUER)
@@ -85,7 +106,7 @@ class CDP:
         ctx = _CTX if parts.scheme == "https" else None
         with urllib.request.urlopen(req, timeout=30, context=ctx) as r:
             data = json.loads(r.read())
-        return data.get("code", "")
+        return data.get("code", ""), data.get("state", "")
 
     def navigate(self, url):
         self.send("Page.navigate", {"url": url})
@@ -127,7 +148,7 @@ def main():
             except Exception:
                 pass
             time.sleep(0.5)
-        cdp = CDP(ws_url)
+        cdp = CDP(ws_url, test_id)
         cdp.send("Page.enable")
         cdp.send("Fetch.enable", {"patterns": [{"urlPattern": "*sso-issuer*"}]})
         print(f"[driver] test {test_id}", flush=True)
