@@ -56,8 +56,8 @@ func pingDBSource(name string, store pingDBStore) sso.StorageHealthSource {
 
 // twoRealStores spins up two real SQLite stores (clients + permissions) on
 // distinct in-memory DBs and returns their storage-health sources plus a
-// cleanup. Each store's migrate namespace ("clients" / "permissions") sits at
-// the baseline version 1.
+// cleanup. Each store's migrate namespace ("clients" / "permissions") is
+// checked against its current declared migration version.
 func twoRealStores(t *testing.T) []sso.StorageHealthSource {
 	t.Helper()
 	clients, err := sqlitestores.NewClientStore(memDSN("clients"))
@@ -117,8 +117,8 @@ func storeByName(t *testing.T, body map[string]any) map[string]map[string]any {
 }
 
 // TestStorageHealth_ReportsReachableWithSchema wires two real SQLite stores
-// and asserts the report shows both reachable with their baseline (v1)
-// migrate namespaces.
+// and asserts the report shows both reachable with their current migration
+// namespaces.
 func TestStorageHealth_ReportsReachableWithSchema(t *testing.T) {
 	srv := sso.NewServer(sso.WithStorageHealth(twoRealStores(t)...))
 	code, body := storageHealthGET(t, srv)
@@ -161,8 +161,9 @@ func TestStorageHealth_ReportsReachableWithSchema(t *testing.T) {
 		t.Errorf("permissions reachable = %v, want true", perms["reachable"])
 	}
 	psv, _ := perms["schema_versions"].(map[string]any)
-	if v, _ := psv["permissions"].(float64); int(v) != 1 {
-		t.Errorf("permissions schema_versions[permissions] = %v, want 1", psv)
+	wantPermissionsVersion := permsqlite.PermissionsMaxVersion()
+	if v, _ := psv["permissions"].(float64); int(v) != wantPermissionsVersion {
+		t.Errorf("permissions schema_versions[permissions] = %v, want %d", psv, wantPermissionsVersion)
 	}
 }
 
