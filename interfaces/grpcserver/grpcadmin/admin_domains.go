@@ -199,8 +199,12 @@ func (s *PermissionAdminService) SetConflictSets(ctx context.Context, in *adminv
 		return nil, status.Error(codes.InvalidArgument, "request required")
 	}
 	if err := p.SetConflictSets(ctx, in.ClientId, conflictSetsFromProto(in.ConflictSets)); err != nil {
+		recordAdminFailureMeta(ctx, s.recorder, audit.EventAdminRoleUpdated, in.ClientId,
+			map[string]string{"sod_mode": "ssod", "sod_error": err.Error()})
 		return nil, mapSoDError("set conflict sets", err)
 	}
+	recordAdminMeta(ctx, s.recorder, audit.EventAdminRoleUpdated, in.ClientId,
+		map[string]string{"sod_mode": "ssod"})
 	s.invalidateAuthzPolicy(ctx, in.ClientId)
 	return &adminv1.SetConflictSetsResponse{}, nil
 }
@@ -229,8 +233,12 @@ func (s *PermissionAdminService) SetActivationConflictSets(ctx context.Context, 
 		return nil, status.Error(codes.InvalidArgument, "request required")
 	}
 	if err := p.SetActivationConflictSets(ctx, in.ClientId, conflictSetsFromProto(in.ConflictSets)); err != nil {
+		recordAdminFailureMeta(ctx, s.recorder, audit.EventAdminRoleUpdated, in.ClientId,
+			map[string]string{"sod_mode": "dsod", "sod_error": err.Error()})
 		return nil, mapSoDError("set activation conflict sets", err)
 	}
+	recordAdminMeta(ctx, s.recorder, audit.EventAdminRoleUpdated, in.ClientId,
+		map[string]string{"sod_mode": "dsod"})
 	s.invalidateAuthzPolicy(ctx, in.ClientId)
 	return &adminv1.SetActivationConflictSetsResponse{}, nil
 }
@@ -259,8 +267,12 @@ func (s *PermissionAdminService) ActivateRoles(ctx context.Context, in *adminv1.
 		return nil, status.Error(codes.InvalidArgument, "user_id and session_id required")
 	}
 	if err := p.ActivateRoles(ctx, in.UserId, in.ClientId, in.SessionId, in.Roles); err != nil {
+		recordAdminFailureMeta(ctx, s.recorder, audit.EventAdminRoleAssigned, in.ClientId+"/"+in.UserId,
+			map[string]string{"sod_mode": "dsod", "target_user_id": in.UserId, "session_id": in.SessionId, "sod_error": err.Error()})
 		return nil, mapSoDError("activate roles", err)
 	}
+	recordAdminMeta(ctx, s.recorder, audit.EventAdminRoleAssigned, in.ClientId+"/"+in.UserId,
+		map[string]string{"sod_mode": "dsod", "target_user_id": in.UserId, "session_id": in.SessionId})
 	return &adminv1.ActivateRolesResponse{}, nil
 }
 
@@ -292,8 +304,12 @@ func (s *PermissionAdminService) DeactivateSession(ctx context.Context, in *admi
 		return nil, status.Error(codes.InvalidArgument, "user_id and session_id required")
 	}
 	if err := p.DeactivateSession(ctx, in.UserId, in.ClientId, in.SessionId); err != nil {
+		recordAdminFailureMeta(ctx, s.recorder, audit.EventAdminRoleUnassigned, in.ClientId+"/"+in.UserId,
+			map[string]string{"sod_mode": "dsod", "target_user_id": in.UserId, "session_id": in.SessionId, "sod_error": err.Error()})
 		return nil, status.Errorf(codes.Internal, "deactivate session: %v", err)
 	}
+	recordAdminMeta(ctx, s.recorder, audit.EventAdminRoleUnassigned, in.ClientId+"/"+in.UserId,
+		map[string]string{"sod_mode": "dsod", "target_user_id": in.UserId, "session_id": in.SessionId})
 	return &adminv1.DeactivateSessionResponse{}, nil
 }
 
@@ -321,9 +337,9 @@ func (s *PermissionAdminService) sessionRoleActivator() (permissions.SessionRole
 
 func mapSoDError(op string, err error) error {
 	switch {
-	case errors.Is(err, permissions.ErrInvalidConflictSet), errors.Is(err, permissions.ErrRoleNotAssigned):
+	case errors.Is(err, permissions.ErrInvalidConflictSet):
 		return status.Error(codes.InvalidArgument, err.Error())
-	case errors.Is(err, permissions.ErrRoleConflict):
+	case errors.Is(err, permissions.ErrRoleNotAssigned), errors.Is(err, permissions.ErrRoleConflict):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	default:
 		return status.Errorf(codes.Internal, "%s: %v", op, err)

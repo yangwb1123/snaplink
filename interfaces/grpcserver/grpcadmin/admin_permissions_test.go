@@ -314,15 +314,25 @@ func TestPermissionAdminService_SoDAndSessionActivation(t *testing.T) {
 			t.Fatalf("AddRole: %v", err)
 		}
 	}
+	sink := audit.NewMemorySink(20)
 	var invalidated []string
-	svc := NewPermissionAdminService(prov, nil, func(_ context.Context, clientID string) {
+	svc := NewPermissionAdminService(prov, audit.New(sink), func(_ context.Context, clientID string) {
 		invalidated = append(invalidated, clientID)
 	})
 	_, err := svc.SetConflictSets(ctx, &adminv1.SetConflictSetsRequest{
+		ClientId: "web", ConflictSets: []*adminv1.ConflictSet{{RoleCodes: []string{"approver"}}},
+	})
+	requireCode(t, err, codes.InvalidArgument)
+	sets, err := svc.ListConflictSets(ctx, &adminv1.ListConflictSetsRequest{ClientId: "web"})
+	requireOK(t, err, "ListConflictSets after invalid set")
+	if len(sets.ConflictSets) != 0 {
+		t.Fatalf("invalid conflict set was persisted: %+v", sets.ConflictSets)
+	}
+	_, err = svc.SetConflictSets(ctx, &adminv1.SetConflictSetsRequest{
 		ClientId: "web", ConflictSets: []*adminv1.ConflictSet{{RoleCodes: []string{"approver", "requester"}}},
 	})
 	requireOK(t, err, "SetConflictSets")
-	sets, err := svc.ListConflictSets(ctx, &adminv1.ListConflictSetsRequest{ClientId: "web"})
+	sets, err = svc.ListConflictSets(ctx, &adminv1.ListConflictSetsRequest{ClientId: "web"})
 	requireOK(t, err, "ListConflictSets")
 	if len(sets.ConflictSets) != 1 || len(sets.ConflictSets[0].RoleCodes) != 2 {
 		t.Fatalf("conflict sets = %+v", sets.ConflictSets)
@@ -357,9 +367,25 @@ func TestPermissionAdminService_SoDAndSessionActivation(t *testing.T) {
 		ClientId: "web", UserId: "alice", SessionId: "sid-1", Roles: []string{"approver", "requester"},
 	})
 	requireCode(t, err, codes.FailedPrecondition)
+	_, err = svc.ActivateRoles(ctx, &adminv1.ActivateRolesRequest{
+		ClientId: "web", UserId: "alice", SessionId: "sid-2", Roles: []string{"unassigned"},
+	})
+	requireCode(t, err, codes.FailedPrecondition)
 	_, err = svc.DeactivateSession(ctx, &adminv1.DeactivateSessionRequest{ClientId: "web", UserId: "alice", SessionId: "sid-1"})
 	requireOK(t, err, "DeactivateSession")
 	if len(invalidated) != 3 {
 		t.Fatalf("invalidations = %v, want three declaration writes", invalidated)
+	}
+	events, err := sink.Query(ctx, audit.Query{})
+	requireOK(t, err, "SoD audit query")
+	var failure bool
+	for _, event := range events {
+		if event.Outcome == audit.OutcomeFailure && event.Metadata["sod_error"] != "" {
+			failure = true
+			break
+		}
+	}
+	if !failure {
+		t.Fatalf("SoD failure audit detail missing: %+v", events)
 	}
 }

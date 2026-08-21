@@ -200,7 +200,9 @@ func (s *PermissionAdminService) AssignRoles(ctx context.Context, in *adminv1.As
 		return nil, status.Error(codes.InvalidArgument, "user_id required")
 	}
 	if err := s.prov.AssignRoles(ctx, in.UserId, in.ClientId, in.Roles); err != nil {
-		if errors.Is(err, permissions.ErrRoleConflict) {
+		if errors.Is(err, permissions.ErrRoleConflict) || errors.Is(err, permissions.ErrRoleNotAssigned) {
+			recordAdminFailureMeta(ctx, s.recorder, audit.EventAdminRoleAssigned, in.ClientId+"/"+in.UserId,
+				map[string]string{"sod_mode": "ssod", "target_user_id": in.UserId, "sod_error": err.Error()})
 			return nil, mapSoDError("assign", err)
 		}
 		return nil, status.Errorf(codes.Internal, "assign: %v", err)
