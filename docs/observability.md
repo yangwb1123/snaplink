@@ -106,6 +106,21 @@ Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; ver
 |---|---|
 | `metrics.tenant_label_allowlist` | `WithTenantMetricsAllowlist` — bounded per-tenant login/issue metrics + `"other"` bucket; empty = off |
 
+When `audit.external_worker.enabled` is set, `/readyz` includes
+`external-audit-worker`. The check covers both lifecycle-manager health and an
+authenticated worker readiness RPC. Worker delivery is fail-open for request
+handling; failures are logged with only the bounded module ID and operation.
+Lifecycle transitions emit `external_worker_lifecycle_transition` with module,
+generation, related generation and fixed transition type only. Executable
+paths, credentials, provenance contents and audit payloads are excluded.
+
+When `WithRebacEngine` is wired, `/readyz` includes `rebac-check`. The check
+requires a healthy active generation; `Disable` withdraws `/authz/check` as a
+native 404 only after matched requests drain, and `Activate` publishes a fresh
+generation without changing the route shape. Transitions emit
+`rebac_lifecycle_transition` with only module ID, generation, related
+generation and fixed transition type; tuple contents are excluded.
+
 ## Standalone Billing Background Work
 
 The separate `snaplink-billing` process logs a successful non-empty renewal

@@ -133,6 +133,11 @@ const (
 	// secret-shaped leaves, and the audit trail must never echo them.
 	EventAdminConfigApplied    EventType = "admin_config_applied"
 	EventAdminConfigRolledBack EventType = "admin_config_rolled_back"
+	// Canary lifecycle events carry identifiers and health outcome metadata,
+	// never the candidate snapshot.
+	EventConfigCanaryStarted    EventType = "config_canary_started"
+	EventConfigCanaryConfirmed  EventType = "config_canary_confirmed"
+	EventConfigCanaryRolledBack EventType = "config_canary_rolled_back"
 	// EventAdminWriteQuotaExceeded / EventAdminIPDenied are emitted by
 	// AdminMiddleware when the opt-in write-quota or IP/geo allowlist gate
 	// (platform/lifecycle/admingovernance) blocks a request, when an audit Recorder is

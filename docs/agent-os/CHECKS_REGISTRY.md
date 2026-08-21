@@ -14,7 +14,7 @@ Catalog of the Python engineering helpers. Committed Go gates are specified in
 | `architecture.py` | Python dependency-direction check | `architecture` |
 | `build.py` | Configured binary build | `build` |
 | `complexity.py` | Optional cyclomatic/cognitive diagnostics | `complexity` |
-| `coverage.py` | Package coverage diagnostic | `coverage`, `evaluate` |
+| `coverage.py` | Package coverage regression gate | `coverage`, `evaluate` |
 | `directory_fanout.py` | Configured subdirectory fan-out | via `adr-compliance` |
 | `exemptions.py` | Declarative exemption synchronization | `check-exemptions` |
 | `filesize.py` | Configured file-size check | `check-filesize` |
@@ -70,9 +70,11 @@ Run `python cli.py check-test` for check-module tests and
   every protocol row or every profile's resolved dependency closure.
 - `invariants.py` confirms selected markers exist somewhere; it does not prove
   per-endpoint behavior.
-- Coverage and optional complexity diagnostics have known false-green paths.
-- Python/Go fan-out thresholds and declarative exemptions are not fully
-  synchronized.
+- Coverage fails closed when the test subprocess fails, a package target cannot
+  be resolved, or a coverage row is missing. Optional complexity remains a
+  diagnostic unless invoked through a blocking project gate.
+- Python and Go fan-out use the same 15-subdirectory ceiling and skip scope;
+  the committed Go exemption maps remain the ratcheted authority.
 
 Exact open debt belongs in [`TODO.md`](TODO.md) and acceptance caveats in
 [`EVALUATION.md`](EVALUATION.md).

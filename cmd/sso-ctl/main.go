@@ -27,7 +27,6 @@ import (
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/configcmd"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/entitiescmd"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/generate"
-	"github.com/yangwb1123/snaplink/cmd/sso-ctl/hashcmd"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/importcmd"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/legacysync"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/migratecmd"
@@ -56,7 +55,7 @@ var subcommands = map[string]func([]string) int{
 	"sessions":     sessionscmd.Run,
 	"snapshot":     snapshotcmd.Run,
 	"config":       configcmd.Run,
-	"hash":         hashcmd.Run,
+	"hash":         runHash,
 	"tokens":       tokenscmd.Run,
 	"generate":     generate.Run,
 	"tenants":      entitiescmd.RunTenants,

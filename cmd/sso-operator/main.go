@@ -1,9 +1,9 @@
 // Command sso-operator runs the SSOConfigDrift controller: a Kubernetes
 // operator that watches SSOConfigDrift custom resources, reports
 // cross-cluster SSO config drift, and — for CRs that opt in and carry the
-// one-shot approval annotation — drives the declared-baseline apply write.
-// See doc.go for the full scope and explicit non-goals (no canary, no
-// remediation; rollback stays manual).
+// one-shot approval annotation — drives the declared-baseline apply or
+// expected-version-guarded rollback write. See doc.go for the full scope and
+// explicit non-goals (no canary, automatic remediation, or GitOps).
 package main
 
 import (

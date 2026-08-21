@@ -28,16 +28,18 @@ type testDeps struct {
 	rec *audit.Recorder
 }
 
-func (d *testDeps) WebhookEngine() *webhook.Engine { return d.eng }
-func (d *testDeps) Auditor() *audit.Recorder       { return d.rec }
+func (d *testDeps) WebhookEngine() *webhook.Engine  { return d.eng }
+func (d *testDeps) WebhookRuntime() webhook.Runtime { return d.eng }
+func (d *testDeps) Auditor() *audit.Recorder        { return d.rec }
 
 var _ webhook.HandlerDeps = (*testDeps)(nil)
 
 // nilEngineDeps exercises the not-configured guards.
 type nilEngineDeps struct{}
 
-func (nilEngineDeps) WebhookEngine() *webhook.Engine { return nil }
-func (nilEngineDeps) Auditor() *audit.Recorder       { return nil }
+func (nilEngineDeps) WebhookEngine() *webhook.Engine  { return nil }
+func (nilEngineDeps) WebhookRuntime() webhook.Runtime { return nil }
+func (nilEngineDeps) Auditor() *audit.Recorder        { return nil }
 
 func newTestDeps() (*testDeps, *audit.MemorySink) {
 	sink := audit.NewMemorySink(64)

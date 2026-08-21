@@ -114,6 +114,17 @@ def test_release_workflow_prepares_evidence_before_goreleaser():
     assert '>> "${GITHUB_ENV}"' in workflow
 
 
+def test_release_workflow_attests_goreleaser_subjects_after_publish():
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    release = workflow.index("goreleaser/goreleaser-action")
+    attest = workflow.index("actions/attest@v4")
+
+    assert release < attest
+    assert "attestations: write" in workflow
+    assert "artifact-metadata: write" in workflow
+    assert "subject-checksums: dist/checksums.txt" in workflow
+
+
 def test_inventory_is_the_public_modules_command_shape():
     lock = {
         "profile": "prototype",

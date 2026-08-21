@@ -29,6 +29,7 @@ import (
 var migrations = []migrate.Migration{
 	{Version: 1, Name: "baseline_config_history", SQL: schema},
 	{Version: 2, Name: "applied_config_baseline", SQL: appliedSchema},
+	{Version: 3, Name: "config_canary_state", SQL: canarySchema},
 }
 
 // schema mirrors configaudit.Entry field-by-field. The patch (a []Op slice)
@@ -75,6 +76,7 @@ type Store struct {
 }
 
 var _ configaudit.Store = (*Store)(nil)
+var _ configaudit.ConditionalRollbackStore = (*Store)(nil)
 
 // New opens dsn, migrates the schema, and returns the store. Caller owns
 // Close().
@@ -222,6 +224,9 @@ func (s *Store) Apply(ctx context.Context, v configaudit.AppliedVersion) (config
 	if err != nil && !errors.Is(err, configaudit.ErrNoAppliedVersion) {
 		return v, err
 	}
+	if err := rejectObservingCanary(ctx, tx); err != nil {
+		return v, err
+	}
 	v.PrevID = prev.ID
 	snapshotJSON, err := json.Marshal(v.Snapshot)
 	if err != nil {
@@ -257,6 +262,16 @@ func (s *Store) Applied(ctx context.Context) (configaudit.AppliedVersion, error)
 // config_history entry in the same transaction. ErrNoAppliedVersion when
 // there is no baseline or no predecessor.
 func (s *Store) Rollback(ctx context.Context, actor, reason string) (configaudit.AppliedVersion, error) {
+	return s.rollback(ctx, "", actor, reason)
+}
+
+// RollbackIfCurrent performs the atomic expected-version guarded rollback
+// used by the explicit operator path.
+func (s *Store) RollbackIfCurrent(ctx context.Context, expectedID, actor, reason string) (configaudit.AppliedVersion, error) {
+	return s.rollback(ctx, expectedID, actor, reason)
+}
+
+func (s *Store) rollback(ctx context.Context, expectedID, actor, reason string) (configaudit.AppliedVersion, error) {
 	if s == nil || s.db == nil {
 		return configaudit.AppliedVersion{}, errors.New("configaudit/sqlite: closed")
 	}
@@ -270,10 +285,13 @@ func (s *Store) Rollback(ctx context.Context, actor, reason string) (configaudit
 	if err != nil {
 		return configaudit.AppliedVersion{}, err
 	}
-	if cur.PrevID == "" {
-		return configaudit.AppliedVersion{}, configaudit.ErrNoAppliedVersion
+	if err := rejectObservingCanary(ctx, tx); err != nil {
+		return configaudit.AppliedVersion{}, err
 	}
-	prev, err := appliedByID(ctx, tx, cur.PrevID)
+	if expectedID != "" && cur.ID != expectedID {
+		return configaudit.AppliedVersion{}, configaudit.ErrRollbackConflict
+	}
+	prev, err := rollbackPrevious(ctx, tx, cur)
 	if err != nil {
 		return configaudit.AppliedVersion{}, err
 	}
@@ -286,24 +304,28 @@ func (s *Store) Rollback(ctx context.Context, actor, reason string) (configaudit
 		PrevID:    cur.ID,
 		Snapshot:  prev.Snapshot,
 	}
-	snapshotJSON, err := json.Marshal(v.Snapshot)
-	if err != nil {
-		return configaudit.AppliedVersion{}, fmt.Errorf("configaudit/sqlite: rollback marshal snapshot: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-        INSERT INTO config_applied (id, applied_at, actor, digest, reason, prev_id, snapshot_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		v.ID, v.AppliedAt.UnixNano(), v.Actor, v.Digest, v.Reason, cur.ID, string(snapshotJSON),
-	); err != nil {
-		return configaudit.AppliedVersion{}, fmt.Errorf("configaudit/sqlite: rollback insert baseline: %w", err)
-	}
-	if err := insertApplyEntry(ctx, tx, v, cur); err != nil {
+	if err := insertRollbackVersion(ctx, tx, v, cur); err != nil {
 		return configaudit.AppliedVersion{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return configaudit.AppliedVersion{}, fmt.Errorf("configaudit/sqlite: rollback commit: %w", err)
 	}
 	return v, nil
+}
+
+func insertRollbackVersion(ctx context.Context, tx *sql.Tx, v, cur configaudit.AppliedVersion) error {
+	snapshotJSON, err := json.Marshal(v.Snapshot)
+	if err != nil {
+		return fmt.Errorf("configaudit/sqlite: rollback marshal snapshot: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+        INSERT INTO config_applied (id, applied_at, actor, digest, reason, prev_id, snapshot_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.AppliedAt.UnixNano(), v.Actor, v.Digest, v.Reason, cur.ID, string(snapshotJSON),
+	); err != nil {
+		return fmt.Errorf("configaudit/sqlite: rollback insert baseline: %w", err)
+	}
+	return insertApplyEntry(ctx, tx, v, cur)
 }
 
 // latestApplied reads the newest config_applied row from db (a *sql.DB or

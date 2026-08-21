@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
-	"github.com/yangwb1123/snaplink/platform/registrar"
+	"github.com/yangwb1123/snaplink/platform/registry/typed"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
@@ -55,7 +55,7 @@ type RADIUSAuthenticatorFactory func(ctx context.Context, deps RADIUSServerDeps)
 // binary, not this module — the operator calls RegisterRADIUSAuthenticators
 // from their main before running the server, then selects the factory by name
 // from their own config. The generic machinery is the standard
-// platform/registrar implementation (same shape as SAMLHandlerRegistry /
+// platform/registry/typed implementation (same shape as SAMLHandlerRegistry /
 // serverbuildsign.RegisterExternalSigner). Exported so tests can clean up
 // between runs via Unregister.
 var RADIUSAuthenticatorRegistry = registrar.New[RADIUSAuthenticatorFactory]()

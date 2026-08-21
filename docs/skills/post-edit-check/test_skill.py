@@ -3,8 +3,11 @@
 import unittest
 from pathlib import Path
 import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from run import check
+skill_dir = Path(__file__).resolve().parent
+sys.path.insert(0, str(skill_dir.parent))
+from shared.loader import load_skill_run
+
+check = load_skill_run(skill_dir, "skill_post_edit_check_run").check
 
 
 class TestPostEditCheck(unittest.TestCase):

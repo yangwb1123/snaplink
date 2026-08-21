@@ -34,6 +34,24 @@ func TestValidateDCRMetadata(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid redirect URI pattern is additive",
+			req: &DCRMetadata{
+				RedirectURIs:        []string{"https://example.com/cb"},
+				RedirectURIPatterns: []string{"https://example.com/test/*/callback"},
+			},
+			policy:  &DCRPolicy{},
+			wantErr: false,
+		},
+		{
+			name: "invalid redirect URI pattern rejected",
+			req: &DCRMetadata{
+				RedirectURIs:        []string{"https://example.com/cb"},
+				RedirectURIPatterns: []string{"https://example.com/test/*"},
+			},
+			policy:  &DCRPolicy{},
+			wantErr: true,
+		},
+		{
 			name: "wired id_token_signed_response_alg accepted",
 			req: &DCRMetadata{
 				RedirectURIs:             []string{"https://example.com/cb"},

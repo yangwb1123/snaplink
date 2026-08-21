@@ -52,11 +52,9 @@
 //     repo and push it to a cluster; it only compares two ALREADY-RUNNING
 //     clusters against each other (and, when opted in and approved, writes
 //     one declared baseline).
-//   - NO operator-driven rollback. POST .../config/rollback exists on the
-//     server and stays a manual action: the operator has no observable
-//     signal that a baseline is wrong (apply does not change running
-//     configs, which are the only thing this controller compares).
-//     Status.Apply.VersionID names the exact rollback target for a human.
+//   - NO automatic rollback. Explicit rollback is supported only through the
+//     separately approved Spec.Rollback contract and an expected-version CAS
+//     guard; the operator never infers rollback from drift or health.
 //
 // # Apply mode (opt-in, one-shot approval)
 //
@@ -84,6 +82,17 @@
 //     apply body carries no secret-shaped values, and the operator never
 //     persists it (Status.Apply.Digest is a hash, Status.Apply.Message is
 //     the server's own error text or a version id).
+//
+// # Rollback mode (opt-in, one-shot approval, expected-version CAS)
+//
+// When Spec.Rollback.Enabled is true and the CR carries a non-empty reason,
+// an expected current version, and the one-shot annotation
+// sso.snaplink.io/rollback-approve: "true", the controller POSTs
+// /api/v1/admin/config/rollback with the expected-version CAS guard. A
+// successful rollback consumes that annotation and records the restored
+// version in Status.Rollback; conflicts and other failures retain the
+// approval for the short retry. Apply and rollback approvals cannot coexist
+// in one reconcile.
 //
 // Honesty note: apply records B's applied-config baseline; it does not
 // change B's running config, so the operator's drift report persists after
@@ -156,8 +165,8 @@
 // # Remaining next steps (not built here)
 //
 // Canary/rollout strategy (percentage of config keys, or a staged
-// multi-cluster order) living in its own CRD or Spec sub-struct,
-// operator-driven rollback (there is no operator-observable signal for it
-// yet — see the non-goals), and GitOps reconciliation of the declared
-// baseline. None of that is present in this package.
+// multi-cluster order) living in its own CRD or Spec sub-struct, and GitOps
+// reconciliation of the declared baseline remain out of scope. Explicit
+// rollback is implemented, but it is never automatic and still requires the
+// expected-version CAS plus one-shot approval described above.
 package main

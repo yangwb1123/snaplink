@@ -1,6 +1,7 @@
 // Command gensdk regenerates the consumer SDKs committed at
-// docs/sdks/typescript/client.ts and docs/sdks/python/client.py from
-// docs/openapi.yaml — the "multi-language SDK generation + developer
+// docs/sdks/typescript/client.ts, docs/sdks/python/client.py, and the
+// installable sdks/python package module from docs/openapi.yaml — the
+// "multi-language SDK generation + developer
 // portal" backlog item (docs/deferred-backlog.md).
 //
 // This is deliberately NOT a general-purpose OpenAPI-to-any-language
@@ -87,23 +88,34 @@ func generate(opts cliOptions, title, version string, reg *Registry, ops []Opera
 	case "ts":
 		return writeFile(opts.outTS, GenerateTS(title, version, reg, ops))
 	case "py":
-		return writeFile(opts.outPy, GeneratePython(title, version, reg, ops))
+		return writePythonOutputs(opts, GeneratePython(title, version, reg, ops))
 	case "all":
 		if err := writeFile(opts.outTS, GenerateTS(title, version, reg, ops)); err != nil {
 			return err
 		}
-		return writeFile(opts.outPy, GeneratePython(title, version, reg, ops))
+		return writePythonOutputs(opts, GeneratePython(title, version, reg, ops))
 	default:
 		return fmt.Errorf("unknown --lang %q (want ts|py|all)", opts.lang)
 	}
 }
 
+func writePythonOutputs(opts cliOptions, content string) error {
+	if err := writeFile(opts.outPy, content); err != nil {
+		return err
+	}
+	if opts.outPackagePy == "" || opts.outPackagePy == opts.outPy {
+		return nil
+	}
+	return writeFile(opts.outPackagePy, content)
+}
+
 type cliOptions struct {
-	lang        string
-	specPath    string
-	surfacePath string
-	outTS       string
-	outPy       string
+	lang         string
+	specPath     string
+	surfacePath  string
+	outTS        string
+	outPy        string
+	outPackagePy string
 }
 
 func parseFlags(args []string) (cliOptions, error) {
@@ -114,6 +126,7 @@ func parseFlags(args []string) (cliOptions, error) {
 	fs.StringVar(&opts.surfacePath, "surface", defaultSurfacePath, "path to the sdk-surface registry (ops/build/sdk-surface.json)")
 	fs.StringVar(&opts.outTS, "out-ts", filepath.Join("docs", "sdks", "typescript", "client.ts"), "TypeScript output path")
 	fs.StringVar(&opts.outPy, "out-py", filepath.Join("docs", "sdks", "python", "client.py"), "Python output path")
+	fs.StringVar(&opts.outPackagePy, "out-package-py", filepath.Join("sdks", "python", "snaplink_sso", "client.py"), "installable Python package output path (empty to disable)")
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, err
 	}

@@ -27,6 +27,11 @@ const (
 // ConfigAuditStore returns nil when runtime configuration history is unwired.
 func (s *Server) ConfigAuditStore() configaudit.Store { return s.configAuditStore }
 
+// ConfigCanaryController returns the optional configuration-baseline canary.
+func (s *Server) ConfigCanaryController() *configaudit.CanaryController {
+	return s.configCanaryController
+}
+
 // AppliedConfigSnapshot returns the redacted effective configuration captured
 // at startup, OR — after a POST /api/v1/admin/config/apply established a
 // declared peer-config baseline — the redacted latest applied baseline from

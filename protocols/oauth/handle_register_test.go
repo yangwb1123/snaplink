@@ -324,6 +324,54 @@ func TestHandleRegister_IDTokenSignedResponseAlg(t *testing.T) {
 	})
 }
 
+func TestHandleRegister_RedirectURIPatterns(t *testing.T) {
+	t.Parallel()
+	d, _ := newRegisterDeps(&DCRPolicy{AllowOpenRegistration: true, DefaultActive: true})
+	create := `{"client_name":"pattern-rp","redirect_uris":["https://rp.test/cb"],"redirect_uri_patterns":["https://rp.test/test/*/callback"]}`
+	ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, create)
+	HandleRegister(d, ctx)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register status = %d (body %s)", rec.Code, rec.Body.String())
+	}
+	response := decodeBody(t, rec)
+	if got, ok := response["redirect_uri_patterns"].([]any); !ok || len(got) != 1 || got[0] != "https://rp.test/test/*/callback" {
+		t.Fatalf("register patterns = %#v, want one echoed pattern", response["redirect_uri_patterns"])
+	}
+	id, _ := response["client_id"].(string)
+	rat, _ := response["registration_access_token"].(string)
+	stored, err := d.clients.Get(ctx.Request().Context(), id)
+	if err != nil || stored == nil || len(stored.RedirectURIPatterns) != 1 {
+		t.Fatalf("stored patterns = %#v (err %v)", stored, err)
+	}
+
+	getRec := serveMgmt(d, mgmtHandler(d, HandleRegistrationGet), http.MethodGet, "", id, rat)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d", getRec.Code)
+	}
+	getResponse := decodeBody(t, getRec)
+	if got, ok := getResponse["redirect_uri_patterns"].([]any); !ok || len(got) != 1 {
+		t.Fatalf("GET patterns = %#v, want one pattern", getResponse["redirect_uri_patterns"])
+	}
+
+	put := `{"client_name":"pattern-rp","redirect_uris":["https://rp.test/cb"],"redirect_uri_patterns":["https://rp.test/v2/*/callback"]}`
+	putRec := serveMgmt(d, mgmtHandler(d, HandleRegistrationPut), http.MethodPut, put, id, rat)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d (body %s)", putRec.Code, putRec.Body.String())
+	}
+	updated, err := d.clients.Get(ctx.Request().Context(), id)
+	if err != nil || len(updated.RedirectURIPatterns) != 1 || updated.RedirectURIPatterns[0] != "https://rp.test/v2/*/callback" {
+		t.Fatalf("updated patterns = %#v (err %v)", updated, err)
+	}
+
+	invalid := `{"client_name":"bad-pattern","redirect_uris":["https://rp.test/cb"],"redirect_uri_patterns":["https://rp.test/*"]}`
+	badCtx, badRec := newCtx(http.MethodPost, core.ContentTypeJSON, invalid)
+	HandleRegister(d, badCtx)
+	badResponse := decodeBody(t, badRec)
+	if badRec.Code != http.StatusBadRequest || badResponse["error"] != ErrInvalidClientMetadata {
+		t.Fatalf("invalid pattern response = %d %#v, want 400 invalid_client_metadata", badRec.Code, badResponse)
+	}
+}
+
 func TestHandleRegistrationGet(t *testing.T) {
 	t.Parallel()
 	t.Run("nil policy 501", func(t *testing.T) {

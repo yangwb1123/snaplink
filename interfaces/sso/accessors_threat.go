@@ -78,6 +78,17 @@ func (s *Server) StartNotificationRouter(ctx context.Context) <-chan struct{} {
 }
 
 func (s *Server) applyNotificationErasureWiring() {
+	// The ReBAC check generation is created in this post-option hook so its
+	// startup transition can use the final audit recorder regardless of option
+	// order. The route itself is still mounted later by Mount().
+	if s.rebacEngine != nil {
+		if err := s.rebacEngine.StartHotRuntime(s.auditor); err != nil {
+			s.logger.Error("rebac hot runtime unavailable; using cold check route", "error", err)
+		}
+		if runtime := s.rebacEngine.HotRuntime(); runtime != nil {
+			s.AddReadyCheck("rebac-check", runtime.Ready)
+		}
+	}
 	if s.accountEraser == nil {
 		return
 	}

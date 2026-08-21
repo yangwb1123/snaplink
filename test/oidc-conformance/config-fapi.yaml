@@ -75,6 +75,46 @@ client_registration:
   default_active: true
   default_token_strategy: jwt
 
+# Static client required by the FAPI2 SP FINAL plan. The plan generates one
+# callback path per test instance under this fixed origin; the exact dynamic
+# value observed in the archived run is covered by this bounded pattern.
+# The suite-side private key/client metadata is supplied by the conformance
+# runner; this seed only establishes the Snaplink redirect policy.
+clients:
+  - id: fapi-static-client
+    secret: fapi-static-client-secret
+    name: FAPI static callback client
+    redirect_uris: []
+    redirect_uri_patterns:
+      - https://localhost:8443/test/*/callback
+    jwks:
+      - kty: RSA
+        kid: fapi-static-client-key
+        use: sig
+        alg: PS256
+        n: pR9WeXTmKDu6qNUm5SG69Qifhu2rTnsbbpcVdzPSUSC7L5fX25AYQDDtVL4Ajd-eyj_lbPuuvMeR0SUunKEWMyBwPMMqqEHPRvdN4cjLqRCUVEi9MTCG5HhrDHk9KCXsUmVZP9u3-N1INfyIZFRYfs1XeZo2JZkCiFF4nIFMXEuy6TFC9wJNTrkBpKb4N7_aL_C4-ph-mn7hWrp7rAXQyWs1A7BqmCPyPBUhtLYil0Mf4yW3WdbkuGdz-92RalcqitQlQsUffcrj6cdafIBSd4YpVT9a78-8Q_hQ2Ye0o-Zdtqs7wK2ZM--JAkE_I9bsRJ981nrT9z9Ll12gYS-oMw
+        e: AQAB
+    allowed_scopes: []
+    allowed_authenticators: [password]
+    token_strategy: jwt
+    active: true
+  - id: fapi-static-client-2
+    name: FAPI static callback client two
+    redirect_uris: []
+    redirect_uri_patterns:
+      - https://localhost:8443/test/*/callback
+    jwks:
+      - kty: RSA
+        kid: fapi-static-client-2-key
+        use: sig
+        alg: PS256
+        n: m9CWcKvCDWk5a9__a5t0IeCupuPkTU9JPeQimWzY2-UaBswg2ZhGmLl0jaYG9g1sD_QmWTE5K-BSmB7jmghUBRIMFcECHzppjgQZjI5Ske6mSp1tfwMYzvB7oIwTRIJDyR34pQJrVhK8ZAOit6jTJLtWnNFYzemM4xVXDIFWngccp0hx3gAwC5Nrc45dmNDFIqv_2yJJXQLfCEXqYAs13AFBaJwOtPOZfb4VOb7WM2wvjOJR0xriePqky7PM7KSmj5J1MRk_BD7RG4GW4HxUshemLAjtQLp62xV_uvvNKzID3KTjKO9_DIbnr6KBt1ePvsfvHXkIEf1RPUQzQ7rZAQ
+        e: AQAB
+    allowed_scopes: []
+    allowed_authenticators: [password]
+    token_strategy: jwt
+    active: true
+
 authenticators:
   password:
     enabled: true

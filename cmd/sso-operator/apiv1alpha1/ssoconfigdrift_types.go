@@ -72,6 +72,25 @@ type ApplySpec struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// RollbackSpec opts an SSOConfigDrift into the explicit declared-baseline
+// rollback path. The expected version is mandatory so the server can reject
+// a stale operator request instead of undoing a newer baseline.
+type RollbackSpec struct {
+	// Enabled turns on rollback mode. False (the zero value) never issues a
+	// rollback request, regardless of annotations.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Reason is the mandatory operator justification forwarded to the server.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// ExpectedVersionID is the version that must still be latest on Cluster B.
+	// The server checks it atomically before restoring the predecessor.
+	// +optional
+	ExpectedVersionID string `json:"expected_version_id,omitempty"`
+}
+
 // SSOConfigDriftSpec declares the two clusters to compare and how often.
 type SSOConfigDriftSpec struct {
 	// ClusterA is the SOURCE cluster: its running config is fetched via
@@ -95,11 +114,16 @@ type SSOConfigDriftSpec struct {
 	// keeps this CR report-only.
 	// +optional
 	Apply ApplySpec `json:"apply,omitempty"`
+
+	// Rollback opts this CR into the explicitly approved declared-baseline
+	// rollback path. The zero value (disabled) issues no operator rollback.
+	// +optional
+	Rollback RollbackSpec `json:"rollback,omitempty"`
 }
 
 // SSOConfigDriftStatus reports the outcome of the most recent reconcile.
-// This is the ENTIRE surface of this feature: nothing here ever triggers a
-// write against either cluster (see doc.go for the explicit non-goals).
+// Status is evidence only; writes occur only through the explicitly enabled
+// and one-shot-approved apply or expected-version-guarded rollback paths.
 type SSOConfigDriftStatus struct {
 	// LastCheckedAt is when the last fetch+diff attempt completed
 	// (successfully or not).
@@ -134,6 +158,12 @@ type SSOConfigDriftStatus struct {
 	// mapping.
 	// +optional
 	Apply ApplyStatus `json:"apply,omitempty"`
+
+	// Rollback reports the most recent explicit operator rollback attempt.
+	// It coexists with the drift and apply fields and never contains a
+	// snapshot or bearer token.
+	// +optional
+	Rollback RollbackStatus `json:"rollback,omitempty"`
 }
 
 // ApplyStatus reports the outcome of the most recent apply attempt, or the
@@ -152,9 +182,8 @@ type ApplyStatus struct {
 	LastAttemptAt metav1.Time `json:"lastAttemptAt,omitempty"`
 
 	// VersionID is the new applied-config baseline version returned by the
-	// server on success — the exact rollback target for a human issuing
-	// POST .../config/rollback manually (the operator never drives
-	// rollback; see docs/design/operator-config-apply.md Decision 4).
+	// server on success. It can be used as the expected-version input for a
+	// separately approved operator rollback.
 	// +optional
 	VersionID string `json:"versionID,omitempty"`
 
@@ -168,6 +197,31 @@ type ApplyStatus struct {
 	// failure, or a success line naming the recorded version. NEVER a
 	// bearer token or snapshot content — see doc.go's "never log/persist
 	// tokens" invariant.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// RollbackStatus reports the outcome of the most recent explicit rollback
+// attempt, or the zero value when none has been attempted.
+type RollbackStatus struct {
+	// State is one of "rolled_back", "conflict", "rejected", "failed".
+	// Empty means no rollback has been attempted.
+	// +optional
+	State string `json:"state,omitempty"`
+
+	// LastAttemptAt is when the most recent rollback attempt completed.
+	// +optional
+	LastAttemptAt metav1.Time `json:"lastAttemptAt,omitempty"`
+
+	// VersionID is the new restored baseline version returned by the server.
+	// +optional
+	VersionID string `json:"versionID,omitempty"`
+
+	// ExpectedVersionID is the CAS version submitted by the operator.
+	// +optional
+	ExpectedVersionID string `json:"expectedVersionID,omitempty"`
+
+	// Message is a token-free server or controller summary.
 	// +optional
 	Message string `json:"message,omitempty"`
 }
@@ -243,6 +297,7 @@ func (in *SSOConfigDriftSpec) DeepCopyInto(out *SSOConfigDriftSpec) {
 	in.ClusterA.DeepCopyInto(&out.ClusterA)
 	in.ClusterB.DeepCopyInto(&out.ClusterB)
 	in.Apply.DeepCopyInto(&out.Apply)
+	in.Rollback.DeepCopyInto(&out.Rollback)
 }
 
 // DeepCopy returns a deep copy of SSOConfigDriftSpec.
@@ -270,11 +325,27 @@ func (in *ApplySpec) DeepCopy() *ApplySpec {
 	return out
 }
 
+// DeepCopyInto copies every field of RollbackSpec (all value fields).
+func (in *RollbackSpec) DeepCopyInto(out *RollbackSpec) {
+	*out = *in
+}
+
+// DeepCopy returns a deep copy of RollbackSpec.
+func (in *RollbackSpec) DeepCopy() *RollbackSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(RollbackSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
 // DeepCopyInto copies every field of SSOConfigDriftStatus.
 func (in *SSOConfigDriftStatus) DeepCopyInto(out *SSOConfigDriftStatus) {
 	*out = *in
 	in.LastCheckedAt.DeepCopyInto(&out.LastCheckedAt)
 	in.Apply.DeepCopyInto(&out.Apply)
+	in.Rollback.DeepCopyInto(&out.Rollback)
 }
 
 // DeepCopyInto copies every field of ApplyStatus, including the timestamp.
@@ -289,6 +360,22 @@ func (in *ApplyStatus) DeepCopy() *ApplyStatus {
 		return nil
 	}
 	out := new(ApplyStatus)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies every field of RollbackStatus, including the timestamp.
+func (in *RollbackStatus) DeepCopyInto(out *RollbackStatus) {
+	*out = *in
+	in.LastAttemptAt.DeepCopyInto(&out.LastAttemptAt)
+}
+
+// DeepCopy returns a deep copy of RollbackStatus.
+func (in *RollbackStatus) DeepCopy() *RollbackStatus {
+	if in == nil {
+		return nil
+	}
+	out := new(RollbackStatus)
 	in.DeepCopyInto(out)
 	return out
 }

@@ -12,16 +12,17 @@ import "time"
 // same DSN. Both still feed into the same MultiSink+Webhook
 // composition when audit.webhook.enabled.
 type AuditConfig struct {
-	Enabled        bool                    `yaml:"enabled"`
-	APIEnabled     bool                    `yaml:"api_enabled"`
-	Backend        string                  `yaml:"backend"` // memory | sqlite
-	Sqlite         AuditSqliteConfig       `yaml:"sqlite"`
-	MemoryCapacity int                     `yaml:"memory_capacity"`
-	Async          AuditAsyncConfig        `yaml:"async"`
-	HashChain      bool                    `yaml:"hash_chain"`
-	PIIRedaction   AuditPIIRedactionConfig `yaml:"pii_redaction"`
-	Webhook        AuditWebhookConfig      `yaml:"webhook"`
-	Retention      AuditRetentionConfig    `yaml:"retention"`
+	Enabled        bool                      `yaml:"enabled"`
+	APIEnabled     bool                      `yaml:"api_enabled"`
+	Backend        string                    `yaml:"backend"` // memory | sqlite
+	Sqlite         AuditSqliteConfig         `yaml:"sqlite"`
+	MemoryCapacity int                       `yaml:"memory_capacity"`
+	Async          AuditAsyncConfig          `yaml:"async"`
+	HashChain      bool                      `yaml:"hash_chain"`
+	PIIRedaction   AuditPIIRedactionConfig   `yaml:"pii_redaction"`
+	Webhook        AuditWebhookConfig        `yaml:"webhook"`
+	ExternalWorker ExternalAuditWorkerConfig `yaml:"external_worker"`
+	Retention      AuditRetentionConfig      `yaml:"retention"`
 	// CEF, OCSF, and Syslog are three INDEPENDENT SIEM export formatters —
 	// any subset may be enabled simultaneously (e.g. CEF to one collector
 	// AND OCSF to another), unlike Webhook's single-format assumption. Each

@@ -37,7 +37,7 @@ type userinfoHandlerDeps struct {
 
 func (d *userinfoHandlerDeps) RequireUserInfoDeps() error              { return nil }
 func (d *userinfoHandlerDeps) TokenNoStoreHeaders(core.HandlerContext) {}
-func (d *userinfoHandlerDeps) BearerToken(*http.Request) string        { return "tok" }
+func (d *userinfoHandlerDeps) ResourceToken(*http.Request) string      { return "tok" }
 func (d *userinfoHandlerDeps) SetResourceBearerChallenge(core.HandlerContext, string, string, string) {
 }
 func (d *userinfoHandlerDeps) ResolveIssuer(core.HandlerContext) string { return "https://as.example" }

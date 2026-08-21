@@ -20,6 +20,7 @@ func newTestStore(t *testing.T) *Store {
 
 func TestStore_SatisfiesStoreInterface(t *testing.T) {
 	var _ configaudit.Store = (*Store)(nil)
+	var _ configaudit.CanaryStore = (*Store)(nil)
 }
 
 func TestStore_RecordAndList(t *testing.T) {
@@ -178,6 +179,40 @@ func TestStore_Rollback_NoPreviousReturnsErr(t *testing.T) {
 	_, _ = s.Apply(ctx, configaudit.AppliedVersion{Actor: "a", Digest: "d1", Snapshot: map[string]any{"a": 1}})
 	if _, err := s.Rollback(ctx, "a", "r"); err != configaudit.ErrNoAppliedVersion {
 		t.Errorf("Rollback with a single version = %v, want ErrNoAppliedVersion", err)
+	}
+}
+
+func TestStore_CanaryStateAndRollbackAreTransactional(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	baseline, err := s.Apply(ctx, configaudit.AppliedVersion{
+		Actor: "a", Digest: "d1", Snapshot: map[string]any{"version": 1},
+	})
+	if err != nil {
+		t.Fatalf("Apply baseline: %v", err)
+	}
+	_, state, err := s.BeginCanary(ctx, configaudit.AppliedVersion{
+		Actor: "b", Digest: "d2", Reason: "ticket", Snapshot: map[string]any{"version": 2},
+	}, configaudit.CanaryState{StartedAt: time.Now().UTC(), Deadline: time.Now().Add(time.Minute), Status: configaudit.CanaryObserving})
+	if err != nil {
+		t.Fatalf("BeginCanary: %v", err)
+	}
+	loaded, err := s.Canary(ctx)
+	if err != nil || loaded.ID != state.ID || loaded.VersionID == baseline.ID || loaded.Status != configaudit.CanaryObserving {
+		t.Fatalf("loaded canary = %+v, err=%v", loaded, err)
+	}
+	if _, err := s.Apply(ctx, configaudit.AppliedVersion{Snapshot: map[string]any{"version": 3}}); err != configaudit.ErrCanaryInProgress {
+		t.Fatalf("Apply during canary = %v, want ErrCanaryInProgress", err)
+	}
+	restored, rolled, err := s.RollbackCanary(ctx, state.ID, "system", "health failure")
+	if err != nil {
+		t.Fatalf("RollbackCanary: %v", err)
+	}
+	if restored.Snapshot["version"] != float64(1) && restored.Snapshot["version"] != 1 {
+		t.Fatalf("restored snapshot = %+v", restored.Snapshot)
+	}
+	if rolled.Status != configaudit.CanaryRolledBack || rolled.Detail != "health failure" {
+		t.Fatalf("rolled state = %+v", rolled)
 	}
 }
 

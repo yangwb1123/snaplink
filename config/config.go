@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
@@ -31,6 +33,7 @@ type Config struct {
 	Audit                AuditConfig                     `yaml:"audit"`
 	Events               EventsConfig                    `yaml:"events"`
 	Permissions          PermissionsConfig               `yaml:"permissions"`
+	ReBAC                ReBACConfig                     `yaml:"rebac"`
 	Network              NetworkConfig                   `yaml:"network"`
 	Clients              []ClientConfig                  `yaml:"clients"`
 	ClientSecretRotation ClientSecretRotationConfig      `yaml:"client_secret_rotation"`
@@ -94,6 +97,89 @@ type Config struct {
 	SMTP                 SMTPConfig                      `yaml:"smtp"`
 	AuthPipeline         AuthPipelineConfig              `yaml:"auth_pipeline"`
 	Notifications        NotificationsConfig             `yaml:"notifications"`
+}
+
+// ExternalAuditWorkerConfig enables the stock server's one supported
+// out-of-process worker capability: redacted audit-batch delivery. Local
+// workers require a signed provenance manifest; remote workers require mTLS
+// and may additionally pin a SPIFFE URI. AuthToken supports secret:// values.
+type ExternalAuditWorkerConfig struct {
+	Enabled             bool                         `yaml:"enabled"`
+	ModuleID            string                       `yaml:"module_id"`
+	Executable          string                       `yaml:"executable"`
+	Args                []string                     `yaml:"args"`
+	SocketPath          string                       `yaml:"socket_path"`
+	AuthToken           string                       `yaml:"auth_token"`
+	ExpectedSHA256      string                       `yaml:"expected_sha256"`
+	SignaturePath       string                       `yaml:"signature_path"`
+	SignaturePublicKey  string                       `yaml:"signature_public_key"`
+	ProvenancePath      string                       `yaml:"provenance_path"`
+	ProvenancePublicKey string                       `yaml:"provenance_public_key"`
+	ReleaseID           string                       `yaml:"release_id"`
+	BuildProfile        string                       `yaml:"build_profile"`
+	RemoteAddress       string                       `yaml:"remote_address"`
+	TLS                 ExternalAuditWorkerTLSConfig `yaml:"tls"`
+	PeerSPIFFEID        string                       `yaml:"peer_spiffe_id"`
+	StartupTimeout      time.Duration                `yaml:"startup_timeout"`
+	RequestTimeout      time.Duration                `yaml:"request_timeout"`
+	MaxFrameBytes       int                          `yaml:"max_frame_bytes"`
+	MaxBatchEvents      int                          `yaml:"max_batch_events"`
+}
+
+// ExternalAuditWorkerTLSConfig holds file-backed client mTLS material. The
+// private key is never represented as YAML text; CAFile may be empty to use
+// the platform roots, while CertFile and KeyFile are always required for a
+// remote worker.
+type ExternalAuditWorkerTLSConfig struct {
+	CAFile     string `yaml:"ca_file"`
+	CertFile   string `yaml:"cert_file"`
+	KeyFile    string `yaml:"key_file"`
+	ServerName string `yaml:"server_name"`
+}
+
+func (c ExternalAuditWorkerConfig) validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(c.ModuleID) == "" || strings.TrimSpace(c.AuthToken) == "" {
+		return errors.New("config: audit.external_worker.module_id and auth_token are required")
+	}
+	if strings.TrimSpace(c.RemoteAddress) != "" {
+		return c.validateRemoteWorker()
+	}
+	return c.validateLocalWorker()
+}
+
+func (c ExternalAuditWorkerConfig) validateLocalWorker() error {
+	if strings.TrimSpace(c.Executable) == "" || !filepath.IsAbs(c.Executable) || !filepath.IsAbs(c.SocketPath) {
+		return errors.New("config: audit.external_worker local mode requires absolute executable and socket_path")
+	}
+	if strings.TrimSpace(c.ExpectedSHA256) == "" || !filepath.IsAbs(c.ProvenancePath) || strings.TrimSpace(c.ProvenancePublicKey) == "" {
+		return errors.New("config: audit.external_worker local mode requires expected_sha256, absolute provenance_path and provenance_public_key")
+	}
+	if strings.TrimSpace(c.ReleaseID) == "" || strings.TrimSpace(c.BuildProfile) == "" {
+		return errors.New("config: audit.external_worker local mode requires release_id and build_profile")
+	}
+	if (c.SignaturePath == "") != (strings.TrimSpace(c.SignaturePublicKey) == "") {
+		return errors.New("config: audit.external_worker signature_path and signature_public_key must be configured together")
+	}
+	if c.SignaturePath != "" && !filepath.IsAbs(c.SignaturePath) {
+		return errors.New("config: audit.external_worker signature_path must be absolute")
+	}
+	return nil
+}
+
+func (c ExternalAuditWorkerConfig) validateRemoteWorker() error {
+	if c.Executable != "" || len(c.Args) != 0 || c.SocketPath != "" || c.ExpectedSHA256 != "" || c.ProvenancePath != "" || c.SignaturePath != "" {
+		return errors.New("config: audit.external_worker remote mode cannot include local artifact fields")
+	}
+	if c.SignaturePublicKey != "" || c.ProvenancePublicKey != "" || c.ReleaseID != "" || c.BuildProfile != "" {
+		return errors.New("config: audit.external_worker remote mode cannot include local provenance fields")
+	}
+	if strings.TrimSpace(c.TLS.CertFile) == "" || strings.TrimSpace(c.TLS.KeyFile) == "" {
+		return errors.New("config: audit.external_worker remote mode requires tls.cert_file and tls.key_file")
+	}
+	return nil
 }
 
 // AuthPipelineConfig wires the safe built-in lifecycle hooks. Custom and WASM

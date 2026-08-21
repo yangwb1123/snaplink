@@ -13,6 +13,7 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/rebac"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/wasmauthz"
 	"github.com/yangwb1123/snaplink/platform/metrics"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
@@ -164,7 +165,7 @@ func (s *Server) mountCoreOAuthOIDC() {
 		s.router.GET(PathAuthzGraph, s.handleAuthzReverseExpand)
 	}
 	if s.rebacEngine != nil {
-		s.router.GET(PathAuthzCheck, s.handleAuthzCheckAccess)
+		rebac.MountHotCheckRoute(s.router, s, s.handleAuthzCheckAccess)
 	}
 	s.router.POST(PathLogin, s.handleLogin)
 	// GET is for a real top-level browser navigation ONLY — the "Sign in with

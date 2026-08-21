@@ -32,7 +32,7 @@ import (
 // gates (gen/, nested modules, vendored UI, bin/ are out of scope).
 const (
 	maxGoFilesPerDir = 10
-	maxSubdirsPerDir = 16
+	maxSubdirsPerDir = 15
 )
 
 // dirFileCountExemptions / dirSubdirExemptions are the frozen backlogs of dirs
@@ -89,6 +89,11 @@ func collectDirFanout(t *testing.T) []dirFanout {
 		}
 		if !d.IsDir() {
 			return nil
+		}
+		// Deployment manifests are an explicitly exempt ops tree in the
+		// repository contract; they are not Go package structure.
+		if filepath.ToSlash(path) == "ops/deploy" {
+			return filepath.SkipDir
 		}
 		if path != "." && skipDirs[d.Name()] {
 			return filepath.SkipDir

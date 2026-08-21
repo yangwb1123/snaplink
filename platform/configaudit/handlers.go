@@ -18,6 +18,8 @@ const (
 	QueryResource = "resource"
 	QuerySince    = "since"
 	QueryLimit    = "limit"
+	QueryCanary   = "canary"
+	QueryWindow   = "window"
 	// QueryApprove is the mandatory explicit-approval flag for the
 	// apply/rollback write endpoints: ?approve=true or the write is refused
 	// before any state is touched (misoperation barrier, see
@@ -34,6 +36,7 @@ const (
 	KeyCount       = "count"
 	KeyVersion     = "version"
 	KeyPrevVersion = "prev_version"
+	KeyCanary      = "canary"
 )
 
 // ErrNotAvailable is the wire error code returned (HTTP 501) when a
@@ -55,6 +58,10 @@ type HandlerDeps interface {
 	SrvLogger() spi.Logger
 	Auditor() *audit.Recorder
 	ActorFromContext(ctx context.Context) (userID, clientID string, ok bool)
+}
+
+type canaryControllerProvider interface {
+	ConfigCanaryController() *CanaryController
 }
 
 // HandleRunning implements GET /api/v1/admin/config/running: the CURRENT
@@ -141,9 +148,12 @@ type ApplyRequest struct {
 
 // RollbackRequest is the POST body for HandleRollback: the mandatory
 // operator reason (an unexplained governance reversal is itself an audit
-// finding, mirroring break-glass / change-approval).
+// finding, mirroring break-glass / change-approval). ExpectedVersionID is an
+// optional compare-and-swap guard for the operator path; omitting it keeps
+// existing manual rollback behavior unchanged.
 type RollbackRequest struct {
-	Reason string `json:"reason"`
+	Reason            string `json:"reason"`
+	ExpectedVersionID string `json:"expected_version_id,omitempty"`
 }
 
 // HandleApply implements POST /api/v1/admin/config/apply?approve=true: it
@@ -194,24 +204,65 @@ func HandleApply(d HandlerDeps, ctx core.HandlerContext) {
 		return
 	}
 	actor, _, _ := d.ActorFromContext(ctx.Request().Context())
+	req.Digest, req.Reason = got, reason
+	if ctx.Query(QueryCanary) == "true" {
+		handleCanaryApply(d, ctx, req, actor)
+		return
+	}
+	handleStandardApply(d, ctx, store, req, actor)
+}
+
+func handleStandardApply(d HandlerDeps, ctx core.HandlerContext, store Store, req ApplyRequest, actor string) {
+	if canaryInProgress(ctx.Request().Context(), store) {
+		ctx.JSON(http.StatusConflict, map[string]string{core.KeyError: core.ErrConfigCanaryInProgress})
+		return
+	}
 	v, err := store.Apply(ctx.Request().Context(), AppliedVersion{
-		Actor: actor, Digest: got, Reason: reason, Snapshot: Redact(req.Snapshot),
+		Actor: actor, Digest: req.Digest, Reason: req.Reason, Snapshot: Redact(req.Snapshot),
 	})
+	if errors.Is(err, ErrCanaryInProgress) {
+		ctx.JSON(http.StatusConflict, map[string]string{core.KeyError: core.ErrConfigCanaryInProgress})
+		return
+	}
 	if err != nil {
 		d.SrvLogger().Error("config audit: apply failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, map[string]string{core.KeyError: core.ErrInternal})
 		return
 	}
 	recordConfigApplyAudit(d, ctx, v, audit.EventAdminConfigApplied)
-	writeApplyResponse(d, ctx, v)
+	writeApplyResponse(d, ctx, v, nil)
+}
+
+func handleCanaryApply(d HandlerDeps, ctx core.HandlerContext, req ApplyRequest, actor string) {
+	provider, ok := d.(canaryControllerProvider)
+	if !ok || provider.ConfigCanaryController() == nil {
+		ctx.JSON(http.StatusNotImplemented, map[string]string{core.KeyError: core.ErrConfigCanaryNotAvailable})
+		return
+	}
+	window, err := ParseCanaryWindow(ctx.Query(QueryWindow))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, map[string]string{core.KeyError: core.ErrInvalidRequest, core.KeyErrorDescription: "invalid canary window"})
+		return
+	}
+	v, state, err := provider.ConfigCanaryController().Start(ctx.Request().Context(), AppliedVersion{
+		Actor: actor, Digest: req.Digest, Reason: req.Reason, Snapshot: Redact(req.Snapshot),
+	}, window)
+	if err != nil {
+		writeCanaryApplyError(d, ctx, err)
+		return
+	}
+	recordConfigApplyAudit(d, ctx, v, audit.EventAdminConfigApplied)
+	recordCanaryAudit(d, ctx, state, audit.EventConfigCanaryStarted)
+	writeApplyResponse(d, ctx, v, &state)
 }
 
 // HandleRollback implements POST /api/v1/admin/config/rollback?approve=true:
 // it re-declares the PREVIOUS applied-config baseline as the new latest (a
 // new append-only version, see Store.Rollback), so the applied view and
 // subsequent diffs revert to that snapshot. Same gates as apply: mandatory
-// ?approve=true and mandatory reason. 409 config_apply_no_previous when
-// there is no baseline or no predecessor to restore.
+// ?approve=true and mandatory reason. When expected_version_id is supplied,
+// the built-in stores perform an atomic compare-and-swap and return 409
+// config_apply_conflict if a newer baseline is current.
 func HandleRollback(d HandlerDeps, ctx core.HandlerContext) {
 	if !approved(ctx) {
 		ctx.JSON(http.StatusBadRequest, map[string]string{core.KeyError: core.ErrConfigApplyApprovalRequired})
@@ -222,24 +273,30 @@ func HandleRollback(d HandlerDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusNotImplemented, map[string]string{core.KeyError: ErrNotAvailable})
 		return
 	}
-	var req RollbackRequest
-	if err := ctx.Bind(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, map[string]string{
-			core.KeyError: core.ErrInvalidRequest, core.KeyErrorDescription: "reason is required",
-		})
+	req, ok := bindRollbackRequest(ctx)
+	if !ok {
 		return
 	}
-	reason := strings.TrimSpace(req.Reason)
-	if reason == "" {
-		ctx.JSON(http.StatusBadRequest, map[string]string{
-			core.KeyError: core.ErrInvalidRequest, core.KeyErrorDescription: "reason is required",
-		})
+	if canaryInProgress(ctx.Request().Context(), store) {
+		ctx.JSON(http.StatusConflict, map[string]string{core.KeyError: core.ErrConfigCanaryInProgress})
 		return
 	}
 	actor, _, _ := d.ActorFromContext(ctx.Request().Context())
-	v, err := store.Rollback(ctx.Request().Context(), actor, reason)
+	v, err := rollbackBaseline(ctx.Request().Context(), store, strings.TrimSpace(req.ExpectedVersionID), actor, req.Reason)
 	if errors.Is(err, ErrNoAppliedVersion) {
 		ctx.JSON(http.StatusConflict, map[string]string{core.KeyError: core.ErrConfigApplyNoPrevious})
+		return
+	}
+	if errors.Is(err, ErrRollbackConflict) {
+		ctx.JSON(http.StatusConflict, map[string]string{core.KeyError: core.ErrConfigApplyConflict})
+		return
+	}
+	if errors.Is(err, ErrRollbackUnavailable) {
+		ctx.JSON(http.StatusNotImplemented, map[string]string{core.KeyError: core.ErrConfigRollbackNotAvailable})
+		return
+	}
+	if errors.Is(err, ErrCanaryInProgress) {
+		ctx.JSON(http.StatusConflict, map[string]string{core.KeyError: core.ErrConfigCanaryInProgress})
 		return
 	}
 	if err != nil {
@@ -248,7 +305,38 @@ func HandleRollback(d HandlerDeps, ctx core.HandlerContext) {
 		return
 	}
 	recordConfigApplyAudit(d, ctx, v, audit.EventAdminConfigRolledBack)
-	writeApplyResponse(d, ctx, v)
+	writeApplyResponse(d, ctx, v, nil)
+}
+
+func bindRollbackRequest(ctx core.HandlerContext) (RollbackRequest, bool) {
+	var req RollbackRequest
+	if err := ctx.Bind(&req); err != nil {
+		writeRollbackRequestError(ctx)
+		return RollbackRequest{}, false
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if req.Reason == "" {
+		writeRollbackRequestError(ctx)
+		return RollbackRequest{}, false
+	}
+	return req, true
+}
+
+func writeRollbackRequestError(ctx core.HandlerContext) {
+	ctx.JSON(http.StatusBadRequest, map[string]string{
+		core.KeyError: core.ErrInvalidRequest, core.KeyErrorDescription: "reason is required",
+	})
+}
+
+func rollbackBaseline(ctx context.Context, store Store, expectedID, actor, reason string) (AppliedVersion, error) {
+	if expectedID == "" {
+		return store.Rollback(ctx, actor, reason)
+	}
+	conditional, ok := store.(ConditionalRollbackStore)
+	if !ok {
+		return AppliedVersion{}, ErrRollbackUnavailable
+	}
+	return conditional.RollbackIfCurrent(ctx, expectedID, actor, reason)
 }
 
 // approved reports whether the mandatory explicit-approval flag was set
@@ -262,11 +350,14 @@ func approved(ctx core.HandlerContext) bool {
 // patch from the new baseline to this cluster's running config (informational
 // only — best-effort: when the running snapshot fails, the patch is omitted
 // and the failure is logged, mirroring the observability fail-open posture).
-func writeApplyResponse(d HandlerDeps, ctx core.HandlerContext, v AppliedVersion) {
+func writeApplyResponse(d HandlerDeps, ctx core.HandlerContext, v AppliedVersion, state *CanaryState) {
 	body := map[string]any{
 		KeyApplied:     v.Snapshot,
 		KeyVersion:     v.ID,
 		KeyPrevVersion: v.PrevID,
+	}
+	if state != nil {
+		body[KeyCanary] = state
 	}
 	running, err := d.RunningConfigSnapshot(ctx.Request().Context())
 	if err != nil {
@@ -275,6 +366,31 @@ func writeApplyResponse(d HandlerDeps, ctx core.HandlerContext, v AppliedVersion
 		body[KeyPatch] = RedactOps(Diff(v.Snapshot, running))
 	}
 	ctx.JSON(http.StatusOK, body)
+}
+
+func canaryInProgress(ctx context.Context, store Store) bool {
+	canaryStore, ok := store.(CanaryStore)
+	if !ok {
+		return false
+	}
+	state, err := canaryStore.Canary(ctx)
+	return err == nil && state.Status == CanaryObserving
+}
+
+func writeCanaryApplyError(d HandlerDeps, ctx core.HandlerContext, err error) {
+	switch {
+	case errors.Is(err, ErrCanaryInProgress):
+		ctx.JSON(http.StatusConflict, map[string]string{core.KeyError: core.ErrConfigCanaryInProgress})
+	case errors.Is(err, ErrCanaryNoBaseline):
+		ctx.JSON(http.StatusConflict, map[string]string{core.KeyError: core.ErrConfigCanaryNoBaseline})
+	case errors.Is(err, ErrCanaryConflict):
+		ctx.JSON(http.StatusConflict, map[string]string{core.KeyError: core.ErrConfigCanaryConflict})
+	case errors.Is(err, ErrCanaryUnavailable):
+		ctx.JSON(http.StatusNotImplemented, map[string]string{core.KeyError: core.ErrConfigCanaryNotAvailable})
+	default:
+		d.SrvLogger().Error("config audit: canary apply failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, map[string]string{core.KeyError: core.ErrInternal})
+	}
 }
 
 // recordConfigApplyAudit emits the apply/rollback audit event with the
@@ -294,6 +410,23 @@ func recordConfigApplyAudit(d HandlerDeps, ctx core.HandlerContext, v AppliedVer
 		audit.SetMeta(evt, "prev_id", v.PrevID)
 	}
 	rec.Record(ctx.Request().Context(), evt)
+}
+
+func recordCanaryAudit(d HandlerDeps, ctx core.HandlerContext, state CanaryState, eventType audit.EventType) {
+	rec := d.Auditor()
+	if rec == nil {
+		return
+	}
+	e := &audit.Event{
+		Type: eventType, Outcome: audit.OutcomeSuccess, ActorID: state.Actor,
+		ActorIP: audit.ClientIP(ctx.Request()),
+	}
+	audit.SetMeta(e, "canary_id", state.ID)
+	audit.SetMeta(e, "version_id", state.VersionID)
+	audit.SetMeta(e, "prev_id", state.PreviousVersionID)
+	audit.SetMeta(e, "peer_digest", state.Digest)
+	audit.SetMeta(e, "reason", state.Reason)
+	rec.Record(ctx.Request().Context(), e)
 }
 func HandleHistory(d HandlerDeps, ctx core.HandlerContext) {
 	store := d.ConfigAuditStore()

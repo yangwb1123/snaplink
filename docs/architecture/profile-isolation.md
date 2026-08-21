@@ -120,7 +120,7 @@ The `full` profile's claims are proven as follows:
 - SAML, LDAP/Kerberos/RADIUS, KMS/HSM and the other nested modules are
   separate Go modules by construction; the standard host API for
   operator-registered factories is `interfaces/ssoext` (typed registrars on
-  `platform/registrar`) and the module catalog (`ops/build/modules.json`).
+  `platform/registry/typed`) and the module catalog (`ops/build/modules.json`).
   SAML (consumed via `saml.handler`) plus the LDAP/Kerberos/RADIUS
   authenticator families are migrated onto it; the KMS family remains.
 - No in-process capability is classified as hot: activation is

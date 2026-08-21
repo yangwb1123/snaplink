@@ -35,3 +35,17 @@ func MountRoutes(r core.Router, d RoutesDeps, gate func() bool) {
 		api.GET(core.PathAdminRebacCheck, func(ctx core.HandlerContext) { HandleCheck(d, ctx) })
 	}
 }
+
+// MountHotCheckRoute registers the product check route through the active
+// generation slot when the engine owns a lifecycle runtime. It uses fallback
+// for custom routers without match-time lease support.
+func MountHotCheckRoute(r core.Router, d TupleDeps, fallback core.HandlerFunc) {
+	if r == nil || d == nil || d.RebacEngine() == nil {
+		return
+	}
+	runtime := d.RebacEngine().HotRuntime()
+	if runtime != nil && runtime.RegisterCheckRoute(r, d) {
+		return
+	}
+	r.GET(core.PathAuthzCheck, fallback)
+}

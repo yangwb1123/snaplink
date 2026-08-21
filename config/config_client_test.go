@@ -76,3 +76,32 @@ func TestValidateConfiguredClients_IDTokenSignedResponseAlg(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateConfiguredClientsRedirectURIPatterns(t *testing.T) {
+	tests := []struct {
+		name     string
+		patterns []string
+		wantErr  bool
+	}{
+		{name: "unset"},
+		{name: "valid", patterns: []string{"https://app.example.test/tenant/*/callback"}},
+		{name: "invalid partial wildcard", patterns: []string{"https://app.example.test/*-callback"}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateConfiguredClients(&Config{Clients: []ClientConfig{{
+				ID:                  "portal",
+				RedirectURIPatterns: test.patterns,
+			}}})
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "redirect_uri_patterns") {
+					t.Fatalf("err=%v, want redirect_uri_patterns validation error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validateConfiguredClients() error = %v", err)
+			}
+		})
+	}
+}

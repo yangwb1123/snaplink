@@ -64,6 +64,8 @@ class Stage:
     def to_dict(self):
         return {
             "name": self.name,
+            "model": self.model,
+            "provider": self.provider,
             "from_dir": self.from_dir,
             "from_outputs": self.from_outputs,
             "suffix": self.suffix,
@@ -79,8 +81,17 @@ class Stage:
             "output_dir": self.output_dir,
             "max_iterations": self.max_iterations,
             "max_roles_per_iteration": self.max_roles_per_iteration,
+            "meta_timeout": self.meta_timeout,
             "relevance_enabled": self.relevance_enabled,
             "relevance_min_score": self.relevance_min_score,
+            "meta_max_failed_roles": self.meta_max_failed_roles,
+            "meta_role_retries": self.meta_role_retries,
+            "gate": self.gate,
+            "gate_fix_rounds": self.gate_fix_rounds,
+            "gate_fix_prompt": self.gate_fix_prompt,
+            "gate_fix_validate": self.gate_fix_validate,
+            "approval": self.approval,
+            "or_tasks": self.or_tasks,
             "from_prompt": self.from_prompt,
             "output": self.output,
             "tasks": self.tasks,
@@ -103,7 +114,12 @@ class Pipeline:
     name: str = "pipeline"  # label for archive subdirectories
     
     def to_dict(self):
-        return {"stages": [s.to_dict() for s in self.stages]}
+        return {
+            "stages": [s.to_dict() for s in self.stages],
+            "decision_log": self.decision_log,
+            "archive_dir": self.archive_dir,
+            "name": self.name,
+        }
 
 
 @dataclass

@@ -29,6 +29,7 @@ var clientColumns = []string{
 	"secret_rotated_at", "client_trust_score", "client_trust_set_at",
 	"previous_secret", "secret_overlap_until",
 	"secret_expires_at",
+	"redirect_uri_patterns",
 }
 
 // clientWriteArgs is the ordered argument bundle shared by INSERT, upsert, and
@@ -36,6 +37,7 @@ var clientColumns = []string{
 // INTEGERs and durations as int64 nanoseconds (BIGINT), matching the schema.
 func clientWriteArgs(c *sso.Client, secret, rat string) []any {
 	redirects, _ := json.Marshal(c.RedirectURIs)
+	redirectPatterns, _ := json.Marshal(c.RedirectURIPatterns)
 	scopes, _ := json.Marshal(c.AllowedScopes)
 	auths, _ := json.Marshal(c.AllowedAuthenticators)
 	jwks, _ := json.Marshal(c.JWKS)
@@ -65,6 +67,7 @@ func clientWriteArgs(c *sso.Client, secret, rat string) []any {
 		c.ClientTrustScore, unixNanoOrZero(c.ClientTrustSetAt),
 		c.PreviousSecret, unixNanoOrZero(c.SecretOverlapUntil),
 		unixNanoOrZero(c.SecretExpiresAt),
+		string(redirectPatterns),
 	}
 }
 
@@ -123,6 +126,7 @@ func clientAttributesForStorage(c *sso.Client) map[string]string {
 type clientScanRow struct {
 	c                                                      sso.Client
 	redirects, scopes, auths                               string
+	redirectPatterns                                       string
 	jwksBlob, resources, reqURIs, postLogout, authzDetails string
 	pkceM, attrsBlob                                       string
 	activeInt, requirePKCEInt                              int64
@@ -161,6 +165,7 @@ func (r *clientScanRow) scanInto(s scanner) error {
 		&r.c.ClientTrustScore, &r.clientTrustSetAtUnixNs,
 		&r.previousSecret, &r.secretOverlapUntilUnixNs,
 		&r.secretExpiresAtUnixNs,
+		&r.redirectPatterns,
 	)
 }
 
@@ -234,6 +239,7 @@ func (r *clientScanRow) jsonFields() error {
 		field string
 	}{
 		{r.redirects, &c.RedirectURIs, "redirect_uris"},
+		{r.redirectPatterns, &c.RedirectURIPatterns, "redirect_uri_patterns"},
 		{r.scopes, &c.AllowedScopes, "allowed_scopes"},
 		{r.auths, &c.AllowedAuthenticators, "allowed_authenticators"},
 		{r.jwksBlob, &c.JWKS, "jwks"},

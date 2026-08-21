@@ -52,6 +52,19 @@
       "sources": ["interfaces/apidocs"]
     },
     {
+      "id": "audit.external-worker",
+      "name": "External audit worker",
+      "summary": "Lifecycle-supervised typed audit-batch delivery to a local provenance-admitted or remote mTLS worker.",
+      "availability": ["stock-binary"],
+      "default_state": "disabled",
+      "feature_gate": null,
+      "required_stores": [],
+      "module_capabilities": [],
+      "config_keys": ["audit.external_worker"],
+      "surfaces": ["audit sink", "/readyz"],
+      "sources": ["cmd/sso-server/serverbuildauthn/build_external_audit_worker.go", "platform/lifecycle/modules/external.go"]
+    },
+    {
       "id": "audit.governance-provisioner",
       "name": "Audit Governance desired-state provisioner",
       "summary": "Create-only reconciliation of tenant, source allow-list and schema desired state against Audit Governance.",
@@ -80,15 +93,15 @@
     {
       "id": "authorization.fga",
       "name": "Fine-grained authorization",
-      "summary": "Relationship tuples, graph expansion and authorization checks.",
+      "summary": "Relationship tuples, graph expansion and authorization checks with a lifecycle-managed product check route.",
       "availability": ["sdk", "stock-binary"],
       "default_state": "disabled",
       "feature_gate": null,
       "required_stores": ["RebacStore", "RebacEngine"],
       "module_capabilities": ["platform.authorization.v1"],
       "config_keys": ["rebac"],
-      "surfaces": ["/authz/*"],
-      "sources": ["platform/lifecycle/rebac"]
+      "surfaces": ["/authz/*", "/readyz"],
+      "sources": ["platform/lifecycle/rebac", "interfaces/sso/server_routes.go"]
     },
     {
       "id": "branding.public",

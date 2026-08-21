@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Lifecycle-managed ReBAC business check route: the stock `/authz/check`
+  capability now uses a fixed route slot with match-time generation leases,
+  readiness, graceful disable/activate, bounded `rebac_lifecycle_transition`
+  audit events and shutdown draining.
+- Typed external-module supervisor SDK under
+  `platform/lifecycle/modules`: digest-pinned direct executable launch,
+  Unix/TLS version and capability handshake, token authentication, optional
+  detached Ed25519 artifact verification, SPIFFE-aware mTLS, readiness,
+  heartbeat, quiesce/shutdown lifecycle and bounded audit-batch delivery.
+- Stock `sso-server` audit-worker admission: `audit.external_worker` now
+  manages one lifecycle-supervised audit-batch worker, checks signed local
+  release provenance or remote mTLS/SPIFFE identity, contributes readiness and
+  graceful shutdown, and emits bounded lifecycle audit events.
+- Lifecycle-managed stock-server webhook exporter: `webhooks.enabled` now
+  wires a precompiled audit tap with generation leases, readiness, graceful
+  drain, shared subscription/dead-letter stores, safe SIGHUP delivery-policy
+  replacement, and bounded `webhook_lifecycle_transition` audit events.
+- Release workflow provenance attestations: after GoReleaser publishes the
+  archive checksum set, GitHub Artifact Attestations emits signed SLSA build
+  provenance for every archive subject listed in `dist/checksums.txt`.
+- Optional configuration-baseline canary apply (`?canary=true&window=60s`):
+  injected storage-health probes confirm a bounded observation window or
+  atomically roll back to the predecessor; Memory/SQLite retain lifecycle
+  state, restart recovery is fail-safe, and lifecycle audit events carry only
+  redacted-safe identifiers. See `docs/design/config-canary-apply.md`.
+- Opt-in per-client redirect-URI patterns (`redirect_uri_patterns`) for static
+  configuration and the Snaplink DCR extension. Patterns are HTTPS-only,
+  concrete-host, single interior path-segment wildcards validated by one shared
+  matcher; exact `redirect_uris` behavior remains unchanged. SQLite migration v8
+  and PostgreSQL schema v6 persist the field, and DCR POST/GET/PUT round-trip it.
 - Per-client ID-token signing algorithm (`id_token_signed_response_alg`,
   OIDC Core §3.1.3.1 / RFC 7591 §2; design
   `docs/design/per-client-id-token-alg.md`): `core.Client.IDTokenSignedResponseAlg`
@@ -90,10 +120,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields: an apply failure is fail-open (recorded, never suppresses the
   drift report) and keeps the approval pending for the 30s retry;
   success consumes the annotation (at most one apply per approval — no
-  auto-remediation). Report-only CRs are byte-identical to before, the
-  CRD gains the `apply` schema block + a CEL reason-when-enabled rule,
-  and rollback stays manual (the operator never drives it; `versionID`
-  names the target). Design: `docs/design/operator-config-apply.md`.
+  auto-remediation). Report-only CRs are byte-identical to before, and the
+  CRD gains the `apply` schema block + a CEL reason-when-enabled rule.
+  Explicit CAS rollback is documented separately below. Design:
+  `docs/design/operator-config-apply.md`.
+- Explicit `sso-operator` rollback mode for `SSOConfigDrift`: an enabled
+  rollback spec, non-empty reason, expected current version, and one-shot
+  `sso.snaplink.io/rollback-approve` annotation are required. The controller
+  sends the guarded rollback request, records `status.rollback`, consumes the
+  approval only on success, and retains it for short-retry failures. Apply
+  and rollback approvals are mutually exclusive; stale versions return
+  `config_apply_conflict` without changing the baseline. Design:
+  `docs/design/operator-config-rollback.md`.
 - Config apply mode (`POST /api/v1/admin/config/apply` + `.../rollback`, admin:write):
   the declared peer-config baseline write path promoting the deferred-backlog
   "Declarative multi-cluster configuration governance" Partial boundary.
@@ -161,7 +199,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   families: `interfaces/ssoext` now exposes `LDAPAuthenticatorRegistry` /
   `KerberosHandlerRegistry` / `RADIUSAuthenticatorRegistry` (plus the
   `Register*`/`Lookup*`/`Registered*` functions) on the standard
-  `platform/registrar` machinery, with a per-family `*ServerDeps` bundle of
+  `platform/registry/typed` machinery, with a per-family `*ServerDeps` bundle of
   stdlib + intra-repo types only — no go-ldap/gokrb5/layeh dependency enters
   the core module's go.mod. The nested modules each embed their `ssoext`
   Deps bundle (`ldapauth.Deps` / `kerberosauth.Deps` / `radiusauth.Deps`) and
@@ -175,7 +213,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now exposes `ExternalSignerRegistry` / `RegisterExternalSigner` /
   `LookupExternalSigner` / `RegisteredExternalSigners` plus the
   `ExternalSignerDeps` bundle (stdlib + intra-repo types only — no vendor KMS
-  SDK enters the core module's go.mod) on the standard `platform/registrar`
+  SDK enters the core module's go.mod) on the standard `platform/registry/typed`
   machinery, completing the nested-module migration declared in
   `docs/deferred-backlog.md`. The four nested modules
   (`infrastructure/kms/{awskms,gcpkms,azurekeyvault,pkcs11}`) each add a

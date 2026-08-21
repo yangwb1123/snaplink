@@ -27,7 +27,7 @@
 // client's allowed_authenticators so clients may select it via
 // provider=<name> at /auth/login.
 //
-// The standard host-API path (interfaces/ssoext on platform/registrar, the
+// The standard host-API path (interfaces/ssoext on platform/registry/typed, the
 // same typed seam SAML uses) is a NAME-ADDRESSED factory the fork's own boot
 // composition consumes: the fork registers the factory under a name its own
 // config selects (stock config deliberately has NO ldap section — directory

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -205,6 +206,28 @@ func wireFeatureGateReload(reloader *configreload.Reloader, srv *sso.Server) {
 	reloader.SetCAEPGateHook(srv.SetCAEPGateEnabled)
 	reloader.SetFederationGateHook(srv.SetFederationGateEnabled)
 	reloader.SetSelfServiceGateHook(srv.SetSelfServiceGateEnabled)
+}
+
+// wireWebhookReload connects the safe delivery-policy subset to the
+// lifecycle-managed exporter. Enabling/disabling the route owner and changing
+// dead-letter capacity still require a restart and are reported as ignored.
+func wireWebhookReload(reloader *configreload.Reloader, srv *sso.Server) {
+	reloader.SetWebhooksHook(func(cfg config.WebhooksConfig) error {
+		if !cfg.Enabled {
+			return errors.New("webhooks enabled state requires restart")
+		}
+		runtime, ok := srv.WebhookRuntime().(interface {
+			Activate(context.Context, []byte) error
+		})
+		if !ok {
+			return errors.New("webhook exporter was not wired at boot")
+		}
+		encoded, err := json.Marshal(cfg)
+		if err != nil {
+			return fmt.Errorf("encode webhook delivery policy: %w", err)
+		}
+		return runtime.Activate(context.Background(), encoded)
+	})
 }
 
 // initTracing wires OTLP tracing and returns its shutdown func. The call is

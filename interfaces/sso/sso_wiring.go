@@ -127,15 +127,14 @@ type wiringState struct {
 	// webhookEngine is the opt-in generic event/webhook egress engine
 	// (WithWebhookEngine). Nil = no admin subscription/dead-letter routes,
 	// no audit-sink tap — byte-identical to a build without the feature.
-	webhookEngine *webhook.Engine
+	webhookEngine webhook.Runtime
 
 	// rebacEngine is the opt-in Zanzibar-style relationship-tuple Check
-	// engine (WithRebacEngine, platform/lifecycle/rebac). Nil = no admin
-	// debug route mounted — byte-identical to a build without the
-	// feature. Unlike the other authorization layers wired on Server,
-	// this engine is NOT consulted by any built-in gate (see the package
-	// doc); the only Server-side use is the operational-debugging
-	// endpoint below.
+	// engine (WithRebacEngine, platform/lifecycle/rebac). Nil = no FGA
+	// product or admin-debug routes mounted — byte-identical to a build
+	// without the feature. The product /authz/check route is backed by a
+	// fixed lifecycle generation on the standard router; tuple management
+	// remains cold and the admin route remains operational debugging.
 	rebacEngine *rebac.Engine
 
 	// rebacStore is the tuple store for the FGA product API. When wired,
@@ -255,7 +254,8 @@ type wiringState struct {
 	// configAuditStore persists runtime-configuration change history
 	// (platform/configaudit). Nil = the change-capture hook + the
 	// GET .../config/history admin endpoint are both off.
-	configAuditStore configaudit.Store
+	configAuditStore       configaudit.Store
+	configCanaryController *configaudit.CanaryController
 	// configAppliedSnapshot is the redacted effective-config snapshot
 	// captured ONCE at startup (WithConfigSnapshots). configRunningSnapshotFn
 	// recomputes the CURRENT effective snapshot on demand for

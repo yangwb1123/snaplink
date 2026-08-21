@@ -4,10 +4,11 @@ Bounded design for the second step of the deferred-backlog "Declarative
 multi-cluster configuration governance" promotion: the `sso-operator`
 (`cmd/sso-operator`) gains an **opt-in, explicitly-approved apply mode** that
 calls the B10-3 server-side declared-baseline write endpoint
-(`POST /api/v1/admin/config/apply`) — and deliberately does NOT drive
-rollback. All file/line references were verified against executable code
-before writing. Report-only behavior for CRs that never opt in must remain
-byte-identical (Decision 6).
+(`POST /api/v1/admin/config/apply`). Explicit rollback is now covered by the
+follow-up CAS design in `docs/design/operator-config-rollback.md`; this
+document remains the apply-mode authority. All file/line references were
+verified against executable code before writing. Report-only behavior for CRs
+that never opt in must remain byte-identical (Decision 6).
 
 Status quo (implemented, unchanged by this design):
 
@@ -26,9 +27,8 @@ Status quo (implemented, unchanged by this design):
   validation) → `applyResult` (`:376`, drift fields preserved on failure,
   never reset) → `Status().Update` → `RequeueAfter` (`requeueInterval`
   `:406`: shortRequeue 30s on failure, else the CR's PollInterval, default
-  5m). Its doc.go explicitly lists "NO config apply" as a non-goal and
-  names what an apply mode would need: an explicit opt-in + approval gate
-  and a NEW write-capable endpoint on B (now shipped by B10-3).
+  5m). Apply is opt-in and approval-gated; explicit rollback uses the same
+  reconcile check plus the separate CAS contract in the follow-up design.
 - `GET .../config/running` already serves a REDACTED snapshot
   (`platform/configaudit/handlers.go:68` `Redact(running)`), so the
   snapshot the operator forwards to apply carries no secret-shaped values
@@ -38,8 +38,9 @@ Goal of this change: `SSOConfigDrift` may, when its spec opts in AND a
 one-shot approval is present, POST the fetched peer snapshot to ClusterB's
 `/api/v1/admin/config/apply?approve=true` (with the digest and the spec's
 reason), and record the outcome in `Status.Apply`. Canary rollout,
-automated remediation, GitOps reconciliation, and operator-driven rollback
-all remain non-goals (Decision 4).
+automated remediation and GitOps reconciliation remain non-goals here;
+operator rollback is specified separately with an atomic expected-version
+guard.
 
 ---
 
@@ -153,12 +154,11 @@ successful apply, `Status.Message` still reports the drift — this is
 HONEST: apply records B's applied baseline, it does not change B's running
 config, so the drift persists (see the honesty note below).
 
-Rollback results: the operator never drives rollback (Decision 4), so no
-`status.rollback` exists today. The `ApplyStatus` struct is the reuse point
-if a future boundary adds operator-driven rollback (a `rolled_back` state,
-same shape). This is the "apply/rollback result fields" of the brief,
-minimally: the apply fields now, the rollback fields when rollback is in
-scope — see Decision 4.
+Rollback results live in `status.rollback` and are covered by the explicit
+CAS contract in `docs/design/operator-config-rollback.md`: state is
+`rolled_back`, `conflict`, `rejected`, or `failed`, with the attempted
+expected version, restored version, timestamp, and token-free message. The
+rollback path never infers an action from this status.
 
 **Honesty note (stated, not hidden):** after a successful apply, the
 operator's next poll still reports drift, because both clusters' RUNNING
@@ -168,32 +168,24 @@ wants B's config-audit applied view/history to record "A's config is the
 declared baseline" — the drift report is not its success signal, and the
 one-shot approval is what stops pointless repeated applies.
 
-## Decision 4 — Rollback: manual only, never operator-driven
+## Decision 4 — Rollback: explicit CAS approval
 
-**The operator never calls `/config/rollback`; rollback remains a manual
-action against the server API.** Minimal-surface criterion applied to the
-question "what signal could the operator observe that a rollback is
-wanted?" — the answer is none: the operator's only observations are the two
-clusters' running configs and their diff; apply does not change running
-configs (server contract), so an apply can never produce an
-operator-visible "this baseline is wrong" signal. Rollback is a human
-governance decision ("the last apply was a mistake") made against the
-applied-baseline history, which the operator does not read. Driving it
-would require inventing both a trigger condition and a second approval
-channel for an action the operator has no evidence to justify — pure
-surface for zero decision value.
+The operator may call `/config/rollback` only through the separate bounded
+contract in `docs/design/operator-config-rollback.md`: enabled spec, reason,
+expected current version, and one-shot rollback approval annotation. The
+operator does not infer a rollback from drift or health and never runs it on a
+timer without that approval. The server's built-in stores compare the current
+version and the expected version in one transaction; a mismatch is a 409 and
+leaves the baseline unchanged.
 
-consequences, kept minimal:
+Consequences:
 
-- No `rollbackPath` constant, no rollback HTTP code, no rollback status
-  fields. The parity test pins only the paths the binary actually uses
-  (`running`, `cluster-diff`, `apply`).
-- The operator still equips the human: `status.apply.versionID` + `digest`
-  name the baseline just written; the server's
-  `GET .../config/history?resource=config` (and `prev_version` in the
-  apply response) gives the exact rollback target.
-- `docs/deferred-backlog.md` keeps "operator-driven rollback" in the
-  not-committed list.
+- Apply and rollback approvals are mutually exclusive in one reconcile.
+- A successful rollback consumes the rollback annotation; failures retain it
+  for the existing short retry and record a token-free `status.rollback`.
+- A custom backend that cannot provide the conditional extension returns
+  `501 config_rollback_not_available` for the guarded operator path; the
+  existing unguarded manual path remains compatible.
 
 ## Decision 5 — Security boundaries
 
@@ -247,9 +239,9 @@ consequences, kept minimal:
   from the root module's `configaudit.Digest` (this design doc's fixtures),
   asserting the operator's reimplementation stays byte-identical to the
   server's canonicalization.
-- **No rollback surface** (Decision 4). Canary, remediation, GitOps
-  reconciliation remain non-goals — doc.go non-goals updated to say
-  exactly that.
+- **Rollback is a separate explicit surface** (Decision 4). It requires its
+  own spec, reason, expected-version CAS, and one-shot approval; canary,
+  automatic remediation, and GitOps reconciliation remain non-goals.
 - **Budgets checked before editing**: controller file 243 → ~360 lines
   (<500); http.go 133 → ~210; apiv1alpha1 types 255 → ~330; Reconcile
   stays ~30 lines by extracting the apply phase into a helper; no function
@@ -258,7 +250,7 @@ consequences, kept minimal:
 ## Decision 7 — Acceptance assertions (testable, no skips)
 
 All controller tests use fake httptest servers asserting request shape and
-a must-not-contact guard for the apply path:
+must-not-contact guards for both write paths:
 
 | # | Assertion |
 |---|---|
@@ -272,6 +264,9 @@ a must-not-contact guard for the apply path:
 | 8 | opt-in + approval + drift but blank `reason` → rejected without any HTTP call, `state=rejected` |
 | 9 | digest parity: operator `snapshotDigest` equals the hard-coded `configaudit.Digest` known answers for the design fixtures (non-empty, nested, numeric) |
 | 10 | existing parity (`adminpaths_parity_test.go`, extended to pin `applyPath`) + truthiness + validate tests all green; root gates green |
+| 11 | rollback opt-in + approval + expected version → exactly one `POST {B}/api/v1/admin/config/rollback?approve=true`; body carries reason and `expected_version_id`, 200 records `status.rollback.state=rolled_back`, and annotation is removed |
+| 12 | rollback returns 409 `config_apply_conflict` → `status.rollback.state=conflict`, approval retained, baseline unchanged, and short retry requested |
+| 13 | apply and rollback approvals together → neither write is sent; both outcomes are rejected and both approvals remain |
 
 ## Wire contract (operator → server)
 
@@ -283,13 +278,23 @@ a must-not-contact guard for the apply path:
   - non-2xx: `status.apply.state` per Decision 3, `message` =
     `describeAPIError` (the server's own `{"error","error_description"}`),
     never the token.
+- `POST {B.BaseURL}/api/v1/admin/config/rollback?approve=true`
+  - `Authorization: Bearer <tokenB>`, `Content-Type: application/json`
+  - body: `{"reason":"<spec.rollback.reason>","expected_version_id":"<spec.rollback.expected_version_id>"}`
+  - 200 records `status.rollback.{state=rolled_back, versionID,
+    expectedVersionID, lastAttemptAt, message}`; 409 records `conflict` and
+    retains the approval for retry.
 - Reuses: `resolveBearer`, `describeAPIError`, `defaultHTTPClient` timeouts,
   `validateBaseURL`, the no-literal-leaks `const` convention
   (`applyPath` pinned to `shared/core.PathAPIPrefix+PathAdminConfigApply`
   by the parity test).
-- New CRD surface: `spec.apply.{enabled,reason}` (+ CEL admission rule),
-  annotation `sso.snaplink.io/apply-approve`, `status.apply.{state,
-  lastAttemptAt,versionID,digest,message}` — all mirrored in
+- New CRD surface: `spec.apply.{enabled,reason}` and
+  `spec.rollback.{enabled,reason,expected_version_id}` (+ CEL admission
+  rules), annotations `sso.snaplink.io/apply-approve` and
+  `sso.snaplink.io/rollback-approve`, and
+  `status.apply.{state,lastAttemptAt,versionID,digest,message}` plus
+  `status.rollback.{state,lastAttemptAt,versionID,expectedVersionID,message}`
+  — all mirrored in
   `apiv1alpha1/ssoconfigdrift_types.go`, `crd-ssoconfigdrift.yaml`,
   `cmd/sso-operator/doc.go`, `docs/deferred-backlog.md`, and root
   `CHANGELOG.md` in the same change.

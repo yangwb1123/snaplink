@@ -18,7 +18,7 @@ import (
 type UserInfoDeps interface {
 	RequireUserInfoDeps() error
 	TokenNoStoreHeaders(ctx core.HandlerContext)
-	BearerToken(r *http.Request) string
+	ResourceToken(r *http.Request) string
 	SetResourceBearerChallenge(ctx core.HandlerContext, realm, errorCode, errorDescription string)
 	ResolveIssuer(ctx core.HandlerContext) string
 	ValidateAnyToken(ctx context.Context, token string) (*core.TokenClaims, string, error)
@@ -85,7 +85,7 @@ func HandleUserInfo(d UserInfoDeps, ctx core.HandlerContext) {
 // ok=false; the caller MUST return immediately. On success it returns the
 // fully-validated claims. Wire shapes are byte-identical to the inline ladder.
 func authenticateUserInfoBearer(d UserInfoDeps, ctx core.HandlerContext) (*core.TokenClaims, bool) {
-	tokenString := d.BearerToken(ctx.Request())
+	tokenString := d.ResourceToken(ctx.Request())
 	if tokenString == "" {
 		// RFC 6750 §3.1: the "no credentials" case omits error parameters.
 		d.SetResourceBearerChallenge(ctx, d.ResolveIssuer(ctx), "", "")

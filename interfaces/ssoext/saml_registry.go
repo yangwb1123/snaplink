@@ -4,7 +4,7 @@
 // stacks, vendor KMS SDKs) must stay out of the core module's go.mod. The
 // registrars themselves live here — OUTSIDE cmd — so a fork imports the types
 // instead of re-declaring them, and the generic machinery is the single
-// standard implementation in platform/registrar. The cmd-owned SAML registry
+// standard implementation in platform/registry/typed. The cmd-owned SAML registry
 // is consumed by mountSAMLHandler (saml.handler); the external-signer
 // registry (ExternalSignerRegistry, the canonical registrar behind
 // keys.signing.external) is consumed by serverbuildsign, which delegates to
@@ -27,7 +27,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
-	"github.com/yangwb1123/snaplink/platform/registrar"
+	"github.com/yangwb1123/snaplink/platform/registry/typed"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
@@ -124,7 +124,7 @@ type SAMLHandlerFactory func(ctx context.Context, deps SAMLServerDeps) (*SAMLHan
 // forked binary, not this module — the operator calls RegisterSAMLHandlers
 // from their main before running the server, then selects the factory by
 // name via saml.handler. The generic machinery is the standard
-// platform/registrar implementation (same shape as
+// platform/registry/typed implementation (same shape as
 // serverbuildsign.RegisterExternalSigner). Exported so tests can clean up
 // between runs via Unregister.
 var SAMLHandlerRegistry = registrar.New[SAMLHandlerFactory]()

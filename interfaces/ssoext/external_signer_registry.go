@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto"
 
-	"github.com/yangwb1123/snaplink/platform/registrar"
+	"github.com/yangwb1123/snaplink/platform/registry/typed"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
@@ -66,7 +66,7 @@ type ExternalSignerDeps struct {
 // CANONICAL registry for that config key: serverbuildsign's
 // ExternalSignerRegistry is an alias to this one (the same registrar
 // pointer), so there is exactly one name space and no double-registry
-// drift. The generic machinery is the standard platform/registrar
+// drift. The generic machinery is the standard platform/registry/typed
 // implementation (same shape as SAMLHandlerRegistry and the
 // authenticator-family registries). Exported so tests can clean up between
 // runs via Unregister.

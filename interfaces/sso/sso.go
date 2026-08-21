@@ -152,7 +152,7 @@ func (s *Server) applyAuditSinkTaps() {
 	if s.sseBroker != nil {
 		s.auditor.AddSink(sse.NewSink(s.sseBroker))
 	}
-	if s.webhookEngine != nil {
+	if webhookConfigured(s.webhookEngine) {
 		s.auditor.AddSink(s.webhookEngine)
 	}
 	if s.scimProvisionSink != nil {

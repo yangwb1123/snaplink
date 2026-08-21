@@ -6,6 +6,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
@@ -15,6 +16,11 @@ import (
 // the security primitives (token validation, DPoP/mTLS sender-constraint,
 // residency read-gate) are implemented in the root package.
 func (s *Server) handleUserInfo(ctx HandlerContext) { oidc.HandleUserInfo(s, ctx) }
+
+// ResourceToken accepts both RFC 6750 Bearer and RFC 9449 DPoP authorization
+// schemes. Only resource-server handlers use this accessor; client-auth and
+// management endpoints retain the stricter BearerToken behavior.
+func (s *Server) ResourceToken(r *http.Request) string { return oauth.ResourceToken(r) }
 
 // handleCheckSessionIframe delegates to oidc.HandleCheckSessionIframe — the
 // OpenID Connect Session Management 1.0 §2 endpoint. No Deps: see there.

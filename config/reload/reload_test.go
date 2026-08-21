@@ -357,6 +357,62 @@ func TestReload_LegacyWebSPAPathIsIgnoredNotUnknown(t *testing.T) {
 	}
 }
 
+func TestReload_RebuildsWebhookDeliveryPolicyOnly(t *testing.T) {
+	initial := baseConfig()
+	initial.Webhooks.Enabled = true
+	next := baseConfig()
+	next.Webhooks.Enabled = true
+	next.Webhooks.DeliveryTimeout = 3
+	next.Webhooks.Retry.InitialBackoff = 4
+	next.Webhooks.DeadLetterCapacity = 99
+	var got config.WebhooksConfig
+	r := New(initial, func(context.Context) (*config.Config, error) { return next, nil }, nil)
+	r.SetWebhooksHook(func(cfg config.WebhooksConfig) error {
+		got = cfg
+		return nil
+	})
+
+	res, err := r.Reload(context.Background())
+	if err != nil {
+		t.Fatalf("Reload() error = %v", err)
+	}
+	if len(res.Applied) != 1 || res.Applied[0] != "webhooks: delivery policy generation replaced" {
+		t.Fatalf("Applied = %v", res.Applied)
+	}
+	if !containsPath(res.Ignored, "/webhooks/dead_letter_capacity") {
+		t.Fatalf("Ignored = %v, want dead-letter capacity restart boundary", res.Ignored)
+	}
+	if got.DeliveryTimeout != next.Webhooks.DeliveryTimeout || got.Retry != next.Webhooks.Retry {
+		t.Fatalf("webhook hook received %+v, want %+v", got, next.Webhooks)
+	}
+	current := r.Current().Webhooks
+	if current.DeliveryTimeout != next.Webhooks.DeliveryTimeout || current.Retry != next.Webhooks.Retry {
+		t.Fatalf("Current.Webhooks = %+v, want delivery policy applied", current)
+	}
+	if current.DeadLetterCapacity != 0 {
+		t.Fatalf("Current.DeadLetterCapacity = %d, want restart-required value untouched", current.DeadLetterCapacity)
+	}
+}
+
+func TestReload_WebhookPolicyWithoutRuntimeIsIgnored(t *testing.T) {
+	initial := baseConfig()
+	next := baseConfig()
+	next.Webhooks.Enabled = true
+	next.Webhooks.DeliveryTimeout = 3
+	r := New(initial, func(context.Context) (*config.Config, error) { return next, nil }, nil)
+
+	res, err := r.Reload(context.Background())
+	if err != nil {
+		t.Fatalf("Reload() error = %v", err)
+	}
+	if len(res.Applied) != 0 || !containsPath(res.Ignored, "/webhooks") {
+		t.Fatalf("Result = %+v, want ignored webhook policy", res)
+	}
+	if r.Current().Webhooks.DeliveryTimeout != 0 {
+		t.Fatal("unwired webhook policy changed tracked config")
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }
 
 func containsPath(paths []string, want string) bool {

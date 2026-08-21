@@ -29,7 +29,7 @@ the only supported profile set; anything else must not be run or claimed.
 | `session` | ✅ | Session management (`check_session_iframe`) |
 | `logout` | ✅ | RP-initiated logout |
 | `jarm` | ✅ | Requires `oauth.jar`/JARM wiring; opt-in |
-| `fapi` | ⚠️ | FAPI 2.0 code profile (`--fapi`); login + plan creation now work (per-client `id_token_signed_response_alg` RS256 login client via `keys.id_token_algs`), but the `fapi2-security-profile-final-happy-flow` module stops at its **static-client** step: the suite's FAPI2 SP FINAL server tests hardcode a static client whose per-test callback redirect (`https://localhost:8443/test/{testId}/callback`) requires wildcard redirect-URI registration the server does not support (see `docs/campaigns/reports/b12-fapi-conformance.md`; archived `results/<commit>-fapi/BLOCKER.md`) |
+| `fapi` | ⚠️ | FAPI 2.0 code profile (`--fapi`); the static-client fixture, per-test path pattern, PAR, DPoP resource calls, callback `state`/`iss`, and HTTPS cipher checks now run. The pinned `fapi2-security-profile-final-happy-flow` still stops when its second client appends a query to the dynamic callback: the server deliberately rejects query-bearing pattern candidates (`400 invalid_redirect_uri`) under the pattern grammar in `docs/design/redirect-uri-patterns.md`. Latest evidence: `results/1b2867c6-fapi-https/` |
 | `ciba` | ✅ | Only when a CIBA store is wired |
 | `implicit` | ❌ | Runtime rejects `id_token` response types |
 | `hybrid` | ❌ | Runtime rejects `code id_token` response types |
@@ -46,6 +46,7 @@ Prerequisites: Docker with compose v2, google-chrome, python3
 ./run-headless.sh                # HTTP issuer topology; archives results/<commit>/
 ./run-headless.sh --issuer-https # HTTPS issuer topology; archives results/<commit>-https/
 ./run-headless.sh --fapi         # FAPI 2.0 SP variant; archives results/<commit>-fapi/
+./run-headless.sh --fapi --issuer-https # HTTPS FAPI; archives results/<commit>-fapi-https/
 MODULE=oidcc-config-certification-test ./run-headless.sh
 ```
 
@@ -63,16 +64,16 @@ test clients stay on the ES256 primary. The default invocation is
 byte-identical to the committed behavior (`CONFORMANCE_CONFIG` defaults to
 `config.yaml`; verified by `docker compose --env-file config.env config`).
 
-Status as of `07832dda`: the suite login now succeeds and the FAPI plan is
-created (56 modules), but the `fapi2-security-profile-final-happy-flow`
-module stops at its first client step (`GetStaticClientConfiguration`): the
-suite's FAPI2 SP FINAL server tests hardcode a STATIC client configuration
-(the plan exposes no `client_registration` variant), and that client's
-callback redirect is per-test (`https://localhost:8443/test/{testId}/callback`),
-which a pre-registered exact-match redirect URI cannot cover. See
-`docs/sso/oidc-conformance.md` §2 and the archived
-`results/<commit>-fapi/BLOCKER.md`. Do not report a FAPI pass on the basis
-of this harness until that is resolved.
+Latest verified run at HEAD `1b2867c6` (HTTPS topology): the suite login and
+FAPI plan succeed; both static clients load their private-key fixtures, and
+the first per-test callback passes the pattern gate. The run also reaches
+PAR, token exchange, DPoP-protected `/userinfo`, callback `state`/`iss`
+handling, and the HTTPS cipher checks. The second client intentionally adds
+`?dummy1=lorem&dummy2=ipsum` to its callback; the current security contract
+rejects that query-bearing candidate with `400 invalid_redirect_uri`, so the
+module ends `INTERRUPTED`. This is a documented compatibility boundary, not
+a FAPI pass. A query-pattern extension would require a separate security
+design and contract review.
 
 The script builds the harness, registers the suite's OIDC login client via
 DCR plus an admin signup user on the server under test, creates the Basic

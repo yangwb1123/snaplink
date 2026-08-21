@@ -14,16 +14,12 @@ func TestRegistry_RegisterLookupNames(t *testing.T) {
 	reg.Register("b", second)
 
 	got, ok := reg.Lookup("a")
-	if !ok {
-		t.Fatal("Lookup(a) missing")
-	}
-	if got == nil {
-		t.Fatal("Lookup(a) returned nil")
+	if !ok || got == nil {
+		t.Fatal("Lookup(a) missing or nil")
 	}
 	if _, ok := reg.Lookup("missing"); ok {
 		t.Fatal("Lookup(missing) reported ok")
 	}
-
 	names := reg.Names()
 	if len(names) != 2 || names[0] != "a" || names[1] != "b" {
 		t.Fatalf("Names() = %v, want [a b]", names)
@@ -61,8 +57,6 @@ func TestRegistry_RegisterPanicsOnMistakes(t *testing.T) {
 }
 
 func TestRegistry_NonNilableZeroValueAllowed(t *testing.T) {
-	// A struct zero value is a legitimate registered value — only
-	// nilable kinds are rejected.
 	reg := New[struct{ N int }]()
 	reg.Register("zero", struct{ N int }{})
 	got, ok := reg.Lookup("zero")

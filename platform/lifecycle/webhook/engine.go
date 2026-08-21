@@ -63,9 +63,22 @@ type Engine struct {
 	logger   Logger
 	recorder *audit.Recorder
 
-	wg     sync.WaitGroup
-	ctx    context.Context
-	cancel context.CancelFunc
+	deliveryMu sync.RWMutex
+	closed     bool
+	wg         sync.WaitGroup
+	ctx        context.Context
+	cancel     context.CancelFunc
+}
+
+// Runtime is the stable management and audit surface shared by the native
+// Engine and lifecycle-managed wrappers. Keeping the admin methods here lets
+// a host replace a delivery generation without replacing its route closures
+// or subscription/dead-letter stores.
+type Runtime interface {
+	audit.Sink
+	Subscriptions() SubscriptionStore
+	DeadLetters() DeadLetterStore
+	Replay(context.Context, string) (DeadLetterEntry, error)
 }
 
 // Option configures an Engine at construction.
@@ -177,6 +190,11 @@ func (e *Engine) Record(ctx context.Context, ev *audit.Event) error {
 	if err != nil || len(subs) == 0 {
 		return nil
 	}
+	e.deliveryMu.RLock()
+	defer e.deliveryMu.RUnlock()
+	if e.closed {
+		return nil
+	}
 	evCopy := *ev
 	for _, sub := range subs {
 		if !sub.Matches(ev.Type) {
@@ -208,7 +226,39 @@ func (e *Engine) Query(context.Context, audit.Query) ([]*audit.Event, error) {
 // ctx.Err() rather than hanging Shutdown indefinitely. Idempotent (cancel is
 // safe to call more than once).
 func (e *Engine) Close(ctx context.Context) error {
+	if e == nil {
+		return nil
+	}
+	e.deliveryMu.Lock()
+	e.closed = true
 	e.cancel()
+	e.deliveryMu.Unlock()
+	return e.waitDeliveries(ctx)
+}
+
+// CloseGraceful stops new deliveries, waits for already accepted deliveries
+// to finish, and only then cancels the engine context. Lifecycle managers use
+// this after request leases drain so an audit exporter replacement does not
+// discard an in-flight webhook merely because its generation retired.
+func (e *Engine) CloseGraceful(ctx context.Context) error {
+	if e == nil {
+		return nil
+	}
+	e.deliveryMu.Lock()
+	e.closed = true
+	e.deliveryMu.Unlock()
+	if err := e.waitDeliveries(ctx); err != nil {
+		e.cancel()
+		return err
+	}
+	e.cancel()
+	return nil
+}
+
+func (e *Engine) waitDeliveries(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	done := make(chan struct{})
 	go func() { e.wg.Wait(); close(done) }()
 	select {
@@ -221,3 +271,4 @@ func (e *Engine) Close(ctx context.Context) error {
 
 // compile-time guard: an Engine is an audit.Sink.
 var _ audit.Sink = (*Engine)(nil)
+var _ Runtime = (*Engine)(nil)

@@ -243,7 +243,8 @@ const clientInsertSQL = `
             backchannel_logout_uri, subject_type, sector_identifier_uri,
             frontchannel_logout_uri, federation, attributes, secret_rotated_at,
             client_trust_score, client_trust_set_at,
-            previous_secret, secret_overlap_until, secret_expires_at
+            previous_secret, secret_overlap_until, secret_expires_at,
+            redirect_uri_patterns
         ) VALUES (
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
@@ -259,7 +260,8 @@ const clientInsertSQL = `
             ?, ?, ?,
             ?, ?, ?, ?,
 			?, ?,
-			?, ?, ?
+			?, ?, ?,
+			?
         )`
 
 func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
@@ -336,7 +338,8 @@ const clientUpdateSQL = `
             backchannel_logout_uri = ?, subject_type = ?, sector_identifier_uri = ?,
             frontchannel_logout_uri = ?, federation = ?, attributes = ?, secret_rotated_at = ?,
             client_trust_score = ?, client_trust_set_at = ?,
-            previous_secret = ?, secret_overlap_until = ?, secret_expires_at = ?
+            previous_secret = ?, secret_overlap_until = ?, secret_expires_at = ?,
+            redirect_uri_patterns = ?
         WHERE id = ?`
 
 func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
@@ -425,7 +428,8 @@ func clientSelectAll() string {
         backchannel_logout_uri, subject_type, sector_identifier_uri,
         frontchannel_logout_uri, federation, attributes, secret_rotated_at,
         client_trust_score, client_trust_set_at,
-        previous_secret, secret_overlap_until, secret_expires_at
+        previous_secret, secret_overlap_until, secret_expires_at,
+        redirect_uri_patterns
         FROM clients`
 }
 

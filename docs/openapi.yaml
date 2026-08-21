@@ -5822,6 +5822,13 @@ paths:
         (misoperation barrier). Every apply emits `admin_config_applied`
         (apply_id / peer_digest / prev_id metadata only — never snapshot
         content) and records the operator's actor + reason in history.
+        Canary mode is explicit with `?canary=true` and an optional bounded
+        `window` duration (default `60s`, accepted range `1s` through `24h`).
+        It requires an existing applied baseline, observes injected storage
+        health, confirms after a healthy window, and automatically restores the
+        predecessor on a definitive unhealthy result. Only one canary may be
+        observing; a restart fails safe by rolling it back. Unknown probe
+        results are fail-open. The live `running` view remains unchanged.
         Mounted only when BOTH `WithConfigSnapshots` AND
         `WithConfigAuditStore` are wired; otherwise 404. See
         `docs/design/config-apply-mode.md`.
@@ -5834,6 +5841,16 @@ paths:
           required: true
           description: "Must be `true` — the mandatory explicit-approval flag."
           schema: { type: string, example: "true" }
+        - name: canary
+          in: query
+          required: false
+          description: "Set to `true` to observe the applied baseline for a bounded window before confirming it."
+          schema: { type: string, enum: ["true", "false"], default: "false" }
+        - name: window
+          in: query
+          required: false
+          description: "Canary observation duration as a Go duration; defaults to `60s`, bounded to `1s` through `24h`, and is ignored unless `canary=true`."
+          schema: { type: string, example: "60s" }
       requestBody:
         required: true
         content:
@@ -5842,7 +5859,7 @@ paths:
               $ref: "#/components/schemas/ConfigApplyRequest"
       responses:
         "200":
-          description: The new applied baseline (redacted), version id, predecessor, and the redacted informational patch vs this cluster's running config.
+          description: The new applied baseline (redacted), version id, predecessor, redacted informational patch, and optional canary state.
           content:
             application/json:
               schema:
@@ -5866,13 +5883,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: "`config_apply_conflict` — the recomputed snapshot digest does not match the supplied `digest` (stale or mixed-source submission)."
+          description: "`config_apply_conflict` — the recomputed snapshot digest does not match the supplied `digest`; `config_canary_in_progress` when another canary is observing; `config_canary_no_baseline` when a predecessor is unavailable; or `config_canary_conflict` when the candidate is no longer current."
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "501":
-          description: "`config_audit_not_available` — no store wired (belt-and-braces guard; the route is unmounted in that case)."
+          description: "`config_audit_not_available` when no store is wired, or `config_canary_not_available` when `canary=true` has no atomic canary store/health probes."
           content:
             application/json:
               schema:
@@ -5937,13 +5954,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: "`config_apply_no_previous` — no baseline, or the latest baseline has no predecessor to restore."
+          description: "`config_apply_no_previous` when no baseline or predecessor exists; `config_apply_conflict` when expected_version_id is stale; `config_canary_in_progress` while a canary observes."
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "501":
-          description: "`config_audit_not_available` — no store wired (belt-and-braces guard; the route is unmounted in that case)."
+          description: "`config_audit_not_available` when no store is wired, or `config_rollback_not_available` when expected_version_id is supplied but the backend lacks the atomic rollback extension."
           content:
             application/json:
               schema:
@@ -11848,6 +11865,12 @@ paths:
     get:
       tags: [authorization]
       summary: Check whether a subject has a relation to an object.
+      description: |
+        Mounted by `WithRebacEngine`. On the standard router the precompiled
+        check capability is generation-managed; a disabled or drained
+        generation is indistinguishable from an unregistered route (native
+        404). The route shape and authorization contract do not change during
+        a generation transition.
       operationId: checkAuthorization
       security:
         - bearerAuth: []
@@ -15509,6 +15532,16 @@ components:
         redirect_uris:
           type: array
           items: { type: string }
+        redirect_uri_patterns:
+          type: array
+          items: { type: string }
+          description: |
+            Snaplink extension (not part of RFC 7591): opt-in HTTPS redirect
+            patterns. Each pattern has one complete interior path-segment
+            wildcard, with a concrete host and literal prefix/suffix; invalid
+            values are rejected with 400 invalid_client_metadata. Patterns are
+            additive to redirect_uris, which remains required for authorization
+            code registrations.
         token_endpoint_auth_method:
           type: string
           enum:
@@ -15600,6 +15633,13 @@ components:
         redirect_uris:
           type: array
           items: { type: string }
+        redirect_uri_patterns:
+          type: array
+          items: { type: string }
+          description: |
+            Snaplink extension: the validated HTTPS redirect patterns returned
+            by registration and RFC 7592 GET/PUT management. Patterns are
+            additive to the exact redirect_uris allowlist.
         login_page_uri:
           type: string
           format: uri
@@ -15819,6 +15859,23 @@ components:
           items:
             $ref: "#/components/schemas/ConfigPatchOp"
 
+    ConfigCanaryState:
+      type: object
+      required: [id, version_id, previous_version_id, status, started_at, deadline]
+      properties:
+        id: { type: string }
+        version_id: { type: string }
+        previous_version_id: { type: string }
+        actor: { type: string }
+        digest: { type: string }
+        reason: { type: string }
+        started_at: { type: string, format: date-time }
+        deadline: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [observing, confirmed, rolled_back]
+        detail: { type: string }
+
     ConfigClusterDiffRequest:
       type: object
       required: [snapshot]
@@ -15856,10 +15913,18 @@ components:
     ConfigRollbackRequest:
       type: object
       required: [reason]
-      description: Mandatory operator reason for the rollback.
+      description: >-
+        Mandatory operator reason for the rollback. expected_version_id is an
+        optional atomic compare-and-swap guard used by the Operator; when it
+        is supplied, the current applied version must still match it.
       properties:
         reason:
           type: string
+        expected_version_id:
+          type: string
+          description: >-
+            Optional expected current applied-baseline version. A mismatch is
+            a 409 config_apply_conflict and leaves the baseline unchanged.
 
     ConfigApplyResponse:
       type: object
@@ -15883,6 +15948,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ConfigPatchOp"
+        canary:
+          $ref: "#/components/schemas/ConfigCanaryState"
 
     ConfigHistoryEntry:
       type: object
@@ -16753,6 +16820,13 @@ components:
         redirect_uris:
           type: array
           items: { type: string }
+        redirect_uri_patterns:
+          type: array
+          items: { type: string }
+          description: |
+            Snaplink extension: validated HTTPS redirect patterns. A matching
+            pattern is an alternative to an exact redirect_uris entry; an empty
+            list preserves exact-match-only behavior.
         token_endpoint_auth_method:
           type: string
         grant_types:

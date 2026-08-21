@@ -5,7 +5,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared.fs import count_lines
 
 def run_gocyclo(filepath: Path):
-    result = subprocess.run(["gocyclo", str(filepath)], capture_output=True, text=True, check=False)
+    try:
+        result = subprocess.run(["gocyclo", str(filepath)], capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        print("WARN: gocyclo not available: executable not found", file=sys.stderr)
+        return []
     if result.returncode != 0:
         print(f"WARN: gocyclo not available: {result.stderr.strip()}", file=sys.stderr); return []
     funcs = []

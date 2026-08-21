@@ -121,7 +121,7 @@
 //		return nil
 //	}
 //
-// The host-API path (interfaces/ssoext on platform/registrar) wraps the same
+// The host-API path (interfaces/ssoext on platform/registry/typed) wraps the same
 // construction in a NAME-ADDRESSED factory the fork's own boot composition
 // consumes: the fork registers the factory under a name its own config selects
 // (stock config deliberately has NO kerberos section — desktop SSO is a

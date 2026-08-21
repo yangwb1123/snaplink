@@ -65,7 +65,13 @@ type RegisterDeps interface {
 // server understands. Unknown fields are ignored per §3.1 ("the
 // authorization server MUST ignore values it does not understand").
 type DCRRequest struct {
-	RedirectURIs            []string `json:"redirect_uris"`
+	RedirectURIs []string `json:"redirect_uris"`
+	// RedirectURIPatterns is the snaplink-extension redirect-URI pattern list
+	// (RFC 7591 §2 has NO such attribute — the name is deliberately
+	// non-standard and documented as such). Grammar + security model:
+	// docs/design/redirect-uri-patterns.md. Validated with the shared
+	// core grammar; an illegal pattern → 400 invalid_client_metadata.
+	RedirectURIPatterns     []string `json:"redirect_uri_patterns"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
 	GrantTypes              []string `json:"grant_types"`
 	ResponseTypes           []string `json:"response_types"`
@@ -114,6 +120,7 @@ type DCRResponse struct {
 	RegistrationAccessToken string   `json:"registration_access_token,omitempty"`
 	RegistrationClientURI   string   `json:"registration_client_uri,omitempty"`
 	RedirectURIs            []string `json:"redirect_uris,omitempty"`
+	RedirectURIPatterns     []string `json:"redirect_uri_patterns,omitempty"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
 	GrantTypes              []string `json:"grant_types"`
 	ResponseTypes           []string `json:"response_types"`
@@ -147,6 +154,7 @@ func validateDCRRequest(req *DCRRequest, policy *DCRPolicy, supportedIDTokenAlgs
 	normalizeDCRDefaults(req)
 	meta := &DCRMetadata{
 		RedirectURIs:                 req.RedirectURIs,
+		RedirectURIPatterns:          req.RedirectURIPatterns,
 		TokenEndpointAuthMethod:      req.TokenEndpointAuthMethod,
 		GrantTypes:                   req.GrantTypes,
 		ResponseTypes:                req.ResponseTypes,
@@ -455,6 +463,7 @@ func projectClientToDCRResponse(c *core.Client, ctx core.HandlerContext) DCRResp
 		ClientSecretExpiresAt:   dcrClientSecretExpiry(c),
 		RegistrationClientURI:   middleware.BaseURL(ctx.Request()) + PathRegister + "/" + c.ID,
 		RedirectURIs:            c.RedirectURIs,
+		RedirectURIPatterns:     c.RedirectURIPatterns,
 		GrantTypes:              append([]string(nil), c.GrantTypes...),
 		ResponseTypes:           dcrAttributeList(c.Attributes, dcrResponseTypesAttribute),
 		Contacts:                dcrAttributeList(c.Attributes, dcrContactsAttribute),

@@ -1,7 +1,7 @@
 # OIDC Conformance — Certification-Readiness Evidence Kit
 
 Last verified against the code and the archived run artifacts on
-2026-08-16 at HEAD `39ecdf7a`. Every count in this document was re-read
+2026-08-20 at HEAD `1b2867c6`. Every count in this document was re-read
 from the archives listed in [§2](#2-evidence-table); the reproduction
 commands were re-checked against `test/oidc-conformance/run-headless.sh`
 and the harness [README](../../test/oidc-conformance/README.md).
@@ -33,17 +33,19 @@ archival contract is the harness README's Evidence section). Every basic/HTTPS
 archive contains `plan.json`, `oidcc-server.log.json`,
 `oidcc-server.info.json`, `config.yaml` (byte-identical pinned config, md5
 `932b860b…`), `commit.txt` and `worktree.txt`; `commit.txt` matches the
-archive name in all five runs. The FAPI archive (`results/39ecdf7a-fapi/`)
-contains config/discovery/jwks/suite-login-failure/commit/worktree plus a
-`BLOCKER.md` root-cause record — no plan/log/info because the run was
-blocked before plan creation (§2 note).
+archive name in each archive. The pre-login FAPI archive
+(`results/39ecdf7a-fapi/`) contains config/discovery/jwks/suite-login-
+failure/commit/worktree plus a `BLOCKER.md` root-cause record — no
+plan/log/info because that run was blocked before plan creation. The
+redirect-pattern follow-up archive contains the normal plan/log/info
+artifacts and the FAPI module's interrupted result.
 
-All runs pin the suite image
-`registry.gitlab.com/openid/conformance-suite:release-v5.2.1` (suite
-version `5.2.1` recorded in every `oidcc-server.info.json`), create the
-Basic certification plan (`oidcc-basic-certification-test-plan`) with the
+The historical runs below pin the suite image
+`registry.gitlab.com/openid/conformance-suite:release-v5.2.1`. The Basic
+runs create the `oidcc-basic-certification-test-plan` with the
 `server_metadata=discovery` + `client_registration=dynamic_client` variant
-(38 plan modules) and execute the `oidcc-server` module.
+(38 plan modules) and execute the `oidcc-server` module; the FAPI rows use
+the separate FAPI plan described below.
 
 | Run | Date (UTC, suite start) | Server commit | Topology | Result (`oidcc-server`, 60 steps) | Archive | Reproduce |
 |---|---|---|---|---|---|---|
@@ -54,6 +56,7 @@ Basic certification plan (`oidcc-basic-certification-test-plan`) with the
 | HTTPS milestone | 2026-08-15 | `7400ba0c` | HTTPS issuer (self-signed local proxy) | **60 SUCCESS + 0 FAILURE**; 3 WARNING | `results/7400ba0c-https/` | `./run-headless.sh --timeout 900 --issuer-https` |
 | FAPI 2.0 SP attempt | 2026-08-16 | `39ecdf7a` | HTTP issuer, FAPI variant (`--fapi`) | **blocked** — no plan created, no module ran (see the blocker note below) | `results/39ecdf7a-fapi/` | `./run-headless.sh --fapi --timeout 600` |
 | FAPI 2.0 SP run (B12-3) | 2026-08-16 | `07832dda` | HTTP issuer, FAPI variant (`--fapi`) | login OK, plan created (56 modules), happy-flow module **12 SUCCESS + 1 FAILURE** (`GetStaticClientConfiguration`), INTERRUPTED (see the FAPI note below) | `results/07832dda-fapi/` | `./run-headless.sh --fapi --timeout 1200` |
+| FAPI 2.0 redirect-pattern follow-up | 2026-08-20 | `1b2867c6` | HTTPS issuer, FAPI variant (`--fapi --issuer-https`) | static clients + first dynamic callback pass; **156 SUCCESS + 1 FAILURE + 3 WARNING**, INTERRUPTED at the query-suffix PAR case | `results/1b2867c6-fapi-https/` | `./run-headless.sh --fapi --issuer-https --timeout 1200` |
 
 FAPI 2.0 attempt (blocked): the `--fapi` run passed config validation, the
 harness start, DCR registration of the suite login client and the admin
@@ -68,8 +71,8 @@ the FAPI variant, and the suite rejects that login ID token with
 `invalid_id_token: Signed JWT rejected: Another algorithm expected, or no
 matching key(s) found`. A control decode using the suite's jars proves the
 token itself verifies; the rejection is the factory's RS256-only resolver.
-Consequently **no FAPI module has ever run against this harness** — the
-`fapi` allowlist row below must not be reported as passing. The archive
+Consequently **no FAPI module had run against this harness at that point**.
+The archive
 `results/39ecdf7a-fapi/` contains the run-time evidence and a root-cause
 record (`BLOCKER.md`); the recommended unblock (separate RS256 issuer for
 the suite's own login, or per-client `id_token_signed_response_alg`) is
@@ -81,8 +84,8 @@ unblock was implemented in the B12-1 worktree but not merged at HEAD
 fabricated result). The harness variant was verified intact and the basic
 plan was re-run at `78bb614f` with a byte-identical result (59 SUCCESS + 1
 FAILURE; 3 WARNING — see the evidence row above), proving zero regression.
-The blocker record is `docs/campaigns/reports/b12-fapi-conformance.md`;
-the FAPI run proceeds once B12-1 lands.
+The blocker record is `docs/campaigns/reports/b12-fapi-conformance.md`; at
+that point the FAPI run was deferred until B12-1 landed.
 
 FAPI 2.0 run (B12-3, 2026-08-16, `07832dda`): B12-1 landed (per-client
 `id_token_signed_response_alg`), so the harness registers the suite login
@@ -101,13 +104,24 @@ FAILURE at `GetStaticClientConfiguration`: the suite's FAPI2 SP FINAL
 server tests hardcode a STATIC client configuration (the plan exposes no
 `client_registration` variant), and that client's callback redirect is
 per-test (`https://localhost:8443/test/{testId}/callback`), which
-snaplink's exact-match redirect-URI registration cannot cover. The module
-ends INTERRUPTED. Next step: wildcard redirect-URI registration support
-(opt-in per client, exact-match default preserved) is the product change
-that would let the suite's static FAPI client be registered — a separate,
-security-sensitive design decision, out of scope here. Archive
-`results/07832dda-fapi/` contains plan/log/info/config/commit/worktree +
-`BLOCKER.md`.
+snaplink's exact-match redirect-URI registration could not cover at that
+commit. The module ends INTERRUPTED. The follow-up below implements the
+opt-in path pattern required for that callback while preserving exact-match
+behavior. Archive `results/07832dda-fapi/` contains
+plan/log/info/config/commit/worktree + `BLOCKER.md`.
+
+FAPI 2.0 redirect-pattern follow-up (2026-08-20, `1b2867c6`): the HTTPS
+topology seeds both static FAPI clients with
+`https://localhost:8443/test/*/callback` and supplies their private PS256
+fixtures to the suite. The happy-flow module now passes static-client loading,
+discovery/JWKS checks, the first dynamic callback, PAR, token exchange,
+DPoP-protected `/userinfo`, callback `state`/`iss`, and the TLS cipher checks.
+It stops at the suite's second-client case, which appends
+`?dummy1=lorem&dummy2=ipsum` to the callback. Snaplink returns
+`400 invalid_redirect_uri` because query-bearing pattern candidates are
+forbidden by the deliberate v1 grammar; the module ends INTERRUPTED. This is
+the remaining conformance compatibility boundary, not an official FAPI pass.
+The archive is `results/1b2867c6-fapi-https/`.
 
 Notes:
 
@@ -120,13 +134,13 @@ Notes:
 - WARNING events are non-fatal
   `EnsureIdTokenDoesNotContainNonRequestedClaims` notices: the 2026-07-31
   baseline records the `ext` claim; the three 2026-08-15 runs record
-  `ext` + `scope` plus the suite's generic explanation. No run reports a
-  FAILURE beyond the http-only client-management check.
-- Step counts are the per-step result events inside each
+  `ext` + `scope` plus the suite's generic explanation. No Basic run reports
+  a FAILURE beyond the http-only client-management check.
+- Basic step counts are the per-step result events inside each
   `oidcc-server.log.json` (60 steps per run: 59+1 or 60+0). The
-  `oidcc-server.info.json` `result` field is `FAILED` for the HTTP runs
-  and `WARNING` for the HTTPS run (the overall WARNING reflects the
-  non-fatal claim notices).
+  `oidcc-server.info.json` `result` field is `FAILED` for the Basic HTTP
+  runs and `WARNING` for the Basic HTTPS run (the overall WARNING reflects
+  the non-fatal claim notices).
 - All runs cover discovery fetch/validation, JWKS fetch/validation,
   dynamic client registration, the authorization-code round trip
   (browser-driven login against the local OP), ID-token verification,
@@ -212,7 +226,7 @@ archived runs.
 | `session` | ✅ | ⚠️ not run | session-management plan (`check_session_iframe`); not part of the archived plan. |
 | `logout` | ✅ | ⚠️ not run | RP-initiated logout plan; not part of the archived plan. |
 | `jarm` | ✅* | ❌ not run | requires `oauth.jar`/JARM wiring (opt-in); no archive exists. |
-| `fapi` | ✅* | ⚠️ blocked | `--fapi` harness wiring exists (plan/variant/module + config variant) and the run reaches suite login, then blocks: the pinned suite's RS256-only login decoder rejects the FAPI-required ES256 ID token. No plan created, no module ran. Evidence + root cause: `results/39ecdf7a-fapi/` (see §2). |
+| `fapi` | ✅* | ⚠️ blocked after first callback | `--fapi` reaches static-client loading, the path-pattern callback, PAR, token exchange, DPoP `/userinfo`, and HTTPS cipher checks. The second client appends a query suffix; the v1 pattern grammar rejects it with `400 invalid_redirect_uri`. Evidence: `results/1b2867c6-fapi-https/`; the earlier login blocker remains documented at `results/39ecdf7a-fapi/`. |
 | `ciba` | ✅* | ❌ not run | only when a CIBA store is wired; no archive exists. |
 | `implicit` | ❌ | — | runtime rejects `id_token` response types; must never be selected. |
 | `hybrid` | ❌ | — | runtime rejects `code id_token` response types; must never be selected. |

@@ -39,6 +39,7 @@ func hashClientSecretField(value, label string) (string, error) {
 // current record first, exactly as it must to avoid clobbering Secret.
 func clientWriteArgs(c *sso.Client, secret, rat string) ([]any, error) {
 	redirects, _ := json.Marshal(c.RedirectURIs)
+	redirectPatterns, _ := json.Marshal(c.RedirectURIPatterns)
 	scopes, _ := json.Marshal(c.AllowedScopes)
 	auths, _ := json.Marshal(c.AllowedAuthenticators)
 	jwks, _ := json.Marshal(c.JWKS)
@@ -68,6 +69,7 @@ func clientWriteArgs(c *sso.Client, secret, rat string) ([]any, error) {
 		c.ClientTrustScore, unixNanoOrZero(c.ClientTrustSetAt),
 		c.PreviousSecret, unixNanoOrZero(c.SecretOverlapUntil),
 		unixNanoOrZero(c.SecretExpiresAt),
+		string(redirectPatterns),
 	}, nil
 }
 
@@ -142,6 +144,7 @@ func clientWritePrep(c *sso.Client) ([]any, error) {
 type clientScanRow struct {
 	c                                                      sso.Client
 	redirects, scopes, auths                               string
+	redirectPatterns                                       string
 	jwksBlob, resources, reqURIs, postLogout, authzDetails string
 	pkceM, attrsBlob                                       string
 	activeInt, requirePKCEInt                              int64
@@ -180,6 +183,7 @@ func (r *clientScanRow) scanInto(s scanner) error {
 		&r.c.ClientTrustScore, &r.clientTrustSetAtUnixNs,
 		&r.previousSecret, &r.secretOverlapUntilUnixNs,
 		&r.secretExpiresAtUnixNs,
+		&r.redirectPatterns,
 	)
 }
 
@@ -295,6 +299,7 @@ func (r *clientScanRow) jsonFields() error {
 		field string
 	}{
 		{r.redirects, &c.RedirectURIs, "redirect_uris"},
+		{r.redirectPatterns, &c.RedirectURIPatterns, "redirect_uri_patterns"},
 		{r.scopes, &c.AllowedScopes, "allowed_scopes"},
 		{r.auths, &c.AllowedAuthenticators, "allowed_authenticators"},
 		{r.jwksBlob, &c.JWKS, "jwks"},

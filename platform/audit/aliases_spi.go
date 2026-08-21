@@ -49,6 +49,9 @@ const (
 	EventAdminChangeRejected                 = auditspi.EventAdminChangeRejected
 	EventAdminConfigApplied                  = auditspi.EventAdminConfigApplied
 	EventAdminConfigRolledBack               = auditspi.EventAdminConfigRolledBack
+	EventConfigCanaryStarted                 = auditspi.EventConfigCanaryStarted
+	EventConfigCanaryConfirmed               = auditspi.EventConfigCanaryConfirmed
+	EventConfigCanaryRolledBack              = auditspi.EventConfigCanaryRolledBack
 	EventAdminIPDenied                       = auditspi.EventAdminIPDenied
 	EventAdminWriteQuotaExceeded             = auditspi.EventAdminWriteQuotaExceeded
 	EventAdminDeviceSecretsRevoked           = auditspi.EventAdminDeviceSecretsRevoked
@@ -197,6 +200,9 @@ const (
 	EventTokenRevoked                        = auditspi.EventTokenRevoked
 	EventWebAuthnAttestationDenied           = auditspi.EventWebAuthnAttestationDenied
 	EventWebAuthnRegistered                  = auditspi.EventWebAuthnRegistered
+	EventExternalWorkerLifecycleTransition   = auditspi.EventExternalWorkerLifecycleTransition
+	EventWebhookLifecycleTransition          = auditspi.EventWebhookLifecycleTransition
+	EventReBACLifecycleTransition            = auditspi.EventReBACLifecycleTransition
 	MaxQueryLimit                            = auditspi.MaxQueryLimit
 	OutcomeFailure                           = auditspi.OutcomeFailure
 	OutcomeSuccess                           = auditspi.OutcomeSuccess

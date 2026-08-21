@@ -36,9 +36,8 @@ type clusterDiffResponse struct {
 }
 
 // applyPath is appended to cluster B's BaseURL for the declared-baseline
-// write. Only the apply path exists: rollback is deliberately NOT driven by
-// this operator (docs/design/operator-config-apply.md Decision 4), so there
-// is no rollbackPath constant to drift from what the server mounts.
+// write. The explicit rollback path lives in rollback.go beside its request
+// shape so the apply and rollback contracts cannot silently diverge.
 const applyPath = "/api/v1/admin/config/apply"
 
 // approveQuery is the mandatory explicit-approval query string the server

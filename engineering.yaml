@@ -110,14 +110,43 @@ architecture:
 
 directory_fanout:
   max_subdirs: 15
+  # Keep this set identical to the committed Go fan-out gate's skipDirs map.
+  # These are generated/tooling trees or nested modules, not hand-written
+  # production directories in the parent module.
   exempt_dirs:
     - .git
     - .claude
     - gen
+    - web
+    - node_modules
+    - dist
+    - bin
+    - .superpowers
+    - .ai
+    - .devcontainer
+    - ai-dev
     - vendor
     - testdata
     - ops
     - kms
+    - redis
+    - postgres
+    - saml
+    - ldap
+    - extauthz
+    - kerberos
+    - radius
+    - kafka
+    - mqtt
+    - .trends
+    - campaigns
+    - runs
+    - analyses
+    - results
+    - tech-lead-analysis
+    - .pi-batch
+    - .venv
+    - .pi
     - __pycache__
     - .pytest_cache
 

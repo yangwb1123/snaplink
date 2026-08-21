@@ -1,13 +1,18 @@
 package rebac
 
-import "context"
+import (
+	"context"
+	"sync"
+)
 
 // Engine resolves Check queries against a wired RelationTupleStore. It holds
-// no state of its own beyond the store reference, so it is cheap to
-// construct and safe to share across goroutines (the store it delegates to
-// is required to be concurrency-safe).
+// the store reference plus an optional lifecycle controller for the product
+// check route, so it remains cheap to construct and safe to share across
+// goroutines (the store it delegates to is required to be concurrency-safe).
 type Engine struct {
-	store RelationTupleStore
+	store     RelationTupleStore
+	runtimeMu sync.RWMutex
+	runtime   *Runtime
 }
 
 // NewEngine wraps store. A nil store is accepted (Check then always returns

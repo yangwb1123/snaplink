@@ -40,24 +40,31 @@ class CDP:
             q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
             code, state = self._login(q)
             if code:
+                # A PAR authorization URL may still carry redirect_uri as a
+                # diagnostic/browser parameter. request_uri is the reliable
+                # discriminator: the pushed request owns redirect_uri/state,
+                # and the API login response is authoritative for state.
+                is_par = "request_uri" in q
                 if "redirect_uri" in q:
+                    redir = q["redirect_uri"][0]
+                else:
+                    redir = f"{BASE}/test/{self.test_id}/callback"
+                if not is_par:
                     # Plain authorization request: redirect_uri/state ride the
                     # URL (OIDC Core default / basic oidcc-server flow).
-                    redir = q["redirect_uri"][0]
                     state = q.get("state", [""])[0]
-                    sep = "&" if "?" in redir else "?"
-                    target = f"{redir}{sep}code={code}&state={state}"
-                else:
-                    # FAPI 2.0 PAR flow: the browser URL carries only
-                    # client_id + request_uri (RFC 9126); redirect_uri/state
-                    # live inside the pushed request, which snaplink echoes
-                    # state back from (the code response carries state). The
-                    # suite's callback for this test is at
-                    # /test/<test_id>/callback and FAPI2-SP-FINAL requires
-                    # the RFC 9207 iss parameter in the response.
-                    redir = f"{BASE}/test/{self.test_id}/callback"
-                    target = (f"{redir}?code={code}&state={state}"
-                              f"&iss={urllib.parse.quote(ISSUER, safe='')}")
+
+                callback = urllib.parse.urlsplit(redir)
+                callback_query = urllib.parse.parse_qsl(callback.query, keep_blank_values=True)
+                callback_query.append(("code", code))
+                if state:
+                    callback_query.append(("state", state))
+                if is_par:
+                    # RFC 9207 issuer identification is required by the FAPI2
+                    # SP FINAL profile and must survive every PAR redirect.
+                    callback_query.append(("iss", ISSUER))
+                target = urllib.parse.urlunsplit(callback._replace(
+                    query=urllib.parse.urlencode(callback_query)))
                 print(f"[login] fulfilled -> {target[:90]}", flush=True)
                 self._raw("Fetch.fulfillRequest", {"requestId": rid, "responseCode": 302,
                     "responseHeaders": [{"name": "Location", "value": target}]})

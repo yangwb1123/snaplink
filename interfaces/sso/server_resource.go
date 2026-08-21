@@ -6,12 +6,27 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"reflect"
 
+	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc/bcl"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
+
+func webhookConfigured(runtime webhook.Runtime) bool {
+	if runtime == nil {
+		return false
+	}
+	value := reflect.ValueOf(runtime)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return !value.IsNil()
+	default:
+		return true
+	}
+}
 
 func (f ClientCertExtractorFunc) ExtractClientCert(r *http.Request) (*x509.Certificate, bool) {
 	return f(r)
@@ -397,8 +412,8 @@ func adminAPIEndpointCandidates() []endpointCandidate {
 		{endpointInfo{http.MethodGet, PathAuthzPolicyBundle, "admin_api"}, on(func(s *Server) bool { return s.permissions != nil })},
 		{endpointInfo{http.MethodGet, PathStorageHealth, "admin_api"}, on(func(s *Server) bool { return len(s.storageHealthSources) > 0 })},
 		{endpointInfo{http.MethodGet, PathAdminFederationHealth, "admin_api"}, on(func(s *Server) bool { return s.federationHealth != nil })},
-		{endpointInfo{http.MethodGet, prefix + PathAdminWebhookSubscriptions, "admin_api"}, on(func(s *Server) bool { return s.webhookEngine != nil })},
-		{endpointInfo{http.MethodGet, prefix + PathAdminWebhookDeadLetters, "admin_api"}, on(func(s *Server) bool { return s.webhookEngine != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminWebhookSubscriptions, "admin_api"}, on(func(s *Server) bool { return webhookConfigured(s.webhookEngine) })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminWebhookDeadLetters, "admin_api"}, on(func(s *Server) bool { return webhookConfigured(s.webhookEngine) })},
 		{endpointInfo{http.MethodGet, prefix + PathAdminAccessPolicies, "admin_api"}, on(func(s *Server) bool { return s.capStore != nil })},
 		{endpointInfo{http.MethodPost, prefix + PathAdminAccessPolicyConverge, "admin_api"}, on(func(s *Server) bool {
 			return s.capEngine != nil && s.capEngine.Config().Enforce

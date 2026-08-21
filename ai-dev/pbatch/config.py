@@ -101,6 +101,11 @@ AGENT_DEFAULT_TIMEOUT = _AGENT_CFG.get("default_timeout", 900)
 
 AGENT_DEFAULT_WORKERS = _AGENT_CFG.get("default_workers", 4)
 
+# Bound untrusted agent output before it is materialized on disk.  The
+# validator path also writes through the same cap in the runner, so a large
+# response cannot fill the workspace before a later gate runs.
+OUTPUT_MAX_BYTES = 65536
+
 
 COMMIT_PREFIX_DEFAULT = _BATCH_CFG.get("commit", {}).get("prefix", "[pi-batch]")
 

@@ -58,6 +58,37 @@ func (f FactoryFunc) Prepare(ctx context.Context, request PrepareRequest) (Insta
 	return f(ctx, request)
 }
 
+// ExternalFactory creates a fresh external supervisor for each lifecycle
+// generation. Its immutable launch policy is copied at construction;
+// generation config cannot replace it implicitly.
+type ExternalFactory struct {
+	spec ExternalModuleSpec
+}
+
+// NewExternalFactory freezes one launch/transport policy for generation use.
+func NewExternalFactory(spec ExternalModuleSpec) (*ExternalFactory, error) {
+	supervisor, err := NewExternalSupervisor(spec)
+	if err != nil {
+		return nil, err
+	}
+	return &ExternalFactory{spec: supervisor.spec}, nil
+}
+
+func (f *ExternalFactory) Prepare(ctx context.Context, _ PrepareRequest) (Instance, error) {
+	if f == nil {
+		return nil, errors.New("external module: nil factory")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return NewExternalSupervisor(f.spec)
+}
+
+var _ Factory = (*ExternalFactory)(nil)
+
 // BackgroundLease pins only the generation whose controller issued it.
 type BackgroundLease interface {
 	Generation() uint64

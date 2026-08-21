@@ -1,6 +1,11 @@
 package webhook
 
-import "github.com/yangwb1123/snaplink/shared/core"
+import (
+	"crypto/rand"
+	"encoding/hex"
+
+	"github.com/yangwb1123/snaplink/shared/core"
+)
 
 // MountRoutes registers the webhook-egress admin surface (subscription
 // management + dead-letter inspection/replay, all under /api/v1/admin/webhooks)
@@ -16,7 +21,7 @@ func MountRoutes(r core.Router, d HandlerDeps, gate func() bool) {
 	if gate == nil {
 		panic("webhook: MountRoutes requires a non-nil gate")
 	}
-	if d.WebhookEngine() == nil {
+	if webhookRuntime(d) == nil {
 		return
 	}
 	api := core.NewGatedRouter(r.Group(core.PathAPIPrefix), gate)
@@ -25,4 +30,12 @@ func MountRoutes(r core.Router, d HandlerDeps, gate func() bool) {
 	api.DELETE(core.PathAdminWebhookSubscriptionByID, func(ctx core.HandlerContext) { HandleDeleteSubscription(d, ctx) })
 	api.GET(core.PathAdminWebhookDeadLetters, func(ctx core.HandlerContext) { HandleListDeadLetters(d, ctx) })
 	api.POST(core.PathAdminWebhookDeadLetterReplay, func(ctx core.HandlerContext) { HandleReplayDeadLetter(d, ctx) })
+}
+
+// newID returns a random hex identifier for a subscription or dead-letter
+// entry.
+func newID() string {
+	var b [12]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }

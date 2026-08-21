@@ -17,7 +17,7 @@ class Stage:
     """One stage in a pipeline."""
     name: str
     from_dir: str = ""
-    from_outputs: str = ""  # name of previous stage
+    from_outputs: object = ""  # previous stage name or an ordered list for a selected DAG join
     suffix: str = ".md"
     output_suffix: str = ".out.md"
     mode: str = "serial"
@@ -55,6 +55,7 @@ class Stage:
             "role_dir": self.role_dir,
             "output_dir": self.output_dir,
             "max_iterations": self.max_iterations,
+            "gate": self.gate,
             "from_prompt": self.from_prompt,
             "output": self.output,
             "tasks": self.tasks,
@@ -75,7 +76,12 @@ class Pipeline:
     name: str = "pipeline"  # label for archive subdirectories
     
     def to_dict(self):
-        return {"stages": [s.to_dict() for s in self.stages]}
+        return {
+            "stages": [s.to_dict() for s in self.stages],
+            "decision_log": self.decision_log,
+            "archive_dir": self.archive_dir,
+            "name": self.name,
+        }
 
 
 @dataclass
@@ -114,7 +120,12 @@ class Task:
         return self.cwd or os.getcwd()
 
     def output_path(self) -> Optional[Path]:
-        return Path(self.output).resolve() if self.output else None
+        if not self.output:
+            return None
+        path = Path(self.output)
+        if not path.is_absolute():
+            path = Path(self.cwd or os.getcwd()) / path
+        return path.resolve()
 
     def resolve_prompt(self, base_dir: str = "") -> str:
         """Resolve @file references in the prompt to file contents.

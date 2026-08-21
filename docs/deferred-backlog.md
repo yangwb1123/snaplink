@@ -1,6 +1,6 @@
 # Deferred Backlog and Intentional Limits
 
-Verified against the repository on 2026-07-27.
+Verified against the repository on 2026-08-20.
 
 This file and [feature-matrix.md](feature-matrix.md) form the bounded
 functional-requirements baseline:
@@ -33,7 +33,7 @@ Retired audits, plans, and migration records are summarized in
 | Hosted login, admin, self-service, developer and setup UIs | **External** | Separate frontend projects, normally reverse-proxied beside the server. No static SPA is served by this repository; the API contract those projects must consume is [frontend-contract.md](frontend-contract.md). |
 | Admin API-doc viewer | **Implemented** | `WithAPIDocsUI` serves an admin-gated, self-contained API reference. It is not an application UI. |
 | TypeScript/Python SDKs | **Implemented** | Generated from `docs/openapi.yaml` via the `ops/build/sdk-surface.json` registry (full documented operation set: admin, SCIM, SSF, Federation included); validated by `python cli.py sdk-surface check`. Not yet published as versioned packages. |
-| Nested protocol/infrastructure modules | **Implemented** | Strict cold-build profiles and the Kafka static adapter are implemented. The standard host API (`interfaces/ssoext` on `platform/registrar`) now exists outside `cmd/`; SAML (consumed via `saml.handler`), the LDAP/Kerberos/RADIUS authenticator families, and the KMS external-signer family (awskms/gcpkms/azurekeyvault/pkcs11) are migrated onto it — each nested module embedding the corresponding `ssoext` Deps bundle (`ldapauth.Deps` / `kerberosauth.Deps` / `radiusauth.Deps` / the four `kms/*` `Deps` embedding `ssoext.ExternalSignerDeps`) and exposing a `Build` adapter. `keys.signing.external` resolves through the canonical `ssoext.ExternalSignerRegistry`; `serverbuildsign`'s `ExternalSignerFactory` / `ExternalSignerRegistry` / `RegisterExternalSigner` are delegating aliases kept so pre-existing fork binaries compile and behave identically, and the health/metrics/readiness wrapping stays in `serverbuildsign`. No remaining migration work. |
+| Nested protocol/infrastructure modules | **Implemented** | Strict cold-build profiles and the Kafka static adapter are implemented. The standard host API (`interfaces/ssoext` on `platform/registry/typed`) now exists outside `cmd/`; SAML (consumed via `saml.handler`), the LDAP/Kerberos/RADIUS authenticator families, and the KMS external-signer family (awskms/gcpkms/azurekeyvault/pkcs11) are migrated onto it — each nested module embedding the corresponding `ssoext` Deps bundle (`ldapauth.Deps` / `kerberosauth.Deps` / `radiusauth.Deps` / the four `kms/*` `Deps` embedding `ssoext.ExternalSignerDeps`) and exposing a `Build` adapter. `keys.signing.external` resolves through the canonical `ssoext.ExternalSignerRegistry`; `serverbuildsign`'s `ExternalSignerFactory` / `ExternalSignerRegistry` / `RegisterExternalSigner` are delegating aliases kept so pre-existing fork binaries compile and behave identically, and the health/metrics/readiness wrapping stays in `serverbuildsign`. No remaining migration work. |
 
 ## Partial capabilities
 
@@ -61,8 +61,17 @@ roots.
 module, not an SSO edition baseline.
 
 Runtime `FeatureGates` hide already wired routes; they do not load, unload or
-drain code. Generation leases, route guards, hot readiness/drain, dynamic
-audit taps and the external-process supervisor are not implemented. See
+drain code. The reusable lifecycle manager provides generation leases, fixed
+route slots, hot readiness/drain and transition observation, and the
+independent billing service exercises it for a low-risk audit relay. The stock
+`sso-server` now wires the precompiled generic webhook exporter as a narrow
+dynamic audit tap; the external-process supervisor now provides a typed,
+digest-pinned Unix/TLS host/worker boundary, signed provenance admission for
+local workers and SPIFFE-aware mTLS for remote workers. The stock server now
+exposes one narrowly scoped `audit.external_worker` product path. The stock
+server now integrates the precompiled ReBAC `/authz/check` business route
+through a fixed generation slot with readiness, graceful drain and transition
+audit; arbitrary third-party business route workers remain deferred. See
 [plugin-system.md](plugin-system.md) and ADR-0009.
 
 ### Static HTTP contract and generated clients
@@ -187,10 +196,14 @@ Implemented:
   `/api/v1/admin/config/apply?approve=true` (with its canonical digest and
   `spec.apply.reason`) and records the outcome in `status.apply`. The
   approval is consumed after one successful apply (at most one apply per
-  approval, latency ≤ PollInterval), an apply failure never suppresses the
-  drift report (fail-open), and the operator never drives rollback — that
-  stays a manual server call, with `status.apply.versionID` naming the
-  exact rollback target. Design: `docs/design/operator-config-apply.md`.
+  approval, latency ≤ PollInterval), and an apply failure never suppresses
+  the drift report (fail-open). A separate explicit rollback mode requires
+  `spec.rollback.enabled`, a reason, an expected current version, and the
+  one-shot `sso.snaplink.io/rollback-approve` annotation; the server applies
+  an atomic CAS guard and the controller records the outcome in
+  `status.rollback`. Designs:
+  `docs/design/operator-config-apply.md` and
+  `docs/design/operator-config-rollback.md`.
 - Secret references and status reporting within the operator's namespace
   permissions.
 - `POST /api/v1/admin/config/apply` and `.../config/rollback` — the
@@ -202,19 +215,22 @@ Implemented:
   retains every version for rollback, and emits
   `admin_config_applied`/`admin_config_rolled_back` audit events (metadata
   only). Design: `docs/design/config-apply-mode.md`.
+- Optional `?canary=true&window=...` apply observation — requires an existing
+  predecessor, persists `observing|confirmed|rolled_back` state in the
+  built-in Memory/SQLite stores, rejects concurrent mutations, rolls back on a
+  definitive unhealthy probe, and recovers an interrupted observation by
+  rolling back on process restart. Unknown probe results fail open. Design:
+  `docs/design/config-canary-apply.md`.
 
 Not committed:
 
-- Canary rollout or automated remediation.
 - GitOps reconciliation.
-- Operator-driven rollback (manual only, see the operator apply-mode
-  design).
 
-The apply path carries the authority/approval model, secret-redaction
-rules, rollback semantics and split-brain handling the boundary requires;
-canary/GitOps still need their own rollout-ordering and source-of-truth
-models, and operator-driven rollback lacks an operator-observable trigger
-(the drift report compares running configs, which apply never changes).
+The apply and explicit rollback paths carry the authority/approval model,
+secret-redaction rules, CAS rollback semantics and split-brain handling the
+boundary requires. Rollback is never inferred from drift or health and does
+not mutate runtime configuration. GitOps still needs its own rollout-ordering
+and source-of-truth model.
 Diff-only behavior remains fail-open and non-mutating (the apply path
 records a declared baseline, it never mutates live runtime config).
 

@@ -1,6 +1,8 @@
 package serverbuildauthn
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -8,6 +10,8 @@ import (
 	"github.com/yangwb1123/snaplink/config"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/modules"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
@@ -49,6 +53,82 @@ func BuildAuditWebhookSinks(w config.AuditWebhookConfig, logger spi.Logger) ([]a
 		sinks = append(sinks, sink)
 	}
 	return sinks, nil
+}
+
+// BuildManagedWebhookRuntime builds the runtime-registered event exporter
+// used by stock sso-server. Subscription and dead-letter stores are shared by
+// every generation; only delivery policy and HTTP workers rotate.
+func BuildManagedWebhookRuntime(
+	cfg config.WebhooksConfig, recorder *audit.Recorder, logger spi.Logger,
+) (*webhook.ManagedRuntime, error) {
+	subs := webhook.NewMemorySubscriptionStore()
+	deadLetters := webhook.NewMemoryDeadLetterStore(cfg.DeadLetterCapacity)
+	initial, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("webhooks: encode initial policy: %w", err)
+	}
+	factory := func(ctx context.Context, raw []byte, generation uint64) (*webhook.Engine, error) {
+		var current config.WebhooksConfig
+		if err := json.Unmarshal(raw, &current); err != nil {
+			return nil, fmt.Errorf("webhooks generation %d: decode policy: %w", generation, err)
+		}
+		if !current.Enabled {
+			return nil, errors.New("webhooks: disabling requires a server restart")
+		}
+		return webhook.NewEngine(subs, deadLetters, managedWebhookOptions(current, recorder, logger)...), nil
+	}
+	options := modules.Options{
+		TransitionObserver: webhookTransitionObserver(recorder, logger),
+	}
+	runtime, err := webhook.NewManagedRuntime(factory, initial, options)
+	if err != nil {
+		return nil, fmt.Errorf("webhooks: lifecycle startup: %w", err)
+	}
+	return runtime, nil
+}
+
+func managedWebhookOptions(
+	cfg config.WebhooksConfig, recorder *audit.Recorder, logger spi.Logger,
+) []webhook.Option {
+	opts := []webhook.Option{
+		webhook.WithFailureRecorder(recorder),
+		webhook.WithLogger(logger),
+	}
+	if cfg.DeliveryTimeout > 0 {
+		opts = append(opts, webhook.WithDeliveryTimeout(cfg.DeliveryTimeout))
+	}
+	if cfg.Retry.MaxAttempts > 0 || cfg.Retry.InitialBackoff > 0 || cfg.Retry.MaxBackoff > 0 {
+		opts = append(opts, webhook.WithDeliveryRetry(
+			cfg.Retry.MaxAttempts, cfg.Retry.InitialBackoff, cfg.Retry.MaxBackoff,
+		))
+	}
+	return opts
+}
+
+func webhookTransitionObserver(recorder *audit.Recorder, logger spi.Logger) modules.TransitionObserver {
+	return modules.TransitionObserverFunc(func(ctx context.Context, event modules.TransitionEvent) error {
+		if logger != nil {
+			logger.Info("webhook exporter lifecycle transition",
+				"type", event.Type, "generation", event.Generation,
+				"related_generation", event.RelatedGeneration)
+		}
+		if recorder == nil {
+			return nil
+		}
+		auditEvent := &audit.Event{
+			Type:      audit.EventWebhookLifecycleTransition,
+			Outcome:   audit.OutcomeSuccess,
+			Timestamp: event.OccurredAt,
+			Reason:    string(event.Type),
+		}
+		audit.SetMeta(auditEvent, "module_id", event.ModuleID)
+		audit.SetMeta(auditEvent, "generation", fmt.Sprintf("%d", event.Generation))
+		if event.RelatedGeneration != 0 {
+			audit.SetMeta(auditEvent, "related_generation", fmt.Sprintf("%d", event.RelatedGeneration))
+		}
+		recorder.Record(ctx, auditEvent)
+		return nil
+	})
 }
 
 // effectiveAuditWebhookSubscriptions prepends the legacy scalar webhook (when a

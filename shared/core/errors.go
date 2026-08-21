@@ -314,6 +314,11 @@ const (
 	ErrConfigApplyApprovalRequired = "config_apply_approval_required"
 	ErrConfigApplyConflict         = "config_apply_conflict"
 	ErrConfigApplyNoPrevious       = "config_apply_no_previous"
+	ErrConfigRollbackNotAvailable  = "config_rollback_not_available"
+	ErrConfigCanaryNotAvailable    = "config_canary_not_available"
+	ErrConfigCanaryInProgress      = "config_canary_in_progress"
+	ErrConfigCanaryNoBaseline      = "config_canary_no_baseline"
+	ErrConfigCanaryConflict        = "config_canary_conflict"
 	// ErrUnsupportedVersion is returned (400) when a request's Accept-Version
 	// header names a version this deployment does not support (see
 	// interfaces/middleware.AcceptVersion, ADR-0008). Only checked when

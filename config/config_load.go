@@ -206,29 +206,16 @@ func (c *Config) validateLogging() error {
 	return nil
 }
 
-func validateConfiguredClients(c *Config) error {
-	// The JWS name the server's own signing issuer actually produces for
-	// keys.signing.alg (same mapping serverbuildsign.BuildSigningIssuer
-	// uses). clients[].id_token_signed_response_alg may only name THIS alg:
-	// the cmd wires exactly one signing issuer, so any other value would be
-	// registered-but-never-honored (id_token omitted at issuance).
-	wiredAlg := canonicalSigningAlg(c.Keys.Signing.Alg)
-	for _, client := range c.Clients {
-		if client.ID == "" {
-			return errors.New("config: client.id required")
-		}
-		if client.LoginPageURI != "" && !sso.IsFederatedLoginPageURIValid(client.LoginPageURI) {
-			return fmt.Errorf("config: client %q login_page_uri must be HTTPS or loopback HTTP", client.ID)
-		}
-		if client.IDTokenSignedResponseAlg != "" && client.IDTokenSignedResponseAlg != wiredAlg {
-			return fmt.Errorf("config: client %q id_token_signed_response_alg %q is not the wired signing alg %q",
-				client.ID, client.IDTokenSignedResponseAlg, wiredAlg)
-		}
-	}
-	return nil
-}
-
 func (c *Config) validateFeatureConfig() error {
+	if err := c.ReBAC.validate(); err != nil {
+		return err
+	}
+	if c.Audit.ExternalWorker.Enabled && !c.Audit.Enabled {
+		return errors.New("config: audit.external_worker.enabled requires audit.enabled")
+	}
+	if err := c.Audit.ExternalWorker.validate(); err != nil {
+		return err
+	}
 	if err := c.validateAuthPipeline(); err != nil {
 		return err
 	}
@@ -315,6 +302,12 @@ func (c *Config) validateTopology() error {
 	}
 	if c.Server.Topology.AllowPerPodState && mode != TopologyModeMulti {
 		return errors.New("config: server.topology.allow_per_pod_state requires mode: multi")
+	}
+	if mode == TopologyModeMulti && !c.Server.Topology.AllowPerPodState && c.ReBAC.Enabled {
+		backend := strings.ToLower(strings.TrimSpace(c.ReBAC.Backend))
+		if backend == "" || backend == "memory" {
+			return errors.New("config: rebac.backend=memory is unsafe with server.topology.mode=multi; use sqlite")
+		}
 	}
 	return nil
 }

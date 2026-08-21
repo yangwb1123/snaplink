@@ -1,10 +1,9 @@
 // Package controller implements the SSOConfigDrift reconciler: a loop that
 // fetches cluster A's running SSO config, POSTs it to cluster B's
 // cluster-diff endpoint, and records the resulting RFC 6902 patch summary in
-// the CR's Status — plus, for CRs that opt in AND carry the one-shot apply
-// approval annotation, a single declared-baseline write to cluster B's
-// /api/v1/admin/config/apply. See ../../doc.go for the full scope: no
-// canary, no remediation; apply is opt-in only and rollback stays manual.
+// the CR's Status — plus explicitly approved declared-baseline apply or
+// rollback writes. See ../../doc.go for the full scope: no canary, no
+// automatic remediation, and no GitOps source-of-truth resolution.
 package controller
 
 import (
@@ -102,9 +101,9 @@ func (r *Reconciler) httpClient() *http.Client {
 }
 
 // Reconcile implements the fetch-post-report cycle described in the package
-// doc, plus — for opted-in, approved CRs with drift — a single apply write
-// to cluster B (see maybeApply). It NEVER returns a non-nil error for an
-// HTTP/parse failure — this is a report-only feature at heart (AGENTS.md
+// doc, plus explicitly approved apply or expected-version-guarded rollback
+// writes to cluster B (see maybeWrites). It NEVER returns a non-nil error for
+// an HTTP/parse failure — this is a report-only feature at heart (AGENTS.md
 // fail-open doctrine); the only errors returned are ones the
 // controller-runtime retry/backoff machinery should own (e.g. a transient
 // failure to read, update, or patch the CR itself).
@@ -120,7 +119,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	result, running := r.runCheck(ctx, &cr)
 	r.applyResult(&cr, result)
 
-	applyOut, err := r.maybeApply(ctx, &cr, running, result)
+	applyOut, rollbackOut, err := r.maybeWrites(ctx, &cr, running, result)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -137,7 +136,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			return ctrl.Result{}, err
 		}
 	}
-	failed := result.failed || (applyOut != nil && applyOut.failed)
+	if rollbackOut != nil && rollbackOut.rolledBack() {
+		if err := r.consumeRollbackApproval(ctx, &cr); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	failed := result.failed || (applyOut != nil && applyOut.failed) || (rollbackOut != nil && rollbackOut.failed)
 	return ctrl.Result{RequeueAfter: requeueInterval(&cr, failed)}, nil
 }
 
@@ -420,7 +424,7 @@ func requeueInterval(cr *drift.SSOConfigDrift, failed bool) time.Duration {
 // (a rotated token takes effect on the next poll tick, not instantly; wiring
 // a Secret watch would mean indexing every SSOConfigDrift's two
 // SecretKeySelectors, a complexity this reporting feature does not
-// warrant). Annotation-only changes (the apply approval) deliberately do
+// warrant). Annotation-only changes (the apply or rollback approval) deliberately do
 // NOT trigger a reconcile either: that is the apply-mode throttle — an
 // approval takes effect on the next scheduled poll, at most once per
 // approval (see docs/design/operator-config-apply.md Decision 2).

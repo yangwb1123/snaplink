@@ -85,7 +85,7 @@ selection:
   minimum_score: 0
 
 implementation:
-  pipeline: examples/repository-campaign-pipeline.yaml
+  pipeline: docs/campaigns/repository-campaign-pipeline.yaml
   requirement_stage: requirements
   concurrency: 1
   timeout: 14400

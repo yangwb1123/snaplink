@@ -94,12 +94,22 @@ const clientSchemaV5 = `
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS id_token_signed_response_alg TEXT NOT NULL DEFAULT '';
 `
 
+// clientSchemaV6 adds the opt-in per-client redirect-URI pattern column (the
+// snaplink extension; docs/design/redirect-uri-patterns.md). JSON-array TEXT
+// like redirect_uris; empty default keeps existing rows on the exact-match
+// allowlist only, byte-identical. Content is validated (shared core
+// grammar) at every provisioning surface, never trusted at read.
+const clientSchemaV6 = `
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS redirect_uri_patterns TEXT NOT NULL DEFAULT '[]';
+`
+
 var clientMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: clientSchema},
 	{Version: 2, Name: "secret_rotation_and_trust_score", SQL: clientSchemaV2},
 	{Version: 3, Name: "client_secret_overlap", SQL: clientSchemaV3},
 	{Version: 4, Name: "client_secret_expiry", SQL: clientSchemaV4},
 	{Version: 5, Name: "client_id_token_signed_response_alg", SQL: clientSchemaV5},
+	{Version: 6, Name: "client_redirect_uri_patterns", SQL: clientSchemaV6},
 }
 
 // Statements derived once from clientColumns so the INSERT / upsert / UPDATE /

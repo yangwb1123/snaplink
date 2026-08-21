@@ -48,6 +48,40 @@ func TestIsRedirectURIValid(t *testing.T) {
 			uri:      "https://app2.example/cb",
 			expected: true,
 		},
+		{
+			name: "pattern hit without exact match",
+			client: &Client{
+				RedirectURIs:        []string{"https://app.example/cb"},
+				RedirectURIPatterns: []string{"https://app.example/test/*/cb"},
+			},
+			uri:      "https://app.example/test/R7bzpU0mqX8Rghe/cb",
+			expected: true,
+		},
+		{
+			name: "pattern miss",
+			client: &Client{
+				RedirectURIPatterns: []string{"https://app.example/test/*/cb"},
+			},
+			uri:      "https://app.example/test/a/b/cb",
+			expected: false,
+		},
+		{
+			name: "exact wins over pattern",
+			client: &Client{
+				RedirectURIPatterns: []string{"https://app.example/*"},
+			},
+			uri:      "https://app.example/something/cb",
+			expected: false, // invalid pattern never widens the gate
+		},
+		{
+			name: "valid pattern plus exact pre-feature behavior",
+			client: &Client{
+				RedirectURIs:        []string{"https://app.example/cb"},
+				RedirectURIPatterns: []string{"https://app.example/test/*/cb"},
+			},
+			uri:      "https://app.example/cb",
+			expected: true,
+		},
 	}
 	for _, tc := range tests {
 		tc := tc

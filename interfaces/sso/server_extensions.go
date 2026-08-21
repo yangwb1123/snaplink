@@ -57,7 +57,7 @@ const (
 // the routes absent when unwired makes that admin surface byte-identical to a
 // build without the optional lifecycle feature.
 func (s *Server) mountWebhookAdminAPI(api Router) {
-	if s.webhookEngine != nil {
+	if webhookConfigured(s.webhookEngine) {
 		api.GET(PathAdminWebhookSubscriptions, s.handleWebhookListSubscriptions)
 		api.POST(PathAdminWebhookSubscriptions, s.handleWebhookCreateSubscription)
 		api.DELETE(PathAdminWebhookSubscriptionByID, s.handleWebhookDeleteSubscription)
@@ -72,6 +72,44 @@ func (s *Server) mountWebhookAdminAPI(api Router) {
 	api.POST(core.PathAdminBCLFailureReplay, func(ctx HandlerContext) { bcl.HandleReplay(manager, ctx) })
 	api.POST(core.PathAdminBCLFailuresReplay, func(ctx HandlerContext) { bcl.HandleReplayDue(manager, ctx) })
 }
+
+// WithWebhookEngine keeps the historical concrete option. Hosts that need
+// generation replacement should add WithWebhookRuntime with the same native
+// engine as its route-compatible view.
+func WithWebhookEngine(e *webhook.Engine) Option {
+	return func(s *Server) {
+		if e == nil {
+			s.webhookEngine = nil
+			return
+		}
+		s.webhookEngine = e
+	}
+}
+
+// WithWebhookRuntime installs the lifecycle-aware runtime used by the audit
+// tap and webhook admin handlers. It is additive; nil leaves the feature off.
+func WithWebhookRuntime(e webhook.Runtime) Option {
+	return func(s *Server) {
+		if !webhookConfigured(e) {
+			s.webhookEngine = nil
+			return
+		}
+		s.webhookEngine = e
+	}
+}
+
+// WebhookEngine preserves the source-compatible concrete accessor. A managed
+// runtime intentionally returns nil here; use WebhookRuntime for its shared
+// admin/audit surface.
+func (s *Server) WebhookEngine() *webhook.Engine {
+	e, _ := s.webhookEngine.(*webhook.Engine)
+	return e
+}
+
+// WebhookRuntime returns the active audit/admin runtime, native or managed.
+func (s *Server) WebhookRuntime() webhook.Runtime { return s.webhookEngine }
+
+var _ webhook.HandlerDeps = (*Server)(nil)
 
 // temporarily fails.
 // matching the JWT issuers' already-configurable skew.

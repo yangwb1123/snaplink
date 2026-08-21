@@ -93,6 +93,7 @@ type appBuilder struct {
 	asyncSink            *audit.AsyncSink
 	auditRetentionCancel context.CancelFunc
 	auditRetentionDone   <-chan struct{}
+	externalAuditClose   func(context.Context) error
 	// auditKafkaSink is the RAW (pre-RetryingSink) Kafka audit sink, non-nil
 	// only when audit.kafka.enabled — retained so shutdownSubsystems can
 	// Close it (flush + disconnect the producer). audit.Sink (an interface)
@@ -178,21 +179,20 @@ type appBuilder struct {
 	refreshGracePruneCancel context.CancelFunc
 	refreshGracePruneDone   <-chan struct{}
 
-	// Governance subsystems (wave-2 cmd wiring). credentialScheduler is built
-	// by wireCredentialRotation (pre-NewServer) and Started by
-	// startGovernanceWorkers (post-NewServer); the cancel/done pairs mirror the
-	// audit/snapshot retention lifecycle. configAuditStore is retained so
-	// assemble folds it into the *app for Close at shutdown. All nil when the
-	// owning config section is disabled.
-	credentialScheduler   *rotation.Scheduler
-	credentialSchedCancel context.CancelFunc
-	credentialSchedDone   <-chan struct{}
-	configAuditStore      configaudit.Store
-	configDriftCancel     context.CancelFunc
-	configDriftDone       <-chan struct{}
-	breakGlassStore       core.BreakGlassStore
-	breakGlassCancel      context.CancelFunc
-	breakGlassDone        <-chan struct{}
+	// Governance schedulers/stores are built before NewServer and stopped at
+	// shutdown; all are nil when their owning config section is disabled.
+	credentialScheduler    *rotation.Scheduler
+	credentialSchedCancel  context.CancelFunc
+	credentialSchedDone    <-chan struct{}
+	configAuditStore       configaudit.Store
+	configCanaryController *configaudit.CanaryController
+	configCanaryCancel     context.CancelFunc
+	configCanaryDone       <-chan struct{}
+	configDriftCancel      context.CancelFunc
+	configDriftDone        <-chan struct{}
+	breakGlassStore        core.BreakGlassStore
+	breakGlassCancel       context.CancelFunc
+	breakGlassDone         <-chan struct{}
 
 	// sessionTrustDecayOn is set by wireSessionTrustDecay when the zero-trust
 	// session-trust-decay feature is enabled; startGovernanceWorkers then launches

@@ -216,7 +216,8 @@ type app struct {
 
 	// auditAsyncSink is non-nil when audit.async.enabled wraps the
 	// configured sink; Close drains the buffer during shutdown.
-	auditAsyncSink *audit.AsyncSink
+	auditAsyncSink     *audit.AsyncSink
+	externalAuditClose func(context.Context) error
 
 	// auditKafkaSink is non-nil when audit.kafka.enabled wired a Kafka
 	// producer sink; shutdownSubsystems Close's it (flush + disconnect) if
@@ -357,6 +358,8 @@ type app struct {
 	configAuditStore      configaudit.Store
 	configDriftCancel     context.CancelFunc
 	configDriftDone       <-chan struct{}
+	configCanaryCancel    context.CancelFunc
+	configCanaryDone      <-chan struct{}
 	breakGlassCancel      context.CancelFunc
 	breakGlassDone        <-chan struct{}
 
@@ -415,6 +418,7 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcTLSCert, gr
 	defer closeAppStores(a)
 	wireRateLimitReload(reloader, a.server, a.redisClient)
 	wireFeatureGateReload(reloader, a.server)
+	wireWebhookReload(reloader, a.server)
 
 	// Phase C: bootstrap runner — applies pending init steps (seed admin
 	// role, admin user, default netpolicy, admin client). Must complete

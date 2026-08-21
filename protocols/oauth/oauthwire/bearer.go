@@ -19,3 +19,18 @@ func BearerToken(r *http.Request) string {
 	}
 	return strings.TrimPrefix(h, core.BearerPrefix)
 }
+
+// ResourceToken extracts an access token sent with either the RFC 6750
+// Bearer scheme or the RFC 9449 DPoP scheme. Token endpoints and management
+// endpoints must continue using BearerToken, while protected resources need
+// both schemes because a DPoP-bound token is sent as "DPoP <token>".
+func ResourceToken(r *http.Request) string {
+	if token := BearerToken(r); token != "" {
+		return token
+	}
+	h := r.Header.Get(core.HeaderAuthorization)
+	if !strings.HasPrefix(h, core.DPoPPrefix) {
+		return ""
+	}
+	return strings.TrimPrefix(h, core.DPoPPrefix)
+}

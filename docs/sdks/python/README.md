@@ -8,7 +8,9 @@
 
 `client.py` is **generated output**, committed the same way generated Go under
 `gen/proto/` is: checked in for consumers to use directly, regenerated from
-`docs/openapi.yaml` by a Go program rather than hand-maintained.
+`docs/openapi.yaml` by a Go program rather than hand-maintained. The same
+generated module is also written to `sdks/python/snaplink_sso/client.py` so
+applications can install and import the repository's `snaplink_sso` package.
 
 ```
 go run ./cmd/gensdk --lang=py
@@ -18,9 +20,9 @@ Regenerate after any change to `docs/openapi.yaml` or
 `ops/build/sdk-surface.json` (run `python cli.py sdk-surface generate`, which
 re-emits every language). `client.py` has **zero third-party dependencies** — transport
 is stdlib `urllib.request`, wire-shape typing is stdlib `typing.TypedDict`
-— so there is no `pip install` step either; vendor the single file into
-your project (`pyproject.toml`/`requirements.txt` packaging is
-deliberately not set up here — see "What's NOT here" below).
+— so there is no runtime dependency installation step; vendor the single
+file into your project or install the repository package under `sdks/python/`
+(see "What's NOT here" below).
 
 The generator reads `docs/openapi.yaml`; it does not inspect Go route
 registration. A runtime endpoint that has not yet been added to OpenAPI cannot
@@ -93,11 +95,11 @@ been in the stdlib `typing` module since Python 3.8, so this is still
 
 ## What's NOT here
 
-No `pyproject.toml`/`setup.py` packaging, no `requirements.txt` (there is
-nothing to require). This is meant to be vendored as a single file, not
-published to PyPI — turning it into a real package is a separate,
-deliberate decision for whoever wants to publish it, not something this
-generator should quietly decide.
+The `docs/sdks/python` directory itself has no independent packaging or
+release metadata. It remains the vendorable single-file form; the
+repository's installable package metadata is kept separately under
+`sdks/python/` and is generated from the same content. There is no
+`requirements.txt` because the runtime has no third-party dependencies.
 
 There is also no generated compatibility policy or semantic-versioned Python
 release. Consumers that vendor the file should regenerate and review it when

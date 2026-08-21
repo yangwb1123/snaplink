@@ -304,6 +304,7 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventAdminChangeApplied: {}, EventAdminChangeApplyFailed: {},
 	// config apply/rollback (declared peer-config baseline write path)
 	EventAdminConfigApplied: {}, EventAdminConfigRolledBack: {},
+	EventConfigCanaryStarted: {}, EventConfigCanaryConfirmed: {}, EventConfigCanaryRolledBack: {},
 	EventAdminWriteQuotaExceeded: {}, EventAdminIPDenied: {},
 	// system / platform (event_types_system.go)
 	EventBootstrapStepApplied: {}, EventBootstrapStepSkipped: {}, EventBootstrapStepFailed: {},
@@ -319,8 +320,11 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventConnectionAuthenticatorBuildFailed: {},
 	EventIdempotencyCaptureMissing:          {}, EventTenantQuotaStoreFailure: {},
 	EventClientSecretExpiring: {}, EventAuditChainCheckpoint: {},
-	EventTenantQuotaProjectionApplied: {},
-	EventRoleResolutionFailed:         {},
+	EventTenantQuotaProjectionApplied:      {},
+	EventRoleResolutionFailed:              {},
+	EventWebhookLifecycleTransition:        {},
+	EventExternalWorkerLifecycleTransition: {},
+	EventReBACLifecycleTransition:          {},
 	// agent delegation + identity linking + cross-tenant exchange + DR
 	EventAgentDelegationTokenIssued: {}, EventAgentSessionRevoked: {},
 	EventIdentityUnlinked: {}, EventIdentityMerged: {}, EventIdentityMergeRejected: {},

@@ -83,6 +83,7 @@ func (b *appBuilder) seedClients(clientStore sso.ClientStore) error {
 			Secret:                           c.Secret,
 			Name:                             c.Name,
 			RedirectURIs:                     c.RedirectURIs,
+			RedirectURIPatterns:              c.RedirectURIPatterns,
 			AllowedScopes:                    c.AllowedScopes,
 			AllowedAuthenticators:            c.AllowedAuthenticators,
 			LoginPageURI:                     c.LoginPageURI,
@@ -113,15 +114,23 @@ func (b *appBuilder) seedClients(clientStore sso.ClientStore) error {
 			SkipConsent:                      c.SkipConsent,
 			ConsentRefreshInterval:           c.ConsentRefreshInterval,
 		}
-		// Validate the CAEP receiver endpoint (https) at boot; plaintext would
-		// exfiltrate revocation SETs (same anti-exfil rule as the admin gRPC path).
-		if ep := c.Attributes[caep.AttrReceiverEndpoint]; ep != "" {
-			if err := caep.ValidateReceiverEndpoint(ep); err != nil {
-				return fmt.Errorf("client %q caep_receiver_endpoint: %w", c.ID, err)
-			}
+		if err := validateSeededCaepReceiver(&c); err != nil {
+			return err
 		}
 		if err := clientStore.Add(context.Background(), seeded); err != nil && !errors.Is(err, sso.ErrClientExists) {
 			return fmt.Errorf("seed client %q: %w", c.ID, err)
+		}
+	}
+	return nil
+}
+
+// validateSeededCaepReceiver rejects a client whose caep_receiver_endpoint is
+// not https at boot; plaintext would exfiltrate revocation SETs (same anti-
+// exfil rule as the admin gRPC path).
+func validateSeededCaepReceiver(c *config.ClientConfig) error {
+	if ep := c.Attributes[caep.AttrReceiverEndpoint]; ep != "" {
+		if err := caep.ValidateReceiverEndpoint(ep); err != nil {
+			return fmt.Errorf("client %q caep_receiver_endpoint: %w", c.ID, err)
 		}
 	}
 	return nil
@@ -464,6 +473,7 @@ func (b *appBuilder) wireNetwork() error {
 // budget — pure field mapping, no behavior.
 func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.auditKafkaSink, a.consentStore, a.mfaEnrollStore = b.auditKafkaSink, b.consentStore, b.mfaEnrollStore
+	a.externalAuditClose = b.externalAuditClose
 	a.passwordResetRevoker = b.passwordResetRevoker
 	a.pushPruneCancel, a.pushPruneDone = b.pushPruneCancel, b.pushPruneDone
 	a.cibaPruneCancel, a.cibaPruneDone = b.cibaPruneCancel, b.cibaPruneDone
@@ -472,6 +482,7 @@ func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.configAuditStore = b.configAuditStore
 	a.credentialSchedCancel, a.credentialSchedDone = b.credentialSchedCancel, b.credentialSchedDone
 	a.configDriftCancel, a.configDriftDone = b.configDriftCancel, b.configDriftDone
+	a.configCanaryCancel, a.configCanaryDone = b.configCanaryCancel, b.configCanaryDone
 	a.breakGlassCancel, a.breakGlassDone = b.breakGlassCancel, b.breakGlassDone
 	a.continuousVerifyCancel, a.continuousVerifyDone = b.continuousVerifyCancel, b.continuousVerifyDone
 	a.capConvergenceCancel, a.capConvergenceDone = b.capConvergenceCancel, b.capConvergenceDone

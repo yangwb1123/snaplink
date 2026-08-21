@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // DCRMetadata is the subset of RFC 7591 §2 client metadata the
@@ -12,6 +14,7 @@ import (
 // so the SSO server can validate without round-tripping types.
 type DCRMetadata struct {
 	RedirectURIs            []string
+	RedirectURIPatterns     []string
 	TokenEndpointAuthMethod string
 	GrantTypes              []string
 	ResponseTypes           []string
@@ -126,6 +129,12 @@ func validateIDTokenSigningAlg(req *DCRMetadata, supported []string) error {
 // validateRedirectURIs enforces RFC 7591 §2 redirect_uris rules:
 // REQUIRED for grant_type=authorization_code (the default), OPTIONAL for
 // client_credentials-only clients, every entry non-empty and safe.
+// redirect_uri_patterns is the snaplink extension (see
+// shared/core + docs/design/redirect-uri-patterns.md): each entry MUST
+// satisfy the legit shared grammar, else the registration is rejected with
+// invalid_client_metadata — a malformed pattern must never reach the runtime
+// matcher. Patterns are strictly additive to the exact allowlist; the RFC
+// 7591 redirect_uris requirement is unchanged.
 func validateRedirectURIs(req *DCRMetadata, authzCodeGrant string) error {
 	wantsCodeFlow := len(req.GrantTypes) == 0 ||
 		slices.Contains(req.GrantTypes, authzCodeGrant)
@@ -138,6 +147,11 @@ func validateRedirectURIs(req *DCRMetadata, authzCodeGrant string) error {
 	for _, redirectURI := range req.RedirectURIs {
 		if !safeRedirectURI(redirectURI) {
 			return ErrDCR("unsafe redirect_uri: " + redirectURI)
+		}
+	}
+	for _, pattern := range req.RedirectURIPatterns {
+		if err := core.ValidateRedirectURIPattern(pattern); err != nil {
+			return ErrDCR("redirect_uri_patterns: " + err.Error())
 		}
 	}
 	return nil

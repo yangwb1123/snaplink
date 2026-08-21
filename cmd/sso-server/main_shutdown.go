@@ -160,6 +160,7 @@ func shutdownServers(ctx context.Context, logger spi.Logger, httpSrv, pprofSrv *
 func shutdownSubsystems(ctx context.Context, a *app, logger spi.Logger) {
 	shutdownWatchLoops(ctx, a)
 	shutdownSchedulers(ctx, a, logger)
+	shutdownReBACRuntime(ctx, a, logger)
 	if a.server != nil {
 		if err := a.server.ShutdownAuthenticatorDelivery(ctx); err != nil {
 			logger.Error("authenticator delivery drain timed out", "error", err)
@@ -183,17 +184,7 @@ func shutdownSubsystems(ctx context.Context, a *app, logger spi.Logger) {
 			logger.Error("token usage recorder drain timed out", "error", err)
 		}
 	}
-	// Drain the audit AsyncSink queue under the same shutdown
-	// deadline. Events queued during the final ~milliseconds before
-	// SIGTERM matter — they're typically the shutdown events
-	// themselves (admin logout, snapshot rotation). Best-effort:
-	// remaining events are silently dropped when the deadline fires.
-	if a.auditAsyncSink != nil {
-		if err := a.auditAsyncSink.Close(ctx); err != nil {
-			logger.Error("audit async drain timed out", "error", err)
-		}
-	}
-	shutdownAuditKafka(ctx, a, logger)
+	shutdownAuditExporters(ctx, a, logger)
 	// Drain in-flight CAEP SET pushes so a shutting-down replica doesn't
 	// abandon a goroutine mid-POST. Bounded by the shutdown ctx; each send
 	// also has its own per-receiver timeout.
@@ -206,6 +197,49 @@ func shutdownSubsystems(ctx context.Context, a *app, logger spi.Logger) {
 		shutdownBCLManager(ctx, a.server.LogoutNotifier(), logger)
 	}
 	closeMemoryStoreReapers(a)
+}
+
+func shutdownReBACRuntime(ctx context.Context, a *app, logger spi.Logger) {
+	if a == nil || a.server == nil || a.server.RebacEngine() == nil {
+		return
+	}
+	runtime := a.server.RebacEngine().HotRuntime()
+	if runtime == nil {
+		return
+	}
+	if err := runtime.Close(ctx); err != nil {
+		logger.Error("rebac hot runtime close failed", "error", err)
+	}
+}
+
+func shutdownAuditExporters(ctx context.Context, a *app, logger spi.Logger) {
+	// Drain the async queue before closing the managed webhook generation or
+	// Kafka producer; queued audit events still reach every configured sink.
+	if a.auditAsyncSink != nil {
+		if err := a.auditAsyncSink.Close(ctx); err != nil {
+			logger.Error("audit async drain timed out", "error", err)
+		}
+	}
+	if a.externalAuditClose != nil {
+		if err := a.externalAuditClose(ctx); err != nil {
+			logger.Error("audit external worker close failed", "error", err)
+		}
+	}
+	shutdownWebhookRuntime(ctx, a, logger)
+	shutdownAuditKafka(ctx, a, logger)
+}
+
+func shutdownWebhookRuntime(ctx context.Context, a *app, logger spi.Logger) {
+	if a == nil || a.server == nil {
+		return
+	}
+	closer, ok := a.server.WebhookRuntime().(interface{ Close(context.Context) error })
+	if !ok {
+		return
+	}
+	if err := closer.Close(ctx); err != nil {
+		logger.Error("webhook exporter drain timed out", "error", err)
+	}
 }
 
 func shutdownBCLManager(ctx context.Context, notifier sso.LogoutNotifier, logger spi.Logger) {
@@ -315,6 +349,8 @@ func shutdownSchedulers(ctx context.Context, a *app, logger spi.Logger) {
 		"credential rotation scheduler did not exit cleanly")
 	stopScheduler(ctx, logger, a.configDriftCancel, a.configDriftDone,
 		"config drift detection loop did not exit cleanly")
+	stopScheduler(ctx, logger, a.configCanaryCancel, a.configCanaryDone,
+		"config canary loop did not exit cleanly")
 	stopScheduler(ctx, logger, a.breakGlassCancel, a.breakGlassDone,
 		"break-glass sweeper did not exit cleanly")
 	stopScheduler(ctx, logger, a.autoReadOnlyCancel, a.autoReadOnlyDone,

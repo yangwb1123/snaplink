@@ -1,0 +1,55 @@
+{
+  "client": {
+    "client_id": "fapi-static-client",
+    "client_secret": "fapi-static-client-secret",
+    "redirect_uris": [],
+    "scope": "openid",
+    "grant_types": ["authorization_code"],
+    "response_types": ["code"],
+    "token_endpoint_auth_method": "private_key_jwt",
+    "jwks": {
+      "keys": [
+        {
+          "kty": "RSA",
+          "n": "pR9WeXTmKDu6qNUm5SG69Qifhu2rTnsbbpcVdzPSUSC7L5fX25AYQDDtVL4Ajd-eyj_lbPuuvMeR0SUunKEWMyBwPMMqqEHPRvdN4cjLqRCUVEi9MTCG5HhrDHk9KCXsUmVZP9u3-N1INfyIZFRYfs1XeZo2JZkCiFF4nIFMXEuy6TFC9wJNTrkBpKb4N7_aL_C4-ph-mn7hWrp7rAXQyWs1A7BqmCPyPBUhtLYil0Mf4yW3WdbkuGdz-92RalcqitQlQsUffcrj6cdafIBSd4YpVT9a78-8Q_hQ2Ye0o-Zdtqs7wK2ZM--JAkE_I9bsRJ981nrT9z9Ll12gYS-oMw",
+          "e": "AQAB",
+          "d": "AwOG6bGYr9GjRF3w7KFdzwdzbfGG572h0GDBO2CT7UzPzdG-LAY9wxIsNW3rBwE2szymUdkSz-RD75F3qn6FhV-0B2U32-6o5gPb2ov2gk_zUnR_a4HrZwkhnw5-xML9xLqP00q4hA954sOzXkLB2L1OZEGhzQmKvR_g4oO49-hBnhrEYFOi1yayxqEETrC5zd0WwUV5jidz1MgRMz9A6S-DZ0rsAcmhob0S8YpdQKJW5vaRpDxaTJkSL0OVTEtw8Az2UvPD6Xly0bE9jgGgOb-dp5b08EJQB0yuufGolm0jjcBokpABJfvwenxSjiw-9fHg2vTaqgE1iSch28bQGQ",
+          "p": "125CbTaHZlds2m5lbmG3OvhvrCfh9iv38eOXgzX046GC_dZfP6IZrH1WB1XY_PJtd2Dr4tQwsmYkUefiVFe4G4p12JNybQOLVlyo5P_ImWhH3Ljy3U3w3A1Ld8DIFwARc5OsDhI-UewlsxzKmSORSmhLlnjd9whSOSDrCA06S3s",
+          "q": "xDfBnDJn4-iFoeFxUEG_m48z3x_siblTChiZOAdAOdu7t3NNZOESkKSp6XqVo2o1vnzYkpxoVpJ1nceOQUWvPQ1x343z8871HoSCh8S7PX3aTX50iqQiqF3m8rdJ1A2vm8tUSbAqf4id5hIXy2I6MH9xcPofEQp9dB6hCMcZPKk",
+          "dp": "DBjE4h0NvVFra1iHmYsjHsyUeLZEme4eHhcJivScq6uGD3raHlib2HOxQPgxFwMF4o4usK35jgruPysmKlZCoElGFMMyyaxJRrAtS66RNQwF_P7lpEecHr8gXbkVgzUdxb-lCaU8mp0IAOa8-ZxlrCfvFqPy0sxE0bBngiw7-cE",
+          "dq": "UWjsvFixf_6-Sv7VW74buHf-xolhQ3cPu_WexH9Fp3vCc4e0SbGUWUzobkV9BlMPv1vfI10fcSPNBsx_-hbmcQc-AsnLuJFaY_IIkjoOkaHAzDw2MDuPYZmsM3HWgNO404PWEci0qTtOf-Fr2-eCSxLlR0GPWCupB1-Z4qFwmBk",
+          "qi": "yKCjJzchjXE_eWrlXxM_jpzXoMI0wZtSbJHHzbw_mQ0xgod7VpPf-JSS44XFwcO74JD2tcfQ5E1wf5KVVkBT51EpWJ-ueoyKCbb9KjYHdAnkQc85YaHfGkDdkDgaU3uSit-Llc4ahhmnAYQAF6_bBgjLupFkS-SGp3KMICVAWQs",
+          "kid": "fapi-static-client-key",
+          "alg": "PS256",
+          "use": "sig"
+        }
+      ]
+    }
+  },
+  "client2": {
+    "client_id": "fapi-static-client-2",
+    "redirect_uris": [],
+    "scope": "openid",
+    "grant_types": ["authorization_code"],
+    "response_types": ["code"],
+    "token_endpoint_auth_method": "private_key_jwt",
+    "jwks": {
+      "keys": [
+        {
+          "kty": "RSA",
+          "n": "m9CWcKvCDWk5a9__a5t0IeCupuPkTU9JPeQimWzY2-UaBswg2ZhGmLl0jaYG9g1sD_QmWTE5K-BSmB7jmghUBRIMFcECHzppjgQZjI5Ske6mSp1tfwMYzvB7oIwTRIJDyR34pQJrVhK8ZAOit6jTJLtWnNFYzemM4xVXDIFWngccp0hx3gAwC5Nrc45dmNDFIqv_2yJJXQLfCEXqYAs13AFBaJwOtPOZfb4VOb7WM2wvjOJR0xriePqky7PM7KSmj5J1MRk_BD7RG4GW4HxUshemLAjtQLp62xV_uvvNKzID3KTjKO9_DIbnr6KBt1ePvsfvHXkIEf1RPUQzQ7rZAQ",
+          "e": "AQAB",
+          "d": "GmT-gwYZeHeddkhq5nHePZnnxBYhN7ZpYA5cDRTq9G8OFl4wZ2Pb-6WY2KDqF3bFGju_3kaQGn5kx2eeIxrrjrNUsD-yihM1S80mfdCjLJzadxPNd2FRK8cBjjwETIvriy9kTiGHiLxiROf3wbhb0iJZBPYSnskEKHiWNyRWxayHibHe5e8PiMjou-npVJ9UK-j7MzOXHF8zGO5-Oiq-8tyFKY0FXP0M7eCIwLsft7px3SWR0y_890FfkhKzPtlxbBmuqL60uk1cbkmiK2ul0al1UTUrxFiBTk-tx6EQtXYdAgzW1O594qJsl-MT0B1V9aalTjsQKMCjht6gWuuQVQ",
+          "p": "zrsjYqulj0lR9vIYX26xcdOxKcPBda4Sqhg1tuMQx5DyIRsZALO3ROH2zkPXhsTErS80HUKPwpusXj8jYdHsJZh2LaKtNgNSpsizUz8nMQtnVMTuIAtJnKG5nWb8o6BKcg-qV9vaZO4BxGP2oA1wMikYiCHPs4s_oiQVwJQrLg0",
+          "q": "wPMAVE32fj4OqpEdanrKxurOYAu_5Mnezas5GWAet8rrJyZY1zQxdzSAedo0zXv3p-qF8zJeBznCrv98b5CzLqvC6Zi7kVkZh4U9sDXFM9rR2MxRjRAUDl7ggKWkZ3NmSxdJE2Q_6_3fT_FoOHR3RCaE3UlaCAZxZZ6Kx00gzcU",
+          "dp": "xR3I4rdZ2GMH5Vf3h19LkIZSAcmmuGevYkJNTUH66N67EHf_Ah1aHTL8GrazVcxe3-cHYPLrkprO4tp_CTGZYkuaO29Gix7l-yOZYUHxQ6Fk-H4Bs8oveUr3ai8dq4MWGOX4_WcjOWN7id_q87d8iEeJHZxnqAGZPif8GbDt7y0",
+          "dq": "cxzGloVIyLpHT7VxwkPt1EzjwONhoaJaHYPIdf4ldWtHbbzwBbwqwr5847WuCOWrs-8z6QqklFT-dB8SYxEGBZMNnwWy6Z0poPN6ATWjKDOlPF1xTeJIxOYPtFCeS-XKIoSK4VnO1QFKCEyy6_N38B226LpJTz5gysqSayL1ri0",
+          "qi": "WXSG-mxR3Zf3be3LNZR-Ui-D3nl-QEe1o2t8Lzn-NI2Oi0J-a3kut2i2sRw5H0MQQbGhJDkjpu1WmwKyJDR8guYdsWXYc-opQLz7IsUw89WSbVB4I5V0_LQHNqo7UIzHTDIVg8gbOScrrxpidhIIxoqshl7w_IYYmGAI6gBDQbc",
+          "kid": "fapi-static-client-2-key",
+          "alg": "PS256",
+          "use": "sig"
+        }
+      ]
+    }
+  }
+}

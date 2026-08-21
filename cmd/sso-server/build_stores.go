@@ -11,6 +11,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildplatform"
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
 	"github.com/yangwb1123/snaplink/config"
 	"github.com/yangwb1123/snaplink/domains/identitylink"
 	identitylinksqlite "github.com/yangwb1123/snaplink/domains/identitylink/sqlite"
@@ -63,10 +64,10 @@ func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr erro
 	// calls it at shutdown. Registered here (after wireFoundation populates
 	// netCancel, before the later phases) so the LIFO cleanup fires for any
 	// later error, exactly as the original defer did.
-	if b.netCancel != nil {
+	if b.netCancel != nil || b.cfg.Audit.ExternalWorker.Enabled {
 		defer func() {
 			if retErr != nil {
-				b.netCancel()
+				b.closeBuildFailure()
 			}
 		}()
 	}
@@ -122,6 +123,7 @@ func (b *appBuilder) haCoherenceIssues() []string {
 		{multi && b.cfg.SelfService.IdentityLink.Enabled, "self_service.identity_link.backend", b.cfg.SelfService.IdentityLink.Backend},
 		{multi && b.cfg.Server.PairwiseSubjects.Enabled, "server.pairwise_subjects.backend", b.cfg.Server.PairwiseSubjects.Backend},
 		{multi && b.cfg.UserLifecycle.Enabled, "user_lifecycle.backend", b.cfg.UserLifecycle.Backend},
+		{multiFeatureEnabled(multi, b.cfg.ReBAC.Enabled), "rebac.backend", b.cfg.ReBAC.Backend},
 	}
 	var stuck []string
 	for _, check := range checks {
@@ -147,6 +149,8 @@ func perPodBackend(backend string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(backend))
 	return normalized == "" || normalized == "memory"
 }
+
+func multiFeatureEnabled(multi, enabled bool) bool { return multi && enabled }
 
 // buildSnapshotterRestorer constructs the disaster-recovery view over the live
 // stores. Keeping it outside build_app_cluster.go preserves that file's hard
@@ -188,10 +192,8 @@ func (b *appBuilder) wirePeerTrust() error {
 	return nil
 }
 
-// wireFoundation runs the kernel sub-builders (identity/signing, audit,
-// permissions, network) that the later phases depend on. wireNetwork populates
-// b.netCancel, so buildApp registers the on-failure cancel defer immediately
-// after this phase returns.
+// wireFoundation runs kernel sub-builders plus the optional stock ReBAC check
+// store before later phases depend on them.
 func (b *appBuilder) wireFoundation() error {
 	if err := b.wireIdentitySigning(); err != nil {
 		return err
@@ -202,13 +204,16 @@ func (b *appBuilder) wireFoundation() error {
 	if err := b.wirePermissions(); err != nil {
 		return err
 	}
+	rebacOpts, err := serverbuildstore.BuildReBACOptions(b.cfg.ReBAC, b.logger)
+	if err != nil {
+		return fmt.Errorf("rebac: %w", err)
+	}
+	b.opts = append(b.opts, rebacOpts...)
 	return b.wireNetwork()
 }
 
-// wireDomains runs the business-domain sub-builders, in the same order the
-// original monolith applied their Options. wireAnomaly is NOT here — it moved
-// to finalize() (after wireCluster) so it can share the Active ITDR threat
-// executor with tokenanomaly.Detector; see wireThreatAction's doc comment.
+// wireDomains runs business-domain sub-builders in original option order.
+// Threat response wiring moves to finalize so its executor is shared.
 func (b *appBuilder) wireDomains() error {
 	if err := b.wireIdentityLink(); err != nil {
 		return err
@@ -234,13 +239,8 @@ func (b *appBuilder) wireDomains() error {
 	return b.wireOAuthGrantStores()
 }
 
-// wireEdge runs the delivery-edge sub-builders (response encryption, DCR/
-// backchannel, CAEP transmitter, realtime admin event stream, generic
-// webhook egress engine, federation, profiles/metadata, metrics,
-// body/rate-limit, JTI-replay/SPIFFE, CAEP receiver/mesh,
-// mTLS/lockout/proxies/CORS), in the original Option-application order.
-// wireCAEPTransmitter, wireSSEEvents, wireWebhookEngine, and
-// wireMetricsCollector return no error and keep their original positions.
+// wireEdge runs delivery-edge sub-builders in original option order. The
+// lifecycle-managed webhook exporter can fail closed during generation prep.
 func (b *appBuilder) wireEdge() error {
 	if err := b.wireResponseEncryption(); err != nil {
 		return err
@@ -251,7 +251,9 @@ func (b *appBuilder) wireEdge() error {
 	}
 	b.wireCAEPTransmitter()
 	b.wireSSEEvents()
-	b.wireWebhookEngine()
+	if err := b.wireWebhookEngine(); err != nil {
+		return err
+	}
 	b.wireSCIMProvisioning()
 	if err := b.wireFederation(); err != nil {
 		return err

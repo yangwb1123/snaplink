@@ -78,6 +78,8 @@ if [ -n "${FAPI:-}" ]; then
   # plain_fapi / private_key_jwt / DPoP / simple authorization-request type.
   PLAN_VARIANT='{"fapi_profile":"plain_fapi","openid":"openid_connect","client_auth_type":"private_key_jwt","sender_constrain":"dpop","authorization_request_type":"simple"}'
   MODULE="fapi2-security-profile-final-happy-flow"
+  export FAPI_CLIENT_CONFIG="$(jq -c '.client' fapi-static-clients.json)"
+  export FAPI_CLIENT2_CONFIG="$(jq -c '.client2' fapi-static-clients.json)"
   ARCHIVE_SUFFIX="${ARCHIVE_SUFFIX}-fapi"
 fi
 # Compose interpolation picks up the config variant for the sso-server
@@ -141,6 +143,12 @@ say "validating pinned server config"
 
 say "starting harness"
 "${COMPOSE[@]}" up -d --build >/dev/null
+if [ -n "${ISSUER_HTTPS:-}" ]; then
+  # The issuer proxy bind-mounts this config. Force recreation so a reused
+  # container cannot keep an older TLS cipher policy in its nginx process.
+  say "reloading issuer TLS proxy configuration"
+  "${COMPOSE[@]}" up -d --force-recreate issuer-proxy >/dev/null
+fi
 for i in $(seq 1 60); do
   if curl -sf "$SERVER_HTTP/health" >/dev/null 2>&1; then break; fi
   sleep 2
@@ -235,7 +243,19 @@ curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/plan/info/${PLAN_NAME}" \
 # a resource URL for the sender-constrained access-token call; the Basic plan
 # needs only the discovery URL.
 if [ "${PLAN_NAME}" = "fapi2-security-profile-final-test-plan" ]; then
-  OVERRIDE_JSON="{\"fapi2-security-profile-final-happy-flow\": {\"server\": {\"discoveryUrl\": \"${DISCOVERY_URL}\"}, \"resource\": {\"resourceUrl\": \"http://sso-server:8080/userinfo\"}}}"
+  OVERRIDE_JSON="$(DISCOVERY_URL="${DISCOVERY_URL}" RESOURCE_URL="${ISSUER_URL}/userinfo" python3 - <<'PY'
+import json
+import os
+
+override = {
+  "server": {"discoveryUrl": os.environ["DISCOVERY_URL"]},
+  "resource": {"resourceUrl": os.environ["RESOURCE_URL"]},
+  "client": json.loads(os.environ["FAPI_CLIENT_CONFIG"]),
+  "client2": json.loads(os.environ["FAPI_CLIENT2_CONFIG"]),
+}
+print(json.dumps({"fapi2-security-profile-final-happy-flow": override}, separators=(",", ":")))
+PY
+)"
 else
   OVERRIDE_JSON="{\"oidcc-server\": {\"server\": {\"discoveryUrl\": \"${DISCOVERY_URL}\"}}}"
 fi

@@ -384,6 +384,15 @@ permissions:
     - { user_id: user-alice, client_id: mobile-app, roles: [user] }
     - { user_id: user-alice, client_id: "",         roles: [items-reader] }
 
+# Zanzibar-style relationship tuples and object-level checks. The stock
+# /authz/check route is generation-managed and contributes rebac-check to
+# /readyz. Use SQLite when more than one replica serves the same data.
+rebac:
+  enabled: false
+  backend: "memory"       # memory | sqlite
+  sqlite:
+    dsn: ""               # e.g. file:/var/lib/sso/rebac.db?_journal=WAL
+
 # SCIM 2.0 provisioning (RFC 7643/7644). The /Users surface mounts
 # automatically when admin auth + a UserProvider are present (gated under
 # /api/v1/scim/ by AdminMiddleware). The /Groups surface is opt-in here

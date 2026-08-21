@@ -467,8 +467,13 @@ falls through to the same 401/403 the rest of `/api/v1/admin/*` uses.
 | `config_audit_not_available`  | 501  | `.../running`\|`.../applied`\|`.../diff` hit with no `WithConfigSnapshots` wired, or `.../history` hit with no `WithConfigAuditStore` wired |
 | `invalid_request`             | 400  | `.../history?since=` is not RFC3339, or `?limit=` is not an integer                                    |
 | `config_apply_approval_required` | 400  | `POST .../config/apply` or `.../config/rollback` (the declared peer-config baseline write path, `platform/configaudit`) issued without `?approve=true` — the mandatory misoperation barrier, refused before any state is touched |
-| `config_apply_conflict`       | 409  | `POST .../config/apply`: the server-recomputed sha256 of the submitted peer snapshot does not match the supplied `digest` — a stale or mixed-source submission (split-brain guard), nothing recorded |
+| `config_apply_conflict`       | 409  | `POST .../config/apply`: the server-recomputed sha256 does not match `digest`; or `POST .../config/rollback`: supplied `expected_version_id` is stale — both leave the baseline unchanged |
 | `config_apply_no_previous`    | 409  | `POST .../config/rollback`: no applied baseline exists, or the latest baseline has no predecessor to restore |
+| `config_rollback_not_available` | 501  | `POST .../config/rollback`: an `expected_version_id` CAS rollback was requested but the configured backend does not implement the atomic conditional-rollback extension |
+| `config_canary_not_available` | 501  | `POST .../config/apply?canary=true`: the deployment has no atomic canary store and injected health probes |
+| `config_canary_in_progress`   | 409  | A canary is observing; concurrent apply or rollback is refused until it confirms or rolls back |
+| `config_canary_no_baseline`   | 409  | `canary=true` was requested before an applied baseline existed, so no safe predecessor was available |
+| `config_canary_conflict`      | 409  | The canary candidate is no longer the latest applied version; automatic rollback refuses to touch a newer baseline |
 
 ---
 

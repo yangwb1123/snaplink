@@ -1,6 +1,17 @@
 # Design: unified observability for `interfaces/middleware` (access log + single trace/audit source)
 
-Status: committed (implemented scope: Decision 1 AccessLogger + Decision 2 slot + BodyLogPolicy + the capture/redaction/sampling machinery the BodyLogPolicy contract requires, plus the Decision 9 config surface. Decision 7 `Correlation` and Decision 8 span-first `EventFromRequest` — the "unified OTel correlation" half — are NOT implemented yet: the legacy `Tracing`/`RequestID` middleware and the header-parse audit path remain installed, so `request_id`/`trace_id` in the access record are populated by that legacy surface exactly as the Decision 1 field table describes ("empty when no correlation middleware installed"). Drift rulings vs this document: `interfaces/middleware` is at its 10-file ceiling, so `accesslog.go` does not exist — `AccessLogger`/`BodyLogPolicy`/redaction live in the existing `request_log.go`; `WithRequestLogging` is repurposed to the policy signature and `WithAccessLogging` is added, per Decision 3/9; the DEBUG `RequestLogger` and its `debugRequestLogging` fields are deleted, per Decision 2/3). Scope: `interfaces/middleware`, `interfaces/sso` (assembly),
+Status: committed (Decision 1 AccessLogger, Decision 2 slot, BodyLogPolicy,
+the capture/redaction/sampling machinery it requires, Decision 7 Correlation,
+Decision 8 span-first `EventFromRequest`, and the Decision 9 config surface are
+implemented). The legacy `Tracing`/`RequestID` middleware and the
+header-parse-only audit path were removed; `request_id`/`trace_id` now follow
+the current correlation contract described below. Drift rulings vs this
+document: `interfaces/middleware` is at its 10-file ceiling, so
+`accesslog.go` does not exist — `AccessLogger`/`BodyLogPolicy`/redaction live
+in the existing `request_log.go`; `WithRequestLogging` is repurposed to the
+policy signature and `WithAccessLogging` is added, per Decision 3/9; the DEBUG
+`RequestLogger` and its `debugRequestLogging` fields are deleted, per
+Decision 2/3). Scope: `interfaces/middleware`, `interfaces/sso` (assembly),
 `cmd/sso-server`, `cmd/sso-minimal`, `config`, `platform/tracing`,
 `platform/audit`. Direction 3 of the middleware observability requirements:
 replace "DEBUG-gated request logging + two independent propagation chains"
@@ -553,7 +564,7 @@ acceptance CI bounds the rate statistically over 1000 requests.)
 
 ## Test plan (maps 1:1 to acceptance checks)
 
-- **A1 (access log record):** `interfaces/middleware/accesslog_test.go` —
+- **A1 (access log record):** `interfaces/middleware/request_log_test.go` —
   full chain including trustedProxies + correlation: exactly one INFO
   `"access"` record with `status`, `duration_ms`, `client_ip` (validated
   real IP under XFF spoofing), `request_id`; zero-value policy ⇒ no
@@ -566,10 +577,9 @@ acceptance CI bounds the rate statistically over 1000 requests.)
   `client_secret=xxx`, JSON `{"code":"123456"}`, nested JSON; log line
   contains only `[redacted]`; grep the entire record for the raw values
   (including the `[redacted]`-adjacent key) ⇒ absent.
-- **B2 (allowlist + cap):** `/token` never logs bodies even with
-  `AllowAllPaths: true`... (no — `/token` is only exempt when not
-  allowlisted; the test asserts non-allowlisted path ⇒ no body fields,
-  allowlisted path ⇒ body truncated at 4 KB).
+- **B2 (allowlist + cap):** `/token` never logs bodies unless explicitly
+  allowlisted; the test asserts that a non-allowlisted path has no body fields
+  and an allowlisted path is truncated at 4 KB.
 - **B3 (sampling):** `SampleRate: 0.25` over 1000 requests ⇒ capture count
   inside the 99.9% binomial CI (≈ 250 ± 45).
 - **A3 (single source):** `test/` `package ssotest` — server with only
@@ -582,22 +592,22 @@ acceptance CI bounds the rate statistically over 1000 requests.)
   an in-memory exporter; `go test ./... -race`, `go test ./test/ -run TestE2E -v`,
   `make ci`.
 
-## Migration steps (ordered)
+## Implementation checklist (completed in dependency order)
 
 1. Extract `peertrust.ClientIP`; `audit.ClientIP` delegates (no behavior
    change, existing tests green).
 2. Add `BodyLogPolicy` + `AccessLogger` + capture stack to
-   `interfaces/middleware`; delete `request_log.go`; rewrite
-   `request_logging_test.go` for the policy shape.
+   `interfaces/middleware/request_log.go`; update the request-logging tests for
+   the policy shape.
 3. Wire the slot in `buildMiddlewareChain`; add `WithAccessLogging` option +
    `accessLogPolicy` field; repurpose `WithRequestLogging(policy)`.
 4. Add `Correlation` to `interfaces/middleware`; switch
-   `buildMiddlewareChain` to it; delete the legacy `Tracing`/`RequestID`
+   `buildMiddlewareChain` to it; remove the legacy `Tracing`/`RequestID`
    surface and its call sites (Decision 7 removal list).
 5. Change `EventFromRequest` to span-first; update `handlers.go` comment.
 6. Config: `logging.access_log.*`, defaulting, `ServerOptions` wiring,
    reload table entry; update `docs/config-reference.md` +
    `docs/observability.md` (stack diagram, field table, deprecation notes).
-7. Full gate: `go build ./... && go vet ./...`,
-   `go test -run 'TestMaintainability_|TestArchitecture_' .`, then
-   `go test ./... -race`, `go test ./test/ -run TestE2E -v`, `make ci`.
+7. Apply the full gate for release validation: `go build ./... && go vet
+   ./...`, `go test -run 'TestMaintainability_|TestArchitecture_' .`, then
+   `go test ./... -race`, `go test ./test/ -run TestE2E -v`, and `make ci`.

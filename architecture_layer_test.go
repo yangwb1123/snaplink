@@ -134,6 +134,15 @@ var layerExemptions = map[string]bool{
 	"protocols/selfservice -> interfaces/middleware":      true, // real-client-IP helper
 }
 
+const maxLayerExemptions = 9
+
+func TestArchitecture_LayerExemptionsDoNotGrow(t *testing.T) {
+	t.Parallel()
+	if n := len(layerExemptions); n > maxLayerExemptions {
+		t.Errorf("layerExemptions grew to %d (cap %d) — fix the dependency direction instead of grandfathering a new edge", n, maxLayerExemptions)
+	}
+}
+
 func TestArchitecture_LayerBoundaries(t *testing.T) {
 	t.Parallel()
 	fset := token.NewFileSet()

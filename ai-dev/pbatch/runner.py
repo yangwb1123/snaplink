@@ -8,6 +8,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -158,8 +159,26 @@ def save_result(task: Task, result: TaskResult) -> None:
         log.error("NOT SAVED %s: task failed (exit=%d, %.1fs)", out_path, result.returncode, result.elapsed)
         return
 
+    if len(result.stdout.encode("utf-8")) > config.OUTPUT_MAX_BYTES:
+        log.error("NOT SAVED %s: output exceeds %d bytes", out_path, config.OUTPUT_MAX_BYTES)
+        return
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(result.stdout, encoding="utf-8")
+    unresolved = Path(task.output)
+    if not unresolved.is_absolute():
+        unresolved = Path(task.workdir()) / unresolved
+    if unresolved.is_symlink():
+        log.error("NOT SAVED %s: output path is a symlink", out_path)
+        return
+    fd, temporary = tempfile.mkstemp(prefix=out_path.name + ".", suffix=".tmp",
+                                     dir=str(out_path.parent))
+    os.close(fd)
+    temporary_path = Path(temporary)
+    try:
+        temporary_path.write_text(result.stdout, encoding="utf-8")
+        temporary_path.replace(out_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
     log.info("WROTE %s  (%d bytes)", out_path, len(result.stdout))
 
 

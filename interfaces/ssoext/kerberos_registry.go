@@ -6,7 +6,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
-	"github.com/yangwb1123/snaplink/platform/registrar"
+	"github.com/yangwb1123/snaplink/platform/registry/typed"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
@@ -104,7 +104,7 @@ type KerberosHandlerFactory func(ctx context.Context, deps KerberosServerDeps) (
 // asn1/crypto transitive deps) lives in the operator's forked binary, not
 // this module — the operator calls RegisterKerberosHandlers from their main
 // before running the server, then selects the factory by name from their own
-// config. The generic machinery is the standard platform/registrar
+// config. The generic machinery is the standard platform/registry/typed
 // implementation (same shape as SAMLHandlerRegistry). Exported so tests can
 // clean up between runs via Unregister.
 var KerberosHandlerRegistry = registrar.New[KerberosHandlerFactory]()

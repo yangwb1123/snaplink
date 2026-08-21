@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
 )
@@ -19,6 +20,37 @@ type PermissionsConfig struct {
 // PermissionsSQLiteConfig is the SQLite backend's DSN.
 type PermissionsSQLiteConfig struct {
 	DSN string `yaml:"dsn"`
+}
+
+// ReBACConfig selects the stock relationship-tuple authorization surface.
+// The memory backend is for one replica; SQLite preserves tuples across
+// restarts and replicas sharing the same database file.
+type ReBACConfig struct {
+	Enabled bool              `yaml:"enabled"`
+	Backend string            `yaml:"backend"` // memory | sqlite
+	SQLite  ReBACSQLiteConfig `yaml:"sqlite"`
+}
+
+// ReBACSQLiteConfig is the SQLite backend's DSN.
+type ReBACSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
+}
+
+func (c ReBACConfig) validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Backend)) {
+	case "", "memory":
+		return nil
+	case "sqlite":
+		if strings.TrimSpace(c.SQLite.DSN) == "" {
+			return fmt.Errorf("config: rebac.sqlite.dsn required when rebac.backend=sqlite")
+		}
+		return nil
+	default:
+		return fmt.Errorf("config: rebac.backend must be memory or sqlite, got %q", c.Backend)
+	}
 }
 
 // AppPermissionsConfig declares the roles and menu tree for one APP. Roles

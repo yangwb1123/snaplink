@@ -132,6 +132,10 @@ export interface AdminClient {
   active?: boolean;
   allowed_authenticators?: string[];
   allowed_scopes?: string[];
+  /** Unix timestamp. 0 means the secret never expires (legacy/public */
+  client_secret_expires_at?: number;
+  /** Read-only grant-type allowlist, enforced at /token */
+  grant_types?: string[];
   id?: string;
   /** Hosted-login continuation URL for OIDC/SAML federation. HTTPS is */
   login_page_uri?: string;
@@ -139,6 +143,8 @@ export interface AdminClient {
   redirect_uris?: string[];
   /** Write-only. Never echoed on Get/List responses; use */
   secret?: string;
+  /** Read-only over the admin API: surfaced for operator verification */
+  tenant_id?: string;
   token_strategy?: "jwt" | "session";
 }
 
@@ -428,6 +434,8 @@ export interface ClientMetadata {
   login_page_uri?: string;
   name?: string;
   post_logout_redirect_uris?: string[];
+  /** Snaplink extension: the validated HTTPS redirect patterns returned */
+  redirect_uri_patterns?: string[];
   redirect_uris?: string[];
   /** Nanoseconds. */
   refresh_token_ttl?: number;
@@ -610,8 +618,12 @@ export interface DCRRequest {
   grant_types?: string[];
   id_token_encrypted_response_alg?: string;
   id_token_encrypted_response_enc?: string;
+  /** OIDC Core §3.1.3.1 / RFC 7591 §2 — the JWS algorithm the AS */
+  id_token_signed_response_alg?: string;
   jwks?: { keys: Record<string, unknown>[] };
   post_logout_redirect_uris?: string[];
+  /** Snaplink extension (not part of RFC 7591): opt-in HTTPS redirect */
+  redirect_uri_patterns?: string[];
   redirect_uris?: string[];
   require_pkce?: boolean;
   response_types?: string[];
@@ -645,8 +657,12 @@ export interface DCRResponse {
   grant_types?: string[];
   id_token_encrypted_response_alg?: string;
   id_token_encrypted_response_enc?: string;
+  /** OIDC Core §3.1.3.1 / RFC 7591 §2 — the JWS algorithm the AS */
+  id_token_signed_response_alg?: string;
   jwks?: { keys: Record<string, unknown>[] };
   post_logout_redirect_uris?: string[];
+  /** Snaplink extension: validated HTTPS redirect patterns. A matching */
+  redirect_uri_patterns?: string[];
   redirect_uris?: string[];
   /** RFC 7592 management bearer — authenticates subsequent */
   registration_access_token?: string;

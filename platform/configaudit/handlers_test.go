@@ -30,6 +30,7 @@ type handlerDeps struct {
 	runningErr error
 	auditor    *audit.Recorder
 	actor      string
+	controller *configaudit.CanaryController
 }
 
 func (d handlerDeps) ConfigAuditStore() configaudit.Store { return d.store }
@@ -46,6 +47,7 @@ func (d handlerDeps) Auditor() *audit.Recorder {
 func (d handlerDeps) ActorFromContext(context.Context) (string, string, bool) {
 	return d.actor, "", d.actor != ""
 }
+func (d handlerDeps) ConfigCanaryController() *configaudit.CanaryController { return d.controller }
 
 func httpCtx(rawQuery string) (core.HandlerContext, *httptest.ResponseRecorder) {
 	r := httptest.NewRequest("GET", "/api/v1/admin/config/history?"+rawQuery, nil)
@@ -360,6 +362,59 @@ func TestHandleApply_DigestMismatch409(t *testing.T) {
 	}
 	if _, err := store.Applied(context.Background()); err != configaudit.ErrNoAppliedVersion {
 		t.Fatalf("conflict apply must not touch the store, got err=%v", err)
+	}
+}
+
+func TestHandleApply_CanaryStartsAndBlocksConcurrentApply(t *testing.T) {
+	store := configaudit.NewMemoryStore(0)
+	if _, err := store.Apply(context.Background(), configaudit.AppliedVersion{
+		Actor: "seed", Digest: "d1", Snapshot: map[string]any{"version": 1},
+	}); err != nil {
+		t.Fatalf("seed baseline: %v", err)
+	}
+	sink := audit.NewMemorySink(8)
+	controller := configaudit.NewCanaryController(store, []configaudit.CanaryProbe{{
+		Name: "db", Check: func(context.Context) configaudit.CanaryHealth { return configaudit.CanaryHealthy },
+	}}, nil, audit.New(sink))
+	d := handlerDeps{store: store, running: map[string]any{"version": 1}, auditor: audit.New(sink), actor: "admin-9", controller: controller}
+	peer := map[string]any{"version": 2}
+	body := `{"snapshot":` + mustJSON(t, peer) + `,"digest":"` + digestOf(t, peer) + `","reason":"ticket-2"}`
+	ctx, w := httpCtxApply("/api/v1/admin/config/apply", "approve=true&canary=true&window=1s", body)
+	configaudit.HandleApply(d, ctx)
+	if w.Code != 200 {
+		t.Fatalf("canary apply status = %d body=%s", w.Code, w.Body.String())
+	}
+	response := decodeBody(t, w)
+	canary, ok := response[configaudit.KeyCanary].(map[string]any)
+	if !ok || canary["status"] != string(configaudit.CanaryObserving) {
+		t.Fatalf("canary response = %+v", response[configaudit.KeyCanary])
+	}
+	third := map[string]any{"version": 3}
+	thirdBody := `{"snapshot":` + mustJSON(t, third) + `,"digest":"` + digestOf(t, third) + `","reason":"ticket-3"}`
+	ctx, w = httpCtxApply("/api/v1/admin/config/apply", "approve=true", thirdBody)
+	configaudit.HandleApply(d, ctx)
+	if w.Code != 409 || decodeBody(t, w)[core.KeyError] != core.ErrConfigCanaryInProgress {
+		t.Fatalf("concurrent apply status = %d body=%s", w.Code, w.Body.String())
+	}
+	if events, err := sink.Query(context.Background(), audit.Query{Limit: 8}); err != nil {
+		t.Fatalf("query canary audit: %v", err)
+	} else if len(events) != 2 {
+		t.Fatalf("canary start should emit baseline + lifecycle audit, got %+v", events)
+	}
+}
+
+func TestHandleApply_CanaryNeedsPreviousBaseline(t *testing.T) {
+	store := configaudit.NewMemoryStore(0)
+	controller := configaudit.NewCanaryController(store, []configaudit.CanaryProbe{{
+		Name: "db", Check: func(context.Context) configaudit.CanaryHealth { return configaudit.CanaryHealthy },
+	}}, nil, nil)
+	peer := map[string]any{"version": 1}
+	d := handlerDeps{store: store, running: map[string]any{}, controller: controller}
+	body := `{"snapshot":` + mustJSON(t, peer) + `,"digest":"` + digestOf(t, peer) + `","reason":"ticket-1"}`
+	ctx, w := httpCtxApply("/api/v1/admin/config/apply", "approve=true&canary=true", body)
+	configaudit.HandleApply(d, ctx)
+	if w.Code != 409 || decodeBody(t, w)[core.KeyError] != core.ErrConfigCanaryNoBaseline {
+		t.Fatalf("first canary status = %d body=%s", w.Code, w.Body.String())
 	}
 }
 

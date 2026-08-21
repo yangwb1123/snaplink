@@ -119,3 +119,17 @@ const (
 const (
 	EventConnectionAuthenticatorBuildFailed EventType = "connection_authenticator_build_failed"
 )
+
+// Lifecycle-managed exporter transitions. Metadata contains only bounded
+// generation facts; configuration bytes and delivery credentials never enter
+// the audit event.
+const EventWebhookLifecycleTransition EventType = "webhook_lifecycle_transition"
+
+// Lifecycle-managed external worker transitions. Metadata contains only
+// bounded generation facts; executable paths, credentials and provenance
+// contents never enter the audit event.
+const EventExternalWorkerLifecycleTransition EventType = "external_worker_lifecycle_transition"
+
+// Lifecycle-managed ReBAC business-route transitions. Metadata contains only
+// bounded generation facts; tuple contents never enter the audit event.
+const EventReBACLifecycleTransition EventType = "rebac_lifecycle_transition"
