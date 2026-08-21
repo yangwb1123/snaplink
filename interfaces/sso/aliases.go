@@ -416,6 +416,7 @@ const PathVerifyEmail = core.PathVerifyEmail
 const PathMyDataExport = core.PathMyDataExport
 const PathMyAccountErase = core.PathMyAccountErase
 const PathMyEmailChange = core.PathMyEmailChange
+const PathMyPreferences = core.PathMyPreferences
 const PathMyEmailVerify = core.PathMyEmailVerify
 const PathMyWebAuthnRegisterBegin = core.PathMyWebAuthnRegisterBegin
 const PathMyWebAuthnRegisterFinish = core.PathMyWebAuthnRegisterFinish

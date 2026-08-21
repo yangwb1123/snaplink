@@ -147,6 +147,8 @@ const (
 const (
 	EventEmailChangeRequested EventType = "email_change_requested"
 	EventEmailChanged         EventType = "email_changed"
+	// User preferences (theme / language) updated at /me/preferences.
+	EventUserPrefsUpdated EventType = "user_prefs_updated"
 )
 
 // Organization membership events.
@@ -258,7 +260,7 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventConsentGranted: {}, EventConsentRevoked: {}, EventConsentDenied: {},
 	// self-service + email change
 	EventSelfRegistered: {}, EventSubjectDataExported: {}, EventSubjectSelfErased: {},
-	EventEmailChangeRequested: {}, EventEmailChanged: {},
+	EventEmailChangeRequested: {}, EventEmailChanged: {}, EventUserPrefsUpdated: {},
 	// org membership
 	EventOrgLeft: {}, EventOrgMemberAutoProvisioned: {}, EventInvitationSent: {},
 	EventInvitationAccepted: {}, EventInvitationRevoked: {},

@@ -87,6 +87,11 @@ const (
 	// — the verification flow PATCH /me routes email edits through.
 	PathMyEmailChange = "/me/email/change"
 	PathMyEmailVerify = "/me/email/verify"
+	// PathMyPreferences is the authenticated user-preferences endpoint
+	// (GET reads, PUT writes the allowlisted preference keys below —
+	// locale / zoneinfo / sverp:theme_mode). SVERP consumes it for
+	// cross-application theme + language preferences.
+	PathMyPreferences = "/me/preferences"
 	// PathVerifyEmail is the unauthenticated endpoint for completing signup
 	// email verification (POST {token}). Consumes the token and atomically
 	// creates the user. Only mounted when signup with require_verification is
