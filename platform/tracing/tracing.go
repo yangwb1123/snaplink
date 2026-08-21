@@ -36,7 +36,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 )
 
 // active reports whether Init installed a REAL (exporting) TracerProvider.
@@ -245,6 +245,10 @@ func Active() bool { return active.Load() }
 // filters.
 func Middleware(operation string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		return otelhttp.NewHandler(next, operation)
+		return otelhttp.NewHandler(next, operation,
+			otelhttp.WithSpanNameFormatter(func(operation string, _ *http.Request) string {
+				return operation
+			}),
+		)
 	}
 }
