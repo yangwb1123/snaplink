@@ -28,6 +28,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/platform/migrate"
@@ -132,7 +133,7 @@ type Provider struct {
 
 // New opens dsn, migrates the schema, returns the provider.
 func New(dsn string) (*Provider, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", sqliteTransactionDSN(dsn))
 	if err != nil {
 		return nil, fmt.Errorf("permissions/sqlite: open: %w", err)
 	}
@@ -146,6 +147,25 @@ func New(dsn string) (*Provider, error) {
 		return nil, fmt.Errorf("permissions/sqlite: migrate: %w", err)
 	}
 	return &Provider{db: db}, nil
+}
+
+func sqliteTransactionDSN(dsn string) string {
+	lower := strings.ToLower(dsn)
+	params := make([]string, 0, 2)
+	if !strings.Contains(lower, "_txlock=") {
+		params = append(params, "_txlock=immediate")
+	}
+	if !strings.Contains(lower, "_pragma=busy_timeout") {
+		params = append(params, "_pragma=busy_timeout(5000)")
+	}
+	if len(params) == 0 {
+		return dsn
+	}
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	return dsn + separator + strings.Join(params, "&")
 }
 
 // NewWithDB wraps an existing *sql.DB. Caller owns the connection
