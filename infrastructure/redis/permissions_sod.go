@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/yangwb1123/snaplink/domains/permissions"
@@ -17,6 +18,34 @@ const (
 	permActivePrefix         = "sso:perm:active:"
 	permActiveSessionsSuffix = ":active_sessions"
 )
+
+type activeSessionSettings struct {
+	ttl time.Duration
+}
+
+// NewPermissionProviderWithActiveSessionTTL enables expiry for dynamic role
+// projections. A non-positive TTL preserves the historical no-expiry mode.
+func NewPermissionProviderWithActiveSessionTTL(rdb goredis.Cmdable, ttl time.Duration) *PermissionProvider {
+	if ttl < 0 {
+		ttl = 0
+	}
+	return &PermissionProvider{rdb: rdb, activeSessionSettings: activeSessionSettings{ttl: ttl}}
+}
+
+func (p *PermissionProvider) activeSessionTTL() time.Duration {
+	return p.activeSessionSettings.ttl
+}
+
+// Every per-client key carries a {clientID} hash tag so role, assignment, and
+// active-session keys share one Redis Cluster slot for lifecycle scripts.
+func permRolesKey(clientID string) string { return permRolesPrefix + hashTag(clientID) }
+func permMenusKey(clientID string) string { return permMenusPrefix + hashTag(clientID) }
+func permUsersKey(clientID string) string {
+	return permAssignPrefix + hashTag(clientID) + permUsersSuffix
+}
+func permAssignKey(clientID, userID string) string {
+	return permAssignPrefix + hashTag(clientID) + ":" + userID
+}
 
 func permSoDKey(clientID, mode string) string {
 	return permSoDPrefix + hashTag(clientID) + ":" + mode
@@ -34,35 +63,14 @@ func permActiveKeyPrefix(clientID string) string {
 	return permActivePrefix + hashTag(clientID) + ":"
 }
 
-func (p *PermissionProvider) clearActiveSessions(ctx context.Context, userID, clientID string) error {
-	index := permActiveSessionsKey(clientID, userID)
-	sessions, err := p.rdb.SMembers(ctx, index).Result()
-	if err != nil {
-		return fmt.Errorf("redis: list active sessions: %w", err)
-	}
-	pipe := p.rdb.TxPipeline()
-	for _, sessionID := range sessions {
-		pipe.Del(ctx, permActiveKey(clientID, userID, sessionID))
-	}
-	pipe.Del(ctx, index)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("redis: clear active sessions: %w", err)
-	}
-	return nil
-}
-
-func (p *PermissionProvider) clearClientActiveSessions(ctx context.Context, clientID string) error {
-	users, err := p.rdb.SMembers(ctx, permUsersKey(clientID)).Result()
-	if err != nil {
-		return fmt.Errorf("redis: list active-session users: %w", err)
-	}
-	for _, userID := range users {
-		if err := p.clearActiveSessions(ctx, userID, clientID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+var deactivateSessionScript = goredis.NewScript(`
+redis.call('DEL', KEYS[1])
+redis.call('SREM', KEYS[2], ARGV[1])
+if redis.call('SCARD', KEYS[2]) == 0 then
+  redis.call('DEL', KEYS[2])
+end
+return 1
+`)
 
 func (p *PermissionProvider) SetConflictSets(ctx context.Context, clientID string, sets [][]string) error {
 	return p.replaceConflictSets(ctx, clientID, redisStaticSoDMode, sets)
@@ -155,8 +163,12 @@ func (p *PermissionProvider) ActivateRoles(ctx context.Context, userID, clientID
 		return fmt.Errorf("redis: marshal active roles: %w", err)
 	}
 	pipe := p.rdb.TxPipeline()
-	pipe.Set(ctx, permActiveKey(clientID, userID, sessionID), raw, 0)
-	pipe.SAdd(ctx, permActiveSessionsKey(clientID, userID), sessionID)
+	index := permActiveSessionsKey(clientID, userID)
+	pipe.Set(ctx, permActiveKey(clientID, userID, sessionID), raw, p.activeSessionTTL())
+	pipe.SAdd(ctx, index, sessionID)
+	if ttl := p.activeSessionTTL(); ttl > 0 {
+		pipe.Expire(ctx, index, ttl)
+	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis: store active roles: %w", err)
 	}
@@ -199,10 +211,10 @@ func (p *PermissionProvider) ActiveRoles(ctx context.Context, userID, clientID, 
 }
 
 func (p *PermissionProvider) DeactivateSession(ctx context.Context, userID, clientID, sessionID string) error {
-	pipe := p.rdb.TxPipeline()
-	pipe.Del(ctx, permActiveKey(clientID, userID, sessionID))
-	pipe.SRem(ctx, permActiveSessionsKey(clientID, userID), sessionID)
-	if _, err := pipe.Exec(ctx); err != nil {
+	if err := deactivateSessionScript.Run(ctx, p.rdb, []string{
+		permActiveKey(clientID, userID, sessionID),
+		permActiveSessionsKey(clientID, userID),
+	}, sessionID).Err(); err != nil {
 		return fmt.Errorf("redis: deactivate session: %w", err)
 	}
 	return nil

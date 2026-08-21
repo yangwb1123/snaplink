@@ -46,13 +46,14 @@ const (
 // permission set, and the unknown-user lookups return ErrUserNotFound.
 type PermissionProvider struct {
 	rdb goredis.Cmdable
+	activeSessionSettings
 }
 
 // NewPermissionProvider builds a PermissionProvider over an existing go-redis
 // client (or cluster client — any goredis.Cmdable). The caller owns the
 // client lifecycle.
 func NewPermissionProvider(rdb goredis.Cmdable) *PermissionProvider {
-	return &PermissionProvider{rdb: rdb}
+	return NewPermissionProviderWithActiveSessionTTL(rdb, 0)
 }
 
 // Ping reports Redis connection health for [sso.WithReadyCheck] wiring.
@@ -61,21 +62,6 @@ func (p *PermissionProvider) Ping(ctx context.Context) error {
 		return errors.New("redis: permission provider not initialized")
 	}
 	return p.rdb.Ping(ctx).Err()
-}
-
-// Every per-client key carries a {clientID} hash tag so the role hash, the
-// per-user assignment sets, and the users index all map to ONE Redis Cluster
-// slot. removeRoleScript/assignScript/unassignScript/addRoleToUserScript touch
-// several of these in one Lua call (removeRoleScript even builds per-user akeys
-// dynamically) — without the shared tag those are CROSSSLOT errors on a real
-// cluster. See cluster.go.
-func permRolesKey(clientID string) string { return permRolesPrefix + hashTag(clientID) }
-func permMenusKey(clientID string) string { return permMenusPrefix + hashTag(clientID) }
-func permUsersKey(clientID string) string {
-	return permAssignPrefix + hashTag(clientID) + permUsersSuffix
-}
-func permAssignKey(clientID, userID string) string {
-	return permAssignPrefix + hashTag(clientID) + ":" + userID
 }
 
 // --- Role CRUD ---
@@ -144,7 +130,8 @@ func (p *PermissionProvider) UpdateRole(ctx context.Context, clientID string, ro
 // the memory peer would never produce.
 //
 // KEYS[1] = roles hash   KEYS[2] = users index set
-// ARGV[1] = role code    ARGV[2] = assignment key prefix ("sso:perm:assign:<client>:")
+// ARGV[1] = role code    ARGV[2] = assignment key prefix
+// ARGV[3] = active key prefix   ARGV[4] = active-session index suffix
 // Returns 1 on delete, 0 when the role was absent (caller maps to
 // ErrRoleNotFound). An assignment SET emptied by the strip is deleted and its
 // user pruned from the index so ListAssignments' empty-roles filter holds.
@@ -155,6 +142,12 @@ end
 local users = redis.call('SMEMBERS', KEYS[2])
 for i = 1, #users do
   local akey = ARGV[2] .. users[i]
+  local activeIndex = ARGV[3] .. users[i] .. ARGV[4]
+  local sessions = redis.call('SMEMBERS', activeIndex)
+  for j = 1, #sessions do
+    redis.call('DEL', ARGV[3] .. users[i] .. ':' .. sessions[j])
+  end
+  redis.call('DEL', activeIndex)
   redis.call('SREM', akey, ARGV[1])
   if redis.call('SCARD', akey) == 0 then
     redis.call('DEL', akey)
@@ -167,15 +160,13 @@ return 1
 // RemoveRole drops the role definition and rips it out of every user's
 // assignment list under the same client.
 func (p *PermissionProvider) RemoveRole(ctx context.Context, clientID, roleCode string) error {
-	if err := p.clearClientActiveSessions(ctx, clientID); err != nil {
-		return err
-	}
 	res, err := removeRoleScript.Run(ctx, p.rdb,
 		[]string{permRolesKey(clientID), permUsersKey(clientID)},
 		// ARGV[2] is the per-user assignment-key prefix the Lua concatenates
 		// the user id onto; it MUST include the {clientID} hash tag so each
 		// reconstructed akey shares the script's slot (matches permAssignKey).
 		roleCode, permAssignPrefix+hashTag(clientID)+":",
+		permActiveKeyPrefix(clientID), permActiveSessionsSuffix,
 	).Int64()
 	if err != nil {
 		return fmt.Errorf("redis: remove role: %w", err)
@@ -211,15 +202,20 @@ func (p *PermissionProvider) ListAllRoles(ctx context.Context, clientID string) 
 // server-side script so a concurrent reader never sees the half-written
 // intermediate state between DEL and SADD.
 //
-// KEYS[1] = assignment set   KEYS[2] = users index set
-// ARGV[1] = user id          ARGV[2..] = role codes (empty => clear)
+// KEYS[1] = assignment set   KEYS[2] = users index   KEYS[3] = active index
+// ARGV[1] = user id   ARGV[2] = active key prefix   ARGV[3..] = role codes
 var assignScript = goredis.NewScript(`
+local sessions = redis.call('SMEMBERS', KEYS[3])
+for i = 1, #sessions do
+  redis.call('DEL', ARGV[2] .. ARGV[1] .. ':' .. sessions[i])
+end
+redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[1])
-if #ARGV < 2 then
+if #ARGV < 3 then
   redis.call('SREM', KEYS[2], ARGV[1])
   return 0
 end
-for i = 2, #ARGV do
+for i = 3, #ARGV do
   redis.call('SADD', KEYS[1], ARGV[i])
 end
 redis.call('SADD', KEYS[2], ARGV[1])
@@ -234,16 +230,13 @@ func (p *PermissionProvider) AssignRoles(ctx context.Context, userID, clientID s
 	if err := p.checkStaticConflict(ctx, clientID, roles); err != nil {
 		return err
 	}
-	if err := p.clearActiveSessions(ctx, userID, clientID); err != nil {
-		return err
-	}
 	argv := make([]any, 0, len(roles)+1)
-	argv = append(argv, userID)
+	argv = append(argv, userID, permActiveKeyPrefix(clientID))
 	for _, r := range roles {
 		argv = append(argv, r)
 	}
 	if err := assignScript.Run(ctx, p.rdb,
-		[]string{permAssignKey(clientID, userID), permUsersKey(clientID)},
+		[]string{permAssignKey(clientID, userID), permUsersKey(clientID), permActiveSessionsKey(clientID, userID)},
 		argv...,
 	).Err(); err != nil {
 		return fmt.Errorf("redis: assign roles: %w", err)
@@ -256,13 +249,18 @@ func (p *PermissionProvider) AssignRoles(ctx context.Context, userID, clientID s
 // index — all server-side so the SREM + emptiness check + index prune can't
 // be split by a concurrent writer. ARGV[1..] are the codes to drop.
 //
-// KEYS[1] = assignment set   KEYS[2] = users index set
-// ARGV[1] = user id          ARGV[2..] = role codes to remove
+// KEYS[1] = assignment set   KEYS[2] = users index   KEYS[3] = active index
+// ARGV[1] = user id   ARGV[2] = active key prefix   ARGV[3..] = role codes
 var unassignScript = goredis.NewScript(`
+local sessions = redis.call('SMEMBERS', KEYS[3])
+for i = 1, #sessions do
+  redis.call('DEL', ARGV[2] .. ARGV[1] .. ':' .. sessions[i])
+end
+redis.call('DEL', KEYS[3])
 if redis.call('EXISTS', KEYS[1]) == 0 then
   return 0
 end
-for i = 2, #ARGV do
+for i = 3, #ARGV do
   redis.call('SREM', KEYS[1], ARGV[i])
 end
 if redis.call('SCARD', KEYS[1]) == 0 then
@@ -280,16 +278,13 @@ func (p *PermissionProvider) UnassignRoles(ctx context.Context, userID, clientID
 	if len(roles) == 0 {
 		return nil
 	}
-	if err := p.clearActiveSessions(ctx, userID, clientID); err != nil {
-		return err
-	}
 	argv := make([]any, 0, len(roles)+1)
-	argv = append(argv, userID)
+	argv = append(argv, userID, permActiveKeyPrefix(clientID))
 	for _, r := range roles {
 		argv = append(argv, r)
 	}
 	if err := unassignScript.Run(ctx, p.rdb,
-		[]string{permAssignKey(clientID, userID), permUsersKey(clientID)},
+		[]string{permAssignKey(clientID, userID), permUsersKey(clientID), permActiveSessionsKey(clientID, userID)},
 		argv...,
 	).Err(); err != nil {
 		return fmt.Errorf("redis: unassign roles: %w", err)
@@ -303,9 +298,14 @@ func (p *PermissionProvider) UnassignRoles(ctx context.Context, userID, clientID
 // membership delta" case can't duplicate. One script so a crash can't add the
 // code without indexing the user (which would hide them from ListAssignments).
 //
-// KEYS[1] = assignment set   KEYS[2] = users index set
-// ARGV[1] = user id          ARGV[2] = role code
+// KEYS[1] = assignment set   KEYS[2] = users index   KEYS[3] = active index
+// ARGV[1] = user id   ARGV[2] = role code   ARGV[3] = active key prefix
 var addRoleToUserScript = goredis.NewScript(`
+local sessions = redis.call('SMEMBERS', KEYS[3])
+for i = 1, #sessions do
+  redis.call('DEL', ARGV[3] .. ARGV[1] .. ':' .. sessions[i])
+end
+redis.call('DEL', KEYS[3])
 redis.call('SADD', KEYS[1], ARGV[2])
 redis.call('SADD', KEYS[2], ARGV[1])
 return 1
@@ -326,12 +326,9 @@ func (p *PermissionProvider) AddRoleToUser(ctx context.Context, userID, clientID
 	if err := p.checkStaticConflict(ctx, clientID, append(codes, roleCode)); err != nil {
 		return err
 	}
-	if err := p.clearActiveSessions(ctx, userID, clientID); err != nil {
-		return err
-	}
 	if err := addRoleToUserScript.Run(ctx, p.rdb,
-		[]string{permAssignKey(clientID, userID), permUsersKey(clientID)},
-		userID, roleCode,
+		[]string{permAssignKey(clientID, userID), permUsersKey(clientID), permActiveSessionsKey(clientID, userID)},
+		userID, roleCode, permActiveKeyPrefix(clientID),
 	).Err(); err != nil {
 		return fmt.Errorf("redis: add role to user: %w", err)
 	}
