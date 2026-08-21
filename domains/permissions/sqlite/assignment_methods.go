@@ -22,7 +22,15 @@ func (p *Provider) AssignRoles(ctx context.Context, userID, clientID string, rol
 	if err != nil {
 		return fmt.Errorf("permissions/sqlite: marshal assignment: %w", err)
 	}
-	_, err = p.db.ExecContext(ctx, `
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("permissions/sqlite: begin assign: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := p.checkStaticConflict(ctx, tx, clientID, roles); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
         INSERT INTO permissions_assignments (user_id, client_id, roles_json)
         VALUES (?, ?, ?)
         ON CONFLICT(user_id, client_id) DO UPDATE SET roles_json = excluded.roles_json`,
@@ -31,7 +39,7 @@ func (p *Provider) AssignRoles(ctx context.Context, userID, clientID string, rol
 	if err != nil {
 		return fmt.Errorf("permissions/sqlite: assign roles: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // UnassignRoles removes the listed role codes from the user's
@@ -118,6 +126,9 @@ func (p *Provider) AddRoleToUser(ctx context.Context, userID, clientID, roleCode
 		}
 	}
 	have = append(have, roleCode)
+	if err := p.checkStaticConflict(ctx, tx, clientID, have); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(have)
 	if err != nil {
 		return fmt.Errorf("permissions/sqlite: marshal assignment: %w", err)

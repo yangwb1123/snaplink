@@ -49,6 +49,7 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventLogout,
 			audit.EventClientAccess,
 			audit.EventPermissionQuery,
+			audit.EventPermissionCheck,
 			audit.EventIdentityMerged,
 			audit.EventIdentityMergeRejected,
 			audit.EventIdentityUnlinked,

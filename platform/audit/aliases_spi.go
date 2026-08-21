@@ -168,6 +168,7 @@ const (
 	EventPasswordResetRequested              = auditspi.EventPasswordResetRequested
 	EventPasswordWeak                        = auditspi.EventPasswordWeak
 	EventPermissionQuery                     = auditspi.EventPermissionQuery
+	EventPermissionCheck                     = auditspi.EventPermissionCheck
 	EventRefreshRotationVelocityExceeded     = auditspi.EventRefreshRotationVelocityExceeded
 	EventRefreshTokenIssued                  = auditspi.EventRefreshTokenIssued
 	EventRefreshTokenReuse                   = auditspi.EventRefreshTokenReuse

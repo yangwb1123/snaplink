@@ -80,6 +80,45 @@ service PermissionAdminService {
       delete: "/api/v1/admin/permissions/{client_id}/resources/{id}"
     };
   }
+
+  rpc SetConflictSets(SetConflictSetsRequest) returns (SetConflictSetsResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/admin/permissions/{client_id}/sod/conflicts"
+      body: "*"
+    };
+  }
+  rpc ListConflictSets(ListConflictSetsRequest) returns (ListConflictSetsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/admin/permissions/{client_id}/sod/conflicts"
+    };
+  }
+  rpc SetActivationConflictSets(SetActivationConflictSetsRequest) returns (SetActivationConflictSetsResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/admin/permissions/{client_id}/dsod/conflicts"
+      body: "*"
+    };
+  }
+  rpc ListActivationConflictSets(ListActivationConflictSetsRequest) returns (ListActivationConflictSetsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/admin/permissions/{client_id}/dsod/conflicts"
+    };
+  }
+  rpc ActivateRoles(ActivateRolesRequest) returns (ActivateRolesResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/admin/permissions/{client_id}/sessions/{session_id}/roles"
+      body: "*"
+    };
+  }
+  rpc ListActiveRoles(ListActiveRolesRequest) returns (ListActiveRolesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/admin/permissions/{client_id}/sessions/{session_id}/roles"
+    };
+  }
+  rpc DeactivateSession(DeactivateSessionRequest) returns (DeactivateSessionResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/admin/permissions/{client_id}/sessions/{session_id}/roles"
+    };
+  }
 }
 
 message Role {
@@ -208,3 +247,47 @@ message DeleteResourceRequest {
   string id = 3;
 }
 message DeleteResourceResponse {}
+
+message ConflictSet {
+  repeated string role_codes = 1;
+}
+
+message SetConflictSetsRequest {
+  string client_id = 1;
+  repeated ConflictSet conflict_sets = 2;
+}
+message SetConflictSetsResponse {}
+message ListConflictSetsRequest { string client_id = 1; }
+message ListConflictSetsResponse {
+  repeated ConflictSet conflict_sets = 1;
+}
+
+message SetActivationConflictSetsRequest {
+  string client_id = 1;
+  repeated ConflictSet conflict_sets = 2;
+}
+message SetActivationConflictSetsResponse {}
+message ListActivationConflictSetsRequest { string client_id = 1; }
+message ListActivationConflictSetsResponse {
+  repeated ConflictSet conflict_sets = 1;
+}
+
+message ActivateRolesRequest {
+  string client_id = 1;
+  string user_id = 2;
+  string session_id = 3;
+  repeated string roles = 4;
+}
+message ActivateRolesResponse {}
+message ListActiveRolesRequest {
+  string client_id = 1;
+  string user_id = 2;
+  string session_id = 3;
+}
+message ListActiveRolesResponse { repeated Role roles = 1; }
+message DeactivateSessionRequest {
+  string client_id = 1;
+  string user_id = 2;
+  string session_id = 3;
+}
+message DeactivateSessionResponse {}

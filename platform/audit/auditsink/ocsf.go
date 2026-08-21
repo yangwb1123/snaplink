@@ -77,6 +77,7 @@ var ocsfEventActivities = map[auditspi.EventType]ocsfActivity{
 	auditspi.EventCallbackFailure: {ocsfClassAuthentication, ocsfCategoryIAM, 99, "OAuth Callback Failure"},
 	auditspi.EventClientAccess:    {ocsfClassAPIActivity, ocsfCategoryAppActivity, 2, "Read"},
 	auditspi.EventPermissionQuery: {ocsfClassAPIActivity, ocsfCategoryAppActivity, 2, "Read"},
+	auditspi.EventPermissionCheck: {ocsfClassAPIActivity, ocsfCategoryAppActivity, 3, "Authorize"},
 	// DCR
 	auditspi.EventClientRegistered: {ocsfClassAccountChange, ocsfCategoryIAM, 1, "Create"},
 	auditspi.EventClientUpdated:    {ocsfClassAccountChange, ocsfCategoryIAM, 99, "Update"},

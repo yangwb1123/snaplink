@@ -144,6 +144,15 @@ type ResourceProvider interface {
 	ResolveResource(ctx context.Context, lookup ResourceLookup) (*ResourceDecision, error)
 }
 
+// ResourceCatalogLister is an optional ResourceProvider extension used by
+// client-wide policy exports. ListResources deliberately requires an exact
+// tenant bucket for request-time isolation; bundle generation instead needs
+// every tenant row belonging to one client. Providers without this extension
+// remain usable through the no-tenant ListResources fallback.
+type ResourceCatalogLister interface {
+	ListAllResources(ctx context.Context, clientID string) ([]*Resource, error)
+}
+
 // CheckResource decides an optional resource-aware authorization request.
 // A nil lookup preserves the legacy flat permission decision. A catalog miss
 // also falls back to that decision so callers without a matching entry retain

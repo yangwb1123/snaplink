@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -8,12 +9,33 @@ import (
 	"net/http"
 	"reflect"
 
+	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc/bcl"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
+
+// deactivatePermissionSession is best-effort session lifecycle cleanup for
+// DSoD state. Permission stores are optional and logout must not fail closed
+// when their activation table is unavailable.
+func (s *Server) deactivatePermissionSession(ctx context.Context, sessionID string) {
+	if sessionID == "" || s.sessionMgr == nil || s.permissions == nil {
+		return
+	}
+	activator, ok := s.permissions.(permissions.SessionRoleActivator)
+	if !ok {
+		return
+	}
+	sess, err := s.sessionMgr.Get(ctx, sessionID)
+	if err != nil || sess == nil || sess.UserID == "" || sess.ClientID == "" {
+		return
+	}
+	if err := activator.DeactivateSession(ctx, sess.UserID, sess.ClientID, sessionID); err != nil && s.logger != nil {
+		s.logger.Error("logout: deactivate permission session failed", "error", err)
+	}
+}
 
 func webhookConfigured(runtime webhook.Runtime) bool {
 	if runtime == nil {

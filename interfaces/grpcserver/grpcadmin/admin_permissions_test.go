@@ -304,3 +304,62 @@ func TestPermissionAdminService_ResourceCRUDScopePaginationAndAudit(t *testing.T
 		t.Fatalf("audit events = %d, want 3", len(events))
 	}
 }
+
+func TestPermissionAdminService_SoDAndSessionActivation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	prov := permissions.NewMemoryProvider()
+	for _, code := range []string{"approver", "requester"} {
+		if err := prov.AddRole(ctx, "web", permissions.Role{Code: code}); err != nil {
+			t.Fatalf("AddRole: %v", err)
+		}
+	}
+	var invalidated []string
+	svc := NewPermissionAdminService(prov, nil, func(_ context.Context, clientID string) {
+		invalidated = append(invalidated, clientID)
+	})
+	_, err := svc.SetConflictSets(ctx, &adminv1.SetConflictSetsRequest{
+		ClientId: "web", ConflictSets: []*adminv1.ConflictSet{{RoleCodes: []string{"approver", "requester"}}},
+	})
+	requireOK(t, err, "SetConflictSets")
+	sets, err := svc.ListConflictSets(ctx, &adminv1.ListConflictSetsRequest{ClientId: "web"})
+	requireOK(t, err, "ListConflictSets")
+	if len(sets.ConflictSets) != 1 || len(sets.ConflictSets[0].RoleCodes) != 2 {
+		t.Fatalf("conflict sets = %+v", sets.ConflictSets)
+	}
+	_, err = svc.AssignRoles(ctx, &adminv1.AssignRolesRequest{
+		ClientId: "web", UserId: "alice", Roles: []string{"approver", "requester"},
+	})
+	requireCode(t, err, codes.FailedPrecondition)
+
+	if _, err := svc.SetConflictSets(ctx, &adminv1.SetConflictSetsRequest{ClientId: "web"}); err != nil {
+		t.Fatalf("clear SSoD: %v", err)
+	}
+	if _, err := svc.AssignRoles(ctx, &adminv1.AssignRolesRequest{
+		ClientId: "web", UserId: "alice", Roles: []string{"approver", "requester"},
+	}); err != nil {
+		t.Fatalf("AssignRoles after clear: %v", err)
+	}
+	_, err = svc.SetActivationConflictSets(ctx, &adminv1.SetActivationConflictSetsRequest{
+		ClientId: "web", ConflictSets: []*adminv1.ConflictSet{{RoleCodes: []string{"approver", "requester"}}},
+	})
+	requireOK(t, err, "SetActivationConflictSets")
+	_, err = svc.ActivateRoles(ctx, &adminv1.ActivateRolesRequest{
+		ClientId: "web", UserId: "alice", SessionId: "sid-1", Roles: []string{"approver"},
+	})
+	requireOK(t, err, "ActivateRoles")
+	active, err := svc.ListActiveRoles(ctx, &adminv1.ListActiveRolesRequest{ClientId: "web", UserId: "alice", SessionId: "sid-1"})
+	requireOK(t, err, "ListActiveRoles")
+	if len(active.Roles) != 1 || active.Roles[0].Code != "approver" {
+		t.Fatalf("active roles = %+v", active.Roles)
+	}
+	_, err = svc.ActivateRoles(ctx, &adminv1.ActivateRolesRequest{
+		ClientId: "web", UserId: "alice", SessionId: "sid-1", Roles: []string{"approver", "requester"},
+	})
+	requireCode(t, err, codes.FailedPrecondition)
+	_, err = svc.DeactivateSession(ctx, &adminv1.DeactivateSessionRequest{ClientId: "web", UserId: "alice", SessionId: "sid-1"})
+	requireOK(t, err, "DeactivateSession")
+	if len(invalidated) != 3 {
+		t.Fatalf("invalidations = %v, want three declaration writes", invalidated)
+	}
+}

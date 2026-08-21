@@ -76,6 +76,20 @@ func (m *MemoryProvider) ListResources(_ context.Context, tenantID, clientID str
 	return out, nil
 }
 
+// ListAllResources returns every catalog entry for clientID, including rows
+// in tenant-specific buckets. It is used by the client-wide policy export.
+func (m *MemoryProvider) ListAllResources(_ context.Context, clientID string) ([]*Resource, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []*Resource
+	for _, r := range m.resources {
+		if r.ClientID == clientID {
+			out = append(out, cloneResource(r))
+		}
+	}
+	return out, nil
+}
+
 // DeleteResource removes a Resource by ID. Idempotent.
 func (m *MemoryProvider) DeleteResource(_ context.Context, id string) error {
 	m.mu.Lock()

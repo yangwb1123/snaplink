@@ -26,6 +26,11 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 		return
 	}
 	bcSubject, bcClientID, bcSID := s.captureBackchannelTarget(ctx, bearer)
+	logoutSessionID := req.SessionID
+	if logoutSessionID == "" {
+		logoutSessionID = bcSID
+	}
+	s.deactivatePermissionSession(ctx.Request().Context(), logoutSessionID)
 	revoked := s.revokeLogoutCredentials(ctx, req.SessionID, bearer)
 	s.maybeFanOutBackchannel(ctx, bcSubject, bcClientID, bcSID)
 	s.TriggerSessionHubLogout(ctx.Request().Context(), bcSubject, bcSID)

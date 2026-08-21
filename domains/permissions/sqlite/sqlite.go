@@ -19,6 +19,8 @@
 //
 //   - resources(id) PK + tenant/client/type/name uniqueness,
 //     policy JSON, and dispatch columns for the runtime catalog.
+//
+//   - conflict declarations and session-active role rows for SSoD/DSoD.
 package sqlite
 
 import (
@@ -39,6 +41,7 @@ import (
 var migrations = []migrate.Migration{
 	{Version: 1, Name: "baseline_permissions", SQL: schema},
 	{Version: 2, Name: "resource_catalog", SQL: resourceSchema},
+	{Version: 3, Name: "separation_of_duty", SQL: sodSchema},
 }
 
 const schema = `
@@ -95,6 +98,31 @@ CREATE INDEX IF NOT EXISTS idx_permissions_resources_dispatch
 
 CREATE INDEX IF NOT EXISTS idx_permissions_resources_dispatch_key
     ON permissions_resources(tenant_id, client_id, type, dispatch_key);
+`
+
+const sodSchema = `
+CREATE TABLE IF NOT EXISTS permissions_conflict_sets (
+    client_id  TEXT NOT NULL,
+    mode       TEXT NOT NULL,
+    set_index  INTEGER NOT NULL,
+    role_code  TEXT NOT NULL,
+    PRIMARY KEY (client_id, mode, set_index, role_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_conflicts_scope
+    ON permissions_conflict_sets(client_id, mode, set_index);
+
+CREATE TABLE IF NOT EXISTS permissions_active_roles (
+    user_id    TEXT NOT NULL,
+    client_id  TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    role_code  TEXT NOT NULL,
+    role_index INTEGER NOT NULL,
+    PRIMARY KEY (user_id, client_id, session_id, role_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_active_session
+    ON permissions_active_roles(user_id, client_id, session_id, role_index);
 `
 
 // Provider is the SQLite-backed [permissions.Provider].
@@ -158,4 +186,6 @@ var (
 	_ permissions.MenuLister            = (*Provider)(nil)
 	_ permissions.GroupMembershipWriter = (*Provider)(nil)
 	_ permissions.ResourceProvider      = (*Provider)(nil)
+	_ permissions.SoDProvider           = (*Provider)(nil)
+	_ permissions.SessionRoleActivator  = (*Provider)(nil)
 )

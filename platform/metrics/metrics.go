@@ -49,6 +49,11 @@ type Metrics struct {
 	GRPCRequestsTotal   *prometheus.CounterVec   // labels: grpc_service, code_class
 	GRPCRequestDuration *prometheus.HistogramVec // labels: grpc_service, code_class
 
+	// AuthzChecksTotal counts Authorizer.Check decisions. The decision label is
+	// the bounded allow|deny vocabulary; subject/client/permission remain in
+	// audit metadata and logs rather than metric labels.
+	AuthzChecksTotal *prometheus.CounterVec // labels: decision
+
 	// Auth flow.
 	LoginAttemptsTotal *prometheus.CounterVec // labels: provider, outcome
 	TokensIssuedTotal  *prometheus.CounterVec // labels: strategy

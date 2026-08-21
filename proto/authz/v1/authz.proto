@@ -38,6 +38,10 @@ message CheckRequest {
   string            resource_type = 4;
   string            tenant_id     = 5;
   map<string,string> attributes    = 6;
+  // Optional OIDC sid/session context. When the provider supports dynamic
+  // separation of duty and this session has an active role projection, the
+  // decision evaluates that projection instead of the full assignment.
+  string            session_id    = 7;
 }
 
 message CheckResponse {

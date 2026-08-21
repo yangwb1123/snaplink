@@ -97,6 +97,56 @@ func TestBuildPolicyBundle_SerializesRolesAndSemantics(t *testing.T) {
 	}
 }
 
+func TestBuildPolicyBundle_IncludesResourcesAndSoD(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	p := bundleProvider(t)
+	resource := &permissions.Resource{
+		ID: "orders-create", TenantID: "tenant-a", ClientID: "web-app",
+		Type: permissions.ResourceTypeHTTPAPI, Name: "orders:create",
+		RequiresAuth:        true,
+		Attributes:          map[string]string{"path": "/orders", "method": "POST"},
+		RequiredPermissions: []string{"order:create", "audit:write"},
+	}
+	if err := p.RegisterResource(ctx, resource); err != nil {
+		t.Fatalf("register resource: %v", err)
+	}
+	if err := p.SetConflictSets(ctx, "web-app", [][]string{{"viewer", "admin"}}); err != nil {
+		t.Fatalf("set ssod: %v", err)
+	}
+	if err := p.SetActivationConflictSets(ctx, "web-app", [][]string{{"admin", "viewer"}}); err != nil {
+		t.Fatalf("set dsod: %v", err)
+	}
+	b, err := permissions.BuildPolicyBundle(ctx, p, "web-app")
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if len(b.Resources) != 1 || b.Resources[0].TenantID != "tenant-a" {
+		t.Fatalf("resources = %+v", b.Resources)
+	}
+	if b.Resources[0].RequireMode != permissions.RequireAny || !b.Resources[0].RequiresAuth {
+		t.Fatalf("resource semantics = %+v", b.Resources[0])
+	}
+	if len(b.SSoDConflictSets) != 1 || len(b.DSoDConflictSets) != 1 {
+		t.Fatalf("conflict sets = ssod=%v dsod=%v", b.SSoDConflictSets, b.DSoDConflictSets)
+	}
+	if b.SSoDConflictSets[0][0] != "admin" {
+		t.Fatalf("ssod set was not canonicalized: %v", b.SSoDConflictSets)
+	}
+	before := b.CanonicalBytes()
+	resource.RequiredPermissions = []string{"order:create", "audit:write", "orders:read"}
+	if err := p.RegisterResource(ctx, resource); err != nil {
+		t.Fatalf("update resource: %v", err)
+	}
+	updated, err := permissions.BuildPolicyBundle(ctx, p, "web-app")
+	if err != nil {
+		t.Fatalf("rebuild resource: %v", err)
+	}
+	if bytes.Equal(before, updated.CanonicalBytes()) {
+		t.Fatal("canonical bytes unchanged after resource edit")
+	}
+}
+
 // TestBuildPolicyBundle_CanonicalBytesStableAcrossRebuilds is the ETag
 // stability guarantee: rebuilding the bundle from the SAME role set (even
 // at a later time, even when the provider's map iteration order differs)

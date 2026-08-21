@@ -18,6 +18,7 @@ const (
 	EventCallbackFailure EventType = "callback_failure"
 	EventClientAccess    EventType = "client_access"
 	EventPermissionQuery EventType = "permission_query"
+	EventPermissionCheck EventType = "permission_check"
 )
 
 // DCR (RFC 7591/7592) lifecycle events.
@@ -234,7 +235,7 @@ var KnownEventTypes = map[EventType]struct{}{
 	// core auth + token lifecycle
 	EventLogin: {}, EventLoginFailure: {}, EventNewDeviceLogin: {}, EventNewLocation: {}, EventTrustDecay: {}, EventLogout: {}, EventTokenIssued: {},
 	EventTokenRevoked: {}, EventCodeSent: {}, EventCallbackFailure: {},
-	EventClientAccess: {}, EventPermissionQuery: {},
+	EventClientAccess: {}, EventPermissionQuery: {}, EventPermissionCheck: {},
 	// DCR
 	EventClientRegistered: {}, EventClientUpdated: {}, EventClientDeleted: {},
 	// network policy

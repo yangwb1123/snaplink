@@ -12,8 +12,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// TestMigration_StampsBaseline proves the permissions backend runs its
-// baseline migration and records the current version under its own namespace.
+// TestMigration_StampsCurrentSchema proves the permissions backend runs its
+// ordered migrations and records the current version under its own namespace.
 // (Functional correctness of the tables is locked by the shared
 // permissionstest.ConformanceSuite in the package's other tests.)
 func TestMigration_StampsBaseline(t *testing.T) {
@@ -31,8 +31,8 @@ func TestMigration_StampsBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentVersion: %v", err)
 	}
-	if v != 2 {
-		t.Errorf("version = %d, want 2", v)
+	if v != permsqlite.PermissionsMaxVersion() {
+		t.Errorf("version = %d, want %d", v, permsqlite.PermissionsMaxVersion())
 	}
 
 	// Idempotent: a second NewWithDB on the same DB must not error or
@@ -40,12 +40,12 @@ func TestMigration_StampsBaseline(t *testing.T) {
 	if _, err := permsqlite.NewWithDB(db); err != nil {
 		t.Fatalf("second NewWithDB: %v", err)
 	}
-	if v, _ := migrate.CurrentVersion(context.Background(), db, "permissions"); v != 2 {
-		t.Errorf("version = %d after re-run, want 2", v)
+	if v, _ := migrate.CurrentVersion(context.Background(), db, "permissions"); v != permsqlite.PermissionsMaxVersion() {
+		t.Errorf("version = %d after re-run, want %d", v, permsqlite.PermissionsMaxVersion())
 	}
 }
 
-func TestMigration_UpgradesV1ToResourceCatalog(t *testing.T) {
+func TestMigration_UpgradesV1ToCurrentSchema(t *testing.T) {
 	t.Parallel()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "p.db"))
 	if err != nil {
@@ -71,7 +71,7 @@ func TestMigration_UpgradesV1ToResourceCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentVersion: %v", err)
 	}
-	if v != 2 {
-		t.Fatalf("version = %d, want 2", v)
+	if v != permsqlite.PermissionsMaxVersion() {
+		t.Fatalf("version = %d, want %d", v, permsqlite.PermissionsMaxVersion())
 	}
 }

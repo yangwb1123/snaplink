@@ -4929,25 +4929,25 @@ paths:
   /api/v1/admin/authz/policy-bundle:
     get:
       tags: [admin]
-      summary: Export the role-definition authorization policy bundle.
+      summary: Export the authorization policy bundle.
       description: |
-        Read-only export of the permissions role-DEFINITION model as a
+        Read-only export of the permissions policy model as a
         portable JSON bundle a service-mesh sidecar (OPA/Cedar/custom)
         pulls to enforce authorization LOCALLY — no per-request Authorizer
-        RPC. The bundle carries ONLY role definitions (code →
-        permissions[]) plus the static wildcard match semantics, NOT the
-        per-subject role assignments: a sidecar already has the caller's
-        roles from the token (the SSO server embeds them when
-        `WithEmbedPermissionsInLogin` is set), so the bundle stays
-        O(roles) and contains no subject PII.
+        RPC. The bundle carries role definitions, resource-catalog
+        semantics, and SSoD/DSoD conflict sets, NOT per-subject role
+        assignments: a sidecar already has the caller's roles from the
+        token (the SSO server embeds them when
+        `WithEmbedPermissionsInLogin` is set), so the bundle contains no
+        subject PII.
 
         Admin-gated — the admin middleware enforces `admin:read` (the path
         sits under `/api/v1/admin/`). Cacheable read (NOT a credential
         endpoint): stamps `public` Cache-Control + a strong content-based
-        ETag (sha256 over the canonical role bytes, EXCLUDING
-        `generated_at`) so the same role set yields the same ETag across
+        ETag (sha256 over the canonical policy bytes, EXCLUDING
+        `generated_at`) so unchanged policy yields the same ETag across
         regenerations; honors `If-None-Match` → 304. The cache is
-        invalidated on any role/menu mutation (locally and, when an
+        invalidated on role, resource, or SoD mutations (locally and, when an
         invalidation bus is wired, cluster-wide) so a sidecar's next pull
         sees a change before the cache TTL (`WithAuthzPolicyBundleCacheTTL`,
         default 5m). A reference OPA Rego that reproduces the wildcard
@@ -4963,7 +4963,7 @@ paths:
           description: The app whose role definitions to export.
       responses:
         "200":
-          description: The role-definition policy bundle.
+          description: The versioned authorization policy bundle.
           headers:
             Cache-Control:
               schema:
@@ -4972,7 +4972,7 @@ paths:
             ETag:
               schema:
                 type: string
-              description: Short sha256 prefix over the canonical role bytes (stable across rebuilds with unchanged roles).
+              description: Short sha256 prefix over the canonical policy bytes (stable across rebuilds with unchanged policy).
           content:
             application/json:
               schema:
@@ -11131,6 +11131,169 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/admin/permissions/{client_id}/sod/conflicts:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [admin]
+      summary: Replace static separation-of-duty conflict sets.
+      description: |
+        Replaces the role-code sets that may never be assigned together
+        under this client. Assignments that would contain two roles from
+        one set fail with a failed-precondition error.
+      operationId: permissionSetConflictSets
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetConflictSetsRequest"
+      responses:
+        "200":
+          description: Conflict sets replaced.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      tags: [admin]
+      summary: List static separation-of-duty conflict sets.
+      operationId: permissionListConflictSets
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Static conflict sets.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListConflictSetsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/permissions/{client_id}/dsod/conflicts:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [admin]
+      summary: Replace dynamic separation-of-duty conflict sets.
+      description: |
+        Replaces the role-code sets that may not be activated together
+        in one session. Subjects may still hold the roles; activation is
+        rejected when the active subset crosses a declared set.
+      operationId: permissionSetActivationConflictSets
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetConflictSetsRequest"
+      responses:
+        "200":
+          description: Activation conflict sets replaced.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      tags: [admin]
+      summary: List dynamic separation-of-duty conflict sets.
+      operationId: permissionListActivationConflictSets
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Dynamic activation conflict sets.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListConflictSetsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/permissions/{client_id}/sessions/{session_id}/roles:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: session_id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [admin]
+      summary: Activate a role subset for a session.
+      description: |
+        Activates only roles already assigned to the subject. Dynamic
+        separation-of-duty conflict sets are checked atomically.
+      operationId: permissionActivateRoles
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivateRolesRequest"
+      responses:
+        "200":
+          description: Session roles activated.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      tags: [admin]
+      summary: List roles active in a session.
+      operationId: permissionListActiveRoles
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema: { type: string }
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Active session roles.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListActiveRolesResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [admin]
+      summary: Deactivate all roles for a session.
+      operationId: permissionDeactivateSession
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema: { type: string }
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Session roles deactivated.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/scim/v2/ServiceProviderConfig:
     get:
       tags: [scim]
@@ -16900,6 +17063,49 @@ components:
           type: array
           items: { $ref: "#/components/schemas/MenuItem" }
 
+    ConflictSet:
+      type: object
+      required: [role_codes]
+      properties:
+        role_codes:
+          type: array
+          minItems: 2
+          items: { type: string }
+          description: Role codes that cannot be held or activated together.
+
+    SetConflictSetsRequest:
+      type: object
+      required: [conflict_sets]
+      properties:
+        conflict_sets:
+          type: array
+          items: { $ref: "#/components/schemas/ConflictSet" }
+
+    ListConflictSetsResponse:
+      type: object
+      required: [conflict_sets]
+      properties:
+        conflict_sets:
+          type: array
+          items: { $ref: "#/components/schemas/ConflictSet" }
+
+    ActivateRolesRequest:
+      type: object
+      required: [user_id, roles]
+      properties:
+        user_id: { type: string }
+        roles:
+          type: array
+          items: { type: string }
+
+    ListActiveRolesResponse:
+      type: object
+      required: [roles]
+      properties:
+        roles:
+          type: array
+          items: { $ref: "#/components/schemas/Role" }
+
     DCRResponse:
       type: object
       required: [client_id, client_id_issued_at, client_secret_expires_at]
@@ -17755,20 +17961,21 @@ components:
 
     AuthzPolicyBundle:
       type: object
-      required: [version, client_id, roles, wildcard_semantics]
+      required: [version, client_id, roles, resources, ssod_conflict_sets, dsod_conflict_sets, wildcard_semantics]
       description: |
-        Portable role-definition export for decentralized (sidecar)
-        authorization. Carries role definitions + the wildcard match
-        rules, never per-subject assignments.
+        Portable authorization export for decentralized (sidecar)
+        authorization. Version 2 carries role definitions, resource
+        decision semantics, and static/dynamic separation-of-duty sets;
+        it never carries per-subject assignments.
       properties:
         version:
           type: integer
           description: Bundle schema version; a sidecar branches on it.
-          example: 1
+          example: 2
         generated_at:
           type: string
           format: date-time
-          description: When the export rendered. Informational only — NOT part of the ETag (the ETag is hashed over the role content), so the same role set yields the same ETag across regenerations.
+          description: When the export rendered. Informational only — NOT part of the ETag (the ETag is hashed over decision-relevant policy content).
         client_id:
           type: string
           description: The app whose role definitions this bundle exports.
@@ -17776,6 +17983,23 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RoleBundle"
+        resources:
+          type: array
+          description: Resource catalog entries projected into decision semantics; timestamps are omitted.
+          items:
+            $ref: "#/components/schemas/AuthzResourceBundle"
+        ssod_conflict_sets:
+          type: array
+          description: Role sets that may not be held together.
+          items:
+            type: array
+            items: { type: string }
+        dsod_conflict_sets:
+          type: array
+          description: Role sets that may not be active together in one session.
+          items:
+            type: array
+            items: { type: string }
         wildcard_semantics:
           $ref: "#/components/schemas/WildcardSemantics"
 
@@ -17796,6 +18020,28 @@ components:
           items: { type: string }
           description: Granted permission codes (sorted for a stable canonical form).
           example: ["order:*", "user:*"]
+
+    AuthzResourceBundle:
+      type: object
+      required: [id, type, name, requires_auth, required_permissions, require_mode]
+      description: Decision-relevant resource catalog projection; timestamps are intentionally omitted.
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        client_id: { type: string }
+        type: { type: string }
+        name: { type: string }
+        requires_auth: { type: boolean }
+        description: { type: string }
+        attributes:
+          type: object
+          additionalProperties: { type: string }
+        required_permissions:
+          type: array
+          items: { type: string }
+        require_mode:
+          type: string
+          enum: [any, all]
 
     WildcardSemantics:
       type: object

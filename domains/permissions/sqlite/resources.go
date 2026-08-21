@@ -109,6 +109,30 @@ func (p *Provider) ListResources(ctx context.Context, tenantID, clientID string)
 	return out, nil
 }
 
+// ListAllResources returns every catalog entry for clientID, including
+// tenant-specific rows used by the client-wide policy bundle export.
+func (p *Provider) ListAllResources(ctx context.Context, clientID string) ([]*permissions.Resource, error) {
+	rows, err := p.db.QueryContext(ctx, `SELECT `+resourceColumns+`
+        FROM permissions_resources
+        WHERE client_id = ? ORDER BY tenant_id, id`, clientID)
+	if err != nil {
+		return nil, fmt.Errorf("permissions/sqlite: list all resources: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]*permissions.Resource, 0)
+	for rows.Next() {
+		r, err := scanResource(rows)
+		if err != nil {
+			return nil, fmt.Errorf("permissions/sqlite: scan resource: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("permissions/sqlite: resource rows: %w", err)
+	}
+	return out, nil
+}
+
 // DeleteResource removes a catalog entry and is intentionally idempotent.
 func (p *Provider) DeleteResource(ctx context.Context, id string) error {
 	if _, err := p.db.ExecContext(ctx, `DELETE FROM permissions_resources WHERE id = ?`, id); err != nil {

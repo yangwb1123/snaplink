@@ -48,6 +48,7 @@ Generated from [`ops/build/capabilities.json`](../ops/build/capabilities.json); 
 | Audit Governance desired-state provisioner (`audit.governance-provisioner`) | `standalone-binary` | `disabled` | — | `Audit Governance control API` | `/livez`<br>`/readyz`<br>`/metrics`<br>`Audit Governance control API` |
 | Kafka audit sink (`audit.kafka`) | `stock-binary`<br>`module-only` | `disabled` | — | — | `audit sink` |
 | Fine-grained authorization (`authorization.fga`) | `sdk`<br>`stock-binary` | `disabled` | — | `RebacStore`<br>`RebacEngine` | `/authz/*`<br>`/readyz` |
+| Role and resource authorization (`authorization.rbac`) | `sdk`<br>`stock-binary` | `conditional` | — | `permissions.Provider` | `/permissions/me`<br>`/authz/*`<br>`/api/v1/admin/permissions/*` |
 | Public tenant branding (`branding.public`) | `sdk`<br>`stock-binary` | `conditional` | `feature_gates.branding` | `TenantStore` | `/branding` |
 | CAEP and Shared Signals (`caep.shared-signals`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.caep` | `CAEPStreamStore`<br>`JTIReplayStore` | `/.well-known/ssf-configuration`<br>`/ssf/*` |
 | OpenID Connect CIBA (`ciba.core`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.ciba` | `CIBAStore` | `/backchannel-authentication`<br>`/token` |

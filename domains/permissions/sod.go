@@ -155,6 +155,11 @@ func validateConflictSets(sets [][]string) error {
 	return nil
 }
 
+// ValidateConflictSets exposes the shared declaration hygiene to durable
+// providers. Keeping validation here prevents memory and SQL/Redis peers from
+// accepting different conflict-set shapes.
+func ValidateConflictSets(sets [][]string) error { return validateConflictSets(sets) }
+
 // findConflict scans sets for the first declared conflict set with
 // two-or-more codes present in candidateCodes, returning a populated
 // *ConflictError describing the collision (nil when candidateCodes is
@@ -167,6 +172,16 @@ func findConflict(clientID string, sets [][]string, candidateCodes []string) *Co
 		if len(hit) >= 2 {
 			return &ConflictError{ClientID: clientID, Set: append([]string(nil), set...), Roles: hit}
 		}
+	}
+	return nil
+}
+
+// CheckRoleConflict reports the first declared conflict set hit by a role
+// candidate. Durable providers use the same error shape as MemoryProvider so
+// admin callers and authorization adapters stay backend-independent.
+func CheckRoleConflict(clientID string, sets [][]string, candidateCodes []string) error {
+	if conflict := findConflict(clientID, sets, candidateCodes); conflict != nil {
+		return conflict
 	}
 	return nil
 }

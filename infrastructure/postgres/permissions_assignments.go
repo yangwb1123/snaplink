@@ -23,16 +23,20 @@ func (p *PermissionProvider) AssignRoles(ctx context.Context, userID, clientID s
 	if err != nil {
 		return fmt.Errorf("postgres: marshal assignment: %w", err)
 	}
-	_, err = p.db.ExecContext(ctx, `
-        INSERT INTO permissions_assignments (user_id, client_id, roles_json)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (user_id, client_id) DO UPDATE SET roles_json = EXCLUDED.roles_json`,
-		userID, clientID, string(raw),
-	)
-	if err != nil {
-		return fmt.Errorf("postgres: assign roles: %w", err)
-	}
-	return nil
+	return runTx(ctx, p.db, serializable, func(tx *sql.Tx) error {
+		if err := p.checkStaticConflict(ctx, tx, clientID, roles); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+            INSERT INTO permissions_assignments (user_id, client_id, roles_json)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id, client_id) DO UPDATE SET roles_json = EXCLUDED.roles_json`,
+			userID, clientID, string(raw),
+		); err != nil {
+			return fmt.Errorf("postgres: assign roles: %w", err)
+		}
+		return nil
+	})
 }
 
 // UnassignRoles removes the listed role codes from the user's assignment under
@@ -111,6 +115,9 @@ func (p *PermissionProvider) AddRoleToUser(ctx context.Context, userID, clientID
 			return nil // already a member
 		}
 		have = append(have, roleCode)
+		if err := p.checkStaticConflict(ctx, tx, clientID, have); err != nil {
+			return err
+		}
 		raw, err := json.Marshal(have)
 		if err != nil {
 			return fmt.Errorf("postgres: marshal assignment: %w", err)

@@ -29,6 +29,7 @@ var cefEventNames = map[auditspi.EventType]string{
 	auditspi.EventCallbackFailure: "OAuth Callback Failure",
 	auditspi.EventClientAccess:    "Client Access",
 	auditspi.EventPermissionQuery: "Permission Query",
+	auditspi.EventPermissionCheck: "Permission Check",
 	// DCR
 	auditspi.EventClientRegistered: "Client Registered",
 	auditspi.EventClientUpdated:    "Client Updated",

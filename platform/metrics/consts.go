@@ -125,6 +125,7 @@ const (
 	// to the fixed ok|client|server table in docs/observability.md.
 	NameGRPCRequestsTotal   = "sso_grpc_requests_total"
 	NameGRPCRequestDuration = "sso_grpc_request_duration_seconds"
+	NameAuthzChecksTotal    = "sso_authz_checks_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by

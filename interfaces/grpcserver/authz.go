@@ -6,6 +6,9 @@ import (
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	authzv1 "github.com/yangwb1123/snaplink/gen/proto/authz/v1"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/spi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -14,10 +17,19 @@ import (
 type AuthzService struct {
 	authzv1.UnimplementedAuthorizerServer
 	provider permissions.Provider
+	recorder *audit.Recorder
+	metrics  *metrics.Metrics
+	logger   spi.Logger
 }
 
 func NewAuthzService(p permissions.Provider) *AuthzService {
-	return &AuthzService{provider: p}
+	return NewAuthzServiceWithObservability(p, nil, nil, nil)
+}
+
+// NewAuthzServiceWithObservability wires optional decision-plane telemetry
+// while preserving the original constructor for embedded callers.
+func NewAuthzServiceWithObservability(p permissions.Provider, recorder *audit.Recorder, m *metrics.Metrics, logger spi.Logger) *AuthzService {
+	return &AuthzService{provider: p, recorder: recorder, metrics: m, logger: logger}
 }
 
 func (s *AuthzService) Check(ctx context.Context, in *authzv1.CheckRequest) (*authzv1.CheckResponse, error) {
@@ -27,27 +39,76 @@ func (s *AuthzService) Check(ctx context.Context, in *authzv1.CheckRequest) (*au
 	if in.SubjectId == "" || in.Permission == "" {
 		return nil, status.Error(codes.InvalidArgument, "subject_id and permission required")
 	}
-	perms, err := s.provider.Permissions(ctx, in.SubjectId, in.ClientId)
+	perms, err := s.resolvePermissions(ctx, in)
 	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
 		return nil, status.Errorf(codes.Internal, "permissions lookup: %v", err)
 	}
+	var allowed bool
 	if in.ResourceType != "" {
-		rp, ok := s.provider.(permissions.ResourceProvider)
-		if !ok {
-			return nil, status.Error(codes.FailedPrecondition, "resource lookup requested but permission provider has no resource catalog")
-		}
-		allowed, err := permissions.CheckResource(rp, &permissions.ResourceLookup{
-			TenantID: in.TenantId,
-			ClientID: in.ClientId,
-			Type:     permissions.ResourceType(in.ResourceType),
-			Match:    in.Attributes,
-		}, perms, in.Permission)
+		allowed, err = s.checkResource(in, perms)
 		if err != nil {
+			if status.Code(err) == codes.FailedPrecondition {
+				return nil, err
+			}
 			return nil, status.Errorf(codes.Internal, "resource check: %v", err)
 		}
-		return &authzv1.CheckResponse{Allowed: allowed}, nil
+	} else {
+		allowed = permissions.Matches(perms, in.Permission)
 	}
-	return &authzv1.CheckResponse{Allowed: permissions.Matches(perms, in.Permission)}, nil
+	s.recordDecision(ctx, in, allowed)
+	return &authzv1.CheckResponse{Allowed: allowed}, nil
+}
+
+func (s *AuthzService) resolvePermissions(ctx context.Context, in *authzv1.CheckRequest) ([]permissions.Permission, error) {
+	if in.SessionId != "" {
+		if activator, ok := s.provider.(permissions.SessionRoleActivator); ok {
+			roles, err := activator.ActiveRoles(ctx, in.SubjectId, in.ClientId, in.SessionId)
+			if err != nil {
+				return nil, err
+			}
+			// An explicitly supplied session ID opts into the active-role
+			// projection. Empty means no active authority, not legacy full
+			// assignment fallback; otherwise a logged-out/stale sid would
+			// silently regain the subject's complete role set.
+			return permissions.PermissionsFromRoles(roles), nil
+		}
+	}
+	return s.provider.Permissions(ctx, in.SubjectId, in.ClientId)
+}
+
+func (s *AuthzService) checkResource(in *authzv1.CheckRequest, perms []permissions.Permission) (bool, error) {
+	rp, ok := s.provider.(permissions.ResourceProvider)
+	if !ok {
+		return false, status.Error(codes.FailedPrecondition, "resource lookup requested but permission provider has no resource catalog")
+	}
+	return permissions.CheckResource(rp, &permissions.ResourceLookup{
+		TenantID: in.TenantId,
+		ClientID: in.ClientId,
+		Type:     permissions.ResourceType(in.ResourceType),
+		Match:    in.Attributes,
+	}, perms, in.Permission)
+}
+
+func (s *AuthzService) recordDecision(ctx context.Context, in *authzv1.CheckRequest, allowed bool) {
+	decision := "deny"
+	outcome := audit.OutcomeFailure
+	if allowed {
+		decision = "allow"
+		outcome = audit.OutcomeSuccess
+	}
+	if s.metrics != nil && s.metrics.AuthzChecksTotal != nil {
+		s.metrics.AuthzChecksTotal.WithLabelValues(decision).Inc()
+	}
+	if s.recorder != nil {
+		e := &audit.Event{Type: audit.EventPermissionCheck, Outcome: outcome, ActorID: in.SubjectId, ClientID: in.ClientId}
+		audit.SetMeta(e, "permission", in.Permission)
+		audit.SetMeta(e, "decision", decision)
+		audit.SetMeta(e, "resource_type", in.ResourceType)
+		s.recorder.Record(ctx, e)
+	}
+	if !allowed && s.logger != nil {
+		s.logger.Info("authorization denied", "subject_id", in.SubjectId, "client_id", in.ClientId, "permission", in.Permission)
+	}
 }
 
 func (s *AuthzService) ListPermissions(ctx context.Context, in *authzv1.SubjectRequest) (*authzv1.PermissionList, error) {

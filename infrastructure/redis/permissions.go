@@ -229,6 +229,9 @@ return 1
 // assignment row and prunes the user from the client index so
 // ListAssignments' empty-roles filter holds.
 func (p *PermissionProvider) AssignRoles(ctx context.Context, userID, clientID string, roles []string) error {
+	if err := p.checkStaticConflict(ctx, clientID, roles); err != nil {
+		return err
+	}
 	argv := make([]any, 0, len(roles)+1)
 	argv = append(argv, userID)
 	for _, r := range roles {
@@ -305,6 +308,15 @@ return 1
 // no-op. Implements [permissions.GroupMembershipWriter] (SCIM Group
 // add-member).
 func (p *PermissionProvider) AddRoleToUser(ctx context.Context, userID, clientID, roleCode string) error {
+	codes, err := p.rdb.SMembers(ctx, permAssignKey(clientID, userID)).Result()
+	if err != nil {
+		return fmt.Errorf("redis: load assigned roles: %w", err)
+	}
+	if !containsCode(codes, roleCode) {
+		if err := p.checkStaticConflict(ctx, clientID, append(codes, roleCode)); err != nil {
+			return err
+		}
+	}
 	if err := addRoleToUserScript.Run(ctx, p.rdb,
 		[]string{permAssignKey(clientID, userID), permUsersKey(clientID)},
 		userID, roleCode,
@@ -472,4 +484,6 @@ var (
 	_ permissions.Provider              = (*PermissionProvider)(nil)
 	_ permissions.MenuLister            = (*PermissionProvider)(nil)
 	_ permissions.GroupMembershipWriter = (*PermissionProvider)(nil)
+	_ permissions.SoDProvider           = (*PermissionProvider)(nil)
+	_ permissions.SessionRoleActivator  = (*PermissionProvider)(nil)
 )

@@ -116,6 +116,7 @@ var allKnownEventTypes = []auditspi.EventType{
 	auditspi.EventPasswordResetRequested,
 	auditspi.EventPasswordWeak,
 	auditspi.EventPermissionQuery,
+	auditspi.EventPermissionCheck,
 	auditspi.EventRecoveryCodesRegenerated,
 	auditspi.EventRefreshRotationVelocityExceeded,
 	auditspi.EventRefreshTokenIssued,

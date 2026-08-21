@@ -49,6 +49,7 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_netpolicy_classifier_{up,reconnects_total}` | Gauge/Counter | — |
 | `sso_ssf_sets_received_total` | Counter | outcome |
 | `sso_conditional_access_decisions_total` | Counter | decision |
+| `sso_authz_checks_total` | Counter | decision (`allow`\|`deny`) |
 | `sso_token_policy_{evaluations,denials,renew_required}_total` | Counter | bounded policy outcome dimensions |
 | `sso_token_usage_{events,dropped}_total` / `sso_token_usage_tracked_buckets` | Counter/Gauge | bounded outcome / — |
 | `sso_token_anomaly_findings_total` | Counter | severity/type bounded by detector vocabulary |
@@ -90,6 +91,7 @@ Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; ver
   the same signal and the log message is the fixed `client secret
   expiring` with bounded `client_id`/`window`/`days_remaining` keys.
 - `tenant_quota_store_failure` — the authenticated tenant token-rate check failed open because its backing store returned an operational error. `Reason` is the fixed `increment_failed` enum; `resource=token_rate` is added only through `SetMeta`; tenant/client identifiers remain internal to audit and never appear in the `rate_limited` wire response.
+- `permission_check` — one event for every authorization decision. Metadata carries the bounded permission, decision, and resource type dimensions; subject and client identify the decision context. Denials also emit a structured deny log, while the wire response remains the ordinary authorization result.
 - Session quota lifecycle logs use the fixed messages `tenant session quota reservation failed open`, `tenant session quota reconciliation failed`, and `tenant session quota release failed`, with bounded `tenant_id`/`session_id` plus the dependency error. A definitive cap is not logged as an infrastructure failure and remains the stable `403 quota_exceeded` response.
 
 ### Retention Schedulers

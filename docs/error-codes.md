@@ -419,6 +419,15 @@ missing IDs. When PAR resource-catalog enforcement is enabled, an unknown or
 mismatched verifiable API resource is returned as the existing
 `invalid_authorization_details` OAuth error.
 
+Separation-of-duty sentinels are mapped by the admin permission service as
+follows. The REST gateway exposes the corresponding gRPC status mapping.
+
+| Identifier | gRPC / HTTP | Emitted when |
+|---|---|---|
+| `ErrRoleConflict` | `FailedPrecondition` / 400 | An assignment or session activation contains two or more roles from one declared conflict set |
+| `ErrRoleNotAssigned` | `InvalidArgument` / 400 | A session activation names a role not assigned to the subject |
+| `ErrInvalidConflictSet` | `InvalidArgument` / 400 | A conflict set is empty, has fewer than two roles, or repeats a role code |
+
 ---
 
 ## Audit (`/api/v1/audit/events*`)
