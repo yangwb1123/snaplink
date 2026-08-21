@@ -39,6 +39,10 @@ func (p *Provider) AssignRoles(ctx context.Context, userID, clientID string, rol
 	if err != nil {
 		return fmt.Errorf("permissions/sqlite: assign roles: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `
+        DELETE FROM permissions_active_roles WHERE user_id = ? AND client_id = ?`, userID, clientID); err != nil {
+		return fmt.Errorf("permissions/sqlite: clear active roles: %w", err)
+	}
 	return tx.Commit()
 }
 
@@ -88,6 +92,10 @@ func (p *Provider) UnassignRoles(ctx context.Context, userID, clientID string, r
 		string(raw), userID, clientID,
 	); err != nil {
 		return fmt.Errorf("permissions/sqlite: store filtered assignment: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+        DELETE FROM permissions_active_roles WHERE user_id = ? AND client_id = ?`, userID, clientID); err != nil {
+		return fmt.Errorf("permissions/sqlite: clear active roles: %w", err)
 	}
 	return tx.Commit()
 }
@@ -140,6 +148,10 @@ func (p *Provider) AddRoleToUser(ctx context.Context, userID, clientID, roleCode
 		userID, clientID, string(raw),
 	); err != nil {
 		return fmt.Errorf("permissions/sqlite: store assignment: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+        DELETE FROM permissions_active_roles WHERE user_id = ? AND client_id = ?`, userID, clientID); err != nil {
+		return fmt.Errorf("permissions/sqlite: clear active roles: %w", err)
 	}
 	return tx.Commit()
 }

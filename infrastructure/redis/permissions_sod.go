@@ -11,10 +11,11 @@ import (
 )
 
 const (
-	redisStaticSoDMode  = "static"
-	redisDynamicSoDMode = "dynamic"
-	permSoDPrefix       = "sso:perm:sod:"
-	permActivePrefix    = "sso:perm:active:"
+	redisStaticSoDMode       = "static"
+	redisDynamicSoDMode      = "dynamic"
+	permSoDPrefix            = "sso:perm:sod:"
+	permActivePrefix         = "sso:perm:active:"
+	permActiveSessionsSuffix = ":active_sessions"
 )
 
 func permSoDKey(clientID, mode string) string {
@@ -23,6 +24,44 @@ func permSoDKey(clientID, mode string) string {
 
 func permActiveKey(clientID, userID, sessionID string) string {
 	return permActivePrefix + hashTag(clientID) + ":" + userID + ":" + sessionID
+}
+
+func permActiveSessionsKey(clientID, userID string) string {
+	return permActivePrefix + hashTag(clientID) + ":" + userID + permActiveSessionsSuffix
+}
+
+func permActiveKeyPrefix(clientID string) string {
+	return permActivePrefix + hashTag(clientID) + ":"
+}
+
+func (p *PermissionProvider) clearActiveSessions(ctx context.Context, userID, clientID string) error {
+	index := permActiveSessionsKey(clientID, userID)
+	sessions, err := p.rdb.SMembers(ctx, index).Result()
+	if err != nil {
+		return fmt.Errorf("redis: list active sessions: %w", err)
+	}
+	pipe := p.rdb.TxPipeline()
+	for _, sessionID := range sessions {
+		pipe.Del(ctx, permActiveKey(clientID, userID, sessionID))
+	}
+	pipe.Del(ctx, index)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("redis: clear active sessions: %w", err)
+	}
+	return nil
+}
+
+func (p *PermissionProvider) clearClientActiveSessions(ctx context.Context, clientID string) error {
+	users, err := p.rdb.SMembers(ctx, permUsersKey(clientID)).Result()
+	if err != nil {
+		return fmt.Errorf("redis: list active-session users: %w", err)
+	}
+	for _, userID := range users {
+		if err := p.clearActiveSessions(ctx, userID, clientID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *PermissionProvider) SetConflictSets(ctx context.Context, clientID string, sets [][]string) error {
@@ -115,7 +154,10 @@ func (p *PermissionProvider) ActivateRoles(ctx context.Context, userID, clientID
 	if err != nil {
 		return fmt.Errorf("redis: marshal active roles: %w", err)
 	}
-	if err := p.rdb.Set(ctx, permActiveKey(clientID, userID, sessionID), raw, 0).Err(); err != nil {
+	pipe := p.rdb.TxPipeline()
+	pipe.Set(ctx, permActiveKey(clientID, userID, sessionID), raw, 0)
+	pipe.SAdd(ctx, permActiveSessionsKey(clientID, userID), sessionID)
+	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis: store active roles: %w", err)
 	}
 	return nil
@@ -157,7 +199,10 @@ func (p *PermissionProvider) ActiveRoles(ctx context.Context, userID, clientID, 
 }
 
 func (p *PermissionProvider) DeactivateSession(ctx context.Context, userID, clientID, sessionID string) error {
-	if err := p.rdb.Del(ctx, permActiveKey(clientID, userID, sessionID)).Err(); err != nil {
+	pipe := p.rdb.TxPipeline()
+	pipe.Del(ctx, permActiveKey(clientID, userID, sessionID))
+	pipe.SRem(ctx, permActiveSessionsKey(clientID, userID), sessionID)
+	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis: deactivate session: %w", err)
 	}
 	return nil

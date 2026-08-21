@@ -35,6 +35,10 @@ func (p *PermissionProvider) AssignRoles(ctx context.Context, userID, clientID s
 		); err != nil {
 			return fmt.Errorf("postgres: assign roles: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `
+            DELETE FROM permissions_active_roles WHERE user_id = $1 AND client_id = $2`, userID, clientID); err != nil {
+			return fmt.Errorf("postgres: clear active roles: %w", err)
+		}
 		return nil
 	})
 }
@@ -83,6 +87,10 @@ func (p *PermissionProvider) UnassignRoles(ctx context.Context, userID, clientID
 		); err != nil {
 			return fmt.Errorf("postgres: store filtered assignment: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `
+        DELETE FROM permissions_active_roles WHERE user_id = $1 AND client_id = $2`, userID, clientID); err != nil {
+			return fmt.Errorf("postgres: clear active roles: %w", err)
+		}
 		return nil
 	})
 }
@@ -129,6 +137,10 @@ func (p *PermissionProvider) AddRoleToUser(ctx context.Context, userID, clientID
 			userID, clientID, string(raw),
 		); err != nil {
 			return fmt.Errorf("postgres: store assignment: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+            DELETE FROM permissions_active_roles WHERE user_id = $1 AND client_id = $2`, userID, clientID); err != nil {
+			return fmt.Errorf("postgres: clear active roles: %w", err)
 		}
 		return nil
 	})

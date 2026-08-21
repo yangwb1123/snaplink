@@ -99,8 +99,8 @@ func (p *Provider) RemoveRole(ctx context.Context, clientID, roleCode string) er
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
-        DELETE FROM permissions_active_roles WHERE client_id = ? AND role_code = ?`, clientID, roleCode); err != nil {
-		return fmt.Errorf("permissions/sqlite: strip active role: %w", err)
+        DELETE FROM permissions_active_roles WHERE client_id = ?`, clientID); err != nil {
+		return fmt.Errorf("permissions/sqlite: clear active roles: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

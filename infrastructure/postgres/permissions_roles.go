@@ -94,8 +94,8 @@ func (p *PermissionProvider) RemoveRole(ctx context.Context, clientID, roleCode 
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
-            DELETE FROM permissions_active_roles WHERE client_id = $1 AND role_code = $2`, clientID, roleCode); err != nil {
-			return fmt.Errorf("postgres: strip active role: %w", err)
+            DELETE FROM permissions_active_roles WHERE client_id = $1`, clientID); err != nil {
+			return fmt.Errorf("postgres: clear active roles: %w", err)
 		}
 		return nil
 	})

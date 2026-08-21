@@ -319,17 +319,26 @@ func splitSessionKey(key string) (userID, clientID string, ok bool) {
 	return parts[0], parts[1], true
 }
 
-// stripActiveRole removes roleCode from every session's active set under
-// clientID. Called by RemoveRole (memory.go) under m.mu so a
-// deleted-then-recreated role code can't silently reactivate in a stale
-// session without a fresh ActivateRoles call.
-func (m *MemoryProvider) stripActiveRole(clientID, roleCode string) {
-	for key, codes := range m.activeRoles {
+// clearClientActiveRoles invalidates every session projection under clientID
+// after a role definition changes, requiring fresh activation everywhere.
+func (m *MemoryProvider) clearClientActiveRoles(clientID string) {
+	for key := range m.activeRoles {
 		_, kClient, ok := splitSessionKey(key)
-		if !ok || kClient != clientID || !slices.Contains(codes, roleCode) {
-			continue
+		if ok && kClient == clientID {
+			delete(m.activeRoles, key)
 		}
-		m.activeRoles[key] = slices.DeleteFunc(append([]string{}, codes...), func(c string) bool { return c == roleCode })
+	}
+}
+
+// clearActiveRoles invalidates every session projection for a subject after
+// an assignment mutation. Requiring fresh activation is safer than trying to
+// preserve a subset whose assignment provenance may have changed.
+func (m *MemoryProvider) clearActiveRoles(userID, clientID string) {
+	for key := range m.activeRoles {
+		kUser, kClient, ok := splitSessionKey(key)
+		if ok && kUser == userID && kClient == clientID {
+			delete(m.activeRoles, key)
+		}
 	}
 }
 

@@ -167,6 +167,9 @@ return 1
 // RemoveRole drops the role definition and rips it out of every user's
 // assignment list under the same client.
 func (p *PermissionProvider) RemoveRole(ctx context.Context, clientID, roleCode string) error {
+	if err := p.clearClientActiveSessions(ctx, clientID); err != nil {
+		return err
+	}
 	res, err := removeRoleScript.Run(ctx, p.rdb,
 		[]string{permRolesKey(clientID), permUsersKey(clientID)},
 		// ARGV[2] is the per-user assignment-key prefix the Lua concatenates
@@ -201,7 +204,6 @@ func (p *PermissionProvider) ListAllRoles(ctx context.Context, clientID string) 
 }
 
 // --- Assignments ---
-
 // assignScript replaces the user's role SET (drop-then-repopulate so the SET
 // semantics hold — a removed code must not survive a re-assign, which a bare
 // SADD can't guarantee). An empty new set deletes the row and prunes the user
@@ -230,6 +232,9 @@ return 1
 // ListAssignments' empty-roles filter holds.
 func (p *PermissionProvider) AssignRoles(ctx context.Context, userID, clientID string, roles []string) error {
 	if err := p.checkStaticConflict(ctx, clientID, roles); err != nil {
+		return err
+	}
+	if err := p.clearActiveSessions(ctx, userID, clientID); err != nil {
 		return err
 	}
 	argv := make([]any, 0, len(roles)+1)
@@ -275,6 +280,9 @@ func (p *PermissionProvider) UnassignRoles(ctx context.Context, userID, clientID
 	if len(roles) == 0 {
 		return nil
 	}
+	if err := p.clearActiveSessions(ctx, userID, clientID); err != nil {
+		return err
+	}
 	argv := make([]any, 0, len(roles)+1)
 	argv = append(argv, userID)
 	for _, r := range roles {
@@ -312,10 +320,14 @@ func (p *PermissionProvider) AddRoleToUser(ctx context.Context, userID, clientID
 	if err != nil {
 		return fmt.Errorf("redis: load assigned roles: %w", err)
 	}
-	if !containsCode(codes, roleCode) {
-		if err := p.checkStaticConflict(ctx, clientID, append(codes, roleCode)); err != nil {
-			return err
-		}
+	if containsCode(codes, roleCode) {
+		return nil
+	}
+	if err := p.checkStaticConflict(ctx, clientID, append(codes, roleCode)); err != nil {
+		return err
+	}
+	if err := p.clearActiveSessions(ctx, userID, clientID); err != nil {
+		return err
 	}
 	if err := addRoleToUserScript.Run(ctx, p.rdb,
 		[]string{permAssignKey(clientID, userID), permUsersKey(clientID)},
@@ -329,8 +341,7 @@ func (p *PermissionProvider) AddRoleToUser(ctx context.Context, userID, clientID
 // RemoveRoleFromUser revokes roleCode from userID under clientID, leaving the
 // user's other roles intact. Idempotent: removing a role the user doesn't
 // hold is a no-op. Implements [permissions.GroupMembershipWriter] (SCIM Group
-// remove-member). Delegates to UnassignRoles so the emptied-assignment prune
-// stays in one place.
+// remove-member); UnassignRoles performs the emptied-assignment cleanup.
 func (p *PermissionProvider) RemoveRoleFromUser(ctx context.Context, userID, clientID, roleCode string) error {
 	return p.UnassignRoles(ctx, userID, clientID, []string{roleCode})
 }
