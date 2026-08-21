@@ -144,6 +144,48 @@ type ResourceProvider interface {
 	ResolveResource(ctx context.Context, lookup ResourceLookup) (*ResourceDecision, error)
 }
 
+// CheckResource decides an optional resource-aware authorization request.
+// A nil lookup preserves the legacy flat permission decision. A catalog miss
+// also falls back to that decision so callers without a matching entry retain
+// the existing behavior. A found public or auth-only resource is allowed;
+// resources with required permissions use the projected require mode.
+func CheckResource(rp ResourceProvider, lookup *ResourceLookup, subjectPerms []Permission, want string) (bool, error) {
+	if lookup == nil {
+		return Matches(subjectPerms, want), nil
+	}
+	if rp == nil {
+		return false, errors.New("permissions: resource provider required")
+	}
+	decision, err := rp.ResolveResource(context.Background(), *lookup)
+	if err != nil {
+		return false, err
+	}
+	if !decision.Found {
+		return Matches(subjectPerms, want), nil
+	}
+	if !decision.RequiresAuth || len(decision.RequiredPermissions) == 0 {
+		return true, nil
+	}
+	return resourcePermissionsMatch(subjectPerms, decision), nil
+}
+
+func resourcePermissionsMatch(subjectPerms []Permission, decision *ResourceDecision) bool {
+	if decision.RequireMode == RequireAll {
+		for _, required := range decision.RequiredPermissions {
+			if !Matches(subjectPerms, required) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, required := range decision.RequiredPermissions {
+		if Matches(subjectPerms, required) {
+			return true
+		}
+	}
+	return false
+}
+
 // Sentinel errors. Admin RPCs map these to gRPC codes.
 var (
 	ErrResourceNotFound = errors.New("permissions: resource not found")

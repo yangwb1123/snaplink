@@ -31,6 +31,22 @@ func (s *AuthzService) Check(ctx context.Context, in *authzv1.CheckRequest) (*au
 	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
 		return nil, status.Errorf(codes.Internal, "permissions lookup: %v", err)
 	}
+	if in.ResourceType != "" {
+		rp, ok := s.provider.(permissions.ResourceProvider)
+		if !ok {
+			return nil, status.Error(codes.FailedPrecondition, "resource lookup requested but permission provider has no resource catalog")
+		}
+		allowed, err := permissions.CheckResource(rp, &permissions.ResourceLookup{
+			TenantID: in.TenantId,
+			ClientID: in.ClientId,
+			Type:     permissions.ResourceType(in.ResourceType),
+			Match:    in.Attributes,
+		}, perms, in.Permission)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "resource check: %v", err)
+		}
+		return &authzv1.CheckResponse{Allowed: allowed}, nil
+	}
 	return &authzv1.CheckResponse{Allowed: permissions.Matches(perms, in.Permission)}, nil
 }
 

@@ -32,6 +32,12 @@ message CheckRequest {
   string subject_id = 1;
   string client_id  = 2; // app scope; empty = global
   string permission = 3; // permission code being requested
+
+  // Optional resource-aware lookup. When empty, the legacy flat permission
+  // decision remains unchanged.
+  string            resource_type = 4;
+  string            tenant_id     = 5;
+  map<string,string> attributes    = 6;
 }
 
 message CheckResponse {
