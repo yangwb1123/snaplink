@@ -412,6 +412,13 @@ other grants above use, for the SAME oracle-leak reasons.
 | `permission_provider_not_configured`| 501  | `/permissions/me`/`/roles/me`/`/menus/me` hit when no `permissions.Provider` is wired |
 | `permission_lookup_failed`          | 500  | Provider returned an error during lookup              |
 
+The admin permission gRPC service maps resource catalog sentinels as follows:
+`ErrResourceExists` → `AlreadyExists`, `ErrResourceNotFound` → `NotFound`, and
+`ErrInvalidResource` → `InvalidArgument`. Resource deletion is idempotent for
+missing IDs. When PAR resource-catalog enforcement is enabled, an unknown or
+mismatched verifiable API resource is returned as the existing
+`invalid_authorization_details` OAuth error.
+
 ---
 
 ## Audit (`/api/v1/audit/events*`)

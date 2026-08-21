@@ -24,14 +24,18 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PermissionAdminService_ListRoles_FullMethodName       = "/snaplink.admin.v1.PermissionAdminService/ListRoles"
-	PermissionAdminService_AddRole_FullMethodName         = "/snaplink.admin.v1.PermissionAdminService/AddRole"
-	PermissionAdminService_UpdateRole_FullMethodName      = "/snaplink.admin.v1.PermissionAdminService/UpdateRole"
-	PermissionAdminService_RemoveRole_FullMethodName      = "/snaplink.admin.v1.PermissionAdminService/RemoveRole"
-	PermissionAdminService_ListAssignments_FullMethodName = "/snaplink.admin.v1.PermissionAdminService/ListAssignments"
-	PermissionAdminService_AssignRoles_FullMethodName     = "/snaplink.admin.v1.PermissionAdminService/AssignRoles"
-	PermissionAdminService_UnassignRoles_FullMethodName   = "/snaplink.admin.v1.PermissionAdminService/UnassignRoles"
-	PermissionAdminService_SetMenus_FullMethodName        = "/snaplink.admin.v1.PermissionAdminService/SetMenus"
+	PermissionAdminService_ListRoles_FullMethodName        = "/snaplink.admin.v1.PermissionAdminService/ListRoles"
+	PermissionAdminService_AddRole_FullMethodName          = "/snaplink.admin.v1.PermissionAdminService/AddRole"
+	PermissionAdminService_UpdateRole_FullMethodName       = "/snaplink.admin.v1.PermissionAdminService/UpdateRole"
+	PermissionAdminService_RemoveRole_FullMethodName       = "/snaplink.admin.v1.PermissionAdminService/RemoveRole"
+	PermissionAdminService_ListAssignments_FullMethodName  = "/snaplink.admin.v1.PermissionAdminService/ListAssignments"
+	PermissionAdminService_AssignRoles_FullMethodName      = "/snaplink.admin.v1.PermissionAdminService/AssignRoles"
+	PermissionAdminService_UnassignRoles_FullMethodName    = "/snaplink.admin.v1.PermissionAdminService/UnassignRoles"
+	PermissionAdminService_SetMenus_FullMethodName         = "/snaplink.admin.v1.PermissionAdminService/SetMenus"
+	PermissionAdminService_RegisterResource_FullMethodName = "/snaplink.admin.v1.PermissionAdminService/RegisterResource"
+	PermissionAdminService_GetResource_FullMethodName      = "/snaplink.admin.v1.PermissionAdminService/GetResource"
+	PermissionAdminService_ListResources_FullMethodName    = "/snaplink.admin.v1.PermissionAdminService/ListResources"
+	PermissionAdminService_DeleteResource_FullMethodName   = "/snaplink.admin.v1.PermissionAdminService/DeleteResource"
 )
 
 // PermissionAdminServiceClient is the client API for PermissionAdminService service.
@@ -50,6 +54,10 @@ type PermissionAdminServiceClient interface {
 	AssignRoles(ctx context.Context, in *AssignRolesRequest, opts ...grpc.CallOption) (*AssignRolesResponse, error)
 	UnassignRoles(ctx context.Context, in *UnassignRolesRequest, opts ...grpc.CallOption) (*UnassignRolesResponse, error)
 	SetMenus(ctx context.Context, in *SetMenusRequest, opts ...grpc.CallOption) (*SetMenusResponse, error)
+	RegisterResource(ctx context.Context, in *RegisterResourceRequest, opts ...grpc.CallOption) (*RegisterResourceResponse, error)
+	GetResource(ctx context.Context, in *GetResourceRequest, opts ...grpc.CallOption) (*GetResourceResponse, error)
+	ListResources(ctx context.Context, in *ListResourcesRequest, opts ...grpc.CallOption) (*ListResourcesResponse, error)
+	DeleteResource(ctx context.Context, in *DeleteResourceRequest, opts ...grpc.CallOption) (*DeleteResourceResponse, error)
 }
 
 type permissionAdminServiceClient struct {
@@ -140,6 +148,46 @@ func (c *permissionAdminServiceClient) SetMenus(ctx context.Context, in *SetMenu
 	return out, nil
 }
 
+func (c *permissionAdminServiceClient) RegisterResource(ctx context.Context, in *RegisterResourceRequest, opts ...grpc.CallOption) (*RegisterResourceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterResourceResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_RegisterResource_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionAdminServiceClient) GetResource(ctx context.Context, in *GetResourceRequest, opts ...grpc.CallOption) (*GetResourceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetResourceResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_GetResource_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionAdminServiceClient) ListResources(ctx context.Context, in *ListResourcesRequest, opts ...grpc.CallOption) (*ListResourcesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListResourcesResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_ListResources_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionAdminServiceClient) DeleteResource(ctx context.Context, in *DeleteResourceRequest, opts ...grpc.CallOption) (*DeleteResourceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteResourceResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_DeleteResource_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PermissionAdminServiceServer is the server API for PermissionAdminService service.
 // All implementations must embed UnimplementedPermissionAdminServiceServer
 // for forward compatibility.
@@ -156,6 +204,10 @@ type PermissionAdminServiceServer interface {
 	AssignRoles(context.Context, *AssignRolesRequest) (*AssignRolesResponse, error)
 	UnassignRoles(context.Context, *UnassignRolesRequest) (*UnassignRolesResponse, error)
 	SetMenus(context.Context, *SetMenusRequest) (*SetMenusResponse, error)
+	RegisterResource(context.Context, *RegisterResourceRequest) (*RegisterResourceResponse, error)
+	GetResource(context.Context, *GetResourceRequest) (*GetResourceResponse, error)
+	ListResources(context.Context, *ListResourcesRequest) (*ListResourcesResponse, error)
+	DeleteResource(context.Context, *DeleteResourceRequest) (*DeleteResourceResponse, error)
 	mustEmbedUnimplementedPermissionAdminServiceServer()
 }
 
@@ -189,6 +241,18 @@ func (UnimplementedPermissionAdminServiceServer) UnassignRoles(context.Context, 
 }
 func (UnimplementedPermissionAdminServiceServer) SetMenus(context.Context, *SetMenusRequest) (*SetMenusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetMenus not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) RegisterResource(context.Context, *RegisterResourceRequest) (*RegisterResourceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterResource not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) GetResource(context.Context, *GetResourceRequest) (*GetResourceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetResource not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) ListResources(context.Context, *ListResourcesRequest) (*ListResourcesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListResources not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) DeleteResource(context.Context, *DeleteResourceRequest) (*DeleteResourceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteResource not implemented")
 }
 func (UnimplementedPermissionAdminServiceServer) mustEmbedUnimplementedPermissionAdminServiceServer() {
 }
@@ -356,6 +420,78 @@ func _PermissionAdminService_SetMenus_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PermissionAdminService_RegisterResource_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterResourceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).RegisterResource(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_RegisterResource_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).RegisterResource(ctx, req.(*RegisterResourceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionAdminService_GetResource_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetResourceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).GetResource(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_GetResource_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).GetResource(ctx, req.(*GetResourceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionAdminService_ListResources_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListResourcesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).ListResources(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_ListResources_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).ListResources(ctx, req.(*ListResourcesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionAdminService_DeleteResource_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteResourceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).DeleteResource(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_DeleteResource_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).DeleteResource(ctx, req.(*DeleteResourceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PermissionAdminService_ServiceDesc is the grpc.ServiceDesc for PermissionAdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -394,6 +530,22 @@ var PermissionAdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetMenus",
 			Handler:    _PermissionAdminService_SetMenus_Handler,
+		},
+		{
+			MethodName: "RegisterResource",
+			Handler:    _PermissionAdminService_RegisterResource_Handler,
+		},
+		{
+			MethodName: "GetResource",
+			Handler:    _PermissionAdminService_GetResource_Handler,
+		},
+		{
+			MethodName: "ListResources",
+			Handler:    _PermissionAdminService_ListResources_Handler,
+		},
+		{
+			MethodName: "DeleteResource",
+			Handler:    _PermissionAdminService_DeleteResource_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

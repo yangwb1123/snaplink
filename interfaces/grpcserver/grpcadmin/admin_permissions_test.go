@@ -34,6 +34,14 @@ func TestPermissionAdminService_NilProviderPreconditionFails(t *testing.T) {
 	requireCode(t, err, codes.FailedPrecondition)
 	_, err = svc.SetMenus(ctx, &adminv1.SetMenusRequest{})
 	requireCode(t, err, codes.FailedPrecondition)
+	_, err = svc.RegisterResource(ctx, &adminv1.RegisterResourceRequest{Resource: &adminv1.Resource{Id: "r"}})
+	requireCode(t, err, codes.FailedPrecondition)
+	_, err = svc.GetResource(ctx, &adminv1.GetResourceRequest{Id: "r"})
+	requireCode(t, err, codes.FailedPrecondition)
+	_, err = svc.ListResources(ctx, &adminv1.ListResourcesRequest{})
+	requireCode(t, err, codes.FailedPrecondition)
+	_, err = svc.DeleteResource(ctx, &adminv1.DeleteResourceRequest{Id: "r"})
+	requireCode(t, err, codes.FailedPrecondition)
 }
 
 // TestPermissionAdminService_RoleCRUDAndInvalidateCallback drives AddRole /
@@ -217,4 +225,82 @@ func TestPermissionAdminService_ListAssignmentsPagination(t *testing.T) {
 
 	_, err = svc.ListAssignments(ctx, &adminv1.ListAssignmentsRequest{ClientId: "web", PageToken: "!!!not-valid-base64!!!"})
 	requireCode(t, err, codes.InvalidArgument)
+}
+
+func TestPermissionAdminService_ResourceCRUDScopePaginationAndAudit(t *testing.T) {
+	t.Parallel()
+	prov := permissions.NewMemoryProvider()
+	sink := audit.NewMemorySink(20)
+	var invalidated []string
+	svc := NewPermissionAdminService(prov, audit.New(sink), func(_ context.Context, clientID string) {
+		invalidated = append(invalidated, clientID)
+	})
+	ctx := context.Background()
+	resource := &adminv1.Resource{
+		Id: "r-http", TenantId: "spoofed", ClientId: "spoofed", Type: "http_api",
+		Name: "get-user", RequiresAuth: true,
+		Attributes:          map[string]string{"method": "GET", "path": "/users/:id"},
+		RequiredPermissions: []string{"user:read"},
+	}
+	registered, err := svc.RegisterResource(ctx, &adminv1.RegisterResourceRequest{
+		ClientId: "web", TenantId: "tenant-a", Resource: resource,
+	})
+	requireOK(t, err, "RegisterResource")
+	if registered.Resource.ClientId != "web" || registered.Resource.TenantId != "tenant-a" || registered.Resource.CreatedAt == "" {
+		t.Fatalf("registered resource scope/timestamp = %+v", registered.Resource)
+	}
+	_, err = svc.RegisterResource(ctx, &adminv1.RegisterResourceRequest{
+		ClientId: "web", TenantId: "tenant-a", Resource: &adminv1.Resource{
+			Id: "r-conflict", Type: "http_api", Name: "get-user",
+			Attributes: map[string]string{"method": "GET", "path": "/users/:id"},
+		},
+	})
+	requireCode(t, err, codes.AlreadyExists)
+
+	got, err := svc.GetResource(ctx, &adminv1.GetResourceRequest{ClientId: "web", TenantId: "tenant-a", Id: "r-http"})
+	requireOK(t, err, "GetResource")
+	if got.Resource.Name != "get-user" || got.Resource.Attributes["path"] != "/users/:id" {
+		t.Fatalf("GetResource = %+v", got.Resource)
+	}
+	_, err = svc.GetResource(ctx, &adminv1.GetResourceRequest{ClientId: "web", TenantId: "tenant-b", Id: "r-http"})
+	requireCode(t, err, codes.NotFound)
+	_, err = svc.RegisterResource(ctx, &adminv1.RegisterResourceRequest{
+		ClientId: "web", TenantId: "tenant-a", Resource: &adminv1.Resource{
+			Id: "r-grpc", Type: "grpc_api", Name: "delete-user",
+			Attributes: map[string]string{"service": "users.User", "method": "Delete"},
+		},
+	})
+	requireOK(t, err, "RegisterResource grpc")
+
+	page, err := svc.ListResources(ctx, &adminv1.ListResourcesRequest{ClientId: "web", TenantId: "tenant-a", PageSize: 1})
+	requireOK(t, err, "ListResources page 1")
+	if len(page.Resources) != 1 || page.TotalSize != 2 || page.NextPageToken == "" {
+		t.Fatalf("page 1 = %+v", page)
+	}
+	page2, err := svc.ListResources(ctx, &adminv1.ListResourcesRequest{
+		ClientId: "web", TenantId: "tenant-a", PageSize: 1, PageToken: page.NextPageToken,
+	})
+	requireOK(t, err, "ListResources page 2")
+	if len(page2.Resources) != 1 || page2.NextPageToken != "" || page2.Resources[0].Id != "r-http" {
+		t.Fatalf("page 2 = %+v", page2)
+	}
+
+	_, err = svc.RegisterResource(ctx, &adminv1.RegisterResourceRequest{
+		ClientId: "web", TenantId: "tenant-a", Resource: &adminv1.Resource{
+			Id: "bad", Type: "http_api", Name: "invalid",
+		},
+	})
+	requireCode(t, err, codes.InvalidArgument)
+	_, err = svc.DeleteResource(ctx, &adminv1.DeleteResourceRequest{ClientId: "web", TenantId: "tenant-a", Id: "r-http"})
+	requireOK(t, err, "DeleteResource")
+	_, err = svc.DeleteResource(ctx, &adminv1.DeleteResourceRequest{ClientId: "web", TenantId: "tenant-a", Id: "r-http"})
+	requireOK(t, err, "DeleteResource idempotent")
+	if len(invalidated) != 3 {
+		t.Fatalf("invalidations = %v, want three successful writes", invalidated)
+	}
+	events, err := sink.Query(ctx, audit.Query{})
+	requireOK(t, err, "audit query")
+	if len(events) != 3 {
+		t.Fatalf("audit events = %d, want 3", len(events))
+	}
 }

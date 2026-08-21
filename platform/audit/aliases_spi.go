@@ -70,6 +70,8 @@ const (
 	EventAdminRoleRemoved                    = auditspi.EventAdminRoleRemoved
 	EventAdminRoleUnassigned                 = auditspi.EventAdminRoleUnassigned
 	EventAdminRoleUpdated                    = auditspi.EventAdminRoleUpdated
+	EventAdminResourceRegistered             = auditspi.EventAdminResourceRegistered
+	EventAdminResourceRemoved                = auditspi.EventAdminResourceRemoved
 	EventAdminSubjectErased                  = auditspi.EventAdminSubjectErased
 	EventAdminSubjectExported                = auditspi.EventAdminSubjectExported
 	EventAdminSigningKeyRotated              = auditspi.EventAdminSigningKeyRotated

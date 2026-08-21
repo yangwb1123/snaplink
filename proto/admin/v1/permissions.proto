@@ -58,6 +58,28 @@ service PermissionAdminService {
       body: "*"
     };
   }
+
+  rpc RegisterResource(RegisterResourceRequest) returns (RegisterResourceResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/permissions/{client_id}/resources"
+      body: "resource"
+    };
+  }
+  rpc GetResource(GetResourceRequest) returns (GetResourceResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/admin/permissions/{client_id}/resources/{id}"
+    };
+  }
+  rpc ListResources(ListResourcesRequest) returns (ListResourcesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/admin/permissions/{client_id}/resources"
+    };
+  }
+  rpc DeleteResource(DeleteResourceRequest) returns (DeleteResourceResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/admin/permissions/{client_id}/resources/{id}"
+    };
+  }
 }
 
 message Role {
@@ -138,3 +160,51 @@ message SetMenusRequest  {
   repeated MenuItem menus = 2;
 }
 message SetMenusResponse {}
+
+message Resource {
+  string id = 1;
+  string tenant_id = 2;
+  string client_id = 3;
+  string type = 4;
+  string name = 5;
+  bool requires_auth = 6;
+  string description = 7;
+  map<string,string> attributes = 8;
+  repeated string required_permissions = 9;
+  string require_mode = 10;
+  string created_at = 11;
+  string updated_at = 12;
+}
+
+message RegisterResourceRequest {
+  string client_id = 1;
+  string tenant_id = 2;
+  Resource resource = 3;
+}
+message RegisterResourceResponse { Resource resource = 1; }
+
+message GetResourceRequest {
+  string client_id = 1;
+  string tenant_id = 2;
+  string id = 3;
+}
+message GetResourceResponse { Resource resource = 1; }
+
+message ListResourcesRequest {
+  string client_id = 1;
+  string tenant_id = 2;
+  string page_token = 3;
+  int32 page_size = 4;
+}
+message ListResourcesResponse {
+  string next_page_token = 1;
+  int32 total_size = 2;
+  repeated Resource resources = 3;
+}
+
+message DeleteResourceRequest {
+  string client_id = 1;
+  string tenant_id = 2;
+  string id = 3;
+}
+message DeleteResourceResponse {}

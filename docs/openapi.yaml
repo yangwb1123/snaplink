@@ -11029,6 +11029,108 @@ paths:
                 type: object
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/permissions/{client_id}/resources:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List catalog resources for a client and tenant bucket.
+      operationId: permissionListResources
+      parameters:
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: page_size
+          in: query
+          required: false
+          schema: { type: integer, format: int32 }
+        - name: page_token
+          in: query
+          required: false
+          schema: { type: string }
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Resource catalog page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListResourcesResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [admin]
+      summary: Register or update a catalog resource.
+      operationId: permissionRegisterResource
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Resource"
+      responses:
+        "200":
+          description: Registered resource with server timestamps.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterResourceResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/admin/permissions/{client_id}/resources/{id}:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: tenant_id
+        in: query
+        required: false
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Get one catalog resource.
+      operationId: permissionGetResource
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Catalog resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetResourceResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [admin]
+      summary: Delete a catalog resource; missing IDs are idempotent.
+      operationId: permissionDeleteResource
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Resource deleted or already absent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResourceResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/scim/v2/ServiceProviderConfig:
     get:
       tags: [scim]
@@ -13363,6 +13465,12 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     NotFound:
       description: The requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: The request conflicts with an existing resource.
       content:
         application/json:
           schema:
@@ -17007,6 +17115,52 @@ components:
           type: array
           items:
             type: string
+
+    Resource:
+      type: object
+      required: [id, type, name]
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        client_id: { type: string }
+        type: { type: string, example: http_api }
+        name: { type: string }
+        requires_auth: { type: boolean }
+        description: { type: string }
+        attributes:
+          type: object
+          additionalProperties: { type: string }
+        required_permissions:
+          type: array
+          items: { type: string }
+        require_mode:
+          type: string
+          enum: [any, all]
+        created_at: { type: string, format: date-time, readOnly: true }
+        updated_at: { type: string, format: date-time, readOnly: true }
+
+    RegisterResourceResponse:
+      type: object
+      properties:
+        resource: { $ref: "#/components/schemas/Resource" }
+
+    GetResourceResponse:
+      type: object
+      properties:
+        resource: { $ref: "#/components/schemas/Resource" }
+
+    ListResourcesResponse:
+      type: object
+      required: [resources, total_size, next_page_token]
+      properties:
+        next_page_token: { type: string }
+        total_size: { type: integer, format: int32 }
+        resources:
+          type: array
+          items: { $ref: "#/components/schemas/Resource" }
+
+    DeleteResourceResponse:
+      type: object
 
     RoleListResponse:
       type: object

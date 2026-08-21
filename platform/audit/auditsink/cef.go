@@ -126,6 +126,8 @@ var cefEventNames = map[auditspi.EventType]string{
 	auditspi.EventAdminRoleAssigned:               "Admin: Role Assigned",
 	auditspi.EventAdminRoleUnassigned:             "Admin: Role Unassigned",
 	auditspi.EventAdminMenusUpdated:               "Admin: Menus Updated",
+	auditspi.EventAdminResourceRegistered:         "Admin: Resource Registered",
+	auditspi.EventAdminResourceRemoved:            "Admin: Resource Removed",
 	auditspi.EventAdminTenantCreated:              "Admin: Tenant Created",
 	auditspi.EventAdminTenantUpdated:              "Admin: Tenant Updated",
 	auditspi.EventAdminTenantDeleted:              "Admin: Tenant Deleted",

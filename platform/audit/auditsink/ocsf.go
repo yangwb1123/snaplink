@@ -174,6 +174,8 @@ var ocsfEventActivities = map[auditspi.EventType]ocsfActivity{
 	auditspi.EventAdminRoleAssigned:               {ocsfClassAccountChange, ocsfCategoryIAM, 7, "Attach Policy"},
 	auditspi.EventAdminRoleUnassigned:             {ocsfClassAccountChange, ocsfCategoryIAM, 8, "Detach Policy"},
 	auditspi.EventAdminMenusUpdated:               {ocsfClassAccountChange, ocsfCategoryIAM, 99, "Menus Updated"},
+	auditspi.EventAdminResourceRegistered:         {ocsfClassAccountChange, ocsfCategoryIAM, 1, "Resource Registered"},
+	auditspi.EventAdminResourceRemoved:            {ocsfClassAccountChange, ocsfCategoryIAM, 2, "Resource Removed"},
 	auditspi.EventAdminTenantCreated:              {ocsfClassAccountChange, ocsfCategoryIAM, 1, "Create"},
 	auditspi.EventAdminTenantUpdated:              {ocsfClassAccountChange, ocsfCategoryIAM, 99, "Update"},
 	auditspi.EventAdminTenantDeleted:              {ocsfClassAccountChange, ocsfCategoryIAM, 6, "Delete"},

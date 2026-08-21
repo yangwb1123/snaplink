@@ -36,6 +36,8 @@ var allKnownEventTypes = []auditspi.EventType{
 	auditspi.EventAdminEmailChangeTokensRevoked,
 	auditspi.EventAdminGRPCCalled,
 	auditspi.EventAdminMenusUpdated,
+	auditspi.EventAdminResourceRegistered,
+	auditspi.EventAdminResourceRemoved,
 	auditspi.EventAdminMFAFactorRemoved,
 	auditspi.EventAdminPasswordReset,
 	auditspi.EventAdminPasswordResetTokensRevoked,

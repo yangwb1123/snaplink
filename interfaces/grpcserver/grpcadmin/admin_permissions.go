@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"time"
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
@@ -236,6 +237,142 @@ func (s *PermissionAdminService) SetMenus(ctx context.Context, in *adminv1.SetMe
 	return &adminv1.SetMenusResponse{}, nil
 }
 
+func (s *PermissionAdminService) RegisterResource(ctx context.Context, in *adminv1.RegisterResourceRequest) (*adminv1.RegisterResourceResponse, error) {
+	rp, err := s.resourceProvider()
+	if err != nil {
+		return nil, err
+	}
+	if in == nil || in.Resource == nil || in.Resource.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "resource.id required")
+	}
+	r := protoToResource(in.Resource)
+	r.ClientID, r.TenantID = in.ClientId, in.TenantId
+	if err := rp.RegisterResource(ctx, r); err != nil {
+		return nil, mapResourceMutationError("register", err)
+	}
+	stored, err := rp.GetResource(ctx, r.ID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "register resource readback: %v", err)
+	}
+	recordAdmin(ctx, s.recorder, audit.EventAdminResourceRegistered,
+		in.ClientId+"/"+string(stored.Type)+"/"+stored.Name)
+	s.invalidateAuthzPolicy(ctx, in.ClientId)
+	return &adminv1.RegisterResourceResponse{Resource: resourceToProto(stored)}, nil
+}
+
+func (s *PermissionAdminService) GetResource(ctx context.Context, in *adminv1.GetResourceRequest) (*adminv1.GetResourceResponse, error) {
+	rp, err := s.resourceProvider()
+	if err != nil {
+		return nil, err
+	}
+	if in == nil || in.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "id required")
+	}
+	r, err := rp.GetResource(ctx, in.Id)
+	if errors.Is(err, permissions.ErrResourceNotFound) {
+		return nil, status.Error(codes.NotFound, "resource not found")
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get resource: %v", err)
+	}
+	if !resourceInScope(r, in.TenantId, in.ClientId) {
+		return nil, status.Error(codes.NotFound, "resource not found")
+	}
+	return &adminv1.GetResourceResponse{Resource: resourceToProto(r)}, nil
+}
+
+func (s *PermissionAdminService) ListResources(ctx context.Context, in *adminv1.ListResourcesRequest) (*adminv1.ListResourcesResponse, error) {
+	rp, err := s.resourceProvider()
+	if err != nil {
+		return nil, err
+	}
+	if in == nil {
+		return nil, status.Error(codes.InvalidArgument, "request required")
+	}
+	items, next, total, err := runListPage(ctx, in.GetPageToken(), in.GetPageSize(), "", "", nil,
+		func(ctx context.Context) ([]*permissions.Resource, error) {
+			items, err := rp.ListResources(ctx, in.TenantId, in.ClientId)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "list resources: %v", err)
+			}
+			return items, nil
+		}, sortResources, nil, "list resources: %v", nil)
+	if err != nil {
+		return nil, err
+	}
+	out := &adminv1.ListResourcesResponse{NextPageToken: next, TotalSize: total}
+	for _, r := range items {
+		out.Resources = append(out.Resources, resourceToProto(r))
+	}
+	return out, nil
+}
+
+func (s *PermissionAdminService) DeleteResource(ctx context.Context, in *adminv1.DeleteResourceRequest) (*adminv1.DeleteResourceResponse, error) {
+	rp, err := s.resourceProvider()
+	if err != nil {
+		return nil, err
+	}
+	if in == nil || in.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "id required")
+	}
+	r, err := rp.GetResource(ctx, in.Id)
+	if errors.Is(err, permissions.ErrResourceNotFound) {
+		return &adminv1.DeleteResourceResponse{}, nil
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "delete resource lookup: %v", err)
+	}
+	if !resourceInScope(r, in.TenantId, in.ClientId) {
+		return nil, status.Error(codes.NotFound, "resource not found")
+	}
+	if err := rp.DeleteResource(ctx, in.Id); err != nil {
+		return nil, status.Errorf(codes.Internal, "delete resource: %v", err)
+	}
+	recordAdmin(ctx, s.recorder, audit.EventAdminResourceRemoved,
+		in.ClientId+"/"+string(r.Type)+"/"+r.Name)
+	s.invalidateAuthzPolicy(ctx, in.ClientId)
+	return &adminv1.DeleteResourceResponse{}, nil
+}
+
+func (s *PermissionAdminService) resourceProvider() (permissions.ResourceProvider, error) {
+	if s.prov == nil {
+		return nil, status.Error(codes.FailedPrecondition, "permission provider not configured")
+	}
+	rp, ok := s.prov.(permissions.ResourceProvider)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, "resource catalog not configured")
+	}
+	return rp, nil
+}
+
+func mapResourceMutationError(op string, err error) error {
+	switch {
+	case errors.Is(err, permissions.ErrResourceExists):
+		return status.Error(codes.AlreadyExists, "resource already exists")
+	case errors.Is(err, permissions.ErrInvalidResource):
+		return status.Error(codes.InvalidArgument, "invalid resource")
+	default:
+		return status.Errorf(codes.Internal, "%s resource: %v", op, err)
+	}
+}
+
+func resourceInScope(r *permissions.Resource, tenantID, clientID string) bool {
+	return r != nil && r.TenantID == tenantID && r.ClientID == clientID
+}
+
+func sortResources(items []*permissions.Resource, _ string) ([]*permissions.Resource, error) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Type != items[j].Type {
+			return items[i].Type < items[j].Type
+		}
+		if items[i].Name != items[j].Name {
+			return items[i].Name < items[j].Name
+		}
+		return items[i].ID < items[j].ID
+	})
+	return items, nil
+}
+
 func roleToProto(r permissions.Role) *adminv1.Role {
 	return &adminv1.Role{
 		Code:        r.Code,
@@ -252,6 +389,44 @@ func protoToRole(in *adminv1.Role) permissions.Role {
 		Description: in.Description,
 		Permissions: append([]string(nil), in.Permissions...),
 	}
+}
+
+func protoToResource(in *adminv1.Resource) *permissions.Resource {
+	r := &permissions.Resource{
+		ID: in.Id, TenantID: in.TenantId, ClientID: in.ClientId,
+		Type: permissions.ResourceType(in.Type), Name: in.Name,
+		RequiresAuth: in.RequiresAuth, Description: in.Description,
+		RequireMode:         permissions.RequireMode(in.RequireMode),
+		RequiredPermissions: append([]string(nil), in.RequiredPermissions...),
+	}
+	if len(in.Attributes) > 0 {
+		r.Attributes = make(map[string]string, len(in.Attributes))
+		for key, value := range in.Attributes {
+			r.Attributes[key] = value
+		}
+	}
+	return r
+}
+
+func resourceToProto(in *permissions.Resource) *adminv1.Resource {
+	if in == nil {
+		return nil
+	}
+	out := &adminv1.Resource{
+		Id: in.ID, TenantId: in.TenantID, ClientId: in.ClientID,
+		Type: string(in.Type), Name: in.Name, RequiresAuth: in.RequiresAuth,
+		Description: in.Description, RequireMode: string(in.RequireMode),
+		CreatedAt:           in.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:           in.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		RequiredPermissions: append([]string(nil), in.RequiredPermissions...),
+	}
+	if len(in.Attributes) > 0 {
+		out.Attributes = make(map[string]string, len(in.Attributes))
+		for key, value := range in.Attributes {
+			out.Attributes[key] = value
+		}
+	}
+	return out
 }
 
 func protoToMenus(items []*adminv1.MenuItem) permissions.MenuTree {

@@ -117,6 +117,8 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventAdminRoleAssigned,
 			audit.EventAdminRoleUnassigned,
 			audit.EventAdminMenusUpdated,
+			audit.EventAdminResourceRegistered,
+			audit.EventAdminResourceRemoved,
 			audit.EventAdminTenantCreated,
 			audit.EventAdminTenantUpdated,
 			audit.EventAdminTenantDeleted,
