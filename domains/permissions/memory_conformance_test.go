@@ -18,4 +18,9 @@ func TestMemoryProvider_Conformance(t *testing.T) {
 			return permissions.NewMemoryProvider()
 		},
 	}.Run(t)
+	permissionstest.ResourceConformanceSuite{
+		Factory: func(_ *testing.T) permissions.ResourceProvider {
+			return permissions.NewMemoryProvider()
+		},
+	}.Run(t)
 }

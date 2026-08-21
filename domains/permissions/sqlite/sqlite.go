@@ -5,21 +5,20 @@
 // AddRole/AssignRoles/SetMenus on one replica surface on every
 // replica's next lookup.
 //
-// Three tables:
+// Four tables:
+//
 //   - roles(client_id, role_code) PK pair + name + description +
 //     permissions (JSON array of permission codes).
+//
 //   - assignments(user_id, client_id) PK pair + roles (JSON array
 //     of role codes). RemoveRole cascades a strip across this
 //     table.
+//
 //   - menus(client_id) PK + tree (JSON-encoded MenuTree). Each
 //     client has at most one menu tree.
 //
-// Resources (the operator-managed catalog the MemoryProvider also
-// exposes via memory_resources.go) are NOT covered here — they
-// live behind a separate Provider extension interface that admin
-// tooling exercises directly; operators wanting cluster-shared
-// resources can bring a Redis / future SQLite resource store
-// alongside this one.
+//   - resources(id) PK + tenant/client/type/name uniqueness,
+//     policy JSON, and dispatch columns for the runtime catalog.
 package sqlite
 
 import (
@@ -39,6 +38,7 @@ import (
 // IF NOT EXISTS statements and get stamped v1; future changes append.
 var migrations = []migrate.Migration{
 	{Version: 1, Name: "baseline_permissions", SQL: schema},
+	{Version: 2, Name: "resource_catalog", SQL: resourceSchema},
 }
 
 const schema = `
@@ -65,6 +65,36 @@ CREATE TABLE IF NOT EXISTS permissions_menus (
 
 CREATE INDEX IF NOT EXISTS idx_permissions_assignments_client
     ON permissions_assignments(client_id);
+`
+
+const resourceSchema = `
+CREATE TABLE IF NOT EXISTS permissions_resources (
+    id                         TEXT PRIMARY KEY,
+    tenant_id                  TEXT NOT NULL DEFAULT '',
+    client_id                  TEXT NOT NULL DEFAULT '',
+    type                       TEXT NOT NULL,
+    name                       TEXT NOT NULL,
+    requires_auth              INTEGER NOT NULL DEFAULT 0,
+    description                TEXT NOT NULL DEFAULT '',
+    attributes_json            TEXT NOT NULL DEFAULT '{}',
+    required_permissions_json  TEXT NOT NULL DEFAULT '[]',
+    require_mode               TEXT NOT NULL DEFAULT '',
+    created_at                 INTEGER NOT NULL,
+    updated_at                 INTEGER NOT NULL,
+    dispatch_key               TEXT NOT NULL DEFAULT '',
+    dispatch_method            TEXT NOT NULL DEFAULT '',
+    dispatch_segments          INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (tenant_id, client_id, type, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_resources_scope
+    ON permissions_resources(tenant_id, client_id, type, name);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_resources_dispatch
+    ON permissions_resources(tenant_id, client_id, dispatch_method, dispatch_segments);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_resources_dispatch_key
+    ON permissions_resources(tenant_id, client_id, type, dispatch_key);
 `
 
 // Provider is the SQLite-backed [permissions.Provider].
@@ -127,4 +157,5 @@ var (
 	_ permissions.Provider              = (*Provider)(nil)
 	_ permissions.MenuLister            = (*Provider)(nil)
 	_ permissions.GroupMembershipWriter = (*Provider)(nil)
+	_ permissions.ResourceProvider      = (*Provider)(nil)
 )
