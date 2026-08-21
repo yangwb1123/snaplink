@@ -8,6 +8,7 @@ import (
 	authzv1 "github.com/yangwb1123/snaplink/gen/proto/authz/v1"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/spi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,6 +21,15 @@ type AuthzService struct {
 	recorder *audit.Recorder
 	metrics  *metrics.Metrics
 	logger   spi.Logger
+	boundary AuthzSessionBoundary
+}
+
+// AuthzSessionBoundary supplies the state needed to make session-scoped
+// authorization decisions against the same identity boundary as the SSO
+// server. Both dependencies are optional for embedded, stateless callers.
+type AuthzSessionBoundary struct {
+	SessionManager core.SessionManager
+	ResolveSubject func(context.Context, string) (string, error)
 }
 
 func NewAuthzService(p permissions.Provider) *AuthzService {
@@ -29,7 +39,13 @@ func NewAuthzService(p permissions.Provider) *AuthzService {
 // NewAuthzServiceWithObservability wires optional decision-plane telemetry
 // while preserving the original constructor for embedded callers.
 func NewAuthzServiceWithObservability(p permissions.Provider, recorder *audit.Recorder, m *metrics.Metrics, logger spi.Logger) *AuthzService {
-	return &AuthzService{provider: p, recorder: recorder, metrics: m, logger: logger}
+	return NewAuthzServiceWithSessionBoundary(p, recorder, m, logger, AuthzSessionBoundary{})
+}
+
+// NewAuthzServiceWithSessionBoundary adds optional session liveness and
+// pairwise-subject resolution to the authorization decision path.
+func NewAuthzServiceWithSessionBoundary(p permissions.Provider, recorder *audit.Recorder, m *metrics.Metrics, logger spi.Logger, boundary AuthzSessionBoundary) *AuthzService {
+	return &AuthzService{provider: p, recorder: recorder, metrics: m, logger: logger, boundary: boundary}
 }
 
 func (s *AuthzService) Check(ctx context.Context, in *authzv1.CheckRequest) (*authzv1.CheckResponse, error) {
@@ -60,9 +76,20 @@ func (s *AuthzService) Check(ctx context.Context, in *authzv1.CheckRequest) (*au
 }
 
 func (s *AuthzService) resolvePermissions(ctx context.Context, in *authzv1.CheckRequest) ([]permissions.Permission, error) {
+	subject, err := s.resolveSessionSubject(ctx, in)
+	if err != nil {
+		return nil, err
+	}
 	if in.SessionId != "" {
+		live, err := s.sessionIsLive(ctx, in, subject)
+		if err != nil {
+			return nil, err
+		}
+		if !live {
+			return nil, nil
+		}
 		if activator, ok := s.provider.(permissions.SessionRoleActivator); ok {
-			roles, err := activator.ActiveRoles(ctx, in.SubjectId, in.ClientId, in.SessionId)
+			roles, err := activator.ActiveRoles(ctx, subject, in.ClientId, in.SessionId)
 			if err != nil {
 				return nil, err
 			}
@@ -73,7 +100,41 @@ func (s *AuthzService) resolvePermissions(ctx context.Context, in *authzv1.Check
 			return permissions.PermissionsFromRoles(roles), nil
 		}
 	}
-	return s.provider.Permissions(ctx, in.SubjectId, in.ClientId)
+	return s.provider.Permissions(ctx, subject, in.ClientId)
+}
+
+func (s *AuthzService) resolveSessionSubject(ctx context.Context, in *authzv1.CheckRequest) (string, error) {
+	if in.SessionId == "" || s.boundary.ResolveSubject == nil {
+		return in.SubjectId, nil
+	}
+	subject, err := s.boundary.ResolveSubject(ctx, in.SubjectId)
+	if err != nil {
+		return "", err
+	}
+	if subject == "" {
+		return "", errors.New("authorization subject resolution returned an empty subject")
+	}
+	return subject, nil
+}
+
+func (s *AuthzService) sessionIsLive(ctx context.Context, in *authzv1.CheckRequest, subject string) (bool, error) {
+	if s.boundary.SessionManager == nil {
+		return true, nil
+	}
+	sess, err := s.boundary.SessionManager.Get(ctx, in.SessionId)
+	if errors.Is(err, core.ErrSessionNotFound) || sess == nil {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if sess.Revoked || sess.IsExpired() || sess.UserID == "" || sess.UserID != subject {
+		return false, nil
+	}
+	if sess.ClientID != "" && sess.ClientID != in.ClientId {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (s *AuthzService) checkResource(in *authzv1.CheckRequest, perms []permissions.Permission) (bool, error) {

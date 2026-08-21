@@ -3,12 +3,15 @@ package grpcserver_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	authzv1 "github.com/yangwb1123/snaplink/gen/proto/authz/v1"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/yangwb1123/snaplink/interfaces/grpcserver"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
@@ -106,4 +109,43 @@ func TestAuthzCheckRecordsDecisionObservability(t *testing.T) {
 		}
 	}
 	t.Fatalf("metric %s not registered", metrics.NameAuthzChecksTotal)
+}
+
+func TestAuthzCheckEnforcesLiveSessionAndLocalSubject(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	p := permissions.NewMemoryProvider()
+	if err := p.AddRole(ctx, "web", permissions.Role{Code: "reader", Permissions: []string{"item:read"}}); err != nil {
+		t.Fatalf("add role: %v", err)
+	}
+	if err := p.AssignRoles(ctx, "local-alice", "web", []string{"reader"}); err != nil {
+		t.Fatalf("assign role: %v", err)
+	}
+	sessions := memorystoreidentity.NewMemorySessionManager(time.Hour)
+	sess, err := sessions.CreateWithMeta(ctx, "local-alice", core.SessionMeta{ClientID: "web"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := p.ActivateRoles(ctx, "local-alice", "web", sess.ID, []string{"reader"}); err != nil {
+		t.Fatalf("activate role: %v", err)
+	}
+	service := grpcserver.NewAuthzServiceWithSessionBoundary(p, nil, nil, nil, grpcserver.AuthzSessionBoundary{
+		SessionManager: sessions,
+		ResolveSubject: func(context.Context, string) (string, error) { return "local-alice", nil },
+	})
+	allowed, err := service.Check(ctx, &authzv1.CheckRequest{
+		SubjectId: "pairwise-alice", ClientId: "web", Permission: "item:read", SessionId: sess.ID,
+	})
+	if err != nil || !allowed.Allowed {
+		t.Fatalf("live pairwise session = %+v, %v", allowed, err)
+	}
+	if err := sessions.Destroy(ctx, sess.ID); err != nil {
+		t.Fatalf("destroy session: %v", err)
+	}
+	denied, err := service.Check(ctx, &authzv1.CheckRequest{
+		SubjectId: "pairwise-alice", ClientId: "web", Permission: "item:read", SessionId: sess.ID,
+	})
+	if err != nil || denied.Allowed {
+		t.Fatalf("destroyed session = %+v, %v", denied, err)
+	}
 }
