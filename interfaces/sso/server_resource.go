@@ -37,6 +37,19 @@ func (s *Server) deactivatePermissionSession(ctx context.Context, sessionID stri
 	}
 }
 
+// meshIdentityRoles narrows the roles published to a sidecar when the token
+// carries a session id and the provider supports dynamic separation of duty.
+// Providers without the optional activator retain the legacy assigned-role
+// projection; store errors remain non-fatal to the mesh identity response.
+func (s *Server) meshIdentityRoles(ctx context.Context, userID, clientID, sessionID string) ([]permissions.Role, error) {
+	if sessionID != "" {
+		if activator, ok := s.permissions.(permissions.SessionRoleActivator); ok {
+			return activator.ActiveRoles(ctx, userID, clientID, sessionID)
+		}
+	}
+	return s.permissions.Roles(ctx, userID, clientID)
+}
+
 func webhookConfigured(runtime webhook.Runtime) bool {
 	if runtime == nil {
 		return false
