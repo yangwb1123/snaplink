@@ -32,14 +32,15 @@ type SecurityConfig struct {
 	MTLS                        MTLSConfig                        `yaml:"mtls"`
 	TrustedProxies              TrustedProxiesConfig              `yaml:"trusted_proxies"`
 	SecurityHeaders             SecurityHeadersConfig             `yaml:"security_headers"`
-	// RARLimits, ScopeLimit, and MaxTokenBytes are the input-limit-hardening
-	// knobs: RFC 9396 authorization_details shape caps, a scope-count cap,
-	// and a bearer-token byte-length cap respectively. All default to
-	// unbounded (zero value) — byte-identical to a build without this
-	// section. See RARLimitsConfig / ScopeLimitConfig docs (config_admin.go).
-	RARLimits     RARLimitsConfig  `yaml:"rar_limits"`
-	ScopeLimit    ScopeLimitConfig `yaml:"scope_limit"`
-	MaxTokenBytes int              `yaml:"max_token_bytes"`
+	// RARLimits, ScopeLimit, MaxTokenBytes, and RARCatalogCheck are the
+	// input-validation knobs: RFC 9396 shape caps, a scope-count cap, a
+	// bearer-token byte-length cap, and optional PAR catalog verification.
+	// The zero values preserve the legacy behavior. See the corresponding
+	// config types in config_admin.go.
+	RARLimits       RARLimitsConfig       `yaml:"rar_limits"`
+	ScopeLimit      ScopeLimitConfig      `yaml:"scope_limit"`
+	MaxTokenBytes   int                   `yaml:"max_token_bytes"`
+	RARCatalogCheck RARCatalogCheckConfig `yaml:"rar_catalog_check"`
 }
 
 // SecurityHeadersConfig opts into the security-headers framework: CSP (with a

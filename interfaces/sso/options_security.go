@@ -16,6 +16,10 @@ func WithJTIReplayStore(store security.JTIReplayStore) Option {
 	return func(s *Server) { s.jtiReplayStore = store }
 }
 
+// WithRARCatalogCheck enables PAR-time verification of catalog-backed RAR
+// entries when the permission provider exposes the resource extension.
+func WithRARCatalogCheck() Option { return func(s *Server) { s.rarCatalogCheck = true } }
+
 // WithJTIReplayFailClosed makes a TRANSIENT jti-replay STORE ERROR
 // reject the request instead of falling through (fail-open).
 //

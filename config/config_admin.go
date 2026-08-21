@@ -129,6 +129,15 @@ type RARLimitsConfig struct {
 	MaxDepth    int `yaml:"max_depth"`
 }
 
+// RARCatalogCheckConfig enables PAR-time verification for first-party RFC
+// 9396 resource types (http_api, grpc_api, graphql_api). When enabled, the
+// server resolves those elements against a permission provider implementing
+// permissions.ResourceProvider; a provider without that extension keeps the
+// documented shape-only compatibility mode. Maps to sso.WithRARCatalogCheck.
+type RARCatalogCheckConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
 // ScopeLimitConfig caps the number of space-separated scopes accepted in a
 // single request's `scope` parameter on /auth/login and /par. MaxCount <= 0
 // (default) = unbounded — byte-identical to today. This is a token-COUNT

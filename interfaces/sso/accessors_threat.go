@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/domains/threataction"
 	"github.com/yangwb1123/snaplink/domains/tokenexchange"
 	"github.com/yangwb1123/snaplink/interfaces/admin"
@@ -65,6 +66,16 @@ func (s *Server) NotificationBroker() *sse.Broker {
 		return nil
 	}
 	return s.notificationRouter.Broker()
+}
+
+// ResourceCatalog returns the optional catalog extension used by PAR RAR
+// validation. A provider without the extension remains shape-only.
+func (s *Server) ResourceCatalog() permissions.ResourceProvider {
+	if !s.rarCatalogCheck {
+		return nil
+	}
+	rp, _ := s.permissions.(permissions.ResourceProvider)
+	return rp
 }
 
 // StartNotificationRouter starts the optional delivery workers.

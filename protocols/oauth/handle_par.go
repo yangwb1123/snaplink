@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -29,6 +30,9 @@ type PARDeps interface {
 	// MaxScopeCount returns the configured cap on the number of
 	// space-separated scopes accepted in a single request; <= 0 = unbounded.
 	MaxScopeCount() int
+	// ResourceCatalog returns the optional resource provider used to verify
+	// catalog-backed authorization_details during PAR validation.
+	ResourceCatalog() permissions.ResourceProvider
 	// RequireFormContentType reports whether the strict credential wire is
 	// enabled (B4-4, server.require_form_content_type): /par then accepts
 	// ONLY application/x-www-form-urlencoded and answers 415 for a JSON
@@ -240,6 +244,12 @@ func validatePARRequestParams(d PARDeps, ctx core.HandlerContext, req *parReques
 	if _, err := ValidateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes, d.RARLimits()); err != nil {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBodyDesc(ErrInvalidAuthorizationDetails, err.Error()))
 		return false
+	}
+	if rp := d.ResourceCatalog(); rp != nil {
+		if err := ValidateAuthorizationDetailsCatalog(req.AuthorizationDetails, rp, client.TenantID, client.ID); err != nil {
+			ctx.JSON(http.StatusBadRequest, core.ErrorBodyDesc(ErrInvalidAuthorizationDetails, err.Error()))
+			return false
+		}
 	}
 	return true
 }

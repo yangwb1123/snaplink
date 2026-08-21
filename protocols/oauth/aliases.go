@@ -126,3 +126,5 @@ var (
 	RequestedACRFromClaims       = oauthvalidate.RequestedACRFromClaims
 	IsValidResponseMode          = oauthvalidate.IsValidResponseMode
 )
+
+var ValidateAuthorizationDetailsCatalog = oauthvalidate.ValidateAuthorizationDetailsCatalog

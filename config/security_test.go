@@ -122,3 +122,26 @@ func TestSecurityConfig_NegativeBodyLimitIsUnlimited(t *testing.T) {
 		t.Errorf("got %d opts; expected exactly 2 (WithIssuer + access log, body limit unwired)", len(opts))
 	}
 }
+
+func TestSecurityConfig_RARCatalogCheck(t *testing.T) {
+	t.Parallel()
+	p := writeTemp(t, "rar-catalog.yaml", `server:
+  issuer: t
+  listen: :8080
+security:
+  body_limit:
+    max_bytes: -1
+  rar_catalog_check:
+    enabled: true
+`)
+	cfg, err := LoadFromSources(context.Background(), NewFileSource(p))
+	if err != nil {
+		t.Fatalf("LoadFromSources: %v", err)
+	}
+	if !cfg.Security.RARCatalogCheck.Enabled {
+		t.Fatal("rar_catalog_check.enabled should be true")
+	}
+	if got := len(cfg.ServerOptions()); got != 3 {
+		t.Fatalf("ServerOptions returned %d opts, want issuer + access log + RAR catalog check", got)
+	}
+}

@@ -301,6 +301,9 @@ func (c *Config) securityMiddlewareOptions() []sso.Option {
 	if c.Security.CORS.Enabled && len(c.Security.CORS.AllowedOrigins) > 0 {
 		opts = append(opts, sso.WithCORS(c.Security.CORS.toPolicy()))
 	}
+	if c.Security.RARCatalogCheck.Enabled {
+		opts = append(opts, sso.WithRARCatalogCheck())
+	}
 	return opts
 }
 

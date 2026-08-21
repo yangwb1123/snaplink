@@ -98,6 +98,7 @@ type wiringState struct {
 	// a build without this feature.
 	apiV2AlphaPreview          bool
 	permissions                permissions.Provider
+	rarCatalogCheck            bool
 	embedPermissions           bool
 	netStore                   netpolicy.Store
 	netClassifier              *netpolicy.Classifier

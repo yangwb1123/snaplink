@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -21,6 +22,7 @@ type parDeps struct {
 	verifyCA      func(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
 	rarLimits     RARLimits
 	maxScopeCount int
+	catalog       permissions.ResourceProvider
 }
 
 func (d *parDeps) ClientStoreAccessor() core.ClientStore    { return d.clients }
@@ -31,9 +33,10 @@ func (d *parDeps) ResolveIssuer(core.HandlerContext) string { return "https://is
 func (d *parDeps) VerifyJWTClientAssertion(ctx context.Context, a, f, i string) (string, error) {
 	return d.verifyCA(ctx, a, f, i)
 }
-func (d *parDeps) SrvLogger() spi.Logger { return spi.NopLogger{} }
-func (d *parDeps) RARLimits() RARLimits  { return d.rarLimits }
-func (d *parDeps) MaxScopeCount() int    { return d.maxScopeCount }
+func (d *parDeps) SrvLogger() spi.Logger                         { return spi.NopLogger{} }
+func (d *parDeps) RARLimits() RARLimits                          { return d.rarLimits }
+func (d *parDeps) MaxScopeCount() int                            { return d.maxScopeCount }
+func (d *parDeps) ResourceCatalog() permissions.ResourceProvider { return d.catalog }
 
 // RequireFormContentType returns false — the legacy dual-mode posture —
 // so every existing JSON-post unit test in this file stays on the
@@ -228,6 +231,61 @@ func TestHandlePAR(t *testing.T) {
 			t.Fatalf("error = %v, want %s", got, ErrInvalidAuthorizationDetails)
 		}
 	})
+
+	t.Run("catalog-backed authorization_details valid", func(t *testing.T) {
+		cs := newMemClientStore()
+		c := activeClient("rp")
+		c.AllowedAuthorizationDetailsTypes = []string{"http_api"}
+		cs.put(c, "s")
+		catalog := permissions.NewMemoryProvider()
+		if err := catalog.RegisterResource(context.Background(), &permissions.Resource{
+			ID: "users", ClientID: "rp", Type: permissions.ResourceTypeHTTPAPI, Name: "users",
+			Attributes: map[string]string{"method": "GET", "path": "/api/users/:id"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		d := newPARDeps(cs, newMemPARStore())
+		d.catalog = catalog
+		body := `{"client_id":"rp","client_secret":"s","authorization_details":[{"type":"http_api","method":"GET","path":"/api/users/42"}]}`
+		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, body)
+		HandlePAR(d, ctx)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201", rec.Code)
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "catalog-backed authorization_details unknown", path: "/api/other/42"},
+		{name: "catalog-backed authorization_details mismatch", path: "/api/users/42/extra"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := newMemClientStore()
+			c := activeClient("rp")
+			c.AllowedAuthorizationDetailsTypes = []string{"http_api"}
+			cs.put(c, "s")
+			catalog := permissions.NewMemoryProvider()
+			if err := catalog.RegisterResource(context.Background(), &permissions.Resource{
+				ID: "users", ClientID: "rp", Type: permissions.ResourceTypeHTTPAPI, Name: "users",
+				Attributes: map[string]string{"method": "GET", "path": "/api/users/:id"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			d := newPARDeps(cs, newMemPARStore())
+			d.catalog = catalog
+			body := `{"client_id":"rp","client_secret":"s","authorization_details":[{"type":"http_api","method":"GET","path":"` + tc.path + `"}]}`
+			ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, body)
+			HandlePAR(d, ctx)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", rec.Code)
+			}
+			if got := decodeBody(t, rec)["error"]; got != ErrInvalidAuthorizationDetails {
+				t.Fatalf("error = %v, want %s", got, ErrInvalidAuthorizationDetails)
+			}
+		})
+	}
 
 	t.Run("scope count exceeded", func(t *testing.T) {
 		cs := newMemClientStore()

@@ -1,10 +1,9 @@
 # Design: wiring the permissions resource catalog into enforcement, persistence, and management
 
-Status: proposed. Scope: Direction 1 of the analysis — the three improvements
-(resource-aware `Check`, durable catalog backend + conformance, admin CRUD +
-RAR enforcement). Each section is a decision with API surface, semantics,
-failure modes, and risks. Line numbers cited were verified against the tree at
-writing time.
+Status: implemented. The three Direction 1 improvements are shipped:
+resource-aware `Check`, durable catalog backend + conformance, admin CRUD, and
+PAR RAR enforcement. Each section records the shipped API surface, semantics,
+failure modes, and risks.
 
 ## ## 1. Resource-aware decision at the authz `Check` point
 
