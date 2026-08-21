@@ -7,7 +7,7 @@
 #   1. data.bundle  — the role-DEFINITION bundle pulled from
 #                      GET /api/v1/admin/authz/policy-bundle?client_id=<id>
 #                      (code -> permissions[] + wildcard_semantics).
-#   2. input.roles  — the caller's role CODES, taken from the access
+#   2. input.roles or input.session_roles — the caller's role CODES, taken from the access
 #                      token. The SSO server embeds them in the login
 #                      response when WithEmbedPermissionsInLogin is set, so
 #                      the sidecar reads them from the validated token; the
@@ -39,8 +39,10 @@ import rego.v1
 # The permission codes granted by the caller's held roles, flattened from
 # the bundle's role definitions. A token role with no matching definition
 # in the bundle contributes nothing (fail-closed).
+caller_roles := object.get(input, "session_roles", object.get(input, "roles", []))
+
 granted contains code if {
-	some role_code in input.roles
+	some role_code in caller_roles
 	some role in data.bundle.roles
 	role.code == role_code
 	some code in role.permissions
@@ -54,7 +56,7 @@ conflict_sets := array.concat(data.bundle.ssod_conflict_sets, data.bundle.dsod_c
 role_conflict if {
 	input.session_id != ""
 	some conflict_set in conflict_sets
-	count({role_code | some role_code in input.roles; role_code in conflict_set}) >= 2
+	count({role_code | some role_code in caller_roles; role_code in conflict_set}) >= 2
 }
 
 # Wildcard tokens come from the bundle's self-describing semantics so the
@@ -104,13 +106,37 @@ permission_satisfied_code(code, want) if {
 resource_matches contains resource if {
 	some resource in data.bundle.resources
 	resource.type == input.resource.type
-	resource.tenant_id == object.get(input.resource, "tenant_id", "")
-	resource_attributes_match(resource.attributes, object.get(input.resource, "attributes", {}))
+	object.get(resource, "tenant_id", "") == object.get(input.resource, "tenant_id", "")
+	object.get(resource, "client_id", "") == object.get(input.resource, "client_id", object.get(resource, "client_id", ""))
+	resource_attributes_match(resource.type, resource.attributes, object.get(input.resource, "attributes", {}))
 }
 
-resource_attributes_match(expected, actual) if {
-	count(expected) == count({key | some key in expected; expected[key] == actual[key]})
+resource_attributes_match("http_api", expected, actual) if {
+	lower(expected.method) == lower(actual.method)
+	http_path_matches(expected.path, actual.path)
 }
+
+resource_attributes_match(_, expected, actual) if {
+	count(expected) == count(actual)
+	every key, value in expected {
+		actual[key] == value
+	}
+}
+
+http_path_matches(expected, actual) if expected == actual
+
+http_path_matches(expected, actual) if {
+	expected_segments := split(expected, "/")
+	actual_segments := split(actual, "/")
+	count(expected_segments) == count(actual_segments)
+	every index, segment in expected_segments {
+		http_path_segment_matches(segment, actual_segments[index])
+	}
+}
+
+http_path_segment_matches(expected, actual) if startswith(expected, ":")
+
+http_path_segment_matches(expected, actual) if expected == actual
 
 resource_allowed if {
 	not input.resource

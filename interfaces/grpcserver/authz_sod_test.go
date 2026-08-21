@@ -111,6 +111,72 @@ func TestAuthzCheckRecordsDecisionObservability(t *testing.T) {
 	t.Fatalf("metric %s not registered", metrics.NameAuthzChecksTotal)
 }
 
+func TestAuthzCheckAuditCarriesResolvedDecisionContext(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	p := permissions.NewMemoryProvider()
+	if err := p.AddRole(ctx, "web", permissions.Role{Code: "reader", Permissions: []string{"item:read"}}); err != nil {
+		t.Fatalf("add role: %v", err)
+	}
+	if err := p.AssignRoles(ctx, "local-alice", "web", []string{"reader"}); err != nil {
+		t.Fatalf("assign role: %v", err)
+	}
+	if err := p.RegisterResource(ctx, &permissions.Resource{
+		ID: "r-item", TenantID: "tenant-a", ClientID: "web", Type: permissions.ResourceTypeHTTPAPI,
+		Name: "item", RequiresAuth: true, Attributes: map[string]string{"method": "GET", "path": "/items/:id"},
+		RequiredPermissions: []string{"item:read"},
+	}); err != nil {
+		t.Fatalf("register resource: %v", err)
+	}
+	sessions := memorystoreidentity.NewMemorySessionManager(time.Hour)
+	sess, err := sessions.CreateWithMeta(ctx, "local-alice", core.SessionMeta{ClientID: "web"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := p.ActivateRoles(ctx, "local-alice", "web", sess.ID, []string{"reader"}); err != nil {
+		t.Fatalf("activate role: %v", err)
+	}
+	sink := audit.NewMemorySink(8)
+	service := grpcserver.NewAuthzServiceWithSessionBoundary(p, audit.New(sink), nil, spi.NopLogger{}, grpcserver.AuthzSessionBoundary{
+		SessionManager: sessions,
+		ResolveSubject: func(context.Context, string) (string, error) { return "local-alice", nil },
+	})
+	request := &authzv1.CheckRequest{
+		SubjectId: "pairwise-alice", ClientId: "web", Permission: "ignored", SessionId: sess.ID,
+		ResourceType: "http_api", TenantId: "tenant-a", Attributes: map[string]string{"method": "GET", "path": "/items/42"},
+	}
+	allowed, err := service.Check(ctx, request)
+	if err != nil || !allowed.Allowed {
+		t.Fatalf("allowed check = %+v, %v", allowed, err)
+	}
+	if err := sessions.Destroy(ctx, sess.ID); err != nil {
+		t.Fatalf("destroy session: %v", err)
+	}
+	denied, err := service.Check(ctx, request)
+	if err != nil || denied.Allowed {
+		t.Fatalf("destroyed check = %+v, %v", denied, err)
+	}
+	events, err := sink.Query(ctx, audit.Query{Type: audit.EventPermissionCheck, Limit: 8})
+	if err != nil || len(events) != 2 {
+		t.Fatalf("permission events = %d, %v", len(events), err)
+	}
+	byDecision := make(map[string]*audit.Event, len(events))
+	for _, event := range events {
+		byDecision[event.Metadata["decision"]] = event
+	}
+	allowEvent, ok := byDecision["allow"]
+	if !ok {
+		t.Fatalf("allow event missing: %v", byDecision)
+	}
+	if allowEvent.ActorID != "pairwise-alice" || allowEvent.SessionID != sess.ID || allowEvent.Metadata["subject_id"] != "local-alice" || allowEvent.Metadata["client_id"] != "web" || allowEvent.Metadata["resource_id"] != "r-item" || allowEvent.Metadata["reason"] != "require-any" {
+		t.Fatalf("allow context = %+v", allowEvent)
+	}
+	denyEvent, ok := byDecision["deny"]
+	if !ok || denyEvent.Metadata["reason"] != "empty-active-set" || denyEvent.Metadata["session_id"] != sess.ID {
+		t.Fatalf("deny context = %+v", denyEvent)
+	}
+}
+
 func TestAuthzCheckEnforcesLiveSessionAndLocalSubject(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

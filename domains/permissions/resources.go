@@ -153,29 +153,62 @@ type ResourceCatalogLister interface {
 	ListAllResources(ctx context.Context, clientID string) ([]*Resource, error)
 }
 
+// ResourceCheckResult carries the decision-plane details needed by callers
+// that audit authorization without re-resolving the catalog. Reason is a
+// bounded value from the resource matcher, never a provider error string.
+type ResourceCheckResult struct {
+	Allowed    bool
+	ResourceID string
+	Reason     string
+}
+
 // CheckResource decides an optional resource-aware authorization request.
 // A nil lookup preserves the legacy flat permission decision. A catalog miss
 // also falls back to that decision so callers without a matching entry retain
 // the existing behavior. A found public or auth-only resource is allowed;
 // resources with required permissions use the projected require mode.
 func CheckResource(rp ResourceProvider, lookup *ResourceLookup, subjectPerms []Permission, want string) (bool, error) {
+	result, err := CheckResourceWithContext(context.Background(), rp, lookup, subjectPerms, want)
+	return result.Allowed, err
+}
+
+// CheckResourceWithContext is CheckResource with caller-controlled context
+// and bounded decision details for audit or tracing consumers.
+func CheckResourceWithContext(ctx context.Context, rp ResourceProvider, lookup *ResourceLookup, subjectPerms []Permission, want string) (ResourceCheckResult, error) {
 	if lookup == nil {
-		return Matches(subjectPerms, want), nil
+		return flatResourceResult(subjectPerms, want), nil
 	}
 	if rp == nil {
-		return false, errors.New("permissions: resource provider required")
+		return ResourceCheckResult{}, errors.New("permissions: resource provider required")
 	}
-	decision, err := rp.ResolveResource(context.Background(), *lookup)
+	decision, err := rp.ResolveResource(ctx, *lookup)
 	if err != nil {
-		return false, err
+		return ResourceCheckResult{}, err
 	}
 	if !decision.Found {
-		return Matches(subjectPerms, want), nil
+		return flatResourceResult(subjectPerms, want), nil
 	}
 	if !decision.RequiresAuth || len(decision.RequiredPermissions) == 0 {
-		return true, nil
+		return ResourceCheckResult{Allowed: true, ResourceID: decision.ResourceID, Reason: "resource-public"}, nil
 	}
-	return resourcePermissionsMatch(subjectPerms, decision), nil
+	reason := "require-any"
+	if decision.RequireMode == RequireAll {
+		reason = "require-all"
+	}
+	return ResourceCheckResult{
+		Allowed:    resourcePermissionsMatch(subjectPerms, decision),
+		ResourceID: decision.ResourceID,
+		Reason:     reason,
+	}, nil
+}
+
+func flatResourceResult(subjectPerms []Permission, want string) ResourceCheckResult {
+	allowed := Matches(subjectPerms, want)
+	reason := "flat-miss"
+	if allowed {
+		reason = "flat-match"
+	}
+	return ResourceCheckResult{Allowed: allowed, Reason: reason}
 }
 
 func resourcePermissionsMatch(subjectPerms []Permission, decision *ResourceDecision) bool {

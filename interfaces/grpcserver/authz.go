@@ -32,6 +32,19 @@ type AuthzSessionBoundary struct {
 	ResolveSubject func(context.Context, string) (string, error)
 }
 
+type permissionResolution struct {
+	permissions    []permissions.Permission
+	subjectID      string
+	invalidSession bool
+	emptyActive    bool
+}
+
+type authzDecision struct {
+	subjectID  string
+	resourceID string
+	reason     string
+}
+
 func NewAuthzService(p permissions.Provider) *AuthzService {
 	return NewAuthzServiceWithObservability(p, nil, nil, nil)
 }
@@ -55,52 +68,68 @@ func (s *AuthzService) Check(ctx context.Context, in *authzv1.CheckRequest) (*au
 	if in.SubjectId == "" || in.Permission == "" {
 		return nil, status.Error(codes.InvalidArgument, "subject_id and permission required")
 	}
-	perms, err := s.resolvePermissions(ctx, in)
+	resolution, err := s.resolvePermissions(ctx, in)
 	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
 		return nil, status.Errorf(codes.Internal, "permissions lookup: %v", err)
 	}
+	decision := authzDecision{subjectID: resolution.subjectID}
 	var allowed bool
-	if in.ResourceType != "" {
-		allowed, err = s.checkResource(in, perms)
+	if resolution.invalidSession {
+		decision.reason = "empty-active-set"
+	} else if in.ResourceType != "" {
+		result, checkErr := s.checkResource(ctx, in, resolution.permissions)
+		err = checkErr
 		if err != nil {
 			if status.Code(err) == codes.FailedPrecondition {
 				return nil, err
 			}
 			return nil, status.Errorf(codes.Internal, "resource check: %v", err)
 		}
+		allowed = result.Allowed
+		decision.resourceID = result.ResourceID
+		decision.reason = result.Reason
 	} else {
-		allowed = permissions.Matches(perms, in.Permission)
+		allowed = permissions.Matches(resolution.permissions, in.Permission)
+		decision.reason = flatDecisionReason(allowed)
+		if resolution.emptyActive {
+			decision.reason = "empty-active-set"
+		}
 	}
-	s.recordDecision(ctx, in, allowed)
+	s.recordDecision(ctx, in, decision, allowed)
 	return &authzv1.CheckResponse{Allowed: allowed}, nil
 }
 
-func (s *AuthzService) resolvePermissions(ctx context.Context, in *authzv1.CheckRequest) ([]permissions.Permission, error) {
+func (s *AuthzService) resolvePermissions(ctx context.Context, in *authzv1.CheckRequest) (permissionResolution, error) {
 	subject, err := s.resolveSessionSubject(ctx, in)
 	if err != nil {
-		return nil, err
+		return permissionResolution{subjectID: subject}, err
 	}
 	if in.SessionId != "" {
 		live, err := s.sessionIsLive(ctx, in, subject)
 		if err != nil {
-			return nil, err
+			return permissionResolution{subjectID: subject}, err
 		}
 		if !live {
-			return nil, nil
+			return permissionResolution{subjectID: subject, invalidSession: true}, nil
 		}
 		if activator, ok := s.provider.(permissions.SessionRoleActivator); ok {
 			roles, err := activator.ActiveRoles(ctx, subject, in.ClientId, in.SessionId)
 			if err != nil {
-				return nil, err
+				return permissionResolution{subjectID: subject}, err
 			}
 			// An explicitly supplied session ID opts into the active-role
 			// projection. Empty means no active authority, not legacy full
 			// assignment fallback; otherwise a logged-out/stale sid would
 			// silently regain the subject's complete role set.
-			return permissions.PermissionsFromRoles(roles), nil
+			return permissionResolution{
+				permissions: permissions.PermissionsFromRoles(roles),
+				subjectID:   subject,
+				emptyActive: len(roles) == 0,
+			}, nil
 		}
 	}
-	return s.provider.Permissions(ctx, subject, in.ClientId)
+	perms, err := s.provider.Permissions(ctx, subject, in.ClientId)
+	return permissionResolution{permissions: perms, subjectID: subject}, err
 }
 
 func (s *AuthzService) resolveSessionSubject(ctx context.Context, in *authzv1.CheckRequest) (string, error) {
@@ -137,12 +166,12 @@ func (s *AuthzService) sessionIsLive(ctx context.Context, in *authzv1.CheckReque
 	return true, nil
 }
 
-func (s *AuthzService) checkResource(in *authzv1.CheckRequest, perms []permissions.Permission) (bool, error) {
+func (s *AuthzService) checkResource(ctx context.Context, in *authzv1.CheckRequest, perms []permissions.Permission) (permissions.ResourceCheckResult, error) {
 	rp, ok := s.provider.(permissions.ResourceProvider)
 	if !ok {
-		return false, status.Error(codes.FailedPrecondition, "resource lookup requested but permission provider has no resource catalog")
+		return permissions.ResourceCheckResult{}, status.Error(codes.FailedPrecondition, "resource lookup requested but permission provider has no resource catalog")
 	}
-	return permissions.CheckResource(rp, &permissions.ResourceLookup{
+	return permissions.CheckResourceWithContext(ctx, rp, &permissions.ResourceLookup{
 		TenantID: in.TenantId,
 		ClientID: in.ClientId,
 		Type:     permissions.ResourceType(in.ResourceType),
@@ -150,7 +179,7 @@ func (s *AuthzService) checkResource(in *authzv1.CheckRequest, perms []permissio
 	}, perms, in.Permission)
 }
 
-func (s *AuthzService) recordDecision(ctx context.Context, in *authzv1.CheckRequest, allowed bool) {
+func (s *AuthzService) recordDecision(ctx context.Context, in *authzv1.CheckRequest, decisionContext authzDecision, allowed bool) {
 	decision := "deny"
 	outcome := audit.OutcomeFailure
 	if allowed {
@@ -161,15 +190,30 @@ func (s *AuthzService) recordDecision(ctx context.Context, in *authzv1.CheckRequ
 		s.metrics.AuthzChecksTotal.WithLabelValues(decision).Inc()
 	}
 	if s.recorder != nil {
-		e := &audit.Event{Type: audit.EventPermissionCheck, Outcome: outcome, ActorID: in.SubjectId, ClientID: in.ClientId}
+		e := &audit.Event{
+			Type: audit.EventPermissionCheck, Outcome: outcome,
+			ActorID: in.SubjectId, ClientID: in.ClientId, SessionID: in.SessionId,
+		}
+		audit.SetMeta(e, "subject_id", decisionContext.subjectID)
+		audit.SetMeta(e, "client_id", in.ClientId)
 		audit.SetMeta(e, "permission", in.Permission)
 		audit.SetMeta(e, "decision", decision)
 		audit.SetMeta(e, "resource_type", in.ResourceType)
+		audit.SetMeta(e, "resource_id", decisionContext.resourceID)
+		audit.SetMeta(e, "session_id", in.SessionId)
+		audit.SetMeta(e, "reason", decisionContext.reason)
 		s.recorder.Record(ctx, e)
 	}
 	if !allowed && s.logger != nil {
-		s.logger.Info("authorization denied", "subject_id", in.SubjectId, "client_id", in.ClientId, "permission", in.Permission)
+		s.logger.Info("authorization denied", "subject_id", in.SubjectId, "client_id", in.ClientId, "permission", in.Permission, "resource_type", in.ResourceType, "resource_id", decisionContext.resourceID, "session_id", in.SessionId, "reason", decisionContext.reason)
 	}
+}
+
+func flatDecisionReason(allowed bool) string {
+	if allowed {
+		return "flat-match"
+	}
+	return "flat-miss"
 }
 
 func (s *AuthzService) ListPermissions(ctx context.Context, in *authzv1.SubjectRequest) (*authzv1.PermissionList, error) {
