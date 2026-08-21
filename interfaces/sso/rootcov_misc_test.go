@@ -76,6 +76,12 @@ func TestRcovMisc_MeshUsesActivePermissionRoles(t *testing.T) {
 	if err != nil || claims.SID == "" {
 		t.Fatalf("access claims = %+v, %v; want sid", claims, err)
 	}
+	initial := s.srv.MeshAuthorize(ctx, sso.MeshAuthorizeRequest{
+		Header: http.Header{"Authorization": []string{"Bearer " + access}},
+	})
+	if !initial.Allowed || len(initial.Roles) != 2 {
+		t.Fatalf("auto-activated mesh roles = %+v, allowed=%v; want assigned projection", initial.Roles, initial.Allowed)
+	}
 	if err := provider.ActivateRoles(ctx, rcovUser, rcovClient, claims.SID, []string{"active"}); err != nil {
 		t.Fatalf("ActivateRoles: %v", err)
 	}

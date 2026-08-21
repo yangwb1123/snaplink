@@ -11,10 +11,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/domains/userlifecycle"
 	"github.com/yangwb1123/snaplink/internal/auth/login"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
+
+// meshIdentityRoles narrows the roles published to a sidecar when the token
+// carries a session id and the provider supports dynamic separation of duty.
+// Providers without the optional activator retain the legacy assigned-role
+// projection; store errors remain non-fatal to the mesh identity response.
+func (s *Server) meshIdentityRoles(ctx context.Context, userID, clientID, sessionID string) ([]permissions.Role, error) {
+	if sessionID != "" {
+		if activator, ok := s.permissions.(permissions.SessionRoleActivator); ok {
+			return activator.ActiveRoles(ctx, userID, clientID, sessionID)
+		}
+	}
+	return s.permissions.Roles(ctx, userID, clientID)
+}
 
 func (s *Server) applyPairwiseSubject(ctx context.Context, client *Client, localSub string) string {
 	if client == nil || s.pairwiseStore == nil {
