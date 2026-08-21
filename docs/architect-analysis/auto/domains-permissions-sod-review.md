@@ -7,6 +7,33 @@ consistency, ordering, atomicity, idempotency, ownership, conflict
 resolution, outage/crash/retry/partition/clock behavior, and the
 fail-open/fail-closed boundary.
 
+## Post-implementation status (2026-08-21)
+
+This review predates the landed implementation; findings below are retained as
+historical review evidence. The shipped resolutions are:
+
+- F1/F2: mesh identity reads active roles when a session projection exists,
+  and central `createSession` activates the assigned set for fresh sessions.
+- F3/F11: the Authorizer boundary resolves the local subject and checks live
+  session state when configured; invalid/deactivated session IDs deny and do
+  not fall back to assigned roles.
+- F5/F5c: Redis uses hash-tagged keys, atomic projection/index lifecycle
+  scripts, and an explicit active-session TTL constructor. The stock server's
+  permissions backend remains memory/SQLite/Postgres, so there is no hidden
+  Redis `server.session_ttl` wiring claim.
+- F7/F8/F12: Postgres mutations reuse serializable retries; SQLite defaults
+  to immediate locking with a busy timeout; first-party conformance executes
+  11 SoD cases; logout/destroy paths deactivate by the session ID they own.
+- F6 and the observability drift item: policy bundle v2 exports resources and
+  conflict sets, and `Check` decisions emit bounded audit metadata. The OPA
+  reference policy is executed in parity tests.
+
+Where the historical tables below mention `SoDAdminService`,
+`ActivateSessionRoles`, or `permissions_active_sessions`, read the generated
+proto and the shipped status above instead: the actual names are methods on
+`PermissionAdminService`, `ActivateRoles`/`DeactivateSession`, and normalized
+`permissions_active_roles` rows.
+
 ## Evidence standard
 
 Every claim below is labeled **Verified** (read from executable code/gates

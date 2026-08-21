@@ -425,7 +425,7 @@ follows. The REST gateway exposes the corresponding gRPC status mapping.
 | Identifier | gRPC / HTTP | Emitted when |
 |---|---|---|
 | `ErrRoleConflict` | `FailedPrecondition` / 400 | An assignment or session activation contains two or more roles from one declared conflict set |
-| `ErrRoleNotAssigned` | `InvalidArgument` / 400 | A session activation names a role not assigned to the subject |
+| `ErrRoleNotAssigned` | `FailedPrecondition` / 400 | A session activation names a role not assigned to the subject |
 | `ErrInvalidConflictSet` | `InvalidArgument` / 400 | A conflict set is empty, has fewer than two roles, or repeats a role code |
 
 ---

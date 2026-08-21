@@ -4950,8 +4950,10 @@ paths:
         invalidated on role, resource, or SoD mutations (locally and, when an
         invalidation bus is wired, cluster-wide) so a sidecar's next pull
         sees a change before the cache TTL (`WithAuthzPolicyBundleCacheTTL`,
-        default 5m). A reference OPA Rego that reproduces the wildcard
-        match lives in `docs/examples/opa-authz-policy.rego`.
+        default 5m). A reference OPA Rego that reproduces wildcard,
+        parameterized-resource, require-mode, and active-role semantics lives
+        in `docs/examples/opa-authz-policy.rego` and is exercised by the
+        authorizer parity test.
       operationId: getAuthzPolicyBundle
       security:
         - bearerAuth: []
@@ -11287,7 +11289,9 @@ paths:
         - bearerAuth: []
       responses:
         "200":
-          description: Session roles deactivated.
+          description: Session roles deactivated. A session-scoped Authorizer
+            check remains denied because the active projection is empty; it
+            does not fall back to the assigned role set.
           content:
             application/json:
               schema: { type: object }

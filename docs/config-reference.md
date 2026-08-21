@@ -143,6 +143,13 @@ Values below are exactly what the binary's boot-time dispatch accepts
 | Network policy store | `network.store` | `memory` · `etcd` |
 | Bootstrap lock | `bootstrap.lock.backend` | `noop` · `file` · `etcd` |
 
+The stock server does not select Redis as a permissions backend. Embedding
+callers that construct `infrastructure/redis.NewPermissionProvider` can opt
+into active-role projection expiry with
+`NewPermissionProviderWithActiveSessionTTL`; the constructor's non-positive
+TTL preserves no-expiry compatibility, and `server.session_ttl` is not
+implicitly applied to that provider.
+
 All `backend: redis` **hot** stores share the ONE `redis:` block below. All
 `backend: postgres` **durable** stores share the ONE `postgres:` block below —
 a shared *sql.DB pool per replica, not one pool per store. Selecting
