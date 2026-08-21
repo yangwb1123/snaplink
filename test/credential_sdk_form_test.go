@@ -9,11 +9,9 @@ package ssotest
 // invalid_request) lands with the sibling strict-binder change, which
 // owns the server-side tests.
 //
-// TestSdkForm_PARClaimsThreaded is the F1 merge-interlock arm (D6): it
-// is deliberately RED until the sibling's json.RawMessage form branch
-// lands in oauthwire/bind.go (RFC 9396 §3 JSON-string decoding for
-// PAR claims/authorization_details) and must never be skipped — CI
-// cannot go green before the sibling change merges.
+// TestSdkForm_PARClaimsThreaded is the F1 regression arm (D6): it keeps the
+// shared json.RawMessage form branch in oauthwire/bind.go wired through the
+// RFC 9396 claims/authorization_details path and must never be skipped.
 
 import (
 	"bytes"
@@ -142,11 +140,10 @@ func TestSdkForm_PARRepeatedResourceKeys(t *testing.T) {
 // the request_uri and asserts the requested claims reached the
 // authorization request.
 //
-// F1 interlock (reconciliation D6): the shared decoder's
-// json.RawMessage form branch is the sibling B4-4 change. Until it
-// lands, the claims key binds successfully with the value silently
-// dropped, this test FAILS (claims absent at login), and the gensdk
-// change cannot merge. Never skip this test.
+// F1 regression (reconciliation D6): the shared decoder's json.RawMessage
+// form branch must preserve the claims value through PAR and login. Never
+// skip this test because a silently dropped value would weaken requested
+// claims without failing the form bind.
 func TestSdkForm_PARClaimsThreaded(t *testing.T) {
 	srv, auth := newSDKFormClaimsHarness(t)
 
@@ -194,10 +191,7 @@ func TestSdkForm_PARClaimsThreaded(t *testing.T) {
 
 	got := auth.snapshot()
 	if len(got) == 0 {
-		// Deliberately red until the sibling F1 decoder lands: the
-		// form PAR's claims key is silently dropped by setFormField
-		// today (no json.RawMessage branch). Do not skip.
-		t.Fatal("form-PAR claims did not thread into the authorization request (sibling F1 decoder not landed)")
+		t.Fatal("form-PAR claims did not thread into the authorization request")
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal(got, &parsed); err != nil {
