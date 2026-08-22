@@ -70,6 +70,10 @@ func layerName(rel string) string {
 		return "infrastructure"
 	case "cmd", "examples", "testkit", "config", "deploy", "test":
 		return "composition"
+	case "sdks":
+		// Consumer-facing SDKs are delivery adapters with no server-layer
+		// dependencies; keep them at the interfaces boundary.
+		return "interfaces"
 	case "gen", "proto":
 		// generated protobuf + REST gateway — inbound/delivery edge.
 		return "interfaces"

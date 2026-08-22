@@ -1,8 +1,9 @@
 # snaplink/sso — Python client (generated)
 
 > **Scope:** generated client for the full documented API surface of
-> `docs/openapi.yaml`. It is not published to PyPI, and does not provide
-> hosted-login, self-service, setup, developer-portal, or admin-console UI.
+> `docs/openapi.yaml`, plus a framework-neutral hosted-login facade. It is not
+> published to PyPI, and does not ship hosted-login, self-service, setup,
+> developer-portal, or admin-console UI.
 > `sso-server` is a pure API backend; browser applications and consoles are
 > separate frontend projects.
 
@@ -92,6 +93,40 @@ been in the stdlib `typing` module since Python 3.8, so this is still
   acronym dictionary — e.g. `getOAuthAuthorizationServerMetadata` becomes
   `get_o_auth_authorization_server_metadata` rather than the more natural
   `get_oauth_authorization_server_metadata`.
+
+## One-call hosted login without a BFF
+
+`Snaplink.login()` uses the existing Console `/login/` page with a public
+client and S256 PKCE. The first call returns a redirect URL; call it again
+with the callback URL and the SDK validates state and issuer, exchanges the
+code, and exposes the generated API client. A framework only needs to return
+the first URL as a 302 and pass the callback request URL back to the SDK.
+
+```python
+from snaplink_sso import snaplink
+
+started = snaplink.login({
+    "base_url": "https://sso.example.com",
+    "client_id": "my-public-app",
+    "redirect_uri": "https://app.example.com/auth/callback",
+    "return_to": "https://app.example.com/dashboard",
+})
+return redirect(started.redirect_url)
+
+# On the registered callback route:
+completed = snaplink.login({
+    "base_url": "https://sso.example.com",
+    "client_id": "my-public-app",
+    "redirect_uri": "https://app.example.com/auth/callback",
+    "callback_url": request.url,
+})
+me = snaplink.api.get_user_info()
+```
+
+The hosted facade deliberately has no client-secret option. Use a durable,
+atomic `StateStore` implementation for multi-worker deployments; the built-in
+`MemoryStateStore` is for development and single-process examples. Access
+tokens remain in memory and are not written to browser storage.
 
 ## What's NOT here
 
