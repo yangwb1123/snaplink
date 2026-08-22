@@ -811,6 +811,7 @@ security:
     exposed_headers: []      # e.g. [X-Request-ID, Retry-After]
     allow_credentials: false
     max_age: 1h
+    path_overrides: {}       # URL path prefix -> policy; longest prefix wins
 
 # Prometheus instrumentation. Enables HTTP request count + latency
 # histograms, login / token / risk-decision counters, and exposes the

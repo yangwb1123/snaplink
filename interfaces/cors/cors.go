@@ -9,9 +9,9 @@
 // caching).
 //
 // Sensible defaults: AllowedMethods covers GET / POST / PUT / DELETE
-// / OPTIONS; AllowedHeaders covers Authorization + Content-Type. An
-// empty AllowedOrigins skips CORS entirely (the middleware is a
-// no-op).
+// / OPTIONS; AllowedHeaders covers Authorization + Content-Type. Empty
+// AllowedOrigins and PathOverrides skips CORS entirely (the middleware is a
+// no-op); a non-empty PathOverrides map can enable only selected paths.
 package cors
 
 import (
@@ -28,7 +28,7 @@ type Policy struct {
 	// server. "*" wildcards every origin (the browser then refuses to
 	// send credentials per the CORS spec — combine with
 	// AllowCredentials only when you've enumerated specific origins).
-	// Empty = CORS disabled (the middleware is a no-op).
+	// Empty with no PathOverrides = CORS disabled (the middleware is a no-op).
 	AllowedOrigins []string
 
 	// AllowedMethods is the list returned in the preflight response.
@@ -41,7 +41,7 @@ type Policy struct {
 
 	// ExposedHeaders is the list the browser may read from the
 	// actual response (beyond the CORS-safelisted defaults). Useful
-	// when SPAs need to read X-Request-ID, X-RateLimit-Remaining, etc.
+	// when SPAs need to read X-Request-ID, Retry-After, etc.
 	ExposedHeaders []string
 
 	// AllowCredentials sets Access-Control-Allow-Credentials: true.
@@ -216,7 +216,8 @@ func buildOverrideConfigs(overrides map[string]Policy) []prefixCORSConfig {
 	// Sort by prefix length descending so the most specific match wins.
 	for i := 0; i < len(cfgs); i++ {
 		for j := i + 1; j < len(cfgs); j++ {
-			if len(cfgs[j].prefix) > len(cfgs[i].prefix) {
+			if len(cfgs[j].prefix) > len(cfgs[i].prefix) ||
+				(len(cfgs[j].prefix) == len(cfgs[i].prefix) && cfgs[j].prefix < cfgs[i].prefix) {
 				cfgs[i], cfgs[j] = cfgs[j], cfgs[i]
 			}
 		}

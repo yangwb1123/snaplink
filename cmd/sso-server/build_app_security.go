@@ -13,7 +13,6 @@ import (
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
 	"github.com/yangwb1123/snaplink/domains/threataction"
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
-	"github.com/yangwb1123/snaplink/interfaces/cors"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/platform/configaudit"
@@ -166,16 +165,9 @@ func (b *appBuilder) wireMTLSLockoutProxiesCORS() error {
 			"cidrs", tp.CIDRs,
 			"hops", tp.Hops)
 	}
-	if c := cfg.Security.CORS; c.Enabled && len(c.AllowedOrigins) > 0 {
-		b.opts = append(b.opts, sso.WithCORS(cors.Policy{
-			AllowedOrigins:   c.AllowedOrigins,
-			AllowedMethods:   c.AllowedMethods,
-			AllowedHeaders:   c.AllowedHeaders,
-			ExposedHeaders:   c.ExposedHeaders,
-			AllowCredentials: c.AllowCredentials,
-			MaxAge:           c.MaxAge,
-		}))
-		logger.Info("security: cors enabled", "allowed_origins", c.AllowedOrigins)
+	if c := cfg.Security.CORS; c.Enabled && (len(c.AllowedOrigins) > 0 || len(c.PathOverrides) > 0) {
+		b.opts = append(b.opts, sso.WithCORS(c.ToPolicy()))
+		logger.Info("security: cors enabled", "allowed_origins", c.AllowedOrigins, "path_overrides", len(c.PathOverrides))
 	}
 	return nil
 }

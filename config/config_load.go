@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/authenticators"
-	"github.com/yangwb1123/snaplink/interfaces/cors"
 	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/authpipeline"
@@ -207,6 +206,9 @@ func (c *Config) validateLogging() error {
 }
 
 func (c *Config) validateFeatureConfig() error {
+	if err := c.Security.CORS.validate(); err != nil {
+		return err
+	}
 	if err := c.ReBAC.validate(); err != nil {
 		return err
 	}
@@ -474,18 +476,4 @@ func (r *RateLimitConfig) sqliteRateLimitPolicy() (ratelimit.Policy, error) {
 		policy.Prefixes = append(policy.Prefixes, ratelimit.PrefixRule{Prefix: p.Prefix, Limiter: lim})
 	}
 	return policy, nil
-}
-
-// toPolicy builds the cors.Policy implied by the YAML block. Empty
-// AllowedMethods / AllowedHeaders fall back to the cors package's
-// defaults (GET/POST/PUT/DELETE/OPTIONS, Authorization/Content-Type).
-func (c *CORSConfig) toPolicy() cors.Policy {
-	return cors.Policy{
-		AllowedOrigins:   c.AllowedOrigins,
-		AllowedMethods:   c.AllowedMethods,
-		AllowedHeaders:   c.AllowedHeaders,
-		ExposedHeaders:   c.ExposedHeaders,
-		AllowCredentials: c.AllowCredentials,
-		MaxAge:           c.MaxAge,
-	}
 }

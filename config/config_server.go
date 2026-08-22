@@ -298,8 +298,8 @@ func (c *Config) securityMiddlewareOptions() []sso.Option {
 	if opt, ok := c.Security.ClientRegistrationRateLimit.serverOption(); ok {
 		opts = append(opts, opt)
 	}
-	if c.Security.CORS.Enabled && len(c.Security.CORS.AllowedOrigins) > 0 {
-		opts = append(opts, sso.WithCORS(c.Security.CORS.toPolicy()))
+	if c.Security.CORS.Enabled && (len(c.Security.CORS.AllowedOrigins) > 0 || len(c.Security.CORS.PathOverrides) > 0) {
+		opts = append(opts, sso.WithCORS(c.Security.CORS.ToPolicy()))
 	}
 	if c.Security.RARCatalogCheck.Enabled {
 		opts = append(opts, sso.WithRARCatalogCheck())

@@ -132,6 +132,39 @@ func TestWildcardWithCredentials_EchoesOrigin(t *testing.T) {
 	}
 }
 
+func TestPathOverride_UsesOverridePolicyForMatchingPrefix(t *testing.T) {
+	t.Parallel()
+	mw := cors.Middleware(cors.Policy{
+		AllowedOrigins: []string{"https://app.example.com"},
+		PathOverrides: map[string]cors.Policy{
+			"/.well-known/jwks.json": {AllowedOrigins: []string{"*"}},
+		},
+	})
+	wrapped := mw(echo200())
+
+	preflight := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodOptions, path, nil)
+		req.Header.Set("Origin", "https://other.example.com")
+		req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+		rec := httptest.NewRecorder()
+		wrapped.ServeHTTP(rec, req)
+		return rec
+	}
+
+	override := preflight("/.well-known/jwks.json")
+	if override.Code != http.StatusNoContent {
+		t.Errorf("override preflight status = %d, want 204", override.Code)
+	}
+	if got := override.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("override Allow-Origin = %q, want *", got)
+	}
+
+	defaultPolicy := preflight("/token")
+	if got := defaultPolicy.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("default policy unexpectedly allowed origin: %q", got)
+	}
+}
+
 func TestPreflight_EmitsAllowMethodsAndHeaders(t *testing.T) {
 	t.Parallel()
 	mw := cors.Middleware(cors.Policy{
@@ -190,7 +223,7 @@ func TestExposedHeaders(t *testing.T) {
 	t.Parallel()
 	mw := cors.Middleware(cors.Policy{
 		AllowedOrigins: []string{"*"},
-		ExposedHeaders: []string{"X-Request-ID", "X-RateLimit-Remaining"},
+		ExposedHeaders: []string{"X-Request-ID", "Retry-After"},
 	})
 	wrapped := mw(echo200())
 
@@ -199,7 +232,7 @@ func TestExposedHeaders(t *testing.T) {
 	rec := httptest.NewRecorder()
 	wrapped.ServeHTTP(rec, req)
 
-	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != "X-Request-ID, X-RateLimit-Remaining" {
+	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != "X-Request-ID, Retry-After" {
 		t.Errorf("Expose-Headers = %q", got)
 	}
 }
