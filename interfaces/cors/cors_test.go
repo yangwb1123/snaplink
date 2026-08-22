@@ -236,3 +236,59 @@ func TestExposedHeaders(t *testing.T) {
 		t.Errorf("Expose-Headers = %q", got)
 	}
 }
+
+type blockObserver struct {
+	requests   []*http.Request
+	preflights []bool
+}
+
+func (o *blockObserver) OriginBlocked(r *http.Request, preflight bool) {
+	o.requests = append(o.requests, r)
+	o.preflights = append(o.preflights, preflight)
+}
+
+func TestBlockObserver_ReportsOnlyDisallowedOrigins(t *testing.T) {
+	t.Parallel()
+	observer := &blockObserver{}
+	mw := cors.Middleware(cors.Policy{AllowedOrigins: []string{"https://app.example.com"}}, cors.WithBlockObserver(observer))
+	wrapped := mw(echo200())
+
+	denied := httptest.NewRequest(http.MethodGet, "/token", nil)
+	denied.Header.Set("Origin", "https://evil.example.com")
+	wrapped.ServeHTTP(httptest.NewRecorder(), denied)
+
+	preflight := httptest.NewRequest(http.MethodOptions, "/token", nil)
+	preflight.Header.Set("Origin", "https://evil.example.com")
+	preflight.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	wrapped.ServeHTTP(httptest.NewRecorder(), preflight)
+
+	allowed := httptest.NewRequest(http.MethodGet, "/token", nil)
+	allowed.Header.Set("Origin", "https://app.example.com")
+	wrapped.ServeHTTP(httptest.NewRecorder(), allowed)
+
+	if len(observer.requests) != 2 {
+		t.Fatalf("observer calls = %d, want 2", len(observer.requests))
+	}
+	if observer.requests[0] != denied || observer.requests[1] != preflight {
+		t.Error("observer did not receive the rejected request pointers")
+	}
+	if observer.preflights[0] || !observer.preflights[1] {
+		t.Errorf("preflight flags = %v, want [false true]", observer.preflights)
+	}
+}
+
+type panickingObserver struct{}
+
+func (panickingObserver) OriginBlocked(*http.Request, bool) { panic("observer failure") }
+
+func TestBlockObserver_PanicDoesNotBlockRequest(t *testing.T) {
+	t.Parallel()
+	mw := cors.Middleware(cors.Policy{AllowedOrigins: []string{"https://app.example.com"}}, cors.WithBlockObserver(panickingObserver{}))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/token", nil)
+	req.Header.Set("Origin", "https://evil.example.com")
+	mw(echo200()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 after observer panic", rec.Code)
+	}
+}

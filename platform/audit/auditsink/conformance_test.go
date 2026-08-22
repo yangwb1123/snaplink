@@ -75,6 +75,7 @@ var allKnownEventTypes = []auditspi.EventType{
 	auditspi.EventCIBAAuthRequest,
 	auditspi.EventCIBADenied,
 	auditspi.EventCIBAPingFailed,
+	auditspi.EventCORSOriginBlocked,
 	auditspi.EventClientAccess,
 	auditspi.EventClientDeleted,
 	auditspi.EventClientRegistered,

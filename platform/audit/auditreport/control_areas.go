@@ -46,6 +46,7 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventLoginFailure,
 			audit.EventAuthHookExecuted,
 			audit.EventAuthHookFailed,
+			audit.EventCORSOriginBlocked,
 			audit.EventLogout,
 			audit.EventClientAccess,
 			audit.EventPermissionQuery,

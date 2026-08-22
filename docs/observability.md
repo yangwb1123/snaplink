@@ -30,6 +30,7 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_token_revocations_propagated_total` | Counter | direction (published\|adopted) |
 | `sso_fapi_violations_total` | Counter | rule, mode |
 | `sso_ciba_ping_total` | Counter | outcome |
+| `sso_cors_blocked_total` | Counter | reason (`disallowed_origin`), preflight (`true`|`false`) |
 | `sso_caep_sets_total` | Counter | outcome (success\|failed\|dropped\|retried) |
 | `sso_refresh_rotation_velocity_exceeded_total` | Counter | — |
 | `sso_client_store_cache_total` | Counter | outcome (hit\|miss) |
@@ -92,6 +93,7 @@ Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; ver
   expiring` with bounded `client_id`/`window`/`days_remaining` keys.
 - `tenant_quota_store_failure` — the authenticated tenant token-rate check failed open because its backing store returned an operational error. `Reason` is the fixed `increment_failed` enum; `resource=token_rate` is added only through `SetMeta`; tenant/client identifiers remain internal to audit and never appear in the `rate_limited` wire response.
 - `permission_check` — one event for every authorization decision. Metadata carries the permission, decision, resource type, matched resource ID and session ID when present, plus a bounded decision reason; subject and client identify the decision context. Denials also emit a structured deny log, while the wire response remains the ordinary authorization result.
+- `cors_origin_blocked` — one event for each non-empty Origin rejected by the selected CORS policy. Metadata carries the origin, method, path and preflight flag; request correlation, trusted client IP and user-agent use the normal HTTP enrichment path. Origin and path are deliberately absent from Prometheus labels.
 - Session quota lifecycle logs use the fixed messages `tenant session quota reservation failed open`, `tenant session quota reconciliation failed`, and `tenant session quota release failed`, with bounded `tenant_id`/`session_id` plus the dependency error. A definitive cap is not logged as an infrastructure failure and remains the stable `403 quota_exceeded` response.
 
 ### Retention Schedulers

@@ -65,6 +65,27 @@ type Policy struct {
 	PathOverrides map[string]Policy
 }
 
+// BlockObserver receives disallowed-origin requests before the middleware
+// forwards them to the wrapped handler. Implementations must be fail-open:
+// observation must never change the response or prevent the handler running.
+type BlockObserver interface {
+	OriginBlocked(r *http.Request, preflight bool)
+}
+
+type middlewareOptions struct {
+	blockObserver BlockObserver
+}
+
+// Option customizes middleware-side observability without changing the
+// existing Middleware(Policy) call shape.
+type Option func(*middlewareOptions)
+
+// WithBlockObserver reports each non-empty Origin rejected by the selected
+// policy. The request pointer preserves correlation and trusted-peer context.
+func WithBlockObserver(observer BlockObserver) Option {
+	return func(opts *middlewareOptions) { opts.blockObserver = observer }
+}
+
 // corsConfig holds the precomputed CORS values shared across all
 // requests. Joined header strings + origin lookups are built once at
 // Middleware construction so per-request work is just a few probes.
@@ -169,9 +190,15 @@ func (c *corsConfig) writePreflight(w http.ResponseWriter) {
 // the request path is checked against overrides BEFORE the default
 // policy — so /.well-known/jwks.json can have a permissive policy
 // while /token stays locked down.
-func Middleware(p Policy) func(http.Handler) http.Handler {
+func Middleware(p Policy, options ...Option) func(http.Handler) http.Handler {
 	if len(p.AllowedOrigins) == 0 && len(p.PathOverrides) == 0 {
 		return func(next http.Handler) http.Handler { return next }
+	}
+	var cfgOptions middlewareOptions
+	for _, option := range options {
+		if option != nil {
+			option(&cfgOptions)
+		}
 	}
 
 	defaultCfg := buildConfig(p)
@@ -182,22 +209,37 @@ func Middleware(p Policy) func(http.Handler) http.Handler {
 			cfg := resolveCORSConfig(r.URL.Path, defaultCfg, overrideCfgs)
 
 			origin := r.Header.Get(HeaderOrigin)
-			if origin == "" || !cfg.originAllowed(origin) {
-				// No origin, or not allowed — drop CORS headers
-				// entirely. The browser blocks the response on its end.
+			if origin == "" {
+				// No origin — this is not a browser CORS request.
+				next.ServeHTTP(w, r)
+				return
+			}
+			preflight := isPreflight(r)
+			if !cfg.originAllowed(origin) {
+				notifyBlockObserver(cfgOptions.blockObserver, r, preflight)
+				// Drop CORS headers entirely. The browser blocks the response
+				// on its end; the wrapped handler still owns the HTTP response.
 				next.ServeHTTP(w, r)
 				return
 			}
 
 			cfg.writeCommonHeaders(w, origin)
 
-			if isPreflight(r) {
+			if preflight {
 				cfg.writePreflight(w)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func notifyBlockObserver(observer BlockObserver, r *http.Request, preflight bool) {
+	if observer == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	observer.OriginBlocked(r, preflight)
 }
 
 // buildOverrideConfigs constructs a sorted-by-length (longest first)

@@ -34,6 +34,11 @@ const (
 	EventNetPolicyDelete EventType = "netpolicy_delete"
 )
 
+// CORS rejection events.
+const (
+	EventCORSOriginBlocked EventType = "cors_origin_blocked"
+)
+
 // OIDC Back-Channel Logout 1.0 notification attempt.
 const (
 	EventLogoutNotified EventType = "logout_notified"
@@ -240,6 +245,8 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventClientRegistered: {}, EventClientUpdated: {}, EventClientDeleted: {},
 	// network policy
 	EventNetPolicyApply: {}, EventNetPolicyDelete: {},
+	// CORS
+	EventCORSOriginBlocked: {},
 	// back-channel logout + partial revoke
 	EventLogoutNotified: {}, EventPartialRevokeFailure: {},
 	// tenant + lockout

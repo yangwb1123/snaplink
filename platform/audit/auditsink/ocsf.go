@@ -85,6 +85,8 @@ var ocsfEventActivities = map[auditspi.EventType]ocsfActivity{
 	// network policy
 	auditspi.EventNetPolicyApply:  {ocsfClassAPIActivity, ocsfCategoryAppActivity, 1, "Create"},
 	auditspi.EventNetPolicyDelete: {ocsfClassAPIActivity, ocsfCategoryAppActivity, 4, "Delete"},
+	// CORS
+	auditspi.EventCORSOriginBlocked: {ocsfClassAuthentication, ocsfCategoryIAM, 99, "CORS Origin Blocked"},
 	// back-channel logout + partial revoke
 	auditspi.EventLogoutNotified:       {ocsfClassAuthentication, ocsfCategoryIAM, 2, "Logoff"},
 	auditspi.EventPartialRevokeFailure: {ocsfClassAuthentication, ocsfCategoryIAM, 99, "Partial Token Revoke Failure"},

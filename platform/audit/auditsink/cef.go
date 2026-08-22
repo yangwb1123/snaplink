@@ -37,6 +37,8 @@ var cefEventNames = map[auditspi.EventType]string{
 	// network policy
 	auditspi.EventNetPolicyApply:  "Network Policy Applied",
 	auditspi.EventNetPolicyDelete: "Network Policy Deleted",
+	// CORS
+	auditspi.EventCORSOriginBlocked: "CORS Origin Blocked",
 	// back-channel logout + partial revoke
 	auditspi.EventLogoutNotified:       "Back-Channel Logout Notified",
 	auditspi.EventPartialRevokeFailure: "Partial Token Revoke Failure",

@@ -45,6 +45,8 @@ const (
 
 	NameCIBAPingTotal = "sso_ciba_ping_total"
 
+	NameCORSBlockedTotal = "sso_cors_blocked_total"
+
 	NameCAEPSetsTotal = "sso_caep_sets_total"
 
 	NameSSFSetsReceivedTotal = "sso_ssf_sets_received_total"
@@ -155,6 +157,7 @@ const (
 	LabelKind            = "kind"      // bounded: access | refresh | id
 	LabelEndpoint        = "endpoint"  // bounded: token | introspect | userinfo
 	LabelDegradationMode = "mode"      // bounded: the 5 degraded-service modes
+	LabelPreflight       = "preflight" // true|false
 
 	// LabelKid is the signing-key kid dimension on sso_signing_key_usage_total.
 	// Bounded by the issuing replica's own rotation policy — at most a
@@ -222,6 +225,10 @@ const (
 // cardinality at len(allowlist)+1. Mirrors how MFA labels are restricted to
 // SupportedMethods() before they reach the registry (§5).
 const TenantLabelOther = "other"
+
+// CORS block reasons are a closed vocabulary so request input never becomes
+// a Prometheus label value.
+const CORSBlockReasonDisallowedOrigin = "disallowed_origin"
 
 // Signing-key adoption-error reasons, bounded to the three failure modes the
 // aggregation adoption path can hit for a peer JWK: it failed to decode

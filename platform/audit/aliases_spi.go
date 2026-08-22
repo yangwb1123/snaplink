@@ -109,6 +109,7 @@ const (
 	EventCIBAAuthRequest                     = auditspi.EventCIBAAuthRequest
 	EventCIBADenied                          = auditspi.EventCIBADenied
 	EventCIBAPingFailed                      = auditspi.EventCIBAPingFailed
+	EventCORSOriginBlocked                   = auditspi.EventCORSOriginBlocked
 	EventCallbackFailure                     = auditspi.EventCallbackFailure
 	EventClientAccess                        = auditspi.EventClientAccess
 	EventClientDeleted                       = auditspi.EventClientDeleted

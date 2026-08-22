@@ -19,6 +19,7 @@ import (
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/cors"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 func newLoginGateTestServer(t *testing.T) *httptest.Server {
@@ -82,6 +83,51 @@ func TestLogin_OriginBlocked_CarriesNoStoreAndIssuer(t *testing.T) {
 	}
 	if iss, _ := body["iss"].(string); iss == "" {
 		t.Errorf("expected non-empty `iss` per RFC 9207 §2 on the origin-blocked response, body=%v", body)
+	}
+}
+
+func TestLogin_OriginBlocked_RecordsOneCORSAuditEvent(t *testing.T) {
+	t.Parallel()
+	users := defaultimpl.NewMemoryUserProvider()
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID: "test-client", Secret: "test-secret", RedirectURIs: []string{"https://app.example.com/callback"},
+		AllowedAuthenticators: []string{"password"}, TokenStrategy: "jwt", Active: true,
+	})
+	sink := audit.NewMemorySink(16)
+	srv := sso.NewServer(
+		sso.WithUserProvider(users),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithClientStore(clients),
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithCORS(cors.Policy{AllowedOrigins: []string{"https://app.example.com"}}),
+		sso.WithAuditRecorder(audit.New(sink)),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	req, err := http.NewRequest(http.MethodPost, httpSrv.URL+"/auth/login", strings.NewReader(`{"client_id":"test-client"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://evil.com")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+
+	events, err := sink.Query(context.Background(), audit.Query{Type: audit.EventCORSOriginBlocked, Limit: 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("CORS audit events = %d, want 1", len(events))
 	}
 }
 

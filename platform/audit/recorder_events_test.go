@@ -176,6 +176,23 @@ func TestRecordCIBAPingFailed_EmptyAuthReqOmitsMeta(t *testing.T) {
 	}
 }
 
+func TestRecordCORSOriginBlocked_PreservesRequestMetadata(t *testing.T) {
+	t.Parallel()
+	rec, ctx, sink := recCtx(t)
+	ctx.Request().Header.Set(core.HeaderRequestID, "req-cors")
+	audit.RecordCORSOriginBlocked(rec, ctx.Request(), "https://evil.example", true, "disallowed_origin")
+	e := only(t, sink)
+	if e.Type != audit.EventCORSOriginBlocked || e.Outcome != audit.OutcomeFailure {
+		t.Fatalf("type/outcome = %q/%q", e.Type, e.Outcome)
+	}
+	if e.RequestID != "req-cors" || e.ActorIP != "203.0.113.7" || e.UserAgent != "test-agent" {
+		t.Fatalf("request fields = %+v", e)
+	}
+	if e.Metadata["origin"] != "https://evil.example" || e.Metadata["method"] != "POST" || e.Metadata["path"] != "/token" || e.Metadata["preflight"] != "true" {
+		t.Fatalf("metadata = %v", e.Metadata)
+	}
+}
+
 func TestRecordRefreshTokenReuse(t *testing.T) {
 	t.Parallel()
 	rec, ctx, sink := recCtx(t)

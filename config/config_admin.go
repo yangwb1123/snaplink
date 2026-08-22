@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/cors"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 type DPoPNonceConfig struct {
@@ -127,6 +128,9 @@ func (c CORSConfig) validate() error {
 	for prefix, override := range c.PathOverrides {
 		if !strings.HasPrefix(prefix, "/") {
 			return fmt.Errorf("config: security.cors.path_overrides key %q must start with /", prefix)
+		}
+		if strings.HasPrefix(core.PathLogin, prefix) {
+			return fmt.Errorf("config: security.cors.path_overrides key %q overlaps %s origin gate", prefix, core.PathLogin)
 		}
 		if len(override.PathOverrides) > 0 {
 			return fmt.Errorf("config: security.cors.path_overrides[%q].path_overrides must not be nested", prefix)

@@ -154,6 +154,9 @@ func TestSecurityConfig_PathOverridesRejectInvalidEntries(t *testing.T) {
           /nested:
             allowed_origins: ["*"]
 `,
+		"auth-login-overlap": `      /auth:
+        allowed_origins: ["*"]
+`,
 	}
 	for name, overrides := range cases {
 		name, overrides := name, overrides

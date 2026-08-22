@@ -41,7 +41,14 @@ const metaKeyRegionServing = "region.serving"
 // similarly populates the geo metadata keys; without it, no geo.*
 // metadata appears.
 func EventFromRequest(ctx core.HandlerContext) *Event {
-	r := ctx.Request()
+	e := eventFromHTTPRequest(ctx.Request())
+	EnrichTenant(ctx, e)
+	EnrichGeo(ctx, e)
+	EnrichRegion(ctx, e)
+	return e
+}
+
+func eventFromHTTPRequest(r *http.Request) *Event {
 	e := &Event{
 		RequestID: r.Header.Get(core.HeaderRequestID),
 		ActorIP:   ClientIP(r),
@@ -62,9 +69,6 @@ func EventFromRequest(ctx core.HandlerContext) *Event {
 			e.SpanID = tc.SpanID
 		}
 	}
-	EnrichTenant(ctx, e)
-	EnrichGeo(ctx, e)
-	EnrichRegion(ctx, e)
 	return e
 }
 

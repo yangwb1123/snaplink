@@ -458,7 +458,7 @@ func (s *Server) wrapInnerMiddlewares(inner http.Handler) http.Handler {
 		inner = handler.SecurityHeaders(s.resolvedSecurityHeadersPolicy())(inner)
 	}
 	if s.corsPolicy != nil {
-		inner = cors.Middleware(*s.corsPolicy)(inner)
+		inner = cors.Middleware(*s.corsPolicy, cors.WithBlockObserver(s))(inner)
 	}
 	inner = s.wrapCompression(inner)
 	if s.bodyLimit > 0 || len(s.bodyLimitByPath) > 0 {

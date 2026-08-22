@@ -103,6 +103,33 @@ func TestLogin_OriginValidation(t *testing.T) {
 	}
 }
 
+func TestLogin_EmptyCORSPolicyIsNoOp(t *testing.T) {
+	t.Parallel()
+	srv := sso.NewServer(
+		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithCORS(cors.Policy{}),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	req, err := http.NewRequest(http.MethodPost, httpSrv.URL+"/auth/login", strings.NewReader(`{"client_id":"test-client"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://any-origin.example")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden {
+		t.Fatal("empty CORS policy must not activate the login origin gate")
+	}
+}
+
 // TestLogin_NoCORSPolicy_AllowsAllOrigins verifies that when no CORS policy
 // is configured, all origins are allowed (backwards compatible behavior).
 func TestLogin_NoCORSPolicy_AllowsAllOrigins(t *testing.T) {
