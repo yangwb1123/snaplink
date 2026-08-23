@@ -44,6 +44,10 @@ type PrepareInput struct {
 	LicenseKey     string
 	InvitationCode string
 	TenantHint     string
+	// Locale and AppVersion are advisory metadata for store/audit integrations;
+	// they never determine tenant, entitlement, or access policy.
+	Locale     string
+	AppVersion string
 }
 
 type ClaimInput struct {
@@ -108,6 +112,9 @@ func validatePrepareInput(input PrepareInput) error {
 	if input.TenantHint != "" && !validIdentifier(input.TenantHint) {
 		return ErrInvalidActivation
 	}
+	if !validOptionalText(input.Locale, 35) || !validOptionalText(input.AppVersion, 128) {
+		return ErrInvalidActivation
+	}
 	return nil
 }
 
@@ -129,6 +136,10 @@ func validateCurrentInput(input CurrentInput) error {
 
 func validIdentifier(value string) bool {
 	return value != "" && value == trim(value) && len(value) <= 256 && !containsNUL(value)
+}
+
+func validOptionalText(value string, maxLength int) bool {
+	return value == "" || (value == trim(value) && len(value) <= maxLength && !containsNUL(value))
 }
 
 func trim(value string) string {

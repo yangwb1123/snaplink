@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/yangwb1123/snaplink/domains/tenant/activation"
@@ -34,6 +35,7 @@ func TestActivationRoutesPrepareClaimAndReadContext(t *testing.T) {
 	}
 	prepare := requestJSON(t, router, http.MethodPost, PathPrepare, map[string]string{
 		"client_id": "client", "product_id": "console", "license_key": "license-1",
+		"tenant_hint": "acme", "locale": "zh-CN", "app_version": "1.2.3",
 	})
 	if prepare.Code != http.StatusOK || prepare.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("prepare response = %d, headers=%v, body=%s", prepare.Code, prepare.Header(), prepare.Body.String())
@@ -53,6 +55,27 @@ func TestActivationRoutesPrepareClaimAndReadContext(t *testing.T) {
 	current := requestJSON(t, router, http.MethodGet, PathContext+"?product_id=console", nil)
 	if current.Code != http.StatusOK || !bytes.Contains(current.Body.Bytes(), []byte(`"tenant_id":"acme"`)) {
 		t.Fatalf("context response = %d: %s", current.Code, current.Body.String())
+	}
+}
+
+func TestActivationPrepareRejectsOversizedMetadata(t *testing.T) {
+	store := activation.NewMemoryStore()
+	if err := store.AddCode(context.Background(), activation.Code{
+		ID: "code-1", ProductID: "console", TenantID: "acme", Key: "license-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	router := core.NewStdRouter()
+	verifier := testVerifier{claims: &core.TokenClaims{ClientID: "client", Subject: "user-1"}}
+	if err := Mount(router, store, verifier); err != nil {
+		t.Fatal(err)
+	}
+	response := requestJSON(t, router, http.MethodPost, PathPrepare, map[string]string{
+		"client_id": "client", "product_id": "console", "license_key": "license-1",
+		"app_version": strings.Repeat("x", 129),
+	})
+	if response.Code != http.StatusBadRequest || !bytes.Contains(response.Body.Bytes(), []byte(ErrorActivationInvalid)) {
+		t.Fatalf("oversized metadata response = %d: %s", response.Code, response.Body.String())
 	}
 }
 

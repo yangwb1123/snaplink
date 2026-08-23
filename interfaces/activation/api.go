@@ -85,7 +85,7 @@ func (a *API) handlePrepare(ctx core.HandlerContext) {
 	prepared, err := a.store.Prepare(ctx.Request().Context(), activation.PrepareInput{
 		ClientID: request.ClientID, ProductID: request.ProductID,
 		LicenseKey: request.LicenseKey, InvitationCode: request.InvitationCode,
-		TenantHint: request.TenantHint,
+		TenantHint: request.TenantHint, Locale: request.Locale, AppVersion: request.AppVersion,
 	})
 	if err != nil {
 		writeActivationError(ctx, err, false)
