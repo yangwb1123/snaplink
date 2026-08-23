@@ -160,36 +160,45 @@ func (s *Store) Claim(ctx context.Context, input activation.ClaimInput) (*activa
 	var result *activation.AccountContext
 	err := runTransaction(ctx, s.db, func(tx *sql.Tx) error {
 		result = nil
-		ticket, err := s.findTicket(tx, activation.CredentialDigest(input.Ticket))
+		ticket, err := s.consumeTicket(tx, activation.CredentialDigest(input.Ticket))
 		if err != nil {
-			return s.consumeInvalid(tx, input.Ticket, err)
+			if errors.Is(err, sql.ErrNoRows) {
+				return setOperationError(activation.ErrInvalidActivation)
+			}
+			return err
 		}
 		if !ticket.available(s.now()) || ticket.clientID != input.ClientID || ticket.productID != input.ProductID {
-			return s.consumeInvalid(tx, input.Ticket, activation.ErrInvalidActivation)
+			return setOperationError(activation.ErrInvalidActivation)
 		}
 		code, err := s.findCodeForUpdate(tx, ticket.codeID)
 		if err != nil {
-			return s.consumeInvalid(tx, input.Ticket, err)
+			if errors.Is(err, sql.ErrNoRows) {
+				return setOperationError(activation.ErrInvalidActivation)
+			}
+			return err
 		}
 		if !code.available(s.now()) || code.productID != input.ProductID ||
 			(ticket.tenantHint != "" && ticket.tenantHint != code.tenantID) {
-			return s.consumeInvalid(tx, input.Ticket, activation.ErrInvalidActivation)
+			return setOperationError(activation.ErrInvalidActivation)
 		}
 		result, err = s.findBinding(tx, input)
 		if err == nil {
-			return s.deleteTicket(tx, input.Ticket)
+			return nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if err := s.claimLimitReached(tx, code, input.Subject); err != nil {
-			return s.consumeInvalid(tx, input.Ticket, err)
+			if errors.Is(err, activation.ErrInvalidActivation) {
+				return setOperationError(err)
+			}
+			return err
 		}
 		result, err = s.insertBinding(tx, input, code)
 		if err != nil {
 			return err
 		}
-		return s.deleteTicket(tx, input.Ticket)
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -258,10 +267,11 @@ func (s *Store) codeClaimsFull(ctx context.Context, codeID string, maxClaims int
 	return count >= maxClaims, err
 }
 
-func (s *Store) findTicket(tx *sql.Tx, digest string) (ticketRecord, error) {
+func (s *Store) consumeTicket(tx *sql.Tx, digest string) (ticketRecord, error) {
 	return readTicket(tx.QueryRow(`
-        SELECT code_id, client_id, product_id, tenant_hint, expires_at_ns
-        FROM tenant_activation_tickets WHERE ticket_digest = $1 FOR UPDATE`, digest))
+	        DELETE FROM tenant_activation_tickets
+	        WHERE ticket_digest = $1
+	        RETURNING code_id, client_id, product_id, tenant_hint, expires_at_ns`, digest))
 }
 
 func (s *Store) findBinding(tx *sql.Tx, input activation.ClaimInput) (*activation.AccountContext, error) {
@@ -323,21 +333,6 @@ func (s *Store) insertBinding(tx *sql.Tx, input activation.ClaimInput, code code
 		return s.findBinding(tx, input)
 	}
 	return newContext(code), nil
-}
-
-func (s *Store) deleteTicket(tx *sql.Tx, rawTicket string) error {
-	_, err := tx.Exec(`DELETE FROM tenant_activation_tickets WHERE ticket_digest = $1`, activation.CredentialDigest(rawTicket))
-	return err
-}
-
-func (s *Store) consumeInvalid(tx *sql.Tx, rawTicket string, err error) error {
-	if deleteErr := s.deleteTicket(tx, rawTicket); deleteErr != nil {
-		return deleteErr
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		err = activation.ErrInvalidActivation
-	}
-	return setOperationError(err)
 }
 
 type operationError struct{ err error }
