@@ -1,6 +1,5 @@
-# Keep every public SDK on a real verification path. Publishing is handled by
-# the TypeScript tag workflow and future registry-specific release workflows;
-# this workflow only builds, tests, and validates package metadata.
+# Keep every public SDK on a real verification path. Registry-specific release
+# workflows add protected publishing after these same package gates.
 
 name: sdk-ci
 

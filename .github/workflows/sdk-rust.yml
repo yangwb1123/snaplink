@@ -1,0 +1,60 @@
+# Publish the Rust SDK independently from the Go server release. The crates.io
+# token belongs in the protected crates-io environment, never in repository
+# variables or the source tree.
+
+name: sdk-rust
+
+on:
+  push:
+    tags: ["sdk-rs-v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the crate after the verification gates
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: sdk-rust-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.event_name == 'push' || inputs.publish == true
+    runs-on: ubuntu-latest
+    environment: crates-io
+    defaults:
+      run:
+        working-directory: sdks/rust
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run package tests
+        run: cargo test --locked --all-targets
+
+      - name: Validate crate package
+        run: cargo package --locked --allow-dirty
+
+      - name: Verify tag matches crate version
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          package_version="$(cargo metadata --locked --no-deps --format-version 1 | python -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          expected_tag="sdk-rs-v${package_version}"
+          if [[ "${GITHUB_REF_NAME}" != "${expected_tag}" ]]; then
+            echo "tag ${GITHUB_REF_NAME} does not match ${expected_tag}" >&2
+            exit 1
+          fi
+
+      - name: Publish to crates.io
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
