@@ -1,6 +1,82 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/yangwb1123/snaplink/domains/tenant/commerce"
+)
+
+// ActivationConfig wires the stock server's product-activation code store.
+// An empty backend leaves the activation routes unmounted. The memory backend
+// is intended for a single replica or a development deployment; production
+// provisioning should use an embedder-owned durable ActivationStore.
+type ActivationConfig struct {
+	Backend   string                 `yaml:"backend"`
+	TicketTTL time.Duration          `yaml:"ticket_ttl"`
+	Codes     []ActivationCodeConfig `yaml:"codes,omitempty"`
+}
+
+// ActivationCodeConfig is an operator-side seed. LicenseKey and InvitationCode
+// are credential fields: use secret:// references or an equivalent source
+// resolver rather than committing their plaintext values to YAML.
+type ActivationCodeConfig struct {
+	ID             string                        `yaml:"id"`
+	ProductID      string                        `yaml:"product_id"`
+	TenantID       string                        `yaml:"tenant_id"`
+	LicenseKey     string                        `yaml:"license_key,omitempty"`
+	InvitationCode string                        `yaml:"invitation_code,omitempty"`
+	Entitlement    *commerce.EntitlementSnapshot `yaml:"entitlement,omitempty"`
+	ExpiresAt      time.Time                     `yaml:"expires_at,omitempty"`
+	MaxClaims      int                           `yaml:"max_claims,omitempty"`
+}
+
+func (c ActivationConfig) validate() error {
+	switch backend := strings.ToLower(strings.TrimSpace(c.Backend)); backend {
+	case "":
+		if len(c.Codes) > 0 {
+			return fmt.Errorf("config: activation.codes requires activation.backend=memory")
+		}
+	case "memory":
+	default:
+		return fmt.Errorf("config: activation.backend must be memory or empty, got %q", c.Backend)
+	}
+	if c.TicketTTL < 0 {
+		return fmt.Errorf("config: activation.ticket_ttl must not be negative")
+	}
+	seen := make(map[string]struct{}, len(c.Codes))
+	for index, code := range c.Codes {
+		if err := validateActivationCode(code, index, seen); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateActivationCode(code ActivationCodeConfig, index int, seen map[string]struct{}) error {
+	if !activationText(code.ID) || !activationText(code.ProductID) || !activationText(code.TenantID) {
+		return fmt.Errorf("config: activation.codes[%d] requires id, product_id, and tenant_id", index)
+	}
+	if _, exists := seen[code.ID]; exists {
+		return fmt.Errorf("config: activation.codes[%d] duplicates id %q", index, code.ID)
+	}
+	seen[code.ID] = struct{}{}
+	if activationText(code.LicenseKey) == activationText(code.InvitationCode) {
+		return fmt.Errorf("config: activation.codes[%d] requires exactly one of license_key or invitation_code", index)
+	}
+	if code.MaxClaims < 0 {
+		return fmt.Errorf("config: activation.codes[%d].max_claims must not be negative", index)
+	}
+	if code.Entitlement != nil && code.Entitlement.TenantID != code.TenantID {
+		return fmt.Errorf("config: activation.codes[%d].entitlement.tenant_id must match tenant_id", index)
+	}
+	return nil
+}
+
+func activationText(value string) bool {
+	return strings.TrimSpace(value) != "" && !strings.ContainsRune(value, 0)
+}
 
 type HostedLoginConfig struct {
 	Enabled bool `yaml:"enabled"`

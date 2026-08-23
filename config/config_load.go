@@ -227,6 +227,9 @@ func (c *Config) validateFeatureConfig() error {
 	if err := c.Authenticators.CodeDelivery.validate(); err != nil {
 		return err
 	}
+	if err := c.Activation.validate(); err != nil {
+		return err
+	}
 	if err := c.validateBCLFailureQueue(); err != nil {
 		return err
 	}
@@ -310,6 +313,10 @@ func (c *Config) validateTopology() error {
 		if backend == "" || backend == "memory" {
 			return errors.New("config: rebac.backend=memory is unsafe with server.topology.mode=multi; use sqlite")
 		}
+	}
+	if mode == TopologyModeMulti && !c.Server.Topology.AllowPerPodState &&
+		strings.EqualFold(strings.TrimSpace(c.Activation.Backend), "memory") {
+		return errors.New("config: activation.backend=memory is unsafe with server.topology.mode=multi; use a shared ActivationStore")
 	}
 	return nil
 }

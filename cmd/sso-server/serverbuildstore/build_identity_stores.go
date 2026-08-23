@@ -1,6 +1,7 @@
 package serverbuildstore
 
 import (
+	"context"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"github.com/yangwb1123/snaplink/shared/spi"
 
 	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/tenant/activation"
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 
@@ -239,6 +241,30 @@ func BuildPasswordCredentialStore(cfg config.SelfServiceStoreConfig, pg *sql.DB,
 	default:
 		return nil, fmt.Errorf("unknown self_service.password.backend %q (supported: memory, sqlite, postgres)", cfg.Backend)
 	}
+}
+
+// BuildActivationStore selects the stock product-activation store. Empty
+// backend keeps the public activation routes unmounted; the memory backend
+// hashes seeded credentials and retains only short-lived tickets.
+func BuildActivationStore(cfg config.ActivationConfig) (activation.Store, error) {
+	if strings.TrimSpace(cfg.Backend) == "" {
+		return nil, nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(cfg.Backend), "memory") {
+		return nil, fmt.Errorf("unknown activation.backend %q (supported: memory)", cfg.Backend)
+	}
+	store := activation.NewMemoryStore(activation.WithTicketTTL(cfg.TicketTTL))
+	for _, seed := range cfg.Codes {
+		if err := store.AddCode(context.Background(), activation.Code{
+			ID: seed.ID, ProductID: seed.ProductID, TenantID: seed.TenantID,
+			Key: seed.LicenseKey, InvitationCode: seed.InvitationCode,
+			Entitlement: seed.Entitlement, ExpiresAt: seed.ExpiresAt,
+			MaxClaims: seed.MaxClaims,
+		}); err != nil {
+			return nil, fmt.Errorf("activation code %q: %w", seed.ID, err)
+		}
+	}
+	return store, nil
 }
 
 func BuildUserProvider(cfg config.IdentityConfig, pg *sql.DB, dialect postgresbackend.Dialect) (sso.UserProvider, error) {

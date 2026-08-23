@@ -29,14 +29,14 @@
       "id": "activation.hosted-login",
       "name": "Hosted-login product activation",
       "summary": "One-time license or invitation activation linked to a public hosted-login client.",
-      "availability": ["sdk"],
+      "availability": ["sdk", "stock-binary"],
       "default_state": "conditional",
       "feature_gate": null,
       "required_stores": ["ActivationStore"],
       "module_capabilities": [],
-      "config_keys": [],
+      "config_keys": ["activation.backend", "activation.ticket_ttl", "activation.codes"],
       "surfaces": ["/api/v1/activation/prepare", "/api/v1/me/activation/claim", "/api/v1/me/account-context"],
-      "sources": ["domains/tenant/activation", "interfaces/activation", "interfaces/sso/server_routes.go"]
+      "sources": ["config/config_self.go", "cmd/sso-server/serverbuildstore/build_identity_stores.go", "domains/tenant/activation", "interfaces/activation", "interfaces/sso/server_routes.go"]
     },
     {
       "id": "admin.control-plane",

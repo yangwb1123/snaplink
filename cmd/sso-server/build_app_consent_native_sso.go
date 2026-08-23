@@ -11,6 +11,20 @@ import (
 	"strings"
 )
 
+// wireActivation mounts the optional stock product-activation store. The
+// endpoint remains absent unless activation.backend is explicitly configured.
+func (b *appBuilder) wireActivation() error {
+	store, err := serverbuildstore.BuildActivationStore(b.cfg.Activation)
+	if err != nil {
+		return fmt.Errorf("activation store: %w", err)
+	}
+	if store != nil {
+		b.opts = append(b.opts, sso.WithActivationStore(store))
+		b.logger.Info("product activation enabled", "backend", b.cfg.Activation.Backend, "codes", len(b.cfg.Activation.Codes))
+	}
+	return nil
+}
+
 // wiredForPostgres returns true when the backend config targets PostgreSQL,
 // so callers can skip SQLite-specific boot checks (schema version guard).
 func (b *appBuilder) wiredForPostgres(backend string) bool {
@@ -31,6 +45,9 @@ func (b *appBuilder) checkSchema(v any, namespace string, maxVersion int) error 
 // device-secret store, and RFC 9728 protected-resource metadata.
 func (b *appBuilder) wireConsentNativeSSOPRM() error {
 	cfg, logger := b.cfg, b.logger
+	if err := b.wireActivation(); err != nil {
+		return err
+	}
 	if err := b.wireLoginTransactionStore(); err != nil {
 		return err
 	}
