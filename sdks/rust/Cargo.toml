@@ -4,6 +4,8 @@ version = "0.3.0"
 edition = "2021"
 description = "Snaplink public-client hosted login SDK"
 license = "Apache-2.0"
+readme = "README.md"
+documentation = "https://docs.rs/snaplink-sso"
 
 [dependencies]
 base64 = "0.22"

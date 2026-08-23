@@ -46,7 +46,7 @@ jobs:
       - name: Set up Bun test runner
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.4.0
 
       - name: Install package dependencies
         run: npm ci

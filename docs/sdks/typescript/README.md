@@ -23,11 +23,12 @@ go run ./cmd/gensdk --lang=ts
 
 Regenerate after any change to `docs/openapi.yaml` or
 `ops/build/sdk-surface.json` (run `python cli.py sdk-surface generate`, which
-re-emits every language). There is no Node.js/npm build step in this repo — the
-generator is a plain Go program (`cmd/gensdk`) that parses the YAML spec
-(via the `goccy/go-yaml` dependency already in `go.mod`) and writes a
-plain `.ts` file; nothing here runs `npm install` or `tsc` as part of
-`make ci` or any other repo build target.
+re-emits every language). The generator is a plain Go program (`cmd/gensdk`)
+that parses the YAML spec (via the `goccy/go-yaml` dependency already in
+`go.mod`) and writes a plain `.ts` file. The package's npm build and browser
+tests run in `.github/workflows/sdk-ci.yml`; the protected npm publish path is
+`.github/workflows/sdk-typescript.yml`. The root `make ci` remains Go/API
+focused and does not install the Node toolchain.
 
 The generator reads `docs/openapi.yaml`; it does not discover Go route
 registration. A runtime endpoint missing from OpenAPI cannot appear in this
