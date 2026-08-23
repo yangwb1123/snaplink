@@ -26,6 +26,19 @@
   ],
   "capabilities": [
     {
+      "id": "activation.hosted-login",
+      "name": "Hosted-login product activation",
+      "summary": "One-time license or invitation activation linked to a public hosted-login client.",
+      "availability": ["sdk"],
+      "default_state": "conditional",
+      "feature_gate": null,
+      "required_stores": ["ActivationStore"],
+      "module_capabilities": [],
+      "config_keys": [],
+      "surfaces": ["/api/v1/activation/prepare", "/api/v1/me/activation/claim", "/api/v1/me/account-context"],
+      "sources": ["domains/tenant/activation", "interfaces/activation", "interfaces/sso/server_routes.go"]
+    },
+    {
       "id": "admin.control-plane",
       "name": "Admin control plane",
       "summary": "Scoped administration, governance, audit and lifecycle APIs.",

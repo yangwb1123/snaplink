@@ -71,6 +71,8 @@ class Snaplink:
         self._tokens: Optional[Dict[str, Any]] = None
         self._client_id: Optional[str] = None
         self._base_url: Optional[str] = None
+        self._pending_setup: Optional[Dict[str, Any]] = None
+        self._activation_context: Optional[Dict[str, Any]] = None
 
     @property
     def is_logged_in(self) -> bool:
@@ -82,6 +84,12 @@ class Snaplink:
             return None
         token = self._tokens.get("access_token")
         return token if isinstance(token, str) else None
+
+    @property
+    def account_context(self) -> Optional[Dict[str, Any]]:
+        """The latest server-derived product/account context, if available."""
+
+        return self._activation_context
 
     @property
     def api(self) -> SSOClient:
@@ -107,9 +115,15 @@ class Snaplink:
         self._configure_client(base_url, client_id)
 
         callback = _callback_values(options, redirect_uri)
+        if callback is None and options.get("setup") is not None:
+            setup = options.get("setup")
+            if not isinstance(setup, Mapping):
+                raise TypeError("setup must be a mapping")
+            self._prepare_setup(base_url, client_id, setup)
         if callback is not None:
             return self._finish_login(base_url, client_id, callback, ttl)
         if self.is_logged_in and self._base_url == base_url and self._client_id == client_id:
+            self._claim_pending_setup(base_url, client_id)
             return LoginResult(tokens=dict(self._tokens or {}), return_to=return_to)
 
         state = _random_urlsafe(32)
@@ -123,6 +137,11 @@ class Snaplink:
             "return_to": return_to,
             "state": state,
         }
+        if self._pending_setup is not None:
+            transaction.update({
+                "activation_ticket": self._pending_setup["activation_ticket"],
+                "product_id": self._pending_setup["product_id"],
+            })
         self._store.set(_store_key(client_id), json.dumps(transaction, separators=(",", ":")))
         login_page = options.get("login_page_url") or urllib.parse.urljoin(base_url + "/", "/login/")
         login_url = _build_login_url(
@@ -135,6 +154,30 @@ class Snaplink:
         )
         return LoginResult(redirect_url=login_url, return_to=return_to)
 
+    def setup(self, options: Mapping[str, Any]) -> Dict[str, Any]:
+        """Prepare a one-time license or invitation activation ticket."""
+
+        _reject_secrets(options)
+        base_url = _normalize_base_url(_required(options, "base_url"))
+        client_id = _required(options, "client_id")
+        self._configure_client(base_url, client_id)
+        return self._prepare_setup(base_url, client_id, options)
+
+    def get_account_context(self, product_id: Optional[str] = None) -> Dict[str, Any]:
+        """Return the server-derived entitlement and quota context."""
+
+        if self._client is None or not self.access_token:
+            raise SSOError(401, "login_required", "login is required")
+        resolved_product = product_id or (self._activation_context or {}).get("product_id")
+        if not isinstance(resolved_product, str) or not resolved_product.strip():
+            raise TypeError("product_id is required")
+        response = self.api.get_my_account_context({"product_id": resolved_product})
+        context = response.get("context") if isinstance(response, Mapping) else None
+        if not isinstance(context, dict):
+            raise SSOError(0, "invalid_response", "account context response was invalid")
+        self._activation_context = dict(context)
+        return dict(context)
+
     def logout(self) -> None:
         try:
             if self._tokens and self._client:
@@ -144,11 +187,15 @@ class Snaplink:
             self._client = None
             self._client_id = None
             self._base_url = None
+            self._pending_setup = None
+            self._activation_context = None
 
     def _configure_client(self, base_url: str, client_id: str) -> None:
         if self._client and self._base_url == base_url and self._client_id == client_id:
             return
         self._tokens = None
+        self._pending_setup = None
+        self._activation_context = None
         self._base_url = base_url
         self._client_id = client_id
         self._client = self._client_factory(
@@ -187,7 +234,61 @@ class Snaplink:
             "redirect_uri": transaction["redirect_uri"],
         })
         self._tokens = dict(tokens)
+        try:
+            ticket = transaction.get("activation_ticket")
+            product_id = transaction.get("product_id")
+            if isinstance(ticket, str) and isinstance(product_id, str):
+                self._claim_activation(base_url, client_id, ticket, product_id)
+        except Exception:
+            self._tokens = None
+            raise
         return LoginResult(tokens=dict(tokens), return_to=transaction["return_to"])
+
+    def _prepare_setup(
+        self,
+        base_url: str,
+        client_id: str,
+        setup: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        _reject_secrets(setup)
+        body = _activation_request(client_id, setup)
+        response = self.api.post_activation_prepare(body)
+        if not isinstance(response, Mapping):
+            raise SSOError(0, "invalid_response", "activation endpoint returned an invalid response")
+        ticket = response.get("activation_ticket")
+        product_id = response.get("product_id")
+        if not isinstance(ticket, str) or not ticket or not isinstance(product_id, str) or not product_id:
+            raise SSOError(0, "invalid_response", "activation endpoint returned an invalid ticket")
+        self._pending_setup = {
+            "activation_ticket": ticket,
+            "base_url": base_url,
+            "client_id": client_id,
+            "created_at": int(time.time()),
+            "product_id": product_id,
+        }
+        return dict(response)
+
+    def _claim_pending_setup(self, base_url: str, client_id: str) -> None:
+        pending = self._pending_setup
+        if not pending or pending.get("base_url") != base_url or pending.get("client_id") != client_id:
+            return
+        self._claim_activation(base_url, client_id, pending["activation_ticket"], pending["product_id"])
+
+    def _claim_activation(self, base_url: str, client_id: str, ticket: str, product_id: str) -> None:
+        response = self.api.post_my_activation_claim({
+            "activation_ticket": ticket,
+            "product_id": product_id,
+        })
+        context = response.get("context") if isinstance(response, Mapping) else None
+        if not isinstance(context, dict):
+            raise SSOError(0, "invalid_response", "activation claim response was invalid")
+        self._activation_context = dict(context)
+        if (
+            self._pending_setup
+            and self._pending_setup.get("activation_ticket") == ticket
+            and self._pending_setup.get("client_id") == client_id
+        ):
+            self._pending_setup = None
 
 
 snaplink = Snaplink()
@@ -364,3 +465,31 @@ def _store_key(client_id: str) -> str:
 def _reject_secrets(options: Mapping[str, Any]) -> None:
     if "client_secret" in options or "clientSecret" in options:
         raise TypeError("hosted browser login does not accept client secrets")
+
+
+def _activation_request(client_id: str, setup: Mapping[str, Any]) -> Dict[str, Any]:
+    product_id = _required_value(_setup_option(setup, "product_id", "productId"), "product_id")
+    license_key = _optional_text(_setup_option(setup, "license_key", "licenseKey"))
+    invitation_code = _optional_text(_setup_option(setup, "invitation_code", "invitationCode"))
+    if (license_key == "") == (invitation_code == ""):
+        raise SSOError(0, "invalid_request", "exactly one of license_key or invitation_code is required")
+    body: Dict[str, Any] = {"client_id": client_id, "product_id": product_id}
+    if license_key:
+        body["license_key"] = license_key
+    if invitation_code:
+        body["invitation_code"] = invitation_code
+    for snake, camel in (("tenant_hint", "tenantHint"), ("locale", "locale"), ("app_version", "appVersion")):
+        value = _setup_option(setup, snake, camel)
+        if isinstance(value, str) and value:
+            body[snake] = value
+    return body
+
+
+def _setup_option(options: Mapping[str, Any], snake: str, camel: str) -> Any:
+    if snake in options:
+        return options[snake]
+    return options.get(camel)
+
+
+def _optional_text(value: Any) -> str:
+    return value if isinstance(value, str) else ""

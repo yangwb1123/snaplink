@@ -1,10 +1,11 @@
 # snaplink/sso — TypeScript SDK
 
 > **Scope:** generated client for the full documented API surface of
-> `docs/openapi.yaml`, plus browser hosted-login orchestration. It is not
-> published to an npm registry and does not ship a login page, self-service
-> portal, setup UI, developer portal, or admin console. `sso-server` is a pure
-> API backend; those browser experiences are separate frontend projects.
+> `docs/openapi.yaml`, plus browser hosted-login orchestration. It is
+> publishable to npm as `@snaplink/sso-client` and does not ship a login page,
+> self-service portal, setup UI, developer portal, or admin console.
+> `sso-server` is a pure API backend; those browser experiences are separate
+> frontend projects.
 
 `client.ts` is **generated output**, committed the same way generated Go under
 `gen/proto/` is: checked in for consumers to use directly, regenerated from
@@ -108,6 +109,33 @@ const session = await snaplink.login({
 
 const me = await snaplink.api.getUserInfo();
 ```
+
+For a paid product, prepare activation before the redirect. The SDK sends the
+license key only in the HTTPS request body, stores only the short-lived ticket
+in `sessionStorage`, and claims it automatically after the code exchange:
+
+```ts
+await snaplink.setup({
+  baseUrl: "https://sso.example.com",
+  clientId: "my-public-spa",
+  productId: "pro",
+  licenseKey: "license-from-your-checkout",
+});
+
+await snaplink.login({
+  baseUrl: "https://sso.example.com",
+  clientId: "my-public-spa",
+  redirectUri: `${location.origin}/auth/callback`,
+});
+
+const account = await snaplink.getAccountContext();
+```
+
+The equivalent one-call form is `login({ ..., setup: { productId,
+licenseKey } })`. Use `invitationCode` instead of `licenseKey` for an
+invitation. Do not put either credential in a URL, OAuth `state`, or browser
+local storage; the server resolves the tenant and returns the authoritative
+entitlement and limits.
 
 The application must register `redirectUri` on a public OAuth client and must
 allow the SPA origin through the server's CORS policy. Do not configure a

@@ -6,6 +6,9 @@ from snaplink_sso import MemoryStateStore, SSOError, Snaplink
 
 class FakeClient:
     last_body = None
+    activation_body = None
+    claim_body = None
+    claim_token = None
 
     def __init__(self, _base_url, *, client_id, get_access_token):
         self.client_id = client_id
@@ -17,6 +20,18 @@ class FakeClient:
 
     def post_logout(self, _body):
         return {}
+
+    def post_activation_prepare(self, body):
+        FakeClient.activation_body = body
+        return {"activation_ticket": "ticket-1", "expires_in": 300, "product_id": "pro"}
+
+    def post_my_activation_claim(self, body):
+        FakeClient.claim_body = body
+        FakeClient.claim_token = self.get_access_token()
+        return {"context": {"product_id": "pro", "tenant_id": "tenant-1"}}
+
+    def get_my_account_context(self, _query):
+        return {"context": {"product_id": "pro", "tenant_id": "tenant-1"}}
 
 
 class HostedLoginTest(unittest.TestCase):
@@ -67,6 +82,36 @@ class HostedLoginTest(unittest.TestCase):
                 },
             })
         self.assertEqual(raised.exception.error, "invalid_request")
+
+    def test_setup_claims_ticket_after_login_without_persisting_key(self):
+        store = MemoryStateStore()
+        sdk = Snaplink(store, client_factory=FakeClient)
+        sdk.setup({
+            "base_url": "https://sso.example.test",
+            "client_id": "spa-client",
+            "product_id": "pro",
+            "license_key": "paid-secret",
+        })
+        self.assertEqual(FakeClient.activation_body["license_key"], "paid-secret")
+        self.assertNotIn("paid-secret", "".join(store._values.values()))
+        initial = sdk.login({
+            "base_url": "https://sso.example.test",
+            "client_id": "spa-client",
+            "redirect_uri": "https://app.example.test/auth/callback",
+        })
+        query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(initial.redirect_url).query))
+        result = sdk.login({
+            "base_url": "https://sso.example.test",
+            "client_id": "spa-client",
+            "redirect_uri": "https://app.example.test/auth/callback",
+            "callback_url": "https://app.example.test/auth/callback?code=code-setup&state="
+            + urllib.parse.quote(query["state"])
+            + "&iss=https%3A%2F%2Fsso.example.test",
+        })
+        self.assertEqual(result.tokens["access_token"], "access-1")
+        self.assertEqual(FakeClient.claim_body["activation_ticket"], "ticket-1")
+        self.assertEqual(FakeClient.claim_token, "access-1")
+        self.assertEqual(sdk.get_account_context()["tenant_id"], "tenant-1")
 
 
 if __name__ == "__main__":

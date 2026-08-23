@@ -42,6 +42,7 @@ Generated from [`ops/build/capabilities.json`](../ops/build/capabilities.json); 
 
 | Capability | Availability | Default | Feature gate | Required store(s) | Surface(s) |
 |---|---|---|---|---|---|
+| Hosted-login product activation (`activation.hosted-login`) | `sdk` | `conditional` | — | `ActivationStore` | `/api/v1/activation/prepare`<br>`/api/v1/me/activation/claim`<br>`/api/v1/me/account-context` |
 | Admin control plane (`admin.control-plane`) | `sdk`<br>`stock-binary` | `conditional` | `feature_gates.admin_api` | `AdminTokenStore` | `/api/v1/admin/*` |
 | Embedded API docs viewer (`api.docs-viewer`) | `sdk` | `disabled` | `feature_gates.admin_api` | — | `/api/v1/admin/docs` |
 | External audit worker (`audit.external-worker`) | `stock-binary` | `disabled` | — | — | `audit sink`<br>`/readyz` |

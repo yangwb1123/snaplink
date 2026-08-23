@@ -220,7 +220,7 @@ export class SSOClient {
     async adminClearAccountLockout(body) {
         return this.request("POST", `/api/v1/admin/account-lockout/clear`, { body, auth: true });
     }
-    /** Export the role-definition authorization policy bundle. */
+    /** Export the authorization policy bundle. */
     async getAuthzPolicyBundle(query) {
         return this.request("GET", `/api/v1/admin/authz/policy-bundle`, { query: { "client_id": query?.clientId }, auth: true });
     }
@@ -933,6 +933,10 @@ export class SSOClient {
         return this.request("GET", `/api/v1/netpolicy/policies/${encodeURIComponent(name)}`, { auth: true });
     }
     // ---- auth ----
+    /** Prepare a one-time product activation for hosted login. */
+    async postActivationPrepare(body) {
+        return this.request("POST", `/api/v1/activation/prepare`, { body });
+    }
     /** Upstream IdP federation return URL. */
     async getAuthCallback(query) {
         return this.request("GET", `/auth/callback`, { query: { "code": query?.code, "state": query?.state, "provider": query?.provider, "error": query?.error } });
@@ -1132,6 +1136,14 @@ export class SSOClient {
         return this.request("GET", `/fetch`, { query: { "sub": query?.sub, "iss": query?.iss } });
     }
     // ---- me ----
+    /** Read the authenticated subject's product/account context. */
+    async getMyAccountContext(query) {
+        return this.request("GET", `/api/v1/me/account-context`, { query: { "product_id": query?.productId }, auth: true });
+    }
+    /** Claim a prepared activation for the authenticated subject. */
+    async postMyActivationClaim(body) {
+        return this.request("POST", `/api/v1/me/activation/claim`, { body, auth: true });
+    }
     /** List physical devices owned by the authenticated subject. */
     async listMyPhysicalDevices() {
         return this.request("GET", `/me/devices`, { auth: true });

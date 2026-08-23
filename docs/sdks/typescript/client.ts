@@ -123,6 +123,37 @@ export interface AccessPolicyList {
   total: number;
 }
 
+export interface ActivationClaimRequest {
+  activation_ticket: string;
+  product_id: string;
+}
+
+export interface ActivationContextResponse {
+  context: { entitlement?: CommerceEntitlement; product_id: string; tenant_id: string };
+}
+
+/** Exactly one of license_key and invitation_code is required. */
+export interface ActivationPrepareRequest {
+  app_version?: string;
+  /** Public OAuth client that will complete hosted login. */
+  client_id: string;
+  /** Optional invitation credential. */
+  invitation_code?: string;
+  /** Paid product activation credential; never place it in a URL. */
+  license_key?: string;
+  locale?: string;
+  product_id: string;
+  /** Non-authoritative tenant hint; the server resolves the tenant. */
+  tenant_hint?: string;
+}
+
+export interface ActivationPrepareResponse {
+  /** Opaque, one-time, short-lived ticket for the bearer claim route. */
+  activation_ticket: string;
+  expires_in: number;
+  product_id: string;
+}
+
 export interface AddRoleResponse {
   role?: Role;
 }
@@ -296,16 +327,36 @@ export interface AuthorizationDetail {
   type: string;
 }
 
-/** Portable role-definition export for decentralized (sidecar) */
+/** Portable authorization export for decentralized (sidecar) */
 export interface AuthzPolicyBundle {
   /** The app whose role definitions this bundle exports. */
   client_id: string;
-  /** When the export rendered. Informational only — NOT part of the ETag (the ETag is hashed over the role content), so the same role set yields the same ETag across regenerations. */
+  /** Role sets that may not be active together in one session. */
+  dsod_conflict_sets: string[][];
+  /** When the export rendered. Informational only — NOT part of the ETag (the ETag is hashed over decision-relevant policy content). */
   generated_at?: string;
+  /** Resource catalog entries projected into decision semantics; timestamps are omitted. */
+  resources: AuthzResourceBundle[];
   roles: RoleBundle[];
+  /** Role sets that may not be held together. */
+  ssod_conflict_sets: string[][];
   /** Bundle schema version; a sidecar branches on it. */
   version: number;
   wildcard_semantics: WildcardSemantics;
+}
+
+/** Decision-relevant resource catalog projection; timestamps are intentionally omitted. */
+export interface AuthzResourceBundle {
+  attributes?: Record<string, string>;
+  client_id?: string;
+  description?: string;
+  id: string;
+  name: string;
+  require_mode: "any" | "all";
+  required_permissions: string[];
+  requires_auth: boolean;
+  tenant_id?: string;
+  type: string;
 }
 
 /** Exhausted BCL delivery inputs and retry state. Never contains a signed logout token. */
@@ -447,6 +498,31 @@ export interface ClientMetadata {
   tenant_id?: string;
   token_strategy?: "jwt" | "session";
   userinfo_signed_response_alg?: string;
+}
+
+export interface CommerceEntitlement {
+  active: boolean;
+  effective_at: string;
+  expires_at?: string;
+  features: Record<string, boolean>;
+  generated_at: string;
+  limits: Record<string, CommerceLimitGrant>;
+  plan: CommercePlanRef;
+  revision: number;
+  subscription_id: string;
+  tenant_id: string;
+}
+
+/** An explicit finite or unlimited quota grant. When `unlimited` is true, */
+export interface CommerceLimitGrant {
+  hard: number;
+  soft: number;
+  unlimited?: boolean;
+}
+
+export interface CommercePlanRef {
+  id: string;
+  version: number;
 }
 
 /** A peer cluster's config snapshot to diff against this cluster's own */
@@ -1955,7 +2031,7 @@ export class SSOClient {
     return this.request<void>("POST", `/api/v1/admin/account-lockout/clear`, { body, auth: true });
   }
 
-  /** Export the role-definition authorization policy bundle. */
+  /** Export the authorization policy bundle. */
   async getAuthzPolicyBundle(query?: { clientId?: string }): Promise<AuthzPolicyBundle> {
     return this.request<AuthzPolicyBundle>("GET", `/api/v1/admin/authz/policy-bundle`, { query: { "client_id": query?.clientId }, auth: true });
   }
@@ -2847,6 +2923,11 @@ export class SSOClient {
 
   // ---- auth ----
 
+  /** Prepare a one-time product activation for hosted login. */
+  async postActivationPrepare(body: ActivationPrepareRequest): Promise<ActivationPrepareResponse> {
+    return this.request<ActivationPrepareResponse>("POST", `/api/v1/activation/prepare`, { body });
+  }
+
   /** Upstream IdP federation return URL. */
   async getAuthCallback(query?: { code?: string; state?: string; provider?: string; error?: string }): Promise<void> {
     return this.request<void>("GET", `/auth/callback`, { query: { "code": query?.code, "state": query?.state, "provider": query?.provider, "error": query?.error } });
@@ -3097,6 +3178,16 @@ export class SSOClient {
   }
 
   // ---- me ----
+
+  /** Read the authenticated subject's product/account context. */
+  async getMyAccountContext(query?: { productId?: string }): Promise<ActivationContextResponse> {
+    return this.request<ActivationContextResponse>("GET", `/api/v1/me/account-context`, { query: { "product_id": query?.productId }, auth: true });
+  }
+
+  /** Claim a prepared activation for the authenticated subject. */
+  async postMyActivationClaim(body: ActivationClaimRequest): Promise<ActivationContextResponse> {
+    return this.request<ActivationContextResponse>("POST", `/api/v1/me/activation/claim`, { body, auth: true });
+  }
 
   /** List physical devices owned by the authenticated subject. */
   async listMyPhysicalDevices(): Promise<{ devices: Record<string, unknown>[] }> {

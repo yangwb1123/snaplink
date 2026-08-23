@@ -1,4 +1,7 @@
 import {
+  ActivationContextResponse,
+  ActivationPrepareRequest,
+  ActivationPrepareResponse,
   FetchLike,
   SSOClient,
   SSOError,
@@ -8,6 +11,7 @@ import { buildHostedLoginURL } from "./hosted-login.js";
 
 const transactionPrefix = "snaplink.login.transaction.v1.";
 const handoffPrefix = "snaplink.login.handoff.v1.";
+const activationPrefix = "snaplink.activation.pending.v1.";
 const defaultTransactionTTL = 10 * 60 * 1000;
 const callbackParameterNames = [
   "code",
@@ -36,6 +40,33 @@ export interface SnaplinkHistory {
   replaceState(data: unknown, unused: string, url?: string | URL | null): void;
 }
 
+/** Product activation options. The credential is sent only in the HTTPS body. */
+export interface SnaplinkSetupOptions {
+  baseUrl: string;
+  clientId: string;
+  productId: string;
+  licenseKey?: string;
+  invitationCode?: string;
+  tenantHint?: string;
+  locale?: string;
+  appVersion?: string;
+  storage?: SnaplinkStorage;
+  fetch?: FetchLike;
+}
+
+/** Inline setup options for login(); baseUrl and clientId come from login(). */
+export interface SnaplinkLoginSetup {
+  productId: string;
+  licenseKey?: string;
+  invitationCode?: string;
+  tenantHint?: string;
+  locale?: string;
+  appVersion?: string;
+}
+
+export type ActivationPreparation = ActivationPrepareResponse;
+export type AccountContext = ActivationContextResponse["context"];
+
 /** Options for a browser-only, public-client hosted login. */
 export interface SnaplinkLoginOptions {
   /** Snaplink issuer/API base URL, for example https://sso.example.com. */
@@ -61,6 +92,8 @@ export interface SnaplinkLoginOptions {
   allowInsecureHttpForDevelopment?: boolean;
   /** Lifetime of the state/verifier transaction kept in sessionStorage. */
   transactionTtlMs?: number;
+  /** Optional paid license/invitation activation performed before hosted login. */
+  setup?: SnaplinkLoginSetup;
 
   /** SSR/test seams; normal browser callers do not need these. */
   storage?: SnaplinkStorage;
@@ -79,6 +112,8 @@ interface LoginTransaction {
   redirectUri: string;
   returnTo: string;
   state: string;
+  activationTicket?: string;
+  productId?: string;
 }
 
 interface LoginHandoff {
@@ -87,6 +122,15 @@ interface LoginHandoff {
   createdAt: number;
   issuedAt: number;
   tokens: TokenIssuance;
+  context?: AccountContext;
+}
+
+interface PendingSetup {
+  activationTicket: string;
+  baseUrl: string;
+  clientId: string;
+  createdAt: number;
+  productId: string;
 }
 
 interface AuthorizationResponse {
@@ -127,6 +171,7 @@ export class SnaplinkBrowserClient {
   private apiConfig: { baseUrl: string; clientId: string } | undefined;
   private issuedAt = 0;
   private tokens: TokenIssuance | undefined;
+  private activationContext: AccountContext | undefined;
 
   /** True while an unexpired access token is held in this page's memory. */
   get isLoggedIn(): boolean {
@@ -136,6 +181,11 @@ export class SnaplinkBrowserClient {
   /** Access token held by this page, or undefined before login/after logout. */
   get accessToken(): string | undefined {
     return this.tokens?.access_token;
+  }
+
+  /** The server-derived product/account context from the latest activation. */
+  get accountContext(): AccountContext | undefined {
+    return this.activationContext;
   }
 
   /** Generated API client with the current access-token provider. */
@@ -153,17 +203,26 @@ export class SnaplinkBrowserClient {
     const handoff = consumeHandoff(resolved);
     if (handoff) {
       this.setTokens(handoff.tokens, handoff.issuedAt);
+      this.activationContext = handoff.context;
       return handoff.tokens;
     }
 
-    if (this.hasUsableTokens(resolved)) return this.tokens as TokenIssuance;
-    const refreshed = await this.tryRefresh(resolved);
-    if (refreshed) return refreshed;
-
     const callback = readAuthorizationResponse(resolved.location.href);
+    if (!callback && resolved.options.setup) await this.prepareSetup(resolved, resolved.options.setup);
+
+    if (this.hasUsableTokens(resolved)) {
+      await this.claimPendingSetup(resolved);
+      return this.tokens as TokenIssuance;
+    }
+    const refreshed = await this.tryRefresh(resolved);
+    if (refreshed) {
+      await this.claimPendingSetup(resolved);
+      return refreshed;
+    }
+
     if (callback) return this.finishLogin(resolved, callback);
 
-    const transaction = await createTransaction(resolved);
+    const transaction = await createTransaction(resolved, readPendingSetup(resolved.storage, resolved.baseUrl, resolved.clientId));
     writeTransaction(resolved.storage, transaction);
     const loginURL = buildHostedLoginURL({
       loginPageUrl: resolved.loginPageUrl,
@@ -187,31 +246,72 @@ export class SnaplinkBrowserClient {
     return waitForNavigation();
   }
 
+  /** Prepare a one-time activation ticket before calling login(). */
+  async setup(options: SnaplinkSetupOptions): Promise<ActivationPreparation> {
+    rejectConfidentialOptions(options);
+    const baseUrl = normalizeBaseURL(options.baseUrl);
+    const clientId = requiredText(options.clientId, "clientId");
+    const storage = options.storage ?? browserSessionStorage();
+    this.configureAPIValues(baseUrl, clientId, options.fetch);
+    const preparation = await this.api.postActivationPrepare(
+      activationRequest(clientId, {
+        productId: options.productId,
+        licenseKey: options.licenseKey,
+        invitationCode: options.invitationCode,
+        tenantHint: options.tenantHint,
+        locale: options.locale,
+        appVersion: options.appVersion,
+      }),
+    );
+    writePendingSetup(storage, {
+      activationTicket: preparation.activation_ticket,
+      baseUrl,
+      clientId,
+      createdAt: Date.now(),
+      productId: preparation.product_id,
+    });
+    return preparation;
+  }
+
+  /** Fetch server-derived plan, feature, and quota information for a product. */
+  async getAccountContext(productId?: string): Promise<AccountContext> {
+    const resolvedProduct = requiredText(productId ?? this.activationContext?.product_id ?? "", "productId");
+    const response = await this.api.getMyAccountContext({ productId: resolvedProduct });
+    this.activationContext = response.context;
+    return response.context;
+  }
+
   /** Best-effort server logout followed by local token removal. */
   async logout(): Promise<void> {
     try {
       if (this.tokens && this.apiClient) await this.apiClient.postLogout({});
     } finally {
       this.clearTokens();
+      this.activationContext = undefined;
     }
   }
 
   private configureAPI(options: ResolvedLoginOptions): void {
+    this.configureAPIValues(options.baseUrl, options.clientId, options.fetch);
+  }
+
+  private configureAPIValues(baseUrl: string, clientId: string, fetchImpl?: FetchLike): void {
     if (
       this.apiClient &&
-      this.apiConfig?.baseUrl === options.baseUrl &&
-      this.apiConfig.clientId === options.clientId
+      this.apiConfig?.baseUrl === baseUrl &&
+      this.apiConfig.clientId === clientId
     ) {
       return;
     }
     this.apiClient = new SSOClient({
-      baseUrl: options.baseUrl,
-      clientId: options.clientId,
-      fetch: options.fetch,
+      baseUrl,
+      clientId,
+      fetch: fetchImpl,
       getAccessToken: () => this.tokens?.access_token,
     });
-    this.apiConfig = { baseUrl: options.baseUrl, clientId: options.clientId };
+    this.apiConfig = { baseUrl, clientId };
     this.clearTokens();
+    this.activationContext = undefined;
   }
 
   private async finishLogin(
@@ -242,6 +342,9 @@ export class SnaplinkBrowserClient {
         redirect_uri: transaction.redirectUri,
       });
       this.setTokens(tokens, Date.now());
+      if (transaction.activationTicket && transaction.productId) {
+        await this.claimActivation(options, transaction.activationTicket, transaction.productId);
+      }
       options.storage.removeItem(key);
       cleanAuthorizationResponse(options);
 
@@ -252,12 +355,14 @@ export class SnaplinkBrowserClient {
           createdAt: Date.now(),
           issuedAt: this.issuedAt,
           tokens,
+          context: this.activationContext,
         });
         options.navigate(transaction.returnTo);
         return waitForNavigation();
       }
       return tokens;
     } catch (error) {
+      if (transaction.activationTicket) this.clearTokens();
       options.storage.removeItem(key);
       cleanAuthorizationResponse(options);
       throw error;
@@ -286,6 +391,39 @@ export class SnaplinkBrowserClient {
       this.clearTokens();
       return undefined;
     }
+  }
+
+  private async prepareSetup(options: ResolvedLoginOptions, setup: SnaplinkLoginSetup): Promise<void> {
+    rejectConfidentialOptions(setup);
+    const preparation = await this.api.postActivationPrepare(
+      activationRequest(options.clientId, setup),
+    );
+    writePendingSetup(options.storage, {
+      activationTicket: preparation.activation_ticket,
+      baseUrl: options.baseUrl,
+      clientId: options.clientId,
+      createdAt: Date.now(),
+      productId: preparation.product_id,
+    });
+  }
+
+  private async claimPendingSetup(options: ResolvedLoginOptions): Promise<void> {
+    const pending = readPendingSetup(options.storage, options.baseUrl, options.clientId);
+    if (pending) await this.claimActivation(options, pending.activationTicket, pending.productId);
+  }
+
+  private async claimActivation(
+    options: ResolvedLoginOptions,
+    activationTicket: string,
+    productId: string,
+  ): Promise<AccountContext> {
+    const result = await this.api.postMyActivationClaim({
+      activation_ticket: activationTicket,
+      product_id: productId,
+    });
+    this.activationContext = result.context;
+    clearPendingSetup(options.storage, options.clientId, activationTicket);
+    return result.context;
   }
 
   private setTokens(tokens: TokenIssuance, issuedAt: number): void {
@@ -342,7 +480,7 @@ function resolveLoginOptions(options: SnaplinkLoginOptions): ResolvedLoginOption
   };
 }
 
-function rejectConfidentialOptions(options: SnaplinkLoginOptions): void {
+function rejectConfidentialOptions(options: object): void {
   const unsafe = options as unknown as Record<string, unknown>;
   if ("clientSecret" in unsafe || "client_secret" in unsafe) {
     throw new TypeError("browser hosted login does not accept client secrets");
@@ -381,12 +519,23 @@ function absoluteSameOriginURL(value: string | URL, current: URL, name: string):
   return url.toString();
 }
 
-function requiredText(value: string, name: string): string {
+function requiredText(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim() === "") throw new TypeError(`${name} is required`);
   return value;
 }
 
-async function createTransaction(options: ResolvedLoginOptions): Promise<LoginTransaction> {
+function optionalText(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function requiredString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+async function createTransaction(
+  options: ResolvedLoginOptions,
+  pending?: PendingSetup,
+): Promise<LoginTransaction> {
   const codeVerifier = randomBase64URL(64);
   return {
     baseUrl: options.baseUrl,
@@ -397,6 +546,8 @@ async function createTransaction(options: ResolvedLoginOptions): Promise<LoginTr
     redirectUri: options.redirectUri,
     returnTo: options.returnTo,
     state: randomBase64URL(32),
+    activationTicket: pending?.activationTicket,
+    productId: pending?.productId,
   };
 }
 
@@ -440,6 +591,62 @@ function readJSON<T>(storage: SnaplinkStorage, key: string): T | undefined {
 
 function transactionKey(clientId: string): string {
   return transactionPrefix + encodeURIComponent(clientId);
+}
+
+function activationKey(clientId: string): string {
+  return activationPrefix + encodeURIComponent(clientId);
+}
+
+function activationRequest(
+  clientId: string,
+  setup: SnaplinkSetupOptions | SnaplinkLoginSetup,
+): ActivationPrepareRequest {
+  const productId = requiredText(setup.productId, "productId");
+  const licenseKey = optionalText(setup.licenseKey);
+  const invitationCode = optionalText(setup.invitationCode);
+  if ((licenseKey === "") === (invitationCode === "")) {
+    throw new SSOError(0, "invalid_request", "exactly one of licenseKey or invitationCode is required");
+  }
+  return {
+    client_id: clientId,
+    product_id: productId,
+    ...(licenseKey ? { license_key: licenseKey } : {}),
+    ...(invitationCode ? { invitation_code: invitationCode } : {}),
+    ...(setup.tenantHint ? { tenant_hint: setup.tenantHint } : {}),
+    ...(setup.locale ? { locale: setup.locale } : {}),
+    ...(setup.appVersion ? { app_version: setup.appVersion } : {}),
+  };
+}
+
+function writePendingSetup(storage: SnaplinkStorage, pending: PendingSetup): void {
+  storage.setItem(activationKey(pending.clientId), JSON.stringify(pending));
+}
+
+function readPendingSetup(
+  storage: SnaplinkStorage,
+  baseUrl: string,
+  clientId: string,
+): PendingSetup | undefined {
+  const key = activationKey(clientId);
+  const pending = readJSON<PendingSetup>(storage, key);
+  if (!pending) return undefined;
+  if (
+    pending.baseUrl !== baseUrl ||
+    pending.clientId !== clientId ||
+    !requiredString(pending.activationTicket) ||
+    !requiredString(pending.productId) ||
+    Date.now() - pending.createdAt > defaultTransactionTTL
+  ) {
+    storage.removeItem(key);
+    return undefined;
+  }
+  return pending;
+}
+
+function clearPendingSetup(storage: SnaplinkStorage, clientId: string, ticket: string): void {
+  const key = activationKey(clientId);
+  const pending = readJSON<PendingSetup>(storage, key);
+  if (pending?.activationTicket === ticket) storage.removeItem(key);
 }
 
 function handoffKey(clientId: string): string {

@@ -150,6 +150,7 @@ func (s *Server) mountCoreOAuthOIDC() {
 	s.router.GET(PathStatus, s.handleStatus)
 	s.router.GET(PathSetupStatus, s.handleSetupStatus)
 	s.router.POST(PathSetup, s.handleSetup)
+	s.mountActivationRoutes()
 	s.router.GET(PathJWKS, s.handleJWKS)
 	s.mountDiscovery()
 	// Login UI metadata endpoint — public, cacheable, unauthenticated.

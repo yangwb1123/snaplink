@@ -69,31 +69,42 @@ final class SnaplinkClient
 {
     private StateStore $store;
     private $transport;
+    private $jsonTransport;
     private ?array $tokens = null;
     private ?string $baseUrl = null;
     private ?string $clientId = null;
+    private ?array $pendingSetup = null;
+    private ?array $accountContext = null;
 
-    public function __construct(?StateStore $store = null, ?callable $transport = null)
+    public function __construct(
+        ?StateStore $store = null,
+        ?callable $transport = null,
+        ?callable $jsonTransport = null,
+    )
     {
         $this->store = $store ?? new MemoryStateStore();
         $this->transport = $transport;
+        $this->jsonTransport = $jsonTransport;
     }
 
     public function login(array $options): LoginResult
     {
         self::rejectSecrets($options);
         $resolved = self::resolveOptions($options);
-        if ($this->baseUrl !== $resolved['base_url'] || $this->clientId !== $resolved['client_id']) {
-            $this->tokens = null;
-            $this->baseUrl = $resolved['base_url'];
-            $this->clientId = $resolved['client_id'];
-        }
+        $this->configureSession($resolved['base_url'], $resolved['client_id']);
 
         $callback = self::option($options, 'callback_url', 'callbackUrl');
+        if ((!is_string($callback) || $callback === '') && array_key_exists('setup', $options)) {
+            if (!is_array($options['setup'])) {
+                throw new SnaplinkError(0, 'invalid_request', 'setup must be an array');
+            }
+            $this->prepareSetup($resolved['base_url'], $resolved['client_id'], $options['setup']);
+        }
         if (is_string($callback) && $callback !== '') {
             return $this->finish($resolved, $callback);
         }
         if ($this->tokens !== null) {
+            $this->claimPending($resolved['base_url'], $resolved['client_id']);
             return new LoginResult(null, $this->tokens, $resolved['return_to']);
         }
 
@@ -107,6 +118,10 @@ final class SnaplinkClient
             'return_to' => $resolved['return_to'],
             'state' => self::randomUrlSafe(32),
         ];
+        if ($this->pendingSetup !== null) {
+            $transaction['activation_ticket'] = $this->pendingSetup['activation_ticket'];
+            $transaction['product_id'] = $this->pendingSetup['product_id'];
+        }
         $key = self::storeKey($resolved['client_id']);
         $this->store->save($key, json_encode($transaction, JSON_THROW_ON_ERROR));
         try {
@@ -116,6 +131,35 @@ final class SnaplinkClient
             throw $error;
         }
         return new LoginResult($loginUrl, null, $resolved['return_to']);
+    }
+
+    public function setup(array $options): array
+    {
+        self::rejectSecrets($options);
+        $allowInsecure = (bool) (self::option($options, 'allow_insecure_http_for_development', 'allowInsecureHttpForDevelopment') ?? false);
+        $baseUrl = self::normalizeUrl(self::required($options, 'base_url', 'baseUrl'), 'base_url', false, false, $allowInsecure);
+        $clientId = self::required($options, 'client_id', 'clientId');
+        $this->configureSession($baseUrl, $clientId);
+        return $this->prepareSetup($baseUrl, $clientId, $options);
+    }
+
+    public function getAccountContext(?string $productId = null): array
+    {
+        if ($this->tokens === null || !is_string($this->tokens['access_token'] ?? null)) {
+            throw new SnaplinkError(401, 'login_required', 'login is required');
+        }
+        $product = $productId ?? ($this->accountContext['product_id'] ?? null);
+        if (!is_string($product) || trim($product) === '') {
+            throw new SnaplinkError(0, 'invalid_request', 'product_id is required');
+        }
+        $endpoint = rtrim((string) $this->baseUrl, '/') . '/api/v1/me/account-context?product_id=' . rawurlencode($product);
+        $response = $this->jsonRequest('GET', $endpoint, null, (string) $this->tokens['access_token']);
+        $context = $response['context'] ?? null;
+        if (!is_array($context)) {
+            throw new SnaplinkError(0, 'invalid_response', 'account context response was invalid');
+        }
+        $this->accountContext = $context;
+        return $context;
     }
 
     public function accessToken(): ?string
@@ -137,6 +181,7 @@ final class SnaplinkClient
     public function clear(): void
     {
         $this->tokens = null;
+        $this->accountContext = null;
     }
 
     public function logout(): void
@@ -193,7 +238,88 @@ final class SnaplinkClient
         }
         $tokens = $this->exchange($options, $transaction, $code);
         $this->tokens = $tokens;
+        try {
+            if (is_string($transaction['activation_ticket'] ?? null) && is_string($transaction['product_id'] ?? null)) {
+                $this->claimActivation(
+                    $options['base_url'],
+                    $options['client_id'],
+                    $transaction['activation_ticket'],
+                    $transaction['product_id'],
+                );
+            }
+        } catch (\Throwable $error) {
+            $this->tokens = null;
+            throw $error;
+        }
         return new LoginResult(null, $tokens, (string) $transaction['return_to']);
+    }
+
+    private function configureSession(string $baseUrl, string $clientId): void
+    {
+        if ($this->baseUrl === $baseUrl && $this->clientId === $clientId) {
+            return;
+        }
+        $this->tokens = null;
+        $this->pendingSetup = null;
+        $this->accountContext = null;
+        $this->baseUrl = $baseUrl;
+        $this->clientId = $clientId;
+    }
+
+    private function prepareSetup(string $baseUrl, string $clientId, array $setup): array
+    {
+        self::rejectSecrets($setup);
+        $body = self::activationRequest($clientId, $setup);
+        $response = $this->jsonRequest('POST', rtrim($baseUrl, '/') . '/api/v1/activation/prepare', $body, null);
+        $ticket = $response['activation_ticket'] ?? null;
+        $product = $response['product_id'] ?? null;
+        if (!is_string($ticket) || $ticket === '' || !is_string($product) || $product === '') {
+            throw new SnaplinkError(0, 'invalid_response', 'activation endpoint returned an invalid ticket');
+        }
+        $this->pendingSetup = [
+            'activation_ticket' => $ticket,
+            'base_url' => $baseUrl,
+            'client_id' => $clientId,
+            'product_id' => $product,
+        ];
+        return $response;
+    }
+
+    private function claimPending(string $baseUrl, string $clientId): void
+    {
+        if (
+            $this->pendingSetup === null
+            || $this->pendingSetup['base_url'] !== $baseUrl
+            || $this->pendingSetup['client_id'] !== $clientId
+        ) {
+            return;
+        }
+        $this->claimActivation($baseUrl, $clientId, $this->pendingSetup['activation_ticket'], $this->pendingSetup['product_id']);
+    }
+
+    private function claimActivation(string $baseUrl, string $clientId, string $ticket, string $productId): void
+    {
+        $token = $this->tokens['access_token'] ?? null;
+        if (!is_string($token) || $token === '') {
+            throw new SnaplinkError(401, 'login_required', 'login is required');
+        }
+        $response = $this->jsonRequest(
+            'POST',
+            rtrim($baseUrl, '/') . '/api/v1/me/activation/claim',
+            ['activation_ticket' => $ticket, 'product_id' => $productId],
+            $token,
+        );
+        if (!is_array($response['context'] ?? null)) {
+            throw new SnaplinkError(0, 'invalid_response', 'activation claim response was invalid');
+        }
+        $this->accountContext = $response['context'];
+        if (
+            $this->pendingSetup !== null
+            && $this->pendingSetup['activation_ticket'] === $ticket
+            && $this->pendingSetup['client_id'] === $clientId
+        ) {
+            $this->pendingSetup = null;
+        }
     }
 
     private function exchange(array $options, array $transaction, string $code): array
@@ -229,6 +355,56 @@ final class SnaplinkClient
             throw new SnaplinkError(0, 'invalid_response', 'token endpoint returned an invalid token response');
         }
         return $response;
+    }
+
+    private function jsonRequest(string $method, string $endpoint, ?array $body, ?string $bearer): array
+    {
+        $response = $this->jsonTransport !== null
+            ? ($this->jsonTransport)($method, $endpoint, $body, $bearer)
+            : $this->defaultJsonRequest($method, $endpoint, $body, $bearer);
+        if (!is_array($response)) {
+            throw new SnaplinkError(0, 'network_error', 'JSON request returned an invalid response');
+        }
+        if (array_key_exists('status', $response) && array_key_exists('body', $response)) {
+            $status = (int) $response['status'];
+            $decoded = json_decode(is_string($response['body']) ? $response['body'] : '', true);
+            if ($status < 200 || $status >= 300) {
+                self::oauthError($status, is_array($decoded) ? $decoded : []);
+            }
+            $response = $decoded;
+        }
+        if (!is_array($response)) {
+            throw new SnaplinkError(0, 'invalid_response', 'JSON endpoint returned an invalid response');
+        }
+        return $response;
+    }
+
+    private function defaultJsonRequest(string $method, string $endpoint, ?array $body, ?string $bearer): array
+    {
+        $headers = "Accept: application/json\r\n"
+            . "Cache-Control: no-store\r\n"
+            . "Pragma: no-cache\r\n";
+        if ($body !== null) {
+            $headers .= "Content-Type: application/json\r\n";
+        }
+        if ($bearer !== null && $bearer !== '') {
+            $headers .= 'Authorization: Bearer ' . $bearer . "\r\n";
+        }
+        $request = ['method' => $method, 'header' => $headers, 'ignore_errors' => true];
+        if ($body !== null) {
+            $request['content'] = json_encode($body, JSON_THROW_ON_ERROR);
+        }
+        $context = stream_context_create(['http' => $request]);
+        $bodyValue = @file_get_contents($endpoint, false, $context);
+        $headersValue = $http_response_header ?? [];
+        $status = 0;
+        if (isset($headersValue[0]) && preg_match('/\s([0-9]{3})\s/', $headersValue[0], $matches) === 1) {
+            $status = (int) $matches[1];
+        }
+        if ($bodyValue === false) {
+            throw new SnaplinkError($status, 'network_error', 'JSON request failed');
+        }
+        return ['status' => $status, 'body' => $bodyValue];
     }
 
     private function defaultTokenRequest(string $endpoint, array $form): array
@@ -487,6 +663,36 @@ final class SnaplinkClient
             throw new SnaplinkError(0, 'invalid_request', $snake . ' is required');
         }
         return $value;
+    }
+
+    private static function activationRequest(string $clientId, array $setup): array
+    {
+        $productId = self::required($setup, 'product_id', 'productId');
+        $licenseKey = self::option($setup, 'license_key', 'licenseKey');
+        $invitationCode = self::option($setup, 'invitation_code', 'invitationCode');
+        $licenseKey = is_string($licenseKey) ? $licenseKey : '';
+        $invitationCode = is_string($invitationCode) ? $invitationCode : '';
+        if (($licenseKey === '') === ($invitationCode === '')) {
+            throw new SnaplinkError(0, 'invalid_request', 'exactly one of license_key or invitation_code is required');
+        }
+        $body = ['client_id' => $clientId, 'product_id' => $productId];
+        if ($licenseKey !== '') {
+            $body['license_key'] = $licenseKey;
+        }
+        if ($invitationCode !== '') {
+            $body['invitation_code'] = $invitationCode;
+        }
+        foreach ([
+            ['tenant_hint', 'tenantHint'],
+            ['locale', 'locale'],
+            ['app_version', 'appVersion'],
+        ] as [$snake, $camel]) {
+            $value = self::option($setup, $snake, $camel);
+            if (is_string($value) && $value !== '') {
+                $body[$snake] = $value;
+            }
+        }
+        return $body;
     }
 
     private static function option(array $options, string $snake, ?string $camel = null): mixed

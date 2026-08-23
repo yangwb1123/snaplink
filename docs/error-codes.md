@@ -72,6 +72,20 @@ exact emission site.
 
 `GET /api/v1/setup/status` returns `{"initialized":bool,"setup_required":bool}` and is intentionally detail-free (anti-enumeration).
 
+## Product activation and account context (`/api/v1/activation/*`, `/api/v1/me/*`)
+
+These routes are optional and are mounted when an activation store is wired.
+`/api/v1/activation/prepare` accepts a license or invitation credential only in
+the HTTPS request body. It returns a short-lived, one-time ticket; SDKs claim
+that ticket after hosted login with the authenticated bearer. The server, not
+the client, determines the tenant, plan, features, and limits.
+
+| Code | HTTP | Emitted when | Client should |
+|------|------|--------------|---------------|
+| `activation_invalid` | 400 | The license/invitation is unknown, expired, already claimed, for another product/tenant, or the activation ticket is stale, replayed, or bound to another client/subject. These causes intentionally collapse to one oracle-safe code. | Ask for a new valid credential or restart setup; do not distinguish the hidden cause. |
+| `activation_not_found` | 404 | The authenticated subject has no activation/account context for the requested product. | Run setup and hosted login, or show the product is not activated. |
+| `activation_unavailable` | 503 | The activation store or request context failed after validation. | Retry with bounded backoff and inspect server readiness. |
+
 ---
 
 ## Authentication (`/auth/*`, `/userinfo`, `/logout`)

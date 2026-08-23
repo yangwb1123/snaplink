@@ -58,6 +58,32 @@ class AccessPolicyList(TypedDict, total=False):
     total: int
 
 
+class ActivationClaimRequest(TypedDict, total=False):
+    activation_ticket: str
+    product_id: str
+
+
+class ActivationContextResponse(TypedDict, total=False):
+    context: Dict[str, Any]
+
+
+class ActivationPrepareRequest(TypedDict, total=False):
+    """Exactly one of license_key and invitation_code is required."""
+    app_version: str
+    client_id: str  # Public OAuth client that will complete hosted login.
+    invitation_code: str  # Optional invitation credential.
+    license_key: str  # Paid product activation credential; never place it in a URL.
+    locale: str
+    product_id: str
+    tenant_hint: str  # Non-authoritative tenant hint; the server resolves the tenant.
+
+
+class ActivationPrepareResponse(TypedDict, total=False):
+    activation_ticket: str  # Opaque, one-time, short-lived ticket for the bearer claim route.
+    expires_in: int
+    product_id: str
+
+
 class AddRoleResponse(TypedDict, total=False):
     role: Role
 
@@ -204,12 +230,29 @@ class AuthorizationDetail(TypedDict, total=False):
 
 
 class AuthzPolicyBundle(TypedDict, total=False):
-    """Portable role-definition export for decentralized (sidecar)"""
+    """Portable authorization export for decentralized (sidecar)"""
     client_id: str  # The app whose role definitions this bundle exports.
-    generated_at: str  # When the export rendered. Informational only — NOT part of the ETag (the ETag is hashed over the role content), so the same role set yields the same ETag across regenerations.
+    dsod_conflict_sets: List[List[str]]  # Role sets that may not be active together in one session.
+    generated_at: str  # When the export rendered. Informational only — NOT part of the ETag (the ETag is hashed over decision-relevant policy content).
+    resources: List[AuthzResourceBundle]  # Resource catalog entries projected into decision semantics; timestamps are omitted.
     roles: List[RoleBundle]
+    ssod_conflict_sets: List[List[str]]  # Role sets that may not be held together.
     version: int  # Bundle schema version; a sidecar branches on it.
     wildcard_semantics: WildcardSemantics
+
+
+class AuthzResourceBundle(TypedDict, total=False):
+    """Decision-relevant resource catalog projection; timestamps are intentionally omitted."""
+    attributes: Dict[str, str]
+    client_id: str
+    description: str
+    id: str
+    name: str
+    require_mode: str
+    required_permissions: List[str]
+    requires_auth: bool
+    tenant_id: str
+    type: str
 
 
 class BCLFailure(TypedDict, total=False):
@@ -331,6 +374,31 @@ class ClientMetadata(TypedDict, total=False):
     tenant_id: str
     token_strategy: str
     userinfo_signed_response_alg: str
+
+
+class CommerceEntitlement(TypedDict, total=False):
+    active: bool
+    effective_at: str
+    expires_at: str
+    features: Dict[str, bool]
+    generated_at: str
+    limits: Dict[str, CommerceLimitGrant]
+    plan: CommercePlanRef
+    revision: int
+    subscription_id: str
+    tenant_id: str
+
+
+class CommerceLimitGrant(TypedDict, total=False):
+    """An explicit finite or unlimited quota grant. When `unlimited` is true,"""
+    hard: int
+    soft: int
+    unlimited: bool
+
+
+class CommercePlanRef(TypedDict, total=False):
+    id: str
+    version: int
 
 
 class ConfigClusterDiffRequest(TypedDict, total=False):
@@ -1578,7 +1646,7 @@ class SSOClient:
         return self._request("POST", "/api/v1/admin/account-lockout/clear", body=body, auth=True)
 
     def get_authz_policy_bundle(self, query: Optional[Dict[str, Any]] = None) -> AuthzPolicyBundle:
-        """Export the role-definition authorization policy bundle. (operationId: getAuthzPolicyBundle)"""
+        """Export the authorization policy bundle. (operationId: getAuthzPolicyBundle)"""
         return self._request("GET", "/api/v1/admin/authz/policy-bundle", query=query, auth=True)
 
     def list_backchannel_logout_failures(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -2291,6 +2359,10 @@ class SSOClient:
 
     # ---- auth ----
 
+    def post_activation_prepare(self, body: ActivationPrepareRequest) -> ActivationPrepareResponse:
+        """Prepare a one-time product activation for hosted login. (operationId: postActivationPrepare)"""
+        return self._request("POST", "/api/v1/activation/prepare", body=body)
+
     def get_auth_callback(self, query: Optional[Dict[str, Any]] = None) -> None:
         """Upstream IdP federation return URL. (operationId: getAuthCallback)"""
         return self._request("GET", "/auth/callback", query=query)
@@ -2492,6 +2564,14 @@ class SSOClient:
         return self._request("GET", "/fetch", query=query)
 
     # ---- me ----
+
+    def get_my_account_context(self, query: Optional[Dict[str, Any]] = None) -> ActivationContextResponse:
+        """Read the authenticated subject's product/account context. (operationId: getMyAccountContext)"""
+        return self._request("GET", "/api/v1/me/account-context", query=query, auth=True)
+
+    def post_my_activation_claim(self, body: ActivationClaimRequest) -> ActivationContextResponse:
+        """Claim a prepared activation for the authenticated subject. (operationId: postMyActivationClaim)"""
+        return self._request("POST", "/api/v1/me/activation/claim", body=body, auth=True)
 
     def list_my_physical_devices(self) -> Dict[str, Any]:
         """List physical devices owned by the authenticated subject. (operationId: listMyPhysicalDevices)"""
@@ -2908,6 +2988,10 @@ __all__ = [
     "AccessPolicy",
     "AccessPolicyConvergenceSummary",
     "AccessPolicyList",
+    "ActivationClaimRequest",
+    "ActivationContextResponse",
+    "ActivationPrepareRequest",
+    "ActivationPrepareResponse",
     "AddRoleResponse",
     "AdminClient",
     "AdminOperation",
@@ -2926,6 +3010,7 @@ __all__ = [
     "AuthorizationCodeResponse",
     "AuthorizationDetail",
     "AuthzPolicyBundle",
+    "AuthzResourceBundle",
     "BCLFailure",
     "BCLReplaySummary",
     "BackupReport",
@@ -2937,6 +3022,9 @@ __all__ = [
     "ChangeRequest",
     "ClassifyResponse",
     "ClientMetadata",
+    "CommerceEntitlement",
+    "CommerceLimitGrant",
+    "CommercePlanRef",
     "ConfigClusterDiffRequest",
     "ConfigDiffResponse",
     "ConfigHistoryEntry",

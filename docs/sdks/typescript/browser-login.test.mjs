@@ -188,3 +188,46 @@ test("browser hosted login rejects confidential-client options", async () => {
     /does not accept client secrets/,
   );
 });
+
+test("setup sends the credential once, then claims the ticket after PKCE login", async () => {
+  const calls = [];
+  const h = harness(async (input, init) => {
+    calls.push({ input: String(input), init });
+    if (String(input).endsWith("/api/v1/activation/prepare")) {
+      return response(200, { activation_ticket: "ticket-1", expires_in: 300, product_id: "pro" });
+    }
+    if (String(input).endsWith("/token")) {
+      return response(200, { access_token: "access-setup", expires_in: 900, token_type: "Bearer" });
+    }
+    if (String(input).endsWith("/api/v1/me/activation/claim")) {
+      return response(200, { context: { product_id: "pro", tenant_id: "tenant-1" } });
+    }
+    return response(200, { context: { product_id: "pro", tenant_id: "tenant-1" } });
+  });
+  const client = new SnaplinkBrowserClient();
+  const first = options(h);
+  await client.setup({
+    ...first,
+    productId: "pro",
+    licenseKey: "paid-secret-1",
+  });
+  const stored = [...h.storage.values.values()].join("\n");
+  assert.equal(stored.includes("paid-secret-1"), false);
+  const prepareBody = JSON.parse(calls[0].init.body);
+  assert.equal(prepareBody.license_key, "paid-secret-1");
+
+  let loginURL;
+  await assert.rejects(
+    client.login(first),
+    (error) => {
+      loginURL = new URL(error.url);
+      return error instanceof RedirectStarted;
+    },
+  );
+  h.location.href = `https://app.example.test/callback?code=code-setup&state=${encodeURIComponent(loginURL.searchParams.get("state"))}&iss=${encodeURIComponent("https://sso.example.test")}`;
+  const tokens = await client.login(first);
+  assert.equal(tokens.access_token, "access-setup");
+  assert.equal(client.accountContext.tenant_id, "tenant-1");
+  assert.equal(calls[2].init.headers.Authorization, "Bearer access-setup");
+  assert.deepEqual(await client.getAccountContext(), { product_id: "pro", tenant_id: "tenant-1" });
+});

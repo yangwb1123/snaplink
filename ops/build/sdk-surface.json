@@ -235,7 +235,8 @@
         "postToken",
         "postIntrospect",
         "postRevoke",
-        "postRevokeAll"
+        "postRevokeAll",
+        "postActivationPrepare"
       ]
     },
     {
@@ -293,7 +294,9 @@
         "patchMyDevice",
         "getMyMenus",
         "getMyPermissions",
-        "getMyRoles"
+        "getMyRoles",
+        "postMyActivationClaim",
+        "getMyAccountContext"
       ]
     },
     {

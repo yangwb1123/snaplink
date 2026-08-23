@@ -377,6 +377,132 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/activation/prepare:
+    post:
+      tags: [auth]
+      summary: Prepare a one-time product activation for hosted login.
+      description: |
+        Opt-in public-client activation endpoint. The license or invitation
+        credential is accepted only in this TLS-protected JSON body. The
+        response contains an opaque short-lived ticket; it does not disclose
+        the resolved tenant or entitlement. The ticket is bound to the
+        client/product pair and is consumed by the authenticated claim route.
+        Raw credentials MUST NOT be placed in an authorization URL, OAuth
+        state, token, or log.
+      operationId: postActivationPrepare
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationPrepareRequest"
+      responses:
+        "200":
+          description: Short-lived activation ticket.
+          headers:
+            Cache-Control: { schema: { type: string, enum: [no-store] } }
+            Pragma: { schema: { type: string, enum: [no-cache] } }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationPrepareResponse"
+        "400":
+          description: The credential, client, product, or tenant hint is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The activation backend is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/me/activation/claim:
+    post:
+      tags: [me]
+      summary: Claim a prepared activation for the authenticated subject.
+      description: |
+        Consumes the one-time activation ticket after OAuth/OIDC login. The
+        client and subject are taken from the validated bearer token, never
+        from the request body. A repeated claim for the same subject is
+        idempotent; a ticket cannot be claimed by another subject.
+      operationId: postMyActivationClaim
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationClaimRequest"
+      responses:
+        "200":
+          description: User-scoped product/account context.
+          headers:
+            Cache-Control: { schema: { type: string, enum: [no-store] } }
+            Pragma: { schema: { type: string, enum: [no-cache] } }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationContextResponse"
+        "400":
+          description: The ticket is missing, expired, or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: The activation backend is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/me/account-context:
+    get:
+      tags: [me]
+      summary: Read the authenticated subject's product/account context.
+      description: |
+        Returns only the current subject's previously claimed context. The
+        product is explicit so a user with multiple product bindings cannot
+        receive an ambiguous tenant projection.
+      operationId: getMyAccountContext
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: product_id
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        "200":
+          description: User-scoped product/account context.
+          headers:
+            Cache-Control: { schema: { type: string, enum: [no-store] } }
+            Pragma: { schema: { type: string, enum: [no-cache] } }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationContextResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No activation has been claimed for this subject/product.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The activation backend is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /.well-known/jwks.json:
     get:
       tags: [discovery]
@@ -17530,6 +17656,66 @@ components:
         user_id: { type: string }
         role: { type: string, enum: [member, admin, guest] }
         created_at: { type: string, format: date-time }
+
+    ActivationPrepareRequest:
+      type: object
+      additionalProperties: false
+      required: [client_id, product_id]
+      description: Exactly one of license_key and invitation_code is required.
+      properties:
+        client_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Public OAuth client that will complete hosted login.
+        product_id: { type: string, minLength: 1, maxLength: 256 }
+        license_key:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: Paid product activation credential; never place it in a URL.
+        invitation_code:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: Optional invitation credential.
+        tenant_hint:
+          type: string
+          maxLength: 256
+          description: Non-authoritative tenant hint; the server resolves the tenant.
+        locale: { type: string, maxLength: 35 }
+        app_version: { type: string, maxLength: 128 }
+
+    ActivationPrepareResponse:
+      type: object
+      required: [activation_ticket, product_id, expires_in]
+      properties:
+        activation_ticket:
+          type: string
+          description: Opaque, one-time, short-lived ticket for the bearer claim route.
+        product_id: { type: string }
+        expires_in: { type: integer, format: int64, minimum: 1 }
+
+    ActivationClaimRequest:
+      type: object
+      additionalProperties: false
+      required: [activation_ticket, product_id]
+      properties:
+        activation_ticket: { type: string, minLength: 1 }
+        product_id: { type: string, minLength: 1, maxLength: 256 }
+
+    ActivationContextResponse:
+      type: object
+      required: [context]
+      properties:
+        context:
+          type: object
+          required: [product_id, tenant_id]
+          properties:
+            product_id: { type: string }
+            tenant_id: { type: string }
+            entitlement:
+              $ref: "#/components/schemas/CommerceEntitlement"
 
     AdminSession:
       type: object

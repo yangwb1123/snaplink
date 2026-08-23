@@ -20,3 +20,26 @@ The package uses only Python's standard library at runtime. It supports
 Python 3.9 and newer and is intended for applications that want a normal
 `snaplink_sso` import; consumers that vendor one file may use
 `docs/sdks/python/client.py` instead.
+
+For paid or invited products, call `snaplink.setup({...})` before login. The
+credential is sent in the HTTPS JSON body, while only the short-lived ticket is
+kept in the in-process setup state and copied into the login transaction:
+
+```python
+snaplink.setup({
+    "base_url": "https://sso.example.com",
+    "client_id": "my-public-app",
+    "product_id": "pro",
+    "license_key": "license-from-your-checkout",
+})
+started = snaplink.login({
+    "base_url": "https://sso.example.com",
+    "client_id": "my-public-app",
+    "redirect_uri": "https://app.example.com/auth/callback",
+})
+```
+
+The one-call form is `login({..., "setup": {"product_id": "pro",
+"license_key": "..."}})`. Use `invitation_code` for invitations. After the
+callback, `snaplink.get_account_context()` returns server-derived entitlement
+and limits; credentials are never placed in URLs or OAuth state.

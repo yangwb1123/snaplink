@@ -8,7 +8,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::{rngs::OsRng, RngCore};
 use reqwest::blocking::Client as HttpClient;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -38,6 +38,7 @@ pub struct LoginOptions {
     pub callback_url: Option<String>,
     pub allow_insecure_http_for_development: bool,
     pub transaction_ttl: Option<Duration>,
+    pub setup: Option<LoginSetupOptions>,
 }
 
 impl LoginOptions {
@@ -63,6 +64,7 @@ impl LoginOptions {
             callback_url: None,
             allow_insecure_http_for_development: false,
             transaction_ttl: None,
+            setup: None,
         }
     }
 
@@ -133,6 +135,101 @@ impl LoginOptions {
         self.transaction_ttl = Some(value);
         self
     }
+
+    pub fn setup(mut self, value: LoginSetupOptions) -> Self {
+        self.setup = Some(value);
+        self
+    }
+}
+
+/// Direct setup configuration. The license or invitation value is sent only
+/// in the HTTPS request body and is never kept in login state.
+#[derive(Clone, Debug)]
+pub struct SetupOptions {
+    pub base_url: String,
+    pub client_id: String,
+    pub product_id: String,
+    pub license_key: Option<String>,
+    pub invitation_code: Option<String>,
+    pub tenant_hint: Option<String>,
+    pub locale: Option<String>,
+    pub app_version: Option<String>,
+    pub allow_insecure_http_for_development: bool,
+}
+
+impl SetupOptions {
+    pub fn new(
+        base_url: impl Into<String>,
+        client_id: impl Into<String>,
+        product_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            base_url: base_url.into(),
+            client_id: client_id.into(),
+            product_id: product_id.into(),
+            license_key: None,
+            invitation_code: None,
+            tenant_hint: None,
+            locale: None,
+            app_version: None,
+            allow_insecure_http_for_development: false,
+        }
+    }
+
+    pub fn license_key(mut self, value: impl Into<String>) -> Self {
+        self.license_key = Some(value.into());
+        self
+    }
+
+    pub fn invitation_code(mut self, value: impl Into<String>) -> Self {
+        self.invitation_code = Some(value.into());
+        self
+    }
+
+    pub fn tenant_hint(mut self, value: impl Into<String>) -> Self {
+        self.tenant_hint = Some(value.into());
+        self
+    }
+
+    pub fn allow_insecure_http_for_development(mut self, value: bool) -> Self {
+        self.allow_insecure_http_for_development = value;
+        self
+    }
+}
+
+/// Inline setup configuration for LoginOptions; base URL and client id are
+/// inherited from the surrounding login options.
+#[derive(Clone, Debug)]
+pub struct LoginSetupOptions {
+    pub product_id: String,
+    pub license_key: Option<String>,
+    pub invitation_code: Option<String>,
+    pub tenant_hint: Option<String>,
+    pub locale: Option<String>,
+    pub app_version: Option<String>,
+}
+
+impl LoginSetupOptions {
+    pub fn new(product_id: impl Into<String>) -> Self {
+        Self {
+            product_id: product_id.into(),
+            license_key: None,
+            invitation_code: None,
+            tenant_hint: None,
+            locale: None,
+            app_version: None,
+        }
+    }
+
+    pub fn license_key(mut self, value: impl Into<String>) -> Self {
+        self.license_key = Some(value.into());
+        self
+    }
+
+    pub fn invitation_code(mut self, value: impl Into<String>) -> Self {
+        self.invitation_code = Some(value.into());
+        self
+    }
 }
 
 /// Successful OAuth/OIDC token response.
@@ -148,6 +245,21 @@ pub struct TokenResponse {
     #[serde(default)]
     pub scope: Option<String>,
     pub token_type: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ActivationPreparation {
+    pub activation_ticket: String,
+    pub expires_in: u64,
+    pub product_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AccountContext {
+    pub product_id: String,
+    pub tenant_id: String,
+    #[serde(default)]
+    pub entitlement: Option<serde_json::Value>,
 }
 
 /// Result of starting or completing hosted login.
@@ -247,6 +359,8 @@ pub struct SnaplinkClient {
     base_url: Option<Url>,
     client_id: Option<String>,
     tokens: Option<TokenResponse>,
+    pending_setup: Option<PendingSetup>,
+    account_context: Option<AccountContext>,
 }
 
 impl Default for SnaplinkClient {
@@ -271,6 +385,8 @@ impl SnaplinkClient {
             base_url: None,
             client_id: None,
             tokens: None,
+            pending_setup: None,
+            account_context: None,
         }
     }
 
@@ -281,19 +397,37 @@ impl SnaplinkClient {
             || self.client_id.as_deref() != Some(resolved.client_id.as_str())
         {
             self.tokens = None;
+            self.pending_setup = None;
+            self.account_context = None;
             self.base_url = Some(resolved.base_url.clone());
             self.client_id = Some(resolved.client_id.clone());
         }
         if let Some(callback_url) = options.callback_url.as_deref() {
             return self.finish(&resolved, callback_url);
         }
-        if let Some(tokens) = &self.tokens {
+        if let Some(setup) = options.setup.as_ref() {
+            let setup = SetupOptions {
+                base_url: resolved.base_url.to_string(),
+                client_id: resolved.client_id.clone(),
+                product_id: setup.product_id.clone(),
+                license_key: setup.license_key.clone(),
+                invitation_code: setup.invitation_code.clone(),
+                tenant_hint: setup.tenant_hint.clone(),
+                locale: setup.locale.clone(),
+                app_version: setup.app_version.clone(),
+                allow_insecure_http_for_development: options.allow_insecure_http_for_development,
+            };
+            self.setup(&setup)?;
+        }
+        if self.tokens.is_some() {
+            self.claim_pending(&resolved)?;
+            let tokens = self.tokens.clone().expect("checked above");
             return Ok(LoginResult::Complete {
-                tokens: tokens.clone(),
+                tokens,
                 return_to: resolved.return_to.to_string(),
             });
         }
-        self.start(&resolved)
+        self.start(&resolved, self.pending_setup.as_ref())
     }
 
     pub fn access_token(&self) -> Option<&str> {
@@ -310,9 +444,92 @@ impl SnaplinkClient {
 
     pub fn clear(&mut self) {
         self.tokens = None;
+        self.account_context = None;
     }
 
-    fn start(&self, options: &ResolvedOptions) -> Result<LoginResult, SnaplinkError> {
+    /// Prepare a one-time license or invitation activation ticket.
+    pub fn setup(
+        &mut self,
+        options: &SetupOptions,
+    ) -> Result<ActivationPreparation, SnaplinkError> {
+        let base_url = validate_url(
+            &options.base_url,
+            "base_url",
+            false,
+            false,
+            options.allow_insecure_http_for_development,
+        )?;
+        if options.client_id.trim().is_empty() || options.product_id.trim().is_empty() {
+            return Err(invalid("client_id and product_id are required"));
+        }
+        if option_count(&options.license_key, &options.invitation_code) != 1 {
+            return Err(invalid(
+                "exactly one of license_key or invitation_code is required",
+            ));
+        }
+        self.configure_session(&base_url, &options.client_id);
+        let request = ActivationPrepareRequest {
+            client_id: options.client_id.clone(),
+            product_id: options.product_id.clone(),
+            license_key: options.license_key.clone(),
+            invitation_code: options.invitation_code.clone(),
+            tenant_hint: options.tenant_hint.clone(),
+            locale: options.locale.clone(),
+            app_version: options.app_version.clone(),
+        };
+        let preparation: ActivationPreparation = self.request_json(
+            self.http_client
+                .post(activation_endpoint(&base_url, "/api/v1/activation/prepare")),
+            Some(serde_json::to_value(request)?),
+            None,
+        )?;
+        if preparation.activation_ticket.trim().is_empty()
+            || preparation.product_id != options.product_id
+        {
+            return Err(invalid("activation endpoint returned an invalid ticket"));
+        }
+        self.pending_setup = Some(PendingSetup {
+            base_url,
+            client_id: options.client_id.clone(),
+            product_id: preparation.product_id.clone(),
+            activation_ticket: preparation.activation_ticket.clone(),
+        });
+        Ok(preparation)
+    }
+
+    /// Fetch server-derived entitlement and quota information.
+    pub fn get_account_context(
+        &mut self,
+        product_id: &str,
+    ) -> Result<AccountContext, SnaplinkError> {
+        let token = self
+            .tokens
+            .as_ref()
+            .map(|value| value.access_token.clone())
+            .ok_or_else(|| invalid("login is required"))?;
+        if product_id.trim().is_empty() {
+            return Err(invalid("product_id is required"));
+        }
+        let mut endpoint = activation_endpoint(
+            self.base_url
+                .as_ref()
+                .ok_or_else(|| invalid("base_url is required"))?,
+            "/api/v1/me/account-context",
+        );
+        endpoint
+            .query_pairs_mut()
+            .append_pair("product_id", product_id);
+        let response: ActivationContextResponse =
+            self.request_json(self.http_client.get(endpoint), None, Some(&token))?;
+        self.account_context = Some(response.context.clone());
+        Ok(response.context)
+    }
+
+    fn start(
+        &self,
+        options: &ResolvedOptions,
+        pending: Option<&PendingSetup>,
+    ) -> Result<LoginResult, SnaplinkError> {
         let (code_verifier, code_challenge) = create_pkce();
         let transaction = LoginTransaction {
             base_url: canonical_url(&options.base_url),
@@ -322,6 +539,8 @@ impl SnaplinkClient {
             redirect_uri: options.redirect_uri.to_string(),
             return_to: options.return_to.to_string(),
             state: random_urlsafe(32),
+            activation_ticket: pending.map(|value| value.activation_ticket.clone()),
+            product_id: pending.map(|value| value.product_id.clone()),
         };
         let key = store_key(&options.client_id);
         self.store.save(&key, &serde_json::to_vec(&transaction)?)?;
@@ -384,6 +603,15 @@ impl SnaplinkClient {
             .ok_or_else(|| invalid("authorization response did not contain a code"))?;
         let tokens = self.exchange(options, &transaction, &code)?;
         self.tokens = Some(tokens.clone());
+        if let (Some(ticket), Some(product_id)) = (
+            transaction.activation_ticket.as_deref(),
+            transaction.product_id.as_deref(),
+        ) {
+            if let Err(error) = self.claim_activation(options, ticket, product_id) {
+                self.tokens = None;
+                return Err(error);
+            }
+        }
         Ok(LoginResult::Complete {
             tokens,
             return_to: transaction.return_to,
@@ -411,6 +639,87 @@ impl SnaplinkClient {
             .header("Cache-Control", "no-store")
             .form(&form)
             .send()?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let body = response.text().unwrap_or_default();
+            return Err(parse_oauth_error(status, &body));
+        }
+        Ok(response.json()?)
+    }
+
+    fn configure_session(&mut self, base_url: &Url, client_id: &str) {
+        if self.base_url.as_ref() == Some(base_url) && self.client_id.as_deref() == Some(client_id)
+        {
+            return;
+        }
+        self.tokens = None;
+        self.pending_setup = None;
+        self.account_context = None;
+        self.base_url = Some(base_url.clone());
+        self.client_id = Some(client_id.to_owned());
+    }
+
+    fn claim_pending(&mut self, options: &ResolvedOptions) -> Result<(), SnaplinkError> {
+        let pending = self.pending_setup.clone();
+        if let Some(pending) = pending.filter(|value| {
+            value.base_url == options.base_url && value.client_id == options.client_id
+        }) {
+            self.claim_activation(options, &pending.activation_ticket, &pending.product_id)?;
+        }
+        Ok(())
+    }
+
+    fn claim_activation(
+        &mut self,
+        options: &ResolvedOptions,
+        activation_ticket: &str,
+        product_id: &str,
+    ) -> Result<(), SnaplinkError> {
+        let token = self
+            .tokens
+            .as_ref()
+            .map(|value| value.access_token.clone())
+            .ok_or_else(|| invalid("login is required"))?;
+        let request = serde_json::json!({
+            "activation_ticket": activation_ticket,
+            "product_id": product_id,
+        });
+        let response: ActivationContextResponse = self.request_json(
+            self.http_client.post(activation_endpoint(
+                &options.base_url,
+                "/api/v1/me/activation/claim",
+            )),
+            Some(request),
+            Some(&token),
+        )?;
+        self.account_context = Some(response.context);
+        if self
+            .pending_setup
+            .as_ref()
+            .is_some_and(|value| value.activation_ticket == activation_ticket)
+        {
+            self.pending_setup = None;
+        }
+        Ok(())
+    }
+
+    fn request_json<T: DeserializeOwned>(
+        &self,
+        mut request: reqwest::blocking::RequestBuilder,
+        body: Option<serde_json::Value>,
+        bearer: Option<&str>,
+    ) -> Result<T, SnaplinkError> {
+        request = request
+            .header("Accept", "application/json")
+            .header("Cache-Control", "no-store")
+            .header("Pragma", "no-cache");
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        if let Some(token) = bearer {
+            request = request.bearer_auth(token);
+        }
+        let response = request.send()?;
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let body = response.text().unwrap_or_default();
@@ -446,6 +755,39 @@ struct LoginTransaction {
     redirect_uri: String,
     return_to: String,
     state: String,
+    #[serde(default)]
+    activation_ticket: Option<String>,
+    #[serde(default)]
+    product_id: Option<String>,
+}
+
+#[derive(Clone)]
+struct PendingSetup {
+    base_url: Url,
+    client_id: String,
+    product_id: String,
+    activation_ticket: String,
+}
+
+#[derive(Serialize)]
+struct ActivationPrepareRequest {
+    client_id: String,
+    product_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    license_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    invitation_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tenant_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    locale: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    app_version: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ActivationContextResponse {
+    context: AccountContext,
 }
 
 struct Callback {
@@ -628,6 +970,20 @@ fn token_endpoint(base_url: &Url) -> Url {
     endpoint.set_query(None);
     endpoint.set_fragment(None);
     endpoint
+}
+
+fn activation_endpoint(base_url: &Url, suffix: &str) -> Url {
+    let mut endpoint = base_url.clone();
+    let path = format!("{}{}", base_url.path().trim_end_matches('/'), suffix);
+    endpoint.set_path(&path);
+    endpoint.set_query(None);
+    endpoint.set_fragment(None);
+    endpoint
+}
+
+fn option_count(left: &Option<String>, right: &Option<String>) -> usize {
+    usize::from(left.as_ref().is_some_and(|value| !value.trim().is_empty()))
+        + usize::from(right.as_ref().is_some_and(|value| !value.trim().is_empty()))
 }
 
 fn login_page_from_base(base_url: &Url) -> Url {
@@ -823,6 +1179,80 @@ mod tests {
             Err(SnaplinkError::InvalidRequest(message))
                 if message.contains("state did not match")
         ));
+    }
+
+    #[test]
+    fn setup_claims_ticket_after_login_without_leaking_key() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let base_url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = thread::spawn(move || {
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut buffer = [0_u8; 16384];
+                let size = stream.read(&mut buffer).expect("read");
+                let request = String::from_utf8_lossy(&buffer[..size]);
+                let path = request.lines().next().unwrap_or_default();
+                let (body, expected) = if path.starts_with("POST /api/v1/activation/prepare") {
+                    (
+                        br#"{"activation_ticket":"ticket-1","expires_in":300,"product_id":"pro"}"#
+                            as &[u8],
+                        "\"license_key\":\"paid-secret\"",
+                    )
+                } else if path.starts_with("POST /token") {
+                    (
+                        br#"{"access_token":"access-setup","expires_in":900,"token_type":"Bearer"}"#
+                            as &[u8],
+                        "",
+                    )
+                } else {
+                    assert!(path.starts_with("POST /api/v1/me/activation/claim"));
+                    assert!(request
+                        .to_ascii_lowercase()
+                        .contains("authorization: bearer access-setup"));
+                    (
+                        br#"{"context":{"product_id":"pro","tenant_id":"tenant-1"}}"# as &[u8],
+                        "",
+                    )
+                };
+                if !expected.is_empty() {
+                    assert!(request.contains(expected));
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    String::from_utf8_lossy(body)
+                )
+                .expect("write");
+            }
+        });
+
+        let mut client = SnaplinkClient::new();
+        client
+            .setup(&SetupOptions::new(&base_url, "spa-client", "pro").license_key("paid-secret"))
+            .expect("setup");
+        let options = LoginOptions::new(
+            &base_url,
+            "spa-client",
+            "http://app.example.test/auth/callback",
+        )
+        .allow_insecure_http_for_development(true);
+        let started = client.login(&options).expect("start");
+        let redirect = Url::parse(started.redirect_url().expect("redirect")).expect("URL");
+        let callback = format!(
+            "{}?code=code-setup&state={}&iss={}",
+            options.redirect_uri,
+            urlencoding(&redirect, "state"),
+            urlencoding_raw(&base_url)
+        );
+        let completed = client
+            .login(&options.clone().callback_url(callback))
+            .expect("complete");
+        assert_eq!(
+            completed.tokens().expect("tokens").access_token,
+            "access-setup"
+        );
+        server.join().expect("server");
     }
 
     fn urlencoding(url: &Url, key: &str) -> String {

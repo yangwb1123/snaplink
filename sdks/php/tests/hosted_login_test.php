@@ -63,4 +63,45 @@ try {
     }
 }
 
+$activationCalls = [];
+$activationClient = new SnaplinkClient(
+    new MemoryStateStore(),
+    static fn(string $endpoint, array $form): array => [
+        'access_token' => 'access-setup',
+        'expires_in' => 900,
+        'token_type' => 'Bearer',
+    ],
+    static function (string $method, string $endpoint, ?array $body, ?string $bearer) use (&$activationCalls): array {
+        $activationCalls[] = [$method, $endpoint, $body, $bearer];
+        if (str_ends_with($endpoint, '/api/v1/activation/prepare')) {
+            return ['activation_ticket' => 'ticket-1', 'expires_in' => 300, 'product_id' => 'pro'];
+        }
+        return ['context' => ['product_id' => 'pro', 'tenant_id' => 'tenant-1']];
+    },
+);
+$activationOptions = [
+    'base_url' => 'https://sso.example.test',
+    'client_id' => 'spa-client',
+    'redirect_uri' => 'https://app.example.test/auth/callback',
+];
+$activationClient->setup($activationOptions + ['product_id' => 'pro', 'license_key' => 'paid-secret']);
+$activationStarted = $activationClient->login($activationOptions);
+$activationLogin = parse_url((string) $activationStarted->redirectUrl());
+parse_str((string) ($activationLogin['query'] ?? ''), $activationQuery);
+$activationCompleted = $activationClient->login($activationOptions + [
+    'callback_url' => $activationOptions['redirect_uri']
+        . '?code=code-setup&state=' . rawurlencode((string) $activationQuery['state'])
+        . '&iss=' . rawurlencode($activationOptions['base_url']),
+]);
+if ($activationCompleted->accessToken() !== 'access-setup') {
+    throw new RuntimeException('activation login did not complete');
+}
+$claim = array_values(array_filter($activationCalls, static fn(array $call): bool => str_ends_with($call[1], '/api/v1/me/activation/claim')))[0] ?? null;
+if ($claim === null || $claim[2]['activation_ticket'] !== 'ticket-1' || $claim[3] !== 'access-setup') {
+    throw new RuntimeException('activation claim was not bearer-authenticated');
+}
+if ($activationClient->getAccountContext()['tenant_id'] !== 'tenant-1') {
+    throw new RuntimeException('account context was not returned');
+}
+
 echo "hosted login tests passed\n";

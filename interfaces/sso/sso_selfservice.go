@@ -7,6 +7,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/domains/identitylink"
 	"github.com/yangwb1123/snaplink/domains/metering"
+	"github.com/yangwb1123/snaplink/domains/tenant/activation"
 	"github.com/yangwb1123/snaplink/domains/userlifecycle"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/cryptoinventory"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/rotation"
@@ -36,6 +37,10 @@ type ConsentChallengeStore interface {
 
 // selfServiceState holds consent, signup, password-reset, email-change, MFA enrollment, data export/erasure, invitations, usage, JWKS body cache, and SPA-FS fields.
 type selfServiceState struct {
+	// activationStore backs the optional license/invitation activation flow
+	// used by public hosted-login clients. Nil leaves the routes unmounted.
+	activationStore activation.Store
+
 	// consentStore persists end-user consent decisions (WithConsentStore).
 	// When nil all consent checks are skipped — behavior is byte-identical
 	// to a build without the feature.
