@@ -107,14 +107,15 @@ class Snaplink:
         """
 
         _reject_secrets(options)
-        base_url = _normalize_base_url(_required(options, "base_url"))
+        allow_insecure = _allow_insecure_http(options)
+        base_url = _normalize_base_url(_required(options, "base_url"), allow_insecure)
         client_id = _required(options, "client_id")
-        redirect_uri = _normalize_redirect_uri(options.get("redirect_uri"))
+        redirect_uri = _normalize_redirect_uri(options.get("redirect_uri"), allow_insecure)
         return_to = _normalize_return_to(options.get("return_to"), redirect_uri)
         ttl = _positive_integer(options.get("transaction_ttl_seconds", 600), "transaction_ttl_seconds")
         self._configure_client(base_url, client_id)
 
-        callback = _callback_values(options, redirect_uri)
+        callback = _callback_values(options, redirect_uri, allow_insecure)
         if callback is None and options.get("setup") is not None:
             setup = options.get("setup")
             if not isinstance(setup, Mapping):
@@ -151,6 +152,7 @@ class Snaplink:
             state,
             _pkce_challenge(verifier),
             options,
+            allow_insecure,
         )
         return LoginResult(redirect_url=login_url, return_to=return_to)
 
@@ -158,7 +160,8 @@ class Snaplink:
         """Prepare a one-time license or invitation activation ticket."""
 
         _reject_secrets(options)
-        base_url = _normalize_base_url(_required(options, "base_url"))
+        allow_insecure = _allow_insecure_http(options)
+        base_url = _normalize_base_url(_required(options, "base_url"), allow_insecure)
         client_id = _required(options, "client_id")
         self._configure_client(base_url, client_id)
         return self._prepare_setup(base_url, client_id, options)
@@ -294,11 +297,13 @@ class Snaplink:
 snaplink = Snaplink()
 
 
-def _callback_values(options: Mapping[str, Any], redirect_uri: str) -> Optional[Dict[str, str]]:
+def _callback_values(
+    options: Mapping[str, Any], redirect_uri: str, allow_insecure: bool
+) -> Optional[Dict[str, str]]:
     callback_url = options.get("callback_url")
     if callback_url:
         parsed = urllib.parse.urlsplit(str(callback_url))
-        _validate_http_url(parsed, "callback_url", allow_query=True)
+        _validate_http_url(parsed, "callback_url", allow_query=True, allow_insecure=allow_insecure)
         if parsed.fragment or parsed.username or parsed.password:
             raise TypeError("callback_url must not contain credentials or a fragment")
         if _canonical_url(str(callback_url)) != _canonical_url(redirect_uri):
@@ -339,9 +344,10 @@ def _build_login_url(
     state: str,
     challenge: str,
     options: Mapping[str, Any],
+    allow_insecure: bool,
 ) -> str:
     parsed = urllib.parse.urlsplit(login_page)
-    _validate_http_url(parsed, "login_page_url", allow_query=True)
+    _validate_http_url(parsed, "login_page_url", allow_query=True, allow_insecure=allow_insecure)
     if parsed.fragment or parsed.username or parsed.password:
         raise TypeError("login_page_url must not contain credentials or a fragment")
     query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
@@ -386,17 +392,17 @@ def _space_values(value: Union[str, Sequence[str]], name: str) -> str:
     return " ".join(values)
 
 
-def _normalize_base_url(value: Any) -> str:
+def _normalize_base_url(value: Any, allow_insecure: bool = False) -> str:
     parsed = urllib.parse.urlsplit(_required_value(value, "base_url"))
-    _validate_http_url(parsed, "base_url")
+    _validate_http_url(parsed, "base_url", allow_insecure=allow_insecure)
     if parsed.query or parsed.fragment or parsed.username or parsed.password:
         raise TypeError("base_url must not contain credentials, a query, or a fragment")
     return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
 
 
-def _normalize_redirect_uri(value: Any) -> str:
+def _normalize_redirect_uri(value: Any, allow_insecure: bool = False) -> str:
     parsed = urllib.parse.urlsplit(_required_value(value, "redirect_uri"))
-    _validate_http_url(parsed, "redirect_uri")
+    _validate_http_url(parsed, "redirect_uri", allow_insecure=allow_insecure)
     if parsed.fragment or parsed.username or parsed.password:
         raise TypeError("redirect_uri must not contain credentials or a fragment")
     return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
@@ -413,10 +419,17 @@ def _normalize_return_to(value: Any, redirect_uri: str) -> str:
     return target
 
 
-def _validate_http_url(parsed: urllib.parse.SplitResult, name: str, allow_query: bool = False) -> None:
+def _validate_http_url(
+    parsed: urllib.parse.SplitResult,
+    name: str,
+    allow_query: bool = False,
+    allow_insecure: bool = False,
+) -> None:
     if not parsed.scheme or not parsed.netloc:
         raise TypeError(f"{name} must be an absolute HTTP(S) URL")
-    if parsed.scheme != "https" and not (parsed.scheme == "http" and _loopback(parsed.hostname or "")):
+    if parsed.scheme != "https" and not (
+        parsed.scheme == "http" and (_loopback(parsed.hostname or "") or allow_insecure)
+    ):
         raise TypeError(f"{name} must use HTTPS or loopback HTTP")
     if not allow_query and parsed.query:
         raise TypeError(f"{name} must not contain a query")
@@ -435,6 +448,17 @@ def _canonical_url(value: str) -> str:
 
 def _required(options: Mapping[str, Any], key: str) -> str:
     return _required_value(options.get(key), key)
+
+
+def _allow_insecure_http(options: Mapping[str, Any]) -> bool:
+    value = options.get("allow_insecure_http_for_development")
+    if value is None:
+        value = options.get("allowInsecureHttpForDevelopment")
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise TypeError("allow_insecure_http_for_development must be a boolean")
+    return value
 
 
 def _required_value(value: Any, key: str) -> str:

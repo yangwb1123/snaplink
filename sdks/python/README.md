@@ -43,3 +43,7 @@ The one-call form is `login({..., "setup": {"product_id": "pro",
 "license_key": "..."}})`. Use `invitation_code` for invitations. After the
 callback, `snaplink.get_account_context()` returns server-derived entitlement
 and limits; credentials are never placed in URLs or OAuth state.
+
+For trusted local-network development only, set
+`allow_insecure_http_for_development: True`; production integrations must use
+HTTPS.

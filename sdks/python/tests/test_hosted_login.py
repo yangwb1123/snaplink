@@ -35,6 +35,20 @@ class FakeClient:
 
 
 class HostedLoginTest(unittest.TestCase):
+    def test_non_loopback_http_requires_explicit_development_opt_in(self):
+        sdk = Snaplink(MemoryStateStore(), client_factory=FakeClient)
+        options = {
+            "base_url": "http://192.0.2.10",
+            "client_id": "spa-client",
+            "redirect_uri": "http://app.example.test/auth/callback",
+        }
+        with self.assertRaises(TypeError):
+            sdk.login(options)
+
+        options["allow_insecure_http_for_development"] = True
+        started = sdk.login(options)
+        self.assertEqual(urllib.parse.urlsplit(started.redirect_url).scheme, "http")
+
     def test_redirect_then_callback_exchanges_pkce(self):
         sdk = Snaplink(MemoryStateStore(), client_factory=FakeClient)
         initial = sdk.login({

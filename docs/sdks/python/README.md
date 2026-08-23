@@ -128,6 +128,10 @@ completed = snaplink.login({
 me = snaplink.api.get_user_info()
 ```
 
+For trusted local-network development only, set
+`allow_insecure_http_for_development: True`; production integrations must use
+HTTPS.
+
 The hosted facade deliberately has no client-secret option. Use a durable,
 atomic `StateStore` implementation for multi-worker deployments; the built-in
 `MemoryStateStore` is for development and single-process examples. Access
