@@ -14,7 +14,7 @@ func TestBuildActivationStoreSeedsMemoryCode(t *testing.T) {
 		Codes: []config.ActivationCodeConfig{{
 			ID: "license-1", ProductID: "pro", TenantID: "tenant-1", LicenseKey: "paid-key",
 		}},
-	})
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("BuildActivationStore: %v", err)
 	}
@@ -36,11 +36,11 @@ func TestBuildActivationStoreSeedsMemoryCode(t *testing.T) {
 }
 
 func TestBuildActivationStoreDisabledAndUnknown(t *testing.T) {
-	store, err := BuildActivationStore(config.ActivationConfig{})
+	store, err := BuildActivationStore(config.ActivationConfig{}, nil, "")
 	if err != nil || store != nil {
 		t.Fatalf("disabled store = %v, err = %v; want nil, nil", store, err)
 	}
-	if _, err := BuildActivationStore(config.ActivationConfig{Backend: "postgres"}); err == nil {
-		t.Fatal("unknown activation backend accepted")
+	if _, err := BuildActivationStore(config.ActivationConfig{Backend: "postgres"}, nil, ""); err == nil {
+		t.Fatal("postgres activation backend without database accepted")
 	}
 }

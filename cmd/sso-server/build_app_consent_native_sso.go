@@ -14,12 +14,13 @@ import (
 // wireActivation mounts the optional stock product-activation store. The
 // endpoint remains absent unless activation.backend is explicitly configured.
 func (b *appBuilder) wireActivation() error {
-	store, err := serverbuildstore.BuildActivationStore(b.cfg.Activation)
+	store, err := serverbuildstore.BuildActivationStore(b.cfg.Activation, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("activation store: %w", err)
 	}
 	if store != nil {
 		b.opts = append(b.opts, sso.WithActivationStore(store))
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "tenant-activation", store)
 		b.logger.Info("product activation enabled", "backend", b.cfg.Activation.Backend, "codes", len(b.cfg.Activation.Codes))
 	}
 	return nil

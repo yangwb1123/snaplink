@@ -10,8 +10,8 @@ import (
 
 // ActivationConfig wires the stock server's product-activation code store.
 // An empty backend leaves the activation routes unmounted. The memory backend
-// is intended for a single replica or a development deployment; production
-// provisioning should use an embedder-owned durable ActivationStore.
+// is intended for a single replica or a development deployment; postgres is
+// the shared Postgres/CockroachDB backend for production replicas.
 type ActivationConfig struct {
 	Backend   string                 `yaml:"backend"`
 	TicketTTL time.Duration          `yaml:"ticket_ttl"`
@@ -36,11 +36,11 @@ func (c ActivationConfig) validate() error {
 	switch backend := strings.ToLower(strings.TrimSpace(c.Backend)); backend {
 	case "":
 		if len(c.Codes) > 0 {
-			return fmt.Errorf("config: activation.codes requires activation.backend=memory")
+			return fmt.Errorf("config: activation.codes requires activation.backend=memory or postgres")
 		}
-	case "memory":
+	case "memory", "postgres":
 	default:
-		return fmt.Errorf("config: activation.backend must be memory or empty, got %q", c.Backend)
+		return fmt.Errorf("config: activation.backend must be memory, postgres, or empty, got %q", c.Backend)
 	}
 	if c.TicketTTL < 0 {
 		return fmt.Errorf("config: activation.ticket_ttl must not be negative")

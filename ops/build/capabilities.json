@@ -36,7 +36,7 @@
       "module_capabilities": [],
       "config_keys": ["activation.backend", "activation.ticket_ttl", "activation.codes"],
       "surfaces": ["/api/v1/activation/prepare", "/api/v1/me/activation/claim", "/api/v1/me/account-context"],
-      "sources": ["config/config_self.go", "cmd/sso-server/serverbuildstore/build_identity_stores.go", "domains/tenant/activation", "interfaces/activation", "interfaces/sso/server_routes.go"]
+      "sources": ["config/config_self.go", "cmd/sso-server/serverbuildstore/build_identity_stores.go", "domains/tenant/activation", "infrastructure/postgres/tenantactivation", "interfaces/activation", "interfaces/sso/server_routes.go"]
     },
     {
       "id": "admin.control-plane",

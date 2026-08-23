@@ -77,7 +77,7 @@ func (s *MemoryStore) AddCode(ctx context.Context, code Code) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := validateCode(code); err != nil {
+	if err := ValidateCode(code); err != nil {
 		return err
 	}
 	keyHash, invitationHash := credentialHashes(code)
@@ -231,10 +231,18 @@ func randomTicket() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(bytes), nil
 }
 
+// NewTicket creates the opaque short-lived value carried between setup and
+// the authenticated claim. Stores persist only CredentialDigest(ticket).
+func NewTicket() (string, error) { return randomTicket() }
+
 func digest(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
+
+// CredentialDigest returns the storage lookup digest for an opaque credential.
+// It is safe to persist; callers must never use it as the credential itself.
+func CredentialDigest(value string) string { return digest(value) }
 
 func bindingKey(clientID, productID, subject string) string {
 	return clientID + "\x00" + productID + "\x00" + subject

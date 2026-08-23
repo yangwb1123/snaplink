@@ -316,7 +316,7 @@ func (c *Config) validateTopology() error {
 	}
 	if mode == TopologyModeMulti && !c.Server.Topology.AllowPerPodState &&
 		strings.EqualFold(strings.TrimSpace(c.Activation.Backend), "memory") {
-		return errors.New("config: activation.backend=memory is unsafe with server.topology.mode=multi; use a shared ActivationStore")
+		return errors.New("config: activation.backend=memory is unsafe with server.topology.mode=multi; use activation.backend=postgres")
 	}
 	return nil
 }

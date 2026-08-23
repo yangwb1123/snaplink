@@ -80,6 +80,24 @@ type Store interface {
 	Current(context.Context, CurrentInput) (*AccountContext, error)
 }
 
+// CodeProvisioner is the operator/billing seam for adding a code without
+// exposing plaintext credentials through the hosted-login HTTP surface.
+type CodeProvisioner interface {
+	AddCode(context.Context, Code) error
+}
+
+// ValidateCode checks an operator-side provisioning record before storage.
+func ValidateCode(code Code) error { return validateCode(code) }
+
+// ValidatePrepareInput checks the unauthenticated prepare request.
+func ValidatePrepareInput(input PrepareInput) error { return validatePrepareInput(input) }
+
+// ValidateClaimInput checks the authenticated claim request.
+func ValidateClaimInput(input ClaimInput) error { return validateClaimInput(input) }
+
+// ValidateCurrentInput checks the authenticated context request.
+func ValidateCurrentInput(input CurrentInput) error { return validateCurrentInput(input) }
+
 func validatePrepareInput(input PrepareInput) error {
 	if !validIdentifier(input.ClientID) || !validIdentifier(input.ProductID) {
 		return ErrInvalidActivation

@@ -19,6 +19,7 @@ import (
 	"github.com/yangwb1123/snaplink/domains/tenant/activation"
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	tenantactivation "github.com/yangwb1123/snaplink/infrastructure/postgres/tenantactivation"
 
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
 	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
@@ -244,18 +245,36 @@ func BuildPasswordCredentialStore(cfg config.SelfServiceStoreConfig, pg *sql.DB,
 }
 
 // BuildActivationStore selects the stock product-activation store. Empty
-// backend keeps the public activation routes unmounted; the memory backend
-// hashes seeded credentials and retains only short-lived tickets.
-func BuildActivationStore(cfg config.ActivationConfig) (activation.Store, error) {
-	if strings.TrimSpace(cfg.Backend) == "" {
+// backend keeps the public activation routes unmounted; both built-in
+// backends hash seeded credentials and retain only short-lived tickets.
+func BuildActivationStore(cfg config.ActivationConfig, pg *sql.DB, dialect postgresbackend.Dialect) (activation.Store, error) {
+	var store activation.Store
+	switch backend := strings.ToLower(strings.TrimSpace(cfg.Backend)); backend {
+	case "":
 		return nil, nil
+	case "memory":
+		store = activation.NewMemoryStore(activation.WithTicketTTL(cfg.TicketTTL))
+	case "postgres":
+		if pg == nil {
+			return nil, errPostgresNotConfigured("activation")
+		}
+		postgresStore, err := tenantactivation.NewWithDB(pg, dialect, tenantactivation.WithTicketTTL(cfg.TicketTTL))
+		if err != nil {
+			return nil, err
+		}
+		store = postgresStore
+	default:
+		return nil, fmt.Errorf("unknown activation.backend %q (supported: memory, postgres)", cfg.Backend)
 	}
-	if !strings.EqualFold(strings.TrimSpace(cfg.Backend), "memory") {
-		return nil, fmt.Errorf("unknown activation.backend %q (supported: memory)", cfg.Backend)
+	if len(cfg.Codes) == 0 {
+		return store, nil
 	}
-	store := activation.NewMemoryStore(activation.WithTicketTTL(cfg.TicketTTL))
+	provisioner, ok := store.(activation.CodeProvisioner)
+	if !ok {
+		return nil, errors.New("activation store does not support code provisioning")
+	}
 	for _, seed := range cfg.Codes {
-		if err := store.AddCode(context.Background(), activation.Code{
+		if err := provisioner.AddCode(context.Background(), activation.Code{
 			ID: seed.ID, ProductID: seed.ProductID, TenantID: seed.TenantID,
 			Key: seed.LicenseKey, InvitationCode: seed.InvitationCode,
 			Entitlement: seed.Entitlement, ExpiresAt: seed.ExpiresAt,

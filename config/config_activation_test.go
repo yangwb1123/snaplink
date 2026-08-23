@@ -18,7 +18,7 @@ func TestActivationConfigValidation(t *testing.T) {
 		want string
 	}{
 		{"codes without backend", ActivationConfig{Codes: valid.Codes}, "backend=memory"},
-		{"unknown backend", ActivationConfig{Backend: "postgres"}, "must be memory"},
+		{"unknown backend", ActivationConfig{Backend: "redis"}, "must be memory, postgres"},
 		{"both credentials", ActivationConfig{Backend: "memory", Codes: []ActivationCodeConfig{{
 			ID: "code", ProductID: "pro", TenantID: "tenant", LicenseKey: "a", InvitationCode: "b",
 		}}}, "exactly one"},
