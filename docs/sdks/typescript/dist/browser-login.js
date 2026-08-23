@@ -95,7 +95,7 @@ export class SnaplinkBrowserClient {
     /** Prepare a one-time activation ticket before calling login(). */
     async setup(options) {
         rejectConfidentialOptions(options);
-        const baseUrl = normalizeBaseURL(options.baseUrl);
+        const baseUrl = normalizeBaseURL(options.baseUrl, options.allowInsecureHttpForDevelopment === true);
         const clientId = requiredText(options.clientId, "clientId");
         const storage = options.storage ?? browserSessionStorage();
         this.configureAPIValues(baseUrl, clientId, options.fetch);
@@ -277,7 +277,8 @@ function resolveLoginOptions(options) {
     rejectConfidentialOptions(options);
     const location = options.location ?? browserLocation();
     const current = new URL(location.href);
-    const baseUrl = normalizeBaseURL(options.baseUrl);
+    const allowInsecure = options.allowInsecureHttpForDevelopment === true;
+    const baseUrl = normalizeBaseURL(options.baseUrl, allowInsecure);
     const clientId = requiredText(options.clientId, "clientId");
     const redirectUri = options.redirectUri
         ? absoluteURL(options.redirectUri, "redirectUri")
@@ -310,12 +311,13 @@ function rejectConfidentialOptions(options) {
         throw new TypeError("browser hosted login does not accept client secrets");
     }
 }
-function normalizeBaseURL(value) {
+function normalizeBaseURL(value, allowInsecure = false) {
     const url = new URL(requiredText(value, "baseUrl"));
     if (url.username || url.password || url.search || url.hash) {
         throw new TypeError("baseUrl must not contain credentials, a query, or a fragment");
     }
-    if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHost(url.hostname))) {
+    if (url.protocol !== "https:" &&
+        !(url.protocol === "http:" && (isLoopbackHost(url.hostname) || allowInsecure))) {
         throw new TypeError("baseUrl must use HTTPS or loopback HTTP");
     }
     return url.toString().replace(/\/+$/, "");

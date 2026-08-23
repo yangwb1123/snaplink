@@ -50,6 +50,8 @@ export interface SnaplinkSetupOptions {
   tenantHint?: string;
   locale?: string;
   appVersion?: string;
+  /** Development-only opt-in for trusted non-loopback HTTP URLs. */
+  allowInsecureHttpForDevelopment?: boolean;
   storage?: SnaplinkStorage;
   fetch?: FetchLike;
 }
@@ -249,7 +251,10 @@ export class SnaplinkBrowserClient {
   /** Prepare a one-time activation ticket before calling login(). */
   async setup(options: SnaplinkSetupOptions): Promise<ActivationPreparation> {
     rejectConfidentialOptions(options);
-    const baseUrl = normalizeBaseURL(options.baseUrl);
+    const baseUrl = normalizeBaseURL(
+      options.baseUrl,
+      options.allowInsecureHttpForDevelopment === true,
+    );
     const clientId = requiredText(options.clientId, "clientId");
     const storage = options.storage ?? browserSessionStorage();
     this.configureAPIValues(baseUrl, clientId, options.fetch);
@@ -452,7 +457,8 @@ function resolveLoginOptions(options: SnaplinkLoginOptions): ResolvedLoginOption
   rejectConfidentialOptions(options);
   const location = options.location ?? browserLocation();
   const current = new URL(location.href);
-  const baseUrl = normalizeBaseURL(options.baseUrl);
+  const allowInsecure = options.allowInsecureHttpForDevelopment === true;
+  const baseUrl = normalizeBaseURL(options.baseUrl, allowInsecure);
   const clientId = requiredText(options.clientId, "clientId");
   const redirectUri = options.redirectUri
     ? absoluteURL(options.redirectUri, "redirectUri")
@@ -487,12 +493,15 @@ function rejectConfidentialOptions(options: object): void {
   }
 }
 
-function normalizeBaseURL(value: string): string {
+function normalizeBaseURL(value: string, allowInsecure = false): string {
   const url = new URL(requiredText(value, "baseUrl"));
   if (url.username || url.password || url.search || url.hash) {
     throw new TypeError("baseUrl must not contain credentials, a query, or a fragment");
   }
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHost(url.hostname))) {
+  if (
+    url.protocol !== "https:" &&
+    !(url.protocol === "http:" && (isLoopbackHost(url.hostname) || allowInsecure))
+  ) {
     throw new TypeError("baseUrl must use HTTPS or loopback HTTP");
   }
   return url.toString().replace(/\/+$/, "");

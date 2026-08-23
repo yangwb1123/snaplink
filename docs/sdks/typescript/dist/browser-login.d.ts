@@ -24,6 +24,8 @@ export interface SnaplinkSetupOptions {
     tenantHint?: string;
     locale?: string;
     appVersion?: string;
+    /** Development-only opt-in for trusted non-loopback HTTP URLs. */
+    allowInsecureHttpForDevelopment?: boolean;
     storage?: SnaplinkStorage;
     fetch?: FetchLike;
 }

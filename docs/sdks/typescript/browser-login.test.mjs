@@ -189,6 +189,32 @@ test("browser hosted login rejects confidential-client options", async () => {
   );
 });
 
+test("non-loopback HTTP requires the explicit development opt-in", async () => {
+  const h = harness(async () => response(200, {}));
+  const client = new SnaplinkBrowserClient();
+  const insecure = {
+    ...options(h),
+    baseUrl: "http://192.0.2.10",
+    redirectUri: "http://app.example.test/auth/callback",
+  };
+
+  await assert.rejects(client.login(insecure), /baseUrl must use HTTPS or loopback HTTP/);
+  let redirect;
+  await assert.rejects(
+    client.login({
+      ...insecure,
+      allowInsecureHttpForDevelopment: true,
+      navigate(url) {
+        redirect = new URL(url);
+        throw new RedirectStarted(url);
+      },
+    }),
+    (error) => error instanceof RedirectStarted,
+  );
+  assert.equal(redirect.protocol, "http:");
+  assert.equal(redirect.hostname, "192.0.2.10");
+});
+
 test("setup sends the credential once, then claims the ticket after PKCE login", async () => {
   const calls = [];
   const h = harness(async (input, init) => {
