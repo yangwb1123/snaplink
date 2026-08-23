@@ -21,13 +21,15 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   publish:
     if: github.event_name == 'push' || inputs.publish == true
     runs-on: ubuntu-latest
     environment: pypi
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         working-directory: sdks/python

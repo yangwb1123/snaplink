@@ -191,6 +191,16 @@ impl SetupOptions {
         self
     }
 
+    pub fn locale(mut self, value: impl Into<String>) -> Self {
+        self.locale = Some(value.into());
+        self
+    }
+
+    pub fn app_version(mut self, value: impl Into<String>) -> Self {
+        self.app_version = Some(value.into());
+        self
+    }
+
     pub fn allow_insecure_http_for_development(mut self, value: bool) -> Self {
         self.allow_insecure_http_for_development = value;
         self
@@ -228,6 +238,21 @@ impl LoginSetupOptions {
 
     pub fn invitation_code(mut self, value: impl Into<String>) -> Self {
         self.invitation_code = Some(value.into());
+        self
+    }
+
+    pub fn tenant_hint(mut self, value: impl Into<String>) -> Self {
+        self.tenant_hint = Some(value.into());
+        self
+    }
+
+    pub fn locale(mut self, value: impl Into<String>) -> Self {
+        self.locale = Some(value.into());
+        self
+    }
+
+    pub fn app_version(mut self, value: impl Into<String>) -> Self {
+        self.app_version = Some(value.into());
         self
     }
 }
@@ -1217,6 +1242,15 @@ mod tests {
                 if !expected.is_empty() {
                     assert!(request.contains(expected));
                 }
+                if path.starts_with("POST /api/v1/activation/prepare") {
+                    for field in [
+                        "\"tenant_hint\":\"tenant-hint\"",
+                        "\"locale\":\"zh-CN\"",
+                        "\"app_version\":\"1.2.3\"",
+                    ] {
+                        assert!(request.contains(field), "missing setup field {field}");
+                    }
+                }
                 write!(
                     stream,
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1229,7 +1263,13 @@ mod tests {
 
         let mut client = SnaplinkClient::new();
         client
-            .setup(&SetupOptions::new(&base_url, "spa-client", "pro").license_key("paid-secret"))
+            .setup(
+                &SetupOptions::new(&base_url, "spa-client", "pro")
+                    .license_key("paid-secret")
+                    .tenant_hint("tenant-hint")
+                    .locale("zh-CN")
+                    .app_version("1.2.3"),
+            )
             .expect("setup");
         let options = LoginOptions::new(
             &base_url,

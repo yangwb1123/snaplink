@@ -11,7 +11,7 @@
       {
         "file": "docs/sdks/python/client.py",
         "id": "python",
-        "notes": "stdlib urllib + typing only; zero third-party dependencies",
+        "notes": "stdlib urllib + typing only; zero third-party dependencies; package build and PyPI trusted publishing are gated by the SDK workflows",
         "status": "stable"
       }
     ],

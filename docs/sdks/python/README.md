@@ -1,9 +1,10 @@
 # snaplink/sso — Python client (generated)
 
 > **Scope:** generated client for the full documented API surface of
-> `docs/openapi.yaml`, plus a framework-neutral hosted-login facade. It is not
-> published to PyPI, and does not ship hosted-login, self-service, setup,
-> developer-portal, or admin-console UI.
+> `docs/openapi.yaml`, plus a framework-neutral hosted-login facade. The
+> installable package under `sdks/python` is published to PyPI as
+> `snaplink-sso`; this generated directory remains vendorable and does not
+> ship a login page, self-service, setup, developer-portal, or admin-console UI.
 > `sso-server` is a pure API backend; browser applications and consoles are
 > separate frontend projects.
 
@@ -12,6 +13,10 @@
 `docs/openapi.yaml` by a Go program rather than hand-maintained. The same
 generated module is also written to `sdks/python/snaplink_sso/client.py` so
 applications can install and import the repository's `snaplink_sso` package.
+
+Install the package with `pip install snaplink-sso`. Releases run the protected
+`sdk-py-v<version>` workflow after the package tests, wheel/source build, and
+tag/version check pass.
 
 ```
 go run ./cmd/gensdk --lang=py
@@ -135,10 +140,8 @@ release metadata. It remains the vendorable single-file form; the
 repository's installable package metadata is kept separately under
 `sdks/python/` and is generated from the same content. There is no
 `requirements.txt` because the runtime has no third-party dependencies.
-
-There is also no generated compatibility policy or semantic-versioned Python
-release. Consumers that vendor the file should regenerate and review it when
-upgrading the server.
+Consumers that vendor the file should regenerate and review it when upgrading
+the server.
 
 ## Usage
 
