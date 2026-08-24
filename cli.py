@@ -37,7 +37,7 @@ Commands:
     configure              Resolve/materialize a cold-module build profile
     modules                List/check/plan the module catalog
     capabilities           Validate/generate/list the capability registry
-    sdk-surface            Validate/regenerate/list the SDK-surface registry
+    sdk-surface            Validate/compare/regenerate/list the SDK-surface registry
     profiles               Prove build-profile physical isolation (evidence)
     lint                   Run golangci-lint
     security-scan          Run govulncheck + gosec

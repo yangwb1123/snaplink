@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Executable SDK-surface compatibility checking: `python cli.py sdk-surface diff`
+  compares an explicit local registry baseline, reports added/removed/relocated
+  operationIds deterministically, and rejects breaking removals, renames and
+  group moves without an override flag.
 - Public self-service preferences contract: `GET`/`PUT /me/preferences` now
   has an OpenAPI schema and generated TypeScript/Python SDK methods while
   retaining its allowlisted, default-deny attribute projection; the server

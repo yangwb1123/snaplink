@@ -15,7 +15,7 @@
         "status": "stable"
       }
     ],
-    "policy": "Generated clients are additive and semver-tracked. Adding an operation or type never breaks existing call sites; renaming or removing an operationId (the spec's operationId, used verbatim as the method name) is a breaking change requiring a minor-version bump and a CHANGELOG entry. The surface is defined here and validated against docs/openapi.yaml and ops/build/capabilities.json; the generators (cmd/gensdk) never carry their own allowlist."
+    "policy": "Generated clients are additive and semver-tracked. Adding an operation or type never breaks existing call sites; renaming or removing an operationId (the spec's operationId, used verbatim as the method name) is a breaking change requiring a minor-version bump and a CHANGELOG entry. Moving an operationId between registry groups is also treated as breaking because group ownership is part of the declared surface. The surface is defined here and validated against docs/openapi.yaml and ops/build/capabilities.json; the generators (cmd/gensdk) never carry their own allowlist."
   },
   "groups": [
     {

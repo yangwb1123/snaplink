@@ -28,7 +28,7 @@ Catalog of the Python engineering helpers. Committed Go gates are specified in
 | `self_test.py` | Deliberately bad harness probes | `self-test` |
 | `ops/scripts/module_catalog.py` | Strict module/profile validation and capability planning | `modules check`, `modules list`, `modules plan`, `modules graph`, `modules why` |
 | `ops/scripts/capability_registry.py` | Validates product availability against runtime gates/module capabilities and detects generated feature-matrix drift | `capabilities check`, `capabilities generate`, `capabilities list` |
-| `ops/scripts/sdk_surface.py` | Validates the generated-SDK operation registry against OpenAPI + capabilities and re-emits every language | `sdk-surface check`, `sdk-surface generate`, `sdk-surface list` |
+| `ops/scripts/sdk_surface.py` | Validates the generated-SDK operation registry against OpenAPI + capabilities, compares explicit registry baselines, and re-emits every language | `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `sdk-surface generate`, `sdk-surface list` |
 | `ops/scripts/profile_evidence.py` | Builds profile binaries and asserts the declared package-isolation boundaries (durable/admin graph must stay out of the small editions), archiving per-binary package/module/symbol/size evidence | `profiles evidence [--skip-build]` |
 | `ops/scripts/configure_modules.py` | Atomic alternate modfile/overlay/lock materialization and profile builds | `configure --profile <id> [--version vX.Y.Z] [--build]` |
 
@@ -42,7 +42,7 @@ Run `python cli.py check-test` for check-module tests and
 |---|---|
 | Fast loop | `check`, `check-filesize` |
 | Composite reports | `harness`, `accept`, `evaluate` |
-| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `check-proto-openapi-parity`, `adapters`, `capabilities check`, `sdk-surface check`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
+| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `check-proto-openapi-parity`, `adapters`, `capabilities check`, `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
 | Scaffolding | `generate` |
 | Diagnostics | `diagnose`, `trend`, `health-report`, `self-test` |
 | Test execution | `test`, `race`, `bench`, `check-test`, `skill-test` |
@@ -68,6 +68,14 @@ Run `python cli.py check-test` for check-module tests and
   `make test-e2e`.
 - `capability_registry.py` describes product-level capability domains, not
   every protocol row or every profile's resolved dependency closure.
+- `sdk-surface diff` compares only the committed registry's group/operation
+  data. It requires exactly one explicit local baseline (`--baseline-ref` or
+  `--baseline-file`); it never fetches, reads generated SDK
+  source, changes versions, or exposes a breaking-change bypass. Removed or
+  renamed operationIds and group relocations are breaking; additions are
+  additive. The opt-in `make sdk-surface-diff` target requires
+  `SDK_SURFACE_BASELINE_REF`; it is intentionally not a `make ci` prerequisite, so
+  a shallow or parentless local checkout cannot create a false baseline result.
 - `invariants.py` confirms selected markers exist somewhere; it does not prove
   per-endpoint behavior.
 - Coverage fails closed when the test subprocess fails, a package target cannot

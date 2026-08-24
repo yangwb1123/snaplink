@@ -11,7 +11,12 @@ on:
       - "docs/openapi.yaml"
       - "cmd/gensdk/**"
       - "ops/build/sdk-surface.json"
+      - "ops/build/sdk-surface.schema.json"
       - "ops/build/capabilities.json"
+      - "ops/scripts/sdk_surface.py"
+      - "ops/scripts/test_sdk_surface.py"
+      - "cli.py"
+      - "Makefile"
       - ".github/workflows/sdk-ci.yml"
   pull_request:
     paths:
@@ -20,7 +25,12 @@ on:
       - "docs/openapi.yaml"
       - "cmd/gensdk/**"
       - "ops/build/sdk-surface.json"
+      - "ops/build/sdk-surface.schema.json"
       - "ops/build/capabilities.json"
+      - "ops/scripts/sdk_surface.py"
+      - "ops/scripts/test_sdk_surface.py"
+      - "cli.py"
+      - "Makefile"
       - ".github/workflows/sdk-ci.yml"
   workflow_dispatch:
 
@@ -39,6 +49,25 @@ jobs:
           cache: true
       - run: go test ./sdks/go
       - run: go vet ./sdks/go
+
+  surface:
+    name: SDK surface compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The diff reads the PR base from this local checkout; it never fetches.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test SDK surface tool
+        run: python -m unittest discover -s ops/scripts -p 'test_sdk_surface.py' -v
+      - name: Compare with pull request base
+        if: github.event_name == 'pull_request'
+        env:
+          BASELINE_REF: ${{ github.event.pull_request.base.sha }}
+        run: python cli.py sdk-surface diff --baseline-ref "$BASELINE_REF"
 
   python:
     name: Python SDK

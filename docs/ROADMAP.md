@@ -176,12 +176,19 @@ Delivered:
   `python cli.py sdk-surface check`); no route or edition metadata is
   duplicated in the generators.
 - Admin, self-service, SCIM, SSF and Federation operations intended for
-  public consumption are all covered (316 operations).
+  public consumption are all covered (321 operations, as reported by the registry gate).
 - The compatibility policy (additive, semver-tracked, operationId
   verbatim naming) is committed in the registry.
+- `python cli.py sdk-surface diff --baseline-ref <ref>` (or
+  `--baseline-file <path>`) compares the real registry group/operation data
+  with an explicit local baseline. It emits stable added/removed/relocated
+  operationId entries and fails closed for missing or invalid baselines,
+  duplicate operationIds, removals/renames, and group relocations. Additions
+  are additive; no version is changed automatically. The SDK CI runs the
+  check against the pull request base with a full local checkout.
 
-Remaining (non-blocking): SemVer/API-diff checks and versioned package
-publication once the contract is declared stable by the maintainers.
+Remaining (non-blocking): versioned package publication once the contract is
+declared stable by the maintainers.
 
 ### 8. Define the external frontend release contract — DONE
 
