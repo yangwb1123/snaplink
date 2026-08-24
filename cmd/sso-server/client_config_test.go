@@ -5,8 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
 	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
@@ -22,7 +24,7 @@ func TestBuildApp_ClientYAMLPropagatesAllFields(t *testing.T) {
 	cfg.Clients = []config.ClientConfig{
 		{
 			ID:                               "wide-client",
-			Secret:                           "s3cret",
+			Secret:                           "",
 			Name:                             "Wide Client",
 			RedirectURIs:                     []string{"https://rp.example/cb"},
 			AllowedScopes:                    []string{"openid", "profile"},
@@ -32,6 +34,7 @@ func TestBuildApp_ClientYAMLPropagatesAllFields(t *testing.T) {
 			Active:                           true,
 			TenantID:                         "acme",
 			RequirePKCE:                      true,
+			TokenEndpointAuthMethod:          "none",
 			AllowedResources:                 []string{"https://api.example/v1"},
 			PostLogoutRedirectURIs:           []string{"https://rp.example/logout"},
 			AllowedAuthorizationDetailsTypes: []string{"payment_initiation"},
@@ -73,6 +76,7 @@ func TestBuildApp_ClientYAMLPropagatesAllFields(t *testing.T) {
 		ok   bool
 	}{
 		{"RequirePKCE", got.RequirePKCE == true},
+		{"TokenEndpointAuthMethod", got.TokenEndpointAuthMethod == "none"},
 		{"LoginPageURI", got.LoginPageURI == "https://login.example/authorize"},
 		{"AllowedResources len", len(got.AllowedResources) == 1 && got.AllowedResources[0] == "https://api.example/v1"},
 		{"PostLogoutRedirectURIs", len(got.PostLogoutRedirectURIs) == 1},
@@ -132,5 +136,72 @@ func TestConvertClientJWKs_EmptyReturnsNil(t *testing.T) {
 	}
 	if got := serverbuildstore.ConvertClientJWKs([]config.ClientJWK{}); got != nil {
 		t.Fatalf("empty input: got %v want nil", got)
+	}
+}
+
+func TestReconcileLegacySeededPublicClient(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	if err := store.Add(context.Background(), &sso.Client{
+		ID: "spa", Active: true, RequirePKCE: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seeded := &sso.Client{
+		ID: "spa", TokenEndpointAuthMethod: "none", RequirePKCE: true,
+		AllowedPKCEMethods: []string{"S256"},
+	}
+	if err := serverbuildsign.ReconcileLegacySeededPublicClient(context.Background(), store, seeded); err != nil {
+		t.Fatalf("reconcileLegacySeededPublicClient: %v", err)
+	}
+	got, err := store.Get(context.Background(), "spa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TokenEndpointAuthMethod != "none" || !got.RequirePKCE ||
+		len(got.AllowedPKCEMethods) != 1 || got.AllowedPKCEMethods[0] != "S256" {
+		t.Fatalf("public client was not upgraded: %+v", got)
+	}
+}
+
+func TestReconcileLegacySeededPublicClientRejectsStoredSecret(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	if err := store.Add(context.Background(), &sso.Client{ID: "spa", Secret: "existing"}); err != nil {
+		t.Fatal(err)
+	}
+	err := serverbuildsign.ReconcileLegacySeededPublicClient(context.Background(), store, &sso.Client{
+		ID: "spa", TokenEndpointAuthMethod: "none", RequirePKCE: true,
+	})
+	if err == nil {
+		t.Fatal("expected secret-bearing client conversion to fail")
+	}
+}
+
+func TestReconcileLegacySeededPublicClientPreservesExistingPolicy(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	existing := &sso.Client{
+		ID: "spa", Name: "persisted", RedirectURIs: []string{"https://old.example/cb"},
+		AllowedPKCEMethods: []string{"plain"}, JWKS: []sso.JWK{{Kid: "persisted-key"}},
+		Attributes: map[string]string{"owner": "operator"},
+	}
+	if err := store.Add(context.Background(), existing); err != nil {
+		t.Fatal(err)
+	}
+	if err := serverbuildsign.ReconcileLegacySeededPublicClient(context.Background(), store, &sso.Client{
+		ID: "spa", Name: "yaml", TokenEndpointAuthMethod: "none", RequirePKCE: true,
+		AllowedPKCEMethods: []string{"S256"},
+	}); err != nil {
+		t.Fatalf("reconcileLegacySeededPublicClient: %v", err)
+	}
+	got, err := store.Get(context.Background(), "spa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "persisted" || len(got.RedirectURIs) != 1 || got.RedirectURIs[0] != "https://old.example/cb" ||
+		len(got.JWKS) != 1 || got.JWKS[0].Kid != "persisted-key" || got.Attributes["owner"] != "operator" ||
+		len(got.AllowedPKCEMethods) != 1 || got.AllowedPKCEMethods[0] != "plain" {
+		t.Fatalf("reconcile overwrote persisted policy: %+v", got)
 	}
 }

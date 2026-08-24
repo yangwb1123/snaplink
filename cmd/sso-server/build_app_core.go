@@ -21,7 +21,6 @@ import (
 	auditsqlite "github.com/yangwb1123/snaplink/platform/audit/sqlite"
 	"github.com/yangwb1123/snaplink/platform/metrics"
 	"github.com/yangwb1123/snaplink/platform/netpolicy"
-	"github.com/yangwb1123/snaplink/protocols/caep"
 )
 
 // wireIdentitySigning constructs metrics, the seeded client store, the user
@@ -36,7 +35,7 @@ func (b *appBuilder) wireIdentitySigning() error {
 	if err != nil {
 		return fmt.Errorf("identity client_store: %w", err)
 	}
-	if err := b.seedClients(clientStore); err != nil {
+	if err := serverbuildsign.SeedClients(b.cfg, clientStore); err != nil {
 		return err
 	}
 	b.clientStore = clientStore
@@ -72,68 +71,6 @@ func (b *appBuilder) wireIdentitySigning() error {
 		return fmt.Errorf("schema check sessions: %w", err)
 	}
 	return b.wireSigningIssuer()
-}
-
-// seedClients loads the configured clients into the freshly-built store,
-// validating each CAEP receiver endpoint at boot.
-func (b *appBuilder) seedClients(clientStore sso.ClientStore) error {
-	for _, c := range b.cfg.Clients {
-		seeded := &sso.Client{
-			ID:                               c.ID,
-			Secret:                           c.Secret,
-			Name:                             c.Name,
-			RedirectURIs:                     c.RedirectURIs,
-			RedirectURIPatterns:              c.RedirectURIPatterns,
-			AllowedScopes:                    c.AllowedScopes,
-			AllowedAuthenticators:            c.AllowedAuthenticators,
-			LoginPageURI:                     c.LoginPageURI,
-			TokenStrategy:                    c.TokenStrategy,
-			Active:                           c.Active,
-			TenantID:                         c.TenantID,
-			RequirePKCE:                      c.RequirePKCE,
-			AllowedResources:                 c.AllowedResources,
-			PostLogoutRedirectURIs:           c.PostLogoutRedirectURIs,
-			AllowedAuthorizationDetailsTypes: c.AllowedAuthorizationDetailsTypes,
-			RefreshTokenTTL:                  c.RefreshTokenTTL,
-			AccessTokenTTL:                   c.AccessTokenTTL,
-			AllowedPKCEMethods:               c.AllowedPKCEMethods,
-			RequireSignedRequestObject:       c.RequireSignedRequestObject,
-			RequirePAR:                       c.RequirePAR,
-			AllowPasswordlessOnly:            c.AllowPasswordlessOnly,
-			AllowedRequestURIs:               c.AllowedRequestURIs,
-			DeviceCodeTTL:                    c.DeviceCodeTTL,
-			DeviceCodePollInterval:           c.DeviceCodePollInterval,
-			UserinfoSignedResponseAlg:        c.UserinfoSignedResponseAlg,
-			IDTokenSignedResponseAlg:         c.IDTokenSignedResponseAlg,
-			BackchannelLogoutURI:             c.BackchannelLogoutURI,
-			SubjectType:                      c.SubjectType,
-			SectorIdentifierURI:              c.SectorIdentifierURI,
-			FrontchannelLogoutURI:            c.FrontchannelLogoutURI,
-			JWKS:                             serverbuildstore.ConvertClientJWKs(c.JWKS),
-			Attributes:                       c.Attributes,
-			SkipConsent:                      c.SkipConsent,
-			ConsentRefreshInterval:           c.ConsentRefreshInterval,
-		}
-		if err := validateSeededCaepReceiver(&c); err != nil {
-			return err
-		}
-		if err := clientStore.Add(context.Background(), seeded); err != nil && !errors.Is(err, sso.ErrClientExists) {
-			return fmt.Errorf("seed client %q: %w", c.ID, err)
-		}
-	}
-	return nil
-}
-
-// validateSeededCaepReceiver rejects a client whose caep_receiver_endpoint is
-// not https at boot; plaintext would exfiltrate revocation SETs (same anti-
-// exfil rule as the admin gRPC path).
-func validateSeededCaepReceiver(c *config.ClientConfig) error {
-	if ep := c.Attributes[caep.AttrReceiverEndpoint]; ep != "" {
-		if err := caep.ValidateReceiverEndpoint(ep); err != nil {
-			return fmt.Errorf("client %q caep_receiver_endpoint: %w", c.ID, err)
-		}
-	}
-	return nil
 }
 
 // wireSigningIssuer builds the signing issuer + base Option set (router,

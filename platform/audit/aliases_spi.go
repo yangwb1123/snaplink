@@ -181,6 +181,7 @@ const (
 	EventSPIFFEJWTSVIDAccepted               = auditspi.EventSPIFFEJWTSVIDAccepted
 	EventSSFSetReceived                      = auditspi.EventSSFSetReceived
 	EventSelfRegistered                      = auditspi.EventSelfRegistered
+	EventAccountSummaryRead                  = auditspi.EventAccountSummaryRead
 	EventSigningKeyAdoptionErrorsTotal       = auditspi.EventSigningKeyAdoptionErrorsTotal
 	EventSigningKeyAggregationDegraded       = auditspi.EventSigningKeyAggregationDegraded
 	EventSigningKeyAggregationRecovered      = auditspi.EventSigningKeyAggregationRecovered

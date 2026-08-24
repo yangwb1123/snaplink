@@ -145,6 +145,7 @@ const (
 // Self-service registration and account management.
 const (
 	EventSelfRegistered      EventType = "self_registered"
+	EventAccountSummaryRead  EventType = "account_summary_read"
 	EventSubjectDataExported EventType = "subject_data_exported"
 	EventSubjectSelfErased   EventType = "subject_self_erased"
 )
@@ -264,8 +265,8 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventDeviceTrusted: {}, EventDeviceTrustRevoked: {}, EventMFASkippedTrustedDevice: {},
 	// consent
 	EventConsentGranted: {}, EventConsentRevoked: {}, EventConsentDenied: {},
-	// self-service + email change
-	EventSelfRegistered: {}, EventSubjectDataExported: {}, EventSubjectSelfErased: {},
+	// self-service + account summary + email change
+	EventSelfRegistered: {}, EventAccountSummaryRead: {}, EventSubjectDataExported: {}, EventSubjectSelfErased: {},
 	EventEmailChangeRequested: {}, EventEmailChanged: {},
 	// org membership
 	EventOrgLeft: {}, EventOrgMemberAutoProvisioned: {}, EventInvitationSent: {},

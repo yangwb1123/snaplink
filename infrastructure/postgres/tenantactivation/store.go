@@ -159,51 +159,63 @@ func (s *Store) Claim(ctx context.Context, input activation.ClaimInput) (*activa
 	}
 	var result *activation.AccountContext
 	err := runTransaction(ctx, s.db, func(tx *sql.Tx) error {
-		result = nil
-		ticket, err := s.consumeTicket(tx, activation.CredentialDigest(input.Ticket))
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return setOperationError(activation.ErrInvalidActivation)
-			}
-			return err
-		}
-		if !ticket.available(s.now()) || ticket.clientID != input.ClientID || ticket.productID != input.ProductID {
-			return setOperationError(activation.ErrInvalidActivation)
-		}
-		code, err := s.findCodeForUpdate(tx, ticket.codeID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return setOperationError(activation.ErrInvalidActivation)
-			}
-			return err
-		}
-		if !code.available(s.now()) || code.productID != input.ProductID ||
-			(ticket.tenantHint != "" && ticket.tenantHint != code.tenantID) {
-			return setOperationError(activation.ErrInvalidActivation)
-		}
-		result, err = s.findBinding(tx, input)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if err := s.claimLimitReached(tx, code, input.Subject); err != nil {
-			if errors.Is(err, activation.ErrInvalidActivation) {
-				return setOperationError(err)
-			}
-			return err
-		}
-		result, err = s.insertBinding(tx, input, code)
-		if err != nil {
-			return err
-		}
-		return nil
+		var err error
+		result, err = s.claimBinding(tx, input)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// claimBinding consumes the ticket inside the caller's transaction and either
+// returns the existing binding or stages a fresh one. Every ineligibility path
+// collapses to activation.ErrInvalidActivation via setOperationError so the
+// transaction commits: a consumed ticket is never replayed (oracle-safe).
+func (s *Store) claimBinding(tx *sql.Tx, input activation.ClaimInput) (*activation.AccountContext, error) {
+	ticket, err := s.consumeTicket(tx, activation.CredentialDigest(input.Ticket))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, setOperationError(activation.ErrInvalidActivation)
+		}
+		return nil, err
+	}
+	if !ticket.available(s.now()) || ticket.clientID != input.ClientID || ticket.productID != input.ProductID {
+		return nil, setOperationError(activation.ErrInvalidActivation)
+	}
+	code, err := s.findCodeForUpdate(tx, ticket.codeID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, setOperationError(activation.ErrInvalidActivation)
+		}
+		return nil, err
+	}
+	return s.claimCodeBinding(tx, input, code, ticket.tenantHint)
+}
+
+// claimCodeBinding validates the code against the claim input and returns the
+// existing binding when one exists; otherwise it checks the claim limit and
+// inserts a fresh binding.
+func (s *Store) claimCodeBinding(tx *sql.Tx, input activation.ClaimInput, code codeRecord, tenantHint string) (*activation.AccountContext, error) {
+	if !code.available(s.now()) || code.productID != input.ProductID ||
+		(tenantHint != "" && tenantHint != code.tenantID) {
+		return nil, setOperationError(activation.ErrInvalidActivation)
+	}
+	result, err := s.findBinding(tx, input)
+	if err == nil {
+		return result, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if err := s.claimLimitReached(tx, code, input.Subject); err != nil {
+		if errors.Is(err, activation.ErrInvalidActivation) {
+			return nil, setOperationError(err)
+		}
+		return nil, err
+	}
+	return s.insertBinding(tx, input, code)
 }
 
 func (s *Store) Current(ctx context.Context, input activation.CurrentInput) (*activation.AccountContext, error) {

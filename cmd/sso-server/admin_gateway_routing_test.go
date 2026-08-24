@@ -203,6 +203,30 @@ func TestAdminOuterMux_SSORouterOnlyPathsFallThroughToBase(t *testing.T) {
 	}
 }
 
+// TestAdminOuterMux_PermissionResourcePathsReachGateway pins the resource
+// catalog RPC shapes that are easy to miss when copying the generated gateway
+// inventory: both collection and item paths belong to PermissionAdminService.
+func TestAdminOuterMux_PermissionResourcePathsReachGateway(t *testing.T) {
+	t.Parallel()
+	mux := newAdminOuterMux(adminGatewayExactPaths(), markerHandler(routeMarkerGate), markerHandler(routeMarkerBase))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	for _, path := range []string{
+		"/api/v1/admin/permissions/client-1/resources",
+		"/api/v1/admin/permissions/client-1/resources/resource-1",
+	} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		got := resp.Header.Get(routeMarkerHeader)
+		_ = resp.Body.Close()
+		if got != routeMarkerGate {
+			t.Errorf("%s: routed to marker %q, want %q", path, got, routeMarkerGate)
+		}
+	}
+}
+
 // TestAdminOuterMux_GatewayPathsDoNotShadowLocalUsers is a narrower,
 // documentation-grade regression guard: the gateway's OWN "/api/v1/admin/users"
 // + "/api/v1/admin/users/{id}" shapes must NOT structurally overlap with the

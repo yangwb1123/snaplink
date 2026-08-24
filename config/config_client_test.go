@@ -34,6 +34,37 @@ func TestValidateConfiguredClientsLoginPageURI(t *testing.T) {
 	}
 }
 
+func TestValidateConfiguredPublicClientRequiresSecretlessPKCE(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		client  ClientConfig
+		wantErr bool
+	}{
+		{name: "default client secret basic", client: ClientConfig{ID: "confidential"}},
+		{name: "secretless pkce", client: ClientConfig{ID: "spa", TokenEndpointAuthMethod: "none", RequirePKCE: true}},
+		{name: "supported private key jwt", client: ClientConfig{ID: "jwt", TokenEndpointAuthMethod: "private_key_jwt"}},
+		{name: "supported tls client auth", client: ClientConfig{ID: "mtls", TokenEndpointAuthMethod: "tls_client_auth"}},
+		{name: "supported self signed tls", client: ClientConfig{ID: "self", TokenEndpointAuthMethod: "self_signed_tls"}},
+		{name: "secret rejected", client: ClientConfig{ID: "spa", Secret: "not-public", TokenEndpointAuthMethod: "none", RequirePKCE: true}, wantErr: true},
+		{name: "pkce required", client: ClientConfig{ID: "spa", TokenEndpointAuthMethod: "none"}, wantErr: true},
+		{name: "unsupported method", client: ClientConfig{ID: "spa", TokenEndpointAuthMethod: "client_secret_bearer"}, wantErr: true},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateConfiguredClients(&Config{Clients: []ClientConfig{test.client}})
+			if test.wantErr && err == nil {
+				t.Fatal("expected public-client validation error")
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("validateConfiguredClients() error = %v", err)
+			}
+		})
+	}
+}
+
 // TestValidateConfiguredClients_IDTokenSignedResponseAlg covers the static-
 // config gate for clients[].id_token_signed_response_alg: the value must
 // equal the JWS algorithm the wired signing issuer produces

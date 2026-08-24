@@ -41,7 +41,12 @@ type ClientConfig struct {
 	// JWKS, OIDC pairwise sub, FAPI 2.0 require-JAR/PAR, OIDC FCL +
 	// BCL, per-client TTLs) unreachable via YAML. Every field is
 	// optional; omit to use server-wide defaults.
-	RequirePKCE                      bool          `yaml:"require_pkce,omitempty"`
+	RequirePKCE bool `yaml:"require_pkce,omitempty"`
+	// TokenEndpointAuthMethod selects the RFC 7591 client authentication
+	// contract used at the token endpoint. Operator-provisioned browser SPAs
+	// must set this to "none" and pair it with PKCE; an empty value preserves
+	// the OAuth default client_secret_basic behavior.
+	TokenEndpointAuthMethod          string        `yaml:"token_endpoint_auth_method,omitempty"`
 	AllowedResources                 []string      `yaml:"allowed_resources,omitempty"`
 	PostLogoutRedirectURIs           []string      `yaml:"post_logout_redirect_uris,omitempty"`
 	AllowedAuthorizationDetailsTypes []string      `yaml:"allowed_authorization_details_types,omitempty"`
@@ -100,6 +105,15 @@ func validateClientRedirectPatterns(client *ClientConfig) error {
 	return nil
 }
 
+func validateClientTokenEndpointAuthMethod(client *ClientConfig) error {
+	switch client.TokenEndpointAuthMethod {
+	case "", "client_secret_basic", "client_secret_post", "private_key_jwt", "tls_client_auth", "self_signed_tls", "none":
+		return nil
+	default:
+		return fmt.Errorf("config: client %q token_endpoint_auth_method %q is not supported", client.ID, client.TokenEndpointAuthMethod)
+	}
+}
+
 func validateConfiguredClients(c *Config) error {
 	// The JWS name the server's own signing issuer produces for keys.signing.alg
 	// (same mapping serverbuildsign.BuildSigningIssuer uses);
@@ -114,12 +128,23 @@ func validateConfiguredClients(c *Config) error {
 		if err := validateClientRedirectPatterns(&client); err != nil {
 			return err
 		}
+		if err := validateClientTokenEndpointAuthMethod(&client); err != nil {
+			return err
+		}
 		if client.LoginPageURI != "" && !sso.IsFederatedLoginPageURIValid(client.LoginPageURI) {
 			return fmt.Errorf("config: client %q login_page_uri must be HTTPS or loopback HTTP", client.ID)
 		}
 		if client.IDTokenSignedResponseAlg != "" && client.IDTokenSignedResponseAlg != wiredAlg {
 			return fmt.Errorf("config: client %q id_token_signed_response_alg %q is not the wired signing alg %q",
 				client.ID, client.IDTokenSignedResponseAlg, wiredAlg)
+		}
+		if client.TokenEndpointAuthMethod == "none" {
+			if client.Secret != "" {
+				return fmt.Errorf("config: public client %q must not configure a secret", client.ID)
+			}
+			if !client.RequirePKCE {
+				return fmt.Errorf("config: public client %q must require PKCE", client.ID)
+			}
 		}
 	}
 	return nil

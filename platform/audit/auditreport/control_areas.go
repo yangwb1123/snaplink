@@ -54,6 +54,7 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventIdentityMerged,
 			audit.EventIdentityMergeRejected,
 			audit.EventIdentityUnlinked,
+			audit.EventAccountSummaryRead,
 			audit.EventCrossTenantTokenExchange,
 			audit.EventAgentDelegationTokenIssued,
 			audit.EventAgentSessionRevoked,
