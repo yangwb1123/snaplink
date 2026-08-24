@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Public self-service preferences contract: `GET`/`PUT /me/preferences` now
+  has an OpenAPI schema and generated TypeScript/Python SDK methods while
+  retaining its allowlisted, default-deny attribute projection; the server
+  remains API-only and serves no frontend assets.
 - Lifecycle-managed ReBAC business check route: the stock `/authz/check`
   capability now uses a fixed route slot with match-time generation leases,
   readiness, graceful disable/activate, bounded `rebac_lifecycle_transition`

@@ -1,6 +1,7 @@
 package selfservice
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
@@ -14,6 +15,18 @@ func seedUser(t *testing.T, d *testDeps, id string, attrs map[string]string) {
 	if err := d.users.CreateOrUpdate(t.Context(), u); err != nil {
 		t.Fatalf("seed user %s: %v", id, err)
 	}
+}
+
+type nilPreferenceUserProvider struct{ core.UserProvider }
+
+func (nilPreferenceUserProvider) GetByID(context.Context, string) (*core.User, error) {
+	return nil, nil
+}
+
+type nilPreferenceDeps struct{ *testDeps }
+
+func (d nilPreferenceDeps) UserProvider() core.UserProvider {
+	return nilPreferenceUserProvider{UserProvider: d.testDeps.users}
 }
 
 func TestHandleMyPreferencesGet_AllowlistOnly(t *testing.T) {
@@ -53,6 +66,35 @@ func TestHandleMyPreferencesGet_MissingUserIs500(t *testing.T) {
 	HandleMyPreferencesGet(d, ctx, "unknown-user")
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}
+
+func TestHandleMyPreferences_NilUserIs500(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		method string
+		body   string
+	}{
+		{method: http.MethodGet},
+		{method: http.MethodPut, body: `{}`},
+	} {
+		d := &nilPreferenceDeps{testDeps: newTestDeps()}
+		contentType := ""
+		if tc.method == http.MethodPut {
+			contentType = core.ContentTypeJSON
+		}
+		ctx, rec := newCtx(tc.method, contentType, tc.body)
+		if tc.method == http.MethodGet {
+			HandleMyPreferencesGet(d, ctx, "alice")
+		} else {
+			HandleMyPreferencesPut(d, ctx, "alice")
+		}
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("%s status = %d, want 500", tc.method, rec.Code)
+		}
+		if rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Pragma") != "no-cache" {
+			t.Errorf("%s error missing no-store headers", tc.method)
+		}
 	}
 }
 
@@ -98,6 +140,29 @@ func TestHandleMyPreferencesPut_RejectsUnknownOrInvalid(t *testing.T) {
 		HandleMyPreferencesPut(d, ctx, "alice")
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("body %q: status = %d, want 400", body, rec.Code)
+		}
+	}
+}
+
+func TestHandleMyPreferencesPut_RejectsNonJSONAndNonStringValues(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		contentType string
+		body        string
+	}{
+		{contentType: "application/x-www-form-urlencoded", body: "locale=zh-CN"},
+		{contentType: "text/plain", body: `{"locale":"zh-CN"}`},
+		{contentType: core.ContentTypeJSON, body: `{"locale":null}`},
+	}
+	for _, tc := range cases {
+		d := newTestDeps()
+		ctx, rec := newCtx(http.MethodPut, tc.contentType, tc.body)
+		HandleMyPreferencesPut(d, ctx, "alice")
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("content type %q body %q: status = %d, want 400", tc.contentType, tc.body, rec.Code)
+		}
+		if rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Pragma") != "no-cache" {
+			t.Errorf("content type %q body %q: error missing no-store headers", tc.contentType, tc.body)
 		}
 	}
 }

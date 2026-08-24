@@ -44,6 +44,42 @@ func TestRcovMe_Overview(t *testing.T) {
 	}
 }
 
+// TestRcovMe_Preferences covers the public allowlisted preferences routes and
+// the no-store bearer error contract.
+func TestRcovMe_Preferences(t *testing.T) {
+	t.Parallel()
+	s := rcovNewServer(t)
+	access, _ := rcovDirectLogin(t, s)
+
+	status, out := rcovDo(t, http.MethodPut, s.http.URL+"/me/preferences", access, map[string]string{
+		"locale":           "zh-CN",
+		"zoneinfo":         "Asia/Shanghai",
+		"sverp:theme_mode": "dark",
+	})
+	if status != http.StatusOK || out["status"] != "ok" {
+		t.Fatalf("PUT /me/preferences status=%d body=%v", status, out)
+	}
+	status, out = rcovDo(t, http.MethodGet, s.http.URL+"/me/preferences", access, nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET /me/preferences status=%d body=%v", status, out)
+	}
+	if out["locale"] != "zh-CN" || out["zoneinfo"] != "Asia/Shanghai" || out["sverp:theme_mode"] != "dark" {
+		t.Fatalf("preferences = %v, want persisted allowlisted values", out)
+	}
+
+	resp, err := http.Get(s.http.URL + "/me/preferences")
+	if err != nil {
+		t.Fatalf("unauthenticated preferences request: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("unauthenticated preferences = %d, want 401", resp.StatusCode)
+	}
+	if resp.Header.Get("Cache-Control") != "no-store" || resp.Header.Get("Pragma") != "no-cache" {
+		t.Errorf("unauthenticated preferences missing no-store headers")
+	}
+}
+
 // TestRcovMe_PatchProfile covers PATCH /me including the self-editable-attr
 // allowlist (nickname allowed, role dropped).
 func TestRcovMe_PatchProfile(t *testing.T) {

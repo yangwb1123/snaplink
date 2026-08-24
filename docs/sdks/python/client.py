@@ -931,6 +931,20 @@ class MenuTreeResponse(TypedDict, total=False):
     menus: MenuTree
 
 
+class MyPreferences(TypedDict, total=False):
+    """The only profile attributes exposed by the self-service preferences"""
+    locale: str  # BCP 47 language tag. An empty string on PUT deletes it.
+    sverp_theme_mode: str  # Wire key is `sverp:theme_mode`; theme preference. An empty string on PUT deletes it.
+    zoneinfo: str  # Printable ASCII IANA time-zone name. An empty string on PUT deletes it.
+
+
+class MyPreferencesUpdateRequest(TypedDict, total=False):
+    """Partial allowlisted update. A property may contain its valid value or"""
+    locale: str
+    sverp_theme_mode: str  # Wire key is `sverp:theme_mode`; empty string deletes it.
+    zoneinfo: str
+
+
 class NetPolicy(TypedDict, total=False):
     advertised_base_url: str
     advertised_jwks_url: str
@@ -1053,6 +1067,10 @@ class PinReport(TypedDict, total=False):
     mode: str
     previous_id: str  # Empty when nothing was pinned beforehand.
     release_id: str
+
+
+class PreferenceUpdateResponse(TypedDict, total=False):
+    status: str  # Preferences were merged; this is also returned for an empty no-op update.
 
 
 class ReBACBatchItemResult(TypedDict, total=False):
@@ -2837,6 +2855,14 @@ class SSOClient:
         """Authenticated self-service password change. (operationId: changeMyPassword)"""
         return self._request("POST", "/me/password", body=body, auth=True)
 
+    def get_my_preferences(self) -> MyPreferences:
+        """Get the authenticated user's allowlisted preferences. (operationId: getMyPreferences)"""
+        return self._request("GET", "/me/preferences", auth=True)
+
+    def put_my_preferences(self, body: MyPreferencesUpdateRequest) -> PreferenceUpdateResponse:
+        """Update the authenticated user's allowlisted preferences. (operationId: putMyPreferences)"""
+        return self._request("PUT", "/me/preferences", body=body, auth=True)
+
     def get_my_security_activity(self) -> None:
         """List the authenticated user's security activity. (operationId: getMySecurityActivity)"""
         return self._request("GET", "/me/security/activity", auth=True)
@@ -3095,6 +3121,8 @@ __all__ = [
     "MenuItem",
     "MenuTree",
     "MenuTreeResponse",
+    "MyPreferences",
+    "MyPreferencesUpdateRequest",
     "NetPolicy",
     "NetPolicyEnvelope",
     "NetPolicyList",
@@ -3107,6 +3135,7 @@ __all__ = [
     "PermissionListResponse",
     "PinReleaseResponse",
     "PinReport",
+    "PreferenceUpdateResponse",
     "ReBACBatchItemResult",
     "ReBACBatchRequest",
     "ReBACBatchResponse",

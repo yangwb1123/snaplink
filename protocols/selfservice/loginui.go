@@ -1,6 +1,8 @@
 package selfservice
 
 import (
+	"encoding/json"
+	"mime"
 	"net/http"
 	"regexp"
 	"strings"
@@ -87,7 +89,7 @@ func HandleMyPreferencesGet(d Deps, ctx core.HandlerContext, userID string) {
 	middleware.TokenNoStoreHeaders(ctx)
 	rctx := ctx.Request().Context()
 	user, err := d.UserProvider().GetByID(rctx, userID)
-	if err != nil {
+	if err != nil || user == nil {
 		d.Logger().Error("preferences: user lookup failed", "user_id", userID, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return
@@ -114,15 +116,15 @@ func HandleMyPreferencesGet(d Deps, ctx core.HandlerContext, userID string) {
 // set to "" is removed.
 func HandleMyPreferencesPut(d Deps, ctx core.HandlerContext, userID string) {
 	middleware.TokenNoStoreHeaders(ctx)
-	var req map[string]string
-	if err := oauth.BindParams(ctx, &req); err != nil || !validPreferenceRequest(req) {
+	req, ok := bindPreferenceRequest(ctx)
+	if !ok {
 		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
 
 	rctx := ctx.Request().Context()
 	user, err := d.UserProvider().GetByID(rctx, userID)
-	if err != nil {
+	if err != nil || user == nil {
 		d.Logger().Error("preferences: user lookup failed", "user_id", userID, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return
@@ -141,6 +143,29 @@ func HandleMyPreferencesPut(d Deps, ctx core.HandlerContext, userID string) {
 		d.Auditor().Record(rctx, evt)
 	}
 	ctx.JSON(http.StatusOK, map[string]any{"status": "ok"})
+}
+
+func bindPreferenceRequest(ctx core.HandlerContext) (map[string]string, bool) {
+	mediaType, _, err := mime.ParseMediaType(ctx.Request().Header.Get(core.HeaderContentType))
+	if err != nil || !strings.EqualFold(mediaType, core.ContentTypeJSON) {
+		return nil, false
+	}
+	var raw map[string]json.RawMessage
+	if oauth.BindParams(ctx, &raw) != nil || raw == nil || len(raw) > len(preferenceValidators) {
+		return nil, false
+	}
+	req := make(map[string]string, len(raw))
+	for key, value := range raw {
+		var text *string
+		if err := json.Unmarshal(value, &text); err != nil || text == nil {
+			return nil, false
+		}
+		req[key] = *text
+	}
+	if !validPreferenceRequest(req) {
+		return nil, false
+	}
+	return req, true
 }
 
 func validPreferenceRequest(req map[string]string) bool {

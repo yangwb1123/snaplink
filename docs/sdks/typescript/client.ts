@@ -1177,6 +1177,24 @@ export interface MenuTreeResponse {
   menus: MenuTree;
 }
 
+/** The only profile attributes exposed by the self-service preferences */
+export interface MyPreferences {
+  /** BCP 47 language tag. An empty string on PUT deletes it. */
+  locale?: string;
+  /** Wire key is `sverp:theme_mode`; theme preference. An empty string on PUT deletes it. */
+  "sverp:theme_mode"?: "light" | "dark" | "auto";
+  /** Printable ASCII IANA time-zone name. An empty string on PUT deletes it. */
+  zoneinfo?: string;
+}
+
+/** Partial allowlisted update. A property may contain its valid value or */
+export interface MyPreferencesUpdateRequest {
+  locale?: string;
+  /** Wire key is `sverp:theme_mode`; empty string deletes it. */
+  "sverp:theme_mode"?: "" | "light" | "dark" | "auto";
+  zoneinfo?: string;
+}
+
 export interface NetPolicy {
   advertised_base_url?: string;
   advertised_jwks_url?: string;
@@ -1324,6 +1342,11 @@ export interface PinReport {
   /** Empty when nothing was pinned beforehand. */
   previous_id?: string;
   release_id?: string;
+}
+
+export interface PreferenceUpdateResponse {
+  /** Preferences were merged; this is also returned for an empty no-op update. */
+  status: "ok";
 }
 
 export interface ReBACBatchItemResult {
@@ -3515,6 +3538,16 @@ export class SSOClient {
   /** Authenticated self-service password change. */
   async changeMyPassword(body: { current_password: string; new_password: string }): Promise<void> {
     return this.request<void>("POST", `/me/password`, { body, auth: true });
+  }
+
+  /** Get the authenticated user's allowlisted preferences. */
+  async getMyPreferences(): Promise<MyPreferences> {
+    return this.request<MyPreferences>("GET", `/me/preferences`, { auth: true });
+  }
+
+  /** Update the authenticated user's allowlisted preferences. */
+  async putMyPreferences(body: MyPreferencesUpdateRequest): Promise<PreferenceUpdateResponse> {
+    return this.request<PreferenceUpdateResponse>("PUT", `/me/preferences`, { body, auth: true });
   }
 
   /** List the authenticated user's security activity. */

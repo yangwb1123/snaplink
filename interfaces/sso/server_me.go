@@ -46,6 +46,7 @@ func (s *Server) meSubjectOrChallenge(ctx HandlerContext) (userID string, ok boo
 // other devices") can read it without a second validation. On any failure it
 // has already written the oracle-safe resource challenge + 401.
 func (s *Server) meClaimsOrChallenge(ctx HandlerContext) (*core.TokenClaims, bool) {
+	tokenNoStoreHeaders(ctx)
 	tokenString := bearerToken(ctx.Request())
 	if tokenString == "" {
 		s.setResourceBearerChallenge(ctx, s.resolveIssuer(ctx), "", "")

@@ -121,6 +121,7 @@ Consent is opt-in per deployment (`self_service.consent` + per-client
 |---|---|
 | `GET /me` | Account overview (profile + session/consent counts) — the portal's landing call |
 | `GET/PUT /me/profile` | Profile read/update |
+| `GET/PUT /me/preferences` | Allowlisted presentation preferences (`locale`, `zoneinfo`, `sverp:theme_mode`); PUT merges, and an empty string deletes a key |
 | `POST /me/password` | Password change (current password verified) |
 | `GET /me/mfa`, `DELETE /me/mfa/:id` | MFA factor list / unbind |
 | `GET /me/sessions`, `DELETE /me/sessions/:id`, `POST /me/sessions/revoke-all` | Active sessions |

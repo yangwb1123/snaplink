@@ -353,6 +353,8 @@
         "deleteMyConsent",
         "getMe",
         "patchMe",
+        "getMyPreferences",
+        "putMyPreferences",
         "eraseMyAccount",
         "exportMyData",
         "getMyDeviceActivity",
