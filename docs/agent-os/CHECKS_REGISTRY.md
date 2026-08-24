@@ -29,6 +29,8 @@ Catalog of the Python engineering helpers. Committed Go gates are specified in
 | `ops/scripts/module_catalog.py` | Strict module/profile validation and capability planning | `modules check`, `modules list`, `modules plan`, `modules graph`, `modules why` |
 | `ops/scripts/capability_registry.py` | Validates product availability against runtime gates/module capabilities and detects generated feature-matrix drift | `capabilities check`, `capabilities generate`, `capabilities list` |
 | `ops/scripts/sdk_surface.py` | Orchestrates generated-SDK registry validation, explicit-baseline operation/schema diffing, and regeneration | `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `sdk-surface generate`, `sdk-surface list` |
+| `ops/scripts/sdk_versions.py` | Reads the four fixed SDK manifests, validates SemVer 2.0.0, checks the TypeScript lock root, and compares package versions | `sdk-surface versions`; also runs inside `sdk-surface check` |
+| `ops/scripts/sdk_toml.py` | Stdlib TOML loader with a fixed-format fallback for older repository tooling | Called by `sdk_versions.py` |
 | `ops/scripts/sdk_schema.py` | Bounded `components.schemas` structural compatibility comparison using PyYAML; conservative for composition/unsupported keyword changes | Called by `sdk-surface diff` |
 | `ops/scripts/sdk_baseline.py` | Reads registry + OpenAPI from one local git ref without fetch/shell, or reports a closed baseline error | Called by `sdk-surface diff` |
 | `ops/scripts/sdk_report.py` | Stable operation-surface and schema breaking/additive report formatting | Called by `sdk-surface diff` |
@@ -45,7 +47,7 @@ Run `python cli.py check-test` for check-module tests and
 |---|---|
 | Fast loop | `check`, `check-filesize` |
 | Composite reports | `harness`, `accept`, `evaluate` |
-| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `check-proto-openapi-parity`, `adapters`, `capabilities check`, `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
+| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `check-proto-openapi-parity`, `adapters`, `capabilities check`, `sdk-surface versions`, `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
 | Scaffolding | `generate` |
 | Diagnostics | `diagnose`, `trend`, `health-report`, `self-test` |
 | Test execution | `test`, `race`, `bench`, `check-test`, `skill-test` |
@@ -71,6 +73,14 @@ Run `python cli.py check-test` for check-module tests and
   `make test-e2e`.
 - `capability_registry.py` describes product-level capability domains, not
   every protocol row or every profile's resolved dependency closure.
+- `sdk-surface versions` is a read-only, non-networked gate over four audited
+  paths: the TypeScript `package.json` and `package-lock.json`, Python
+  `pyproject.toml`, Rust `Cargo.toml`, and PHP `composer.json`. It rejects
+  missing or malformed manifests, missing/non-string/invalid SemVer versions,
+  package-version drift, and a TypeScript lock-root mismatch. It reads only
+  package-root metadata, never dependency versions, and does not publish or
+  change any file. `sdk-surface check` and `make ci` run the same gate;
+  versioned package publication remains an external release boundary.
 - `sdk-surface diff` compares the committed registry's group/operation data and,
   when available, a bounded structural subset of OpenAPI `components.schemas`.
   It requires exactly one explicit local baseline (`--baseline-ref` or

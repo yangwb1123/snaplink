@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate, compare, and regenerate the SDK-surface registry.
+"""Validate, compare, and regenerate the SDK-surface registry and versions.
 
 The registry (ops/build/sdk-surface.json) is the single source of truth for
 the operationId set the TS/Python generators emit. The generators themselves
@@ -31,6 +31,7 @@ from sdk_schema import (
     load_openapi_file,
     load_openapi_text,
 )
+from sdk_versions import load_version_report, run_versions
 
 ROOT = Path(__file__).resolve().parents[2]
 SURFACE_PATH = ROOT / "ops" / "build" / "sdk-surface.json"
@@ -260,6 +261,11 @@ def validate_schema() -> None:
 def validate_registry() -> dict:
     validate_schema()
     registry = load_surface_file(SURFACE_PATH)
+    version_report = load_version_report()
+    if not version_report.ok:
+        raise SDKSurfaceError(
+            f"SDK package version gate failed: {version_report.failure_message()}"
+        )
     languages = registry["compatibility"]["languages"]
     validate_python_package(languages)
     openapi_ids = load_openapi_operation_ids()
@@ -419,8 +425,8 @@ def run(args: list[str]) -> int:
     )
     parser.add_argument(
         "action",
-        choices=["check", "generate", "list", "diff"],
-        help="check: validate registry vs OpenAPI/capabilities; "
+        choices=["check", "generate", "list", "diff", "versions"],
+        help="check: validate registry vs OpenAPI/capabilities and SDK versions; "
         "generate: run cmd/gensdk for every language; "
         "list: print group coverage; "
         "diff: compare operation/group data and available components.schemas "
@@ -453,6 +459,8 @@ def run(args: list[str]) -> int:
         )
         if parsed.action == "diff":
             return _run_diff(parsed)
+        if parsed.action == "versions":
+            return run_versions()
         if baseline_selected:
             raise SDKSurfaceError("baseline options are only valid with the diff action")
         if parsed.action == "check":

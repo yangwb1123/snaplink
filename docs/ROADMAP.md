@@ -194,10 +194,16 @@ Delivered:
   missing files, and malformed schema structures fail closed. No version is
   changed automatically, and the SDK CI runs the check against the pull
   request base with a full local checkout.
+- `python cli.py sdk-surface versions` now reads the four fixed package
+  manifests, validates SemVer 2.0.0 and the TypeScript lock root, and compares
+  all package versions. `sdk-surface check` and `make ci` execute this same
+  read-only gate; the current four package versions are `0.3.0`.
 
 Remaining (non-blocking): versioned package publication once the contract is
-declared stable by the maintainers. The schema check is intentionally a
-bounded structural subset, not a complete vendor-level OpenAPI diff.
+declared stable by the maintainers. Versioned package publication remains an
+external boundary owned by the registry-specific workflows. The schema check
+is intentionally a bounded structural subset, not a complete vendor-level
+OpenAPI diff.
 
 ### 8. Define the external frontend release contract — DONE
 

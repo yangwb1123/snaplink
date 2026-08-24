@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- SDK release-readiness version gate: `python cli.py sdk-surface versions`
+  reads only the four fixed TypeScript, Python, Rust and PHP manifests,
+  validates SemVer 2.0.0, checks the TypeScript package-lock root, and reports
+  a stable per-package verdict. `sdk-surface check` and `make ci` run the same
+  gate; no version is changed automatically and versioned package publication
+  remains an external registry-workflow boundary.
 - Executable SDK-surface compatibility checking: `python cli.py sdk-surface diff`
   compares an explicit local baseline and reports added/removed/relocated
   operationIds deterministically. A `--baseline-ref` reads the registry and

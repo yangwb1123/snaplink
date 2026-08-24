@@ -14,10 +14,13 @@ on:
       - "ops/build/sdk-surface.schema.json"
       - "ops/build/capabilities.json"
       - "ops/scripts/sdk_surface.py"
+      - "ops/scripts/sdk_versions.py"
+      - "ops/scripts/sdk_toml.py"
       - "ops/scripts/sdk_schema.py"
       - "ops/scripts/sdk_baseline.py"
       - "ops/scripts/sdk_report.py"
       - "ops/scripts/test_sdk_surface.py"
+      - "ops/scripts/test_sdk_versions.py"
       - "cli.py"
       - "Makefile"
       - ".github/workflows/sdk-ci.yml"
@@ -31,10 +34,13 @@ on:
       - "ops/build/sdk-surface.schema.json"
       - "ops/build/capabilities.json"
       - "ops/scripts/sdk_surface.py"
+      - "ops/scripts/sdk_versions.py"
+      - "ops/scripts/sdk_toml.py"
       - "ops/scripts/sdk_schema.py"
       - "ops/scripts/sdk_baseline.py"
       - "ops/scripts/sdk_report.py"
       - "ops/scripts/test_sdk_surface.py"
+      - "ops/scripts/test_sdk_versions.py"
       - "cli.py"
       - "Makefile"
       - ".github/workflows/sdk-ci.yml"
@@ -68,7 +74,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Test SDK surface tool
-        run: python -m unittest discover -s ops/scripts -p 'test_sdk_surface.py' -v
+        run: python -m unittest discover -s ops/scripts -p 'test_sdk_*.py' -v
+      - name: Verify SDK package versions
+        run: python cli.py sdk-surface versions
       - name: Compare operation and schema surface with pull request base
         if: github.event_name == 'pull_request'
         env:

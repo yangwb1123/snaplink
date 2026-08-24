@@ -122,7 +122,7 @@ modules-smoke: ## Build supported profiles plus every currently buildable previe
 capabilities-check: ## Validate capability metadata and generated feature matrix.
 	$(CLI) capabilities check
 
-sdk-surface-check: ## Validate the generated-SDK surface registry against OpenAPI + capabilities.
+sdk-surface-check: ## Validate the generated-SDK surface registry, package versions, OpenAPI, and capabilities.
 	$(CLI) sdk-surface check
 
 sdk-surface-diff: ## Compare operation and components.schemas surface with SDK_SURFACE_BASELINE_REF (required; local git ref).
