@@ -24,6 +24,9 @@ type registerDeps struct {
 	auditor     *audit.Recorder
 	reqErr      error    // forced RequireClientStore error
 	invalidated []string // client IDs passed to InvalidateClientCache
+	// supportedIDTokenAlgs is the wired id_token signing set the fake
+	// reports via IDTokenSigningAlgValues (mirrors *sso.Server).
+	supportedIDTokenAlgs []string
 
 	// quotaCharged, when true, makes CheckClientCreateQuota report a charge
 	// (as if a real quota store were wired) so tests can exercise the
@@ -41,6 +44,9 @@ func (d *registerDeps) SetBearerChallenge(core.HandlerContext, string, string, s
 func (d *registerDeps) RequireClientStore() error                                      { return d.reqErr }
 func (d *registerDeps) Auditor() *audit.Recorder                                       { return d.auditor }
 func (d *registerDeps) InvalidateClientCache(id string)                                { d.invalidated = append(d.invalidated, id) }
+func (d *registerDeps) IDTokenSigningAlgValues(context.Context) []string {
+	return d.supportedIDTokenAlgs
+}
 func (d *registerDeps) CheckClientCreateQuota(core.HandlerContext, string, string) (bool, bool) {
 	return d.quotaCharged, false
 }
@@ -221,6 +227,149 @@ func TestHandleRegister(t *testing.T) {
 			t.Fatalf("error = %v, want %s", got, ErrInvalidClientMetadata)
 		}
 	})
+}
+
+// TestHandleRegister_IDTokenSignedResponseAlg covers the RFC 7591 §2
+// id_token_signed_response_alg metadata: the value is accepted only when it
+// is in the server's wired signing set (unknown → 400 invalid_client_metadata),
+// persisted on the stored Client, echoed in the /register response, and
+// maintained by the RFC 7592 GET/PUT round-trip.
+func TestHandleRegister_IDTokenSignedResponseAlg(t *testing.T) {
+	t.Parallel()
+	wired := []string{"EdDSA", "ES256", "RS256", "PS256"}
+
+	newDeps := func() *registerDeps {
+		d, _ := newRegisterDeps(&DCRPolicy{AllowOpenRegistration: true, DefaultActive: true})
+		d.supportedIDTokenAlgs = wired
+		return d
+	}
+
+	t.Run("register accepts + persists + echoes a wired alg", func(t *testing.T) {
+		d := newDeps()
+		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON,
+			`{"client_name":"fapi-rp","redirect_uris":["https://rp.test/cb"],"id_token_signed_response_alg":"RS256"}`)
+		HandleRegister(d, ctx)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201 (body %s)", rec.Code, rec.Body.String())
+		}
+		resp := decodeBody(t, rec)
+		if got, _ := resp["id_token_signed_response_alg"].(string); got != "RS256" {
+			t.Errorf("response echo id_token_signed_response_alg = %q, want RS256", got)
+		}
+		id, _ := resp["client_id"].(string)
+		stored, err := d.clients.Get(ctx.Request().Context(), id)
+		if err != nil || stored == nil {
+			t.Fatalf("client not persisted: %v", err)
+		}
+		if stored.IDTokenSignedResponseAlg != "RS256" {
+			t.Errorf("stored IDTokenSignedResponseAlg = %q, want RS256", stored.IDTokenSignedResponseAlg)
+		}
+	})
+
+	t.Run("register rejects an alg outside the wired set with 400", func(t *testing.T) {
+		d := newDeps()
+		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON,
+			`{"client_name":"bad-rp","redirect_uris":["https://rp.test/cb"],"id_token_signed_response_alg":"HS256"}`)
+		HandleRegister(d, ctx)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", rec.Code)
+		}
+		if got := decodeBody(t, rec)["error"]; got != ErrInvalidClientMetadata {
+			t.Errorf("error = %v, want %s", got, ErrInvalidClientMetadata)
+		}
+	})
+
+	t.Run("alg none rejected (never whitelisted)", func(t *testing.T) {
+		d := newDeps()
+		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON,
+			`{"client_name":"none-rp","redirect_uris":["https://rp.test/cb"],"id_token_signed_response_alg":"none"}`)
+		HandleRegister(d, ctx)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("GET and PUT round-trip the field", func(t *testing.T) {
+		d := newDeps()
+		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON,
+			`{"client_name":"managed-rp","redirect_uris":["https://rp.test/cb"],"id_token_signed_response_alg":"ES256"}`)
+		HandleRegister(d, ctx)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("register status = %d", rec.Code)
+		}
+		resp := decodeBody(t, rec)
+		id, _ := resp["client_id"].(string)
+		rat, _ := resp["registration_access_token"].(string)
+
+		getRec := serveMgmt(d, mgmtHandler(d, HandleRegistrationGet), http.MethodGet, "", id, rat)
+		if getRec.Code != http.StatusOK {
+			t.Fatalf("GET status = %d", getRec.Code)
+		}
+		if got, _ := decodeBody(t, getRec)["id_token_signed_response_alg"].(string); got != "ES256" {
+			t.Errorf("GET id_token_signed_response_alg = %q, want ES256", got)
+		}
+
+		putRec := serveMgmt(d, mgmtHandler(d, HandleRegistrationPut), http.MethodPut,
+			`{"client_name":"managed-rp","redirect_uris":["https://rp.test/cb"],"id_token_signed_response_alg":"PS256"}`, id, rat)
+		if putRec.Code != http.StatusOK {
+			t.Fatalf("PUT status = %d (body %s)", putRec.Code, putRec.Body.String())
+		}
+		if got, _ := decodeBody(t, putRec)["id_token_signed_response_alg"].(string); got != "PS256" {
+			t.Errorf("PUT echo id_token_signed_response_alg = %q, want PS256", got)
+		}
+		stored, err := d.clients.Get(ctx.Request().Context(), id)
+		if err != nil || stored.IDTokenSignedResponseAlg != "PS256" {
+			t.Errorf("stored after PUT = %q (err %v), want PS256", stored.IDTokenSignedResponseAlg, err)
+		}
+	})
+}
+
+func TestHandleRegister_RedirectURIPatterns(t *testing.T) {
+	t.Parallel()
+	d, _ := newRegisterDeps(&DCRPolicy{AllowOpenRegistration: true, DefaultActive: true})
+	create := `{"client_name":"pattern-rp","redirect_uris":["https://rp.test/cb"],"redirect_uri_patterns":["https://rp.test/test/*/callback"]}`
+	ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, create)
+	HandleRegister(d, ctx)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register status = %d (body %s)", rec.Code, rec.Body.String())
+	}
+	response := decodeBody(t, rec)
+	if got, ok := response["redirect_uri_patterns"].([]any); !ok || len(got) != 1 || got[0] != "https://rp.test/test/*/callback" {
+		t.Fatalf("register patterns = %#v, want one echoed pattern", response["redirect_uri_patterns"])
+	}
+	id, _ := response["client_id"].(string)
+	rat, _ := response["registration_access_token"].(string)
+	stored, err := d.clients.Get(ctx.Request().Context(), id)
+	if err != nil || stored == nil || len(stored.RedirectURIPatterns) != 1 {
+		t.Fatalf("stored patterns = %#v (err %v)", stored, err)
+	}
+
+	getRec := serveMgmt(d, mgmtHandler(d, HandleRegistrationGet), http.MethodGet, "", id, rat)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d", getRec.Code)
+	}
+	getResponse := decodeBody(t, getRec)
+	if got, ok := getResponse["redirect_uri_patterns"].([]any); !ok || len(got) != 1 {
+		t.Fatalf("GET patterns = %#v, want one pattern", getResponse["redirect_uri_patterns"])
+	}
+
+	put := `{"client_name":"pattern-rp","redirect_uris":["https://rp.test/cb"],"redirect_uri_patterns":["https://rp.test/v2/*/callback"]}`
+	putRec := serveMgmt(d, mgmtHandler(d, HandleRegistrationPut), http.MethodPut, put, id, rat)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d (body %s)", putRec.Code, putRec.Body.String())
+	}
+	updated, err := d.clients.Get(ctx.Request().Context(), id)
+	if err != nil || len(updated.RedirectURIPatterns) != 1 || updated.RedirectURIPatterns[0] != "https://rp.test/v2/*/callback" {
+		t.Fatalf("updated patterns = %#v (err %v)", updated, err)
+	}
+
+	invalid := `{"client_name":"bad-pattern","redirect_uris":["https://rp.test/cb"],"redirect_uri_patterns":["https://rp.test/*"]}`
+	badCtx, badRec := newCtx(http.MethodPost, core.ContentTypeJSON, invalid)
+	HandleRegister(d, badCtx)
+	badResponse := decodeBody(t, badRec)
+	if badRec.Code != http.StatusBadRequest || badResponse["error"] != ErrInvalidClientMetadata {
+		t.Fatalf("invalid pattern response = %d %#v, want 400 invalid_client_metadata", badRec.Code, badResponse)
+	}
 }
 
 func TestHandleRegistrationGet(t *testing.T) {

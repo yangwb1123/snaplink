@@ -49,6 +49,11 @@ type Metrics struct {
 	GRPCRequestsTotal   *prometheus.CounterVec   // labels: grpc_service, code_class
 	GRPCRequestDuration *prometheus.HistogramVec // labels: grpc_service, code_class
 
+	// AuthzChecksTotal counts Authorizer.Check decisions. The decision label is
+	// the bounded allow|deny vocabulary; subject/client/permission remain in
+	// audit metadata and logs rather than metric labels.
+	AuthzChecksTotal *prometheus.CounterVec // labels: decision
+
 	// Auth flow.
 	LoginAttemptsTotal *prometheus.CounterVec // labels: provider, outcome
 	TokensIssuedTotal  *prometheus.CounterVec // labels: strategy
@@ -199,6 +204,10 @@ type Metrics struct {
 	// clients are silently falling back to poll. Zero traffic when no
 	// CIBAPingNotifier is wired.
 	CIBAPingTotal *prometheus.CounterVec // labels: outcome
+
+	// CORSBlockedTotal counts disallowed origins by bounded reason and preflight.
+	// Origin and path remain audit metadata, never metric labels.
+	CORSBlockedTotal *prometheus.CounterVec // labels: reason, preflight
 
 	// SigningKeyAggregationUp is 1 while this replica's peer-key subscription
 	// is healthy, 0 while it is degraded (the registry's Subscribe channel

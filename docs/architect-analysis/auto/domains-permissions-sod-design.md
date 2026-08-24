@@ -10,6 +10,35 @@ left a decision matrix incomplete (session-aware `Check` with a provider that
 does not implement the activator; what "activate at login" activates), this
 document pins the missing row.
 
+## Shipped implementation status (2026-08-21)
+
+This design is now an implementation record. The shipped wire contract keeps
+the methods on `PermissionAdminService`, implemented in
+`interfaces/grpcserver/grpcadmin/admin_domains.go`; the separate
+`SoDAdminService` and `sod_admin.go` described in the historical alternative
+below were not introduced because the existing service and file split satisfy
+the fan-out gate. The shipped routes are `/sod/conflicts`, `/dsod/conflicts`,
+and `/sessions/{session_id}/roles`.
+
+Durable providers use normalized SQLite/Postgres conflict and active-role rows
+and Redis hash-tagged keys. SQLite's default constructor enables immediate
+transaction locking and a busy timeout; Postgres uses serializable retries;
+Redis TTL is opt-in through `NewPermissionProviderWithActiveSessionTTL` and is
+not a stock `permissions.backend` configuration field. The 11 SoD conformance
+cases run for first-party providers.
+
+Session activation is wired after central session creation and deactivated on
+logout/destroy. The Authorizer boundary resolves the local subject and checks
+session liveness when configured; invalid sessions deny, active-role
+projections are authoritative, and deactivation never falls back to assigned
+roles. Decision audit records carry bounded reason/session/resource context,
+and the OPA parity test evaluates `docs/examples/opa-authz-policy.rego` with
+the direct test dependency `github.com/open-policy-agent/opa/v1/rego`.
+
+The decision sections below retain the original design alternatives for
+traceability; this status block supersedes any conflicting placement, method,
+route, or post-deactivation claim.
+
 Layer map used throughout:
 
 ```text
@@ -43,7 +72,7 @@ Verified constraints that shape every decision:
   derivation (same two imports, same fields) rather than exporting from
   grpcadmin, keeping the packages decoupled.
 
-## Decision: admin surface — `SoDAdminService` in the proto file, implemented in `grpcserver`, not `grpcadmin`
+## Historical design alternative: admin surface — `SoDAdminService` in the proto file, implemented in `grpcserver`, not `grpcadmin`
 
 ### Problem restated
 
@@ -179,7 +208,7 @@ untouched).
   pair into distinct codes, it breaks oracle-safety for the SoD family and
   the error-code table must not allow it.
 
-## Decision: storage model — three tables per durable backend, atomic check-and-write everywhere
+## Historical design alternative: storage model — three tables per durable backend, atomic check-and-write everywhere
 
 ### Problem restated
 
@@ -318,7 +347,7 @@ cadence.
   mandatory for first-party backends — the domain doc comments on
   `SoDProvider`/`SessionRoleActivator` should be updated to say so.
 
-## Decision: enforcement — session-scoped `Check` over the ACTIVE set, with one shared projection
+## Historical design alternative: enforcement — session-scoped `Check` over the ACTIVE set, with one shared projection
 
 ### Problem restated
 

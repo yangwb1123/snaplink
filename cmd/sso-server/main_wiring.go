@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -207,6 +208,28 @@ func wireFeatureGateReload(reloader *configreload.Reloader, srv *sso.Server) {
 	reloader.SetSelfServiceGateHook(srv.SetSelfServiceGateEnabled)
 }
 
+// wireWebhookReload connects the safe delivery-policy subset to the
+// lifecycle-managed exporter. Enabling/disabling the route owner and changing
+// dead-letter capacity still require a restart and are reported as ignored.
+func wireWebhookReload(reloader *configreload.Reloader, srv *sso.Server) {
+	reloader.SetWebhooksHook(func(cfg config.WebhooksConfig) error {
+		if !cfg.Enabled {
+			return errors.New("webhooks enabled state requires restart")
+		}
+		runtime, ok := srv.WebhookRuntime().(interface {
+			Activate(context.Context, []byte) error
+		})
+		if !ok {
+			return errors.New("webhook exporter was not wired at boot")
+		}
+		encoded, err := json.Marshal(cfg)
+		if err != nil {
+			return fmt.Errorf("encode webhook delivery policy: %w", err)
+		}
+		return runtime.Activate(context.Background(), encoded)
+	})
+}
+
 // initTracing wires OTLP tracing and returns its shutdown func. The call is
 // a no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset, so it is safe to leave
 // unconditional; shutdown flushes pending spans on process exit. On init
@@ -219,6 +242,17 @@ func initTracing(cfg *config.Config, logger spi.Logger) func(context.Context) er
 	if err != nil {
 		logger.Error("tracing init failed; continuing without traces", "error", err)
 		return func(context.Context) error { return nil }
+	}
+	// The correlation middleware (WithTracing) is always installed in
+	// sso-server; without an OTLP endpoint the global provider stays the
+	// no-op default and the whole span-side surface (X-Trace-Id,
+	// Traceparent, audit/access-log trace_id) is empty by design (Decision
+	// 7/12 of docs/design/middleware-observability-unified.md). spi.Logger
+	// has no Warn level, so a boot-time Info note is the closest channel —
+	// deliberate no-tracing deployments get a one-line reminder, not an
+	// error. X-Request-Id and audit RequestID keep working either way.
+	if !tracing.Active() {
+		logger.Info("tracing configured but no OTLP endpoint: X-Trace-Id and audit trace_id will be empty (set OTEL_EXPORTER_OTLP_ENDPOINT); X-Request-Id still works")
 	}
 	return tracingShutdown
 }

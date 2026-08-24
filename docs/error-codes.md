@@ -72,6 +72,20 @@ exact emission site.
 
 `GET /api/v1/setup/status` returns `{"initialized":bool,"setup_required":bool}` and is intentionally detail-free (anti-enumeration).
 
+## Product activation and account context (`/api/v1/activation/*`, `/api/v1/me/*`)
+
+These routes are optional and are mounted when an activation store is wired.
+`/api/v1/activation/prepare` accepts a license or invitation credential only in
+the HTTPS request body. It returns a short-lived, one-time ticket; SDKs claim
+that ticket after hosted login with the authenticated bearer. The server, not
+the client, determines the tenant, plan, features, and limits.
+
+| Code | HTTP | Emitted when | Client should |
+|------|------|--------------|---------------|
+| `activation_invalid` | 400 | The license/invitation is unknown, expired, already claimed, for another product/tenant, or the activation ticket is stale, replayed, or bound to another client/subject. These causes intentionally collapse to one oracle-safe code. | Ask for a new valid credential or restart setup; do not distinguish the hidden cause. |
+| `activation_not_found` | 404 | The authenticated subject has no activation/account context for the requested product. | Run setup and hosted login, or show the product is not activated. |
+| `activation_unavailable` | 503 | The activation store or request context failed after validation. | Retry with bounded backoff and inspect server readiness. |
+
 ---
 
 ## Authentication (`/auth/*`, `/userinfo`, `/logout`)
@@ -302,7 +316,7 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 | `invalid_request_uri`        | 400  | RFC 9126 PAR — `request_uri` is unknown, expired, consumed, or bound to a different RP  | Re-POST `/par` for a fresh one                      |
 | `par_not_configured`         | 501  | `/par` hit but no `WithPARStore` wired                                                  | Operator wires the store                            |
 | `invalid_request_object`     | 400  | RFC 9101 JAR — `request` / `request_uri` carried a signed or encrypted request object that failed to parse / verify / decrypt (bad signature, unknown alg, wrong key, JWE decryption failure)  | Fix the JWT / JWE; verify it's signed by a key in the client's `JWKS` (and encrypted to the AS's `use:enc` JWK when JWE)  |
-| `invalid_authorization_details` | 400  | RFC 9396 RAR — `authorization_details` parameter is malformed (not a JSON array, element missing `type`, or element `type` not in the client's `allowed_authorization_details_types`); OR (when `security.rar_limits.*` is configured) the payload exceeds the configured max serialized size, top-level element count, or nesting depth — checked BEFORE the payload is fully unmarshaled  | Drop the offending element, get its type allowlisted, or shrink/flatten the payload             |
+| `invalid_authorization_details` | 400  | RFC 9396 RAR — `authorization_details` parameter is malformed (not a JSON array, element missing `type`, or element `type` not in the client's `allowed_authorization_details_types`); OR (when `security.rar_limits.*` is configured) the payload exceeds the configured max serialized size, top-level element count, or nesting depth — checked BEFORE the payload is fully unmarshaled; OR (when `security.rar_catalog_check.enabled` is true on PAR) a verifiable API resource is unknown, mismatched, or cannot be resolved | Drop the offending element, get its type allowlisted, register the API resource, or shrink/flatten the payload |
 | `insufficient_user_authentication` | 401 (RS) / 400 (AS) | RFC 9470 — caller demanded `acr_values` the subject token's existing ACR does not satisfy; or refresh-time conditional access / continuous verification requires a new step-up. On `/token` token-exchange or refresh grants and on resource-server `WWW-Authenticate` challenges. | Route user through `/auth/login` to step up; do not retry the same refresh token automatically |
 
 **FAPI 2.0 profile** (`oauth.compliance.profile: fapi_2`, enforce mode): a baseline violation (no PAR, unsigned request object, non-S256 PKCE, non-code response type, or bearer/non-sender-constrained token) is rejected with the standard `invalid_request` (`error_description` carries the failed `fapi:<rule>` id; API clients branch on `error`, operators on the audit event). No new wire code is introduced — every violation maps onto the existing OAuth vocabulary. In inspection mode (`inspection_only: true`) nothing is rejected; each violation only emits the `fapi_compliance_violation` audit event (`fapi_rule` / `fapi_detail` / `fapi_mode` metadata) and increments `sso_fapi_violations_total{rule,mode}`.
@@ -412,6 +426,22 @@ other grants above use, for the SAME oracle-leak reasons.
 | `permission_provider_not_configured`| 501  | `/permissions/me`/`/roles/me`/`/menus/me` hit when no `permissions.Provider` is wired |
 | `permission_lookup_failed`          | 500  | Provider returned an error during lookup              |
 
+The admin permission gRPC service maps resource catalog sentinels as follows:
+`ErrResourceExists` → `AlreadyExists`, `ErrResourceNotFound` → `NotFound`, and
+`ErrInvalidResource` → `InvalidArgument`. Resource deletion is idempotent for
+missing IDs. When PAR resource-catalog enforcement is enabled, an unknown or
+mismatched verifiable API resource is returned as the existing
+`invalid_authorization_details` OAuth error.
+
+Separation-of-duty sentinels are mapped by the admin permission service as
+follows. The REST gateway exposes the corresponding gRPC status mapping.
+
+| Identifier | gRPC / HTTP | Emitted when |
+|---|---|---|
+| `ErrRoleConflict` | `FailedPrecondition` / 400 | An assignment or session activation contains two or more roles from one declared conflict set |
+| `ErrRoleNotAssigned` | `FailedPrecondition` / 400 | A session activation names a role not assigned to the subject |
+| `ErrInvalidConflictSet` | `InvalidArgument` / 400 | A conflict set is empty, has fewer than two roles, or repeats a role code |
+
 ---
 
 ## Audit (`/api/v1/audit/events*`)
@@ -466,6 +496,14 @@ falls through to the same 401/403 the rest of `/api/v1/admin/*` uses.
 |-------------------------------|------|-------------------------------------------------------------------------------------------------------|
 | `config_audit_not_available`  | 501  | `.../running`\|`.../applied`\|`.../diff` hit with no `WithConfigSnapshots` wired, or `.../history` hit with no `WithConfigAuditStore` wired |
 | `invalid_request`             | 400  | `.../history?since=` is not RFC3339, or `?limit=` is not an integer                                    |
+| `config_apply_approval_required` | 400  | `POST .../config/apply` or `.../config/rollback` (the declared peer-config baseline write path, `platform/configaudit`) issued without `?approve=true` — the mandatory misoperation barrier, refused before any state is touched |
+| `config_apply_conflict`       | 409  | `POST .../config/apply`: the server-recomputed sha256 does not match `digest`; or `POST .../config/rollback`: supplied `expected_version_id` is stale — both leave the baseline unchanged |
+| `config_apply_no_previous`    | 409  | `POST .../config/rollback`: no applied baseline exists, or the latest baseline has no predecessor to restore |
+| `config_rollback_not_available` | 501  | `POST .../config/rollback`: an `expected_version_id` CAS rollback was requested but the configured backend does not implement the atomic conditional-rollback extension |
+| `config_canary_not_available` | 501  | `POST .../config/apply?canary=true`: the deployment has no atomic canary store and injected health probes |
+| `config_canary_in_progress`   | 409  | A canary is observing; concurrent apply or rollback is refused until it confirms or rolls back |
+| `config_canary_no_baseline`   | 409  | `canary=true` was requested before an applied baseline existed, so no safe predecessor was available |
+| `config_canary_conflict`      | 409  | The canary candidate is no longer the latest applied version; automatic rollback refuses to touch a newer baseline |
 
 ---
 

@@ -77,6 +77,7 @@ var ocsfEventActivities = map[auditspi.EventType]ocsfActivity{
 	auditspi.EventCallbackFailure: {ocsfClassAuthentication, ocsfCategoryIAM, 99, "OAuth Callback Failure"},
 	auditspi.EventClientAccess:    {ocsfClassAPIActivity, ocsfCategoryAppActivity, 2, "Read"},
 	auditspi.EventPermissionQuery: {ocsfClassAPIActivity, ocsfCategoryAppActivity, 2, "Read"},
+	auditspi.EventPermissionCheck: {ocsfClassAPIActivity, ocsfCategoryAppActivity, 3, "Authorize"},
 	// DCR
 	auditspi.EventClientRegistered: {ocsfClassAccountChange, ocsfCategoryIAM, 1, "Create"},
 	auditspi.EventClientUpdated:    {ocsfClassAccountChange, ocsfCategoryIAM, 99, "Update"},
@@ -84,6 +85,8 @@ var ocsfEventActivities = map[auditspi.EventType]ocsfActivity{
 	// network policy
 	auditspi.EventNetPolicyApply:  {ocsfClassAPIActivity, ocsfCategoryAppActivity, 1, "Create"},
 	auditspi.EventNetPolicyDelete: {ocsfClassAPIActivity, ocsfCategoryAppActivity, 4, "Delete"},
+	// CORS
+	auditspi.EventCORSOriginBlocked: {ocsfClassAuthentication, ocsfCategoryIAM, 99, "CORS Origin Blocked"},
 	// back-channel logout + partial revoke
 	auditspi.EventLogoutNotified:       {ocsfClassAuthentication, ocsfCategoryIAM, 2, "Logoff"},
 	auditspi.EventPartialRevokeFailure: {ocsfClassAuthentication, ocsfCategoryIAM, 99, "Partial Token Revoke Failure"},
@@ -174,6 +177,8 @@ var ocsfEventActivities = map[auditspi.EventType]ocsfActivity{
 	auditspi.EventAdminRoleAssigned:               {ocsfClassAccountChange, ocsfCategoryIAM, 7, "Attach Policy"},
 	auditspi.EventAdminRoleUnassigned:             {ocsfClassAccountChange, ocsfCategoryIAM, 8, "Detach Policy"},
 	auditspi.EventAdminMenusUpdated:               {ocsfClassAccountChange, ocsfCategoryIAM, 99, "Menus Updated"},
+	auditspi.EventAdminResourceRegistered:         {ocsfClassAccountChange, ocsfCategoryIAM, 1, "Resource Registered"},
+	auditspi.EventAdminResourceRemoved:            {ocsfClassAccountChange, ocsfCategoryIAM, 2, "Resource Removed"},
 	auditspi.EventAdminTenantCreated:              {ocsfClassAccountChange, ocsfCategoryIAM, 1, "Create"},
 	auditspi.EventAdminTenantUpdated:              {ocsfClassAccountChange, ocsfCategoryIAM, 99, "Update"},
 	auditspi.EventAdminTenantDeleted:              {ocsfClassAccountChange, ocsfCategoryIAM, 6, "Delete"},

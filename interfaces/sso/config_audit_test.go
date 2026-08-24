@@ -8,6 +8,7 @@ package sso_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -317,6 +318,179 @@ func TestServer_StartConfigDriftDetection_OffByDefault(t *testing.T) {
 	default:
 		t.Fatal("with no WithConfigDriftDetection interval, Run must return an already-closed channel")
 	}
+}
+
+// cfgAuditPostQuery POSTs jsonBody to base+path with a raw query string.
+func cfgAuditPostQuery(t *testing.T, base, path, query, jsonBody string) (int, map[string]any, string) {
+	t.Helper()
+	resp, err := http.Post(base+path+"?"+query, "application/json", strings.NewReader(jsonBody))
+	if err != nil {
+		t.Fatalf("POST %s?%s: %v", path, query, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var body map[string]any
+	_ = json.Unmarshal(raw, &body)
+	return resp.StatusCode, body, string(raw)
+}
+
+func applyDigest(t *testing.T, snap map[string]any) string {
+	t.Helper()
+	d, err := configaudit.Digest(snap)
+	if err != nil {
+		t.Fatalf("Digest: %v", err)
+	}
+	return d
+}
+
+func TestConfigAuditAPI_ApplyRollbackLifecycle(t *testing.T) {
+	sink := audit.NewMemorySink(16)
+	store := configaudit.NewMemoryStore(0)
+	applied := map[string]any{"rate_limit": float64(10)}
+	running := map[string]any{"rate_limit": float64(20)}
+	srv := sso.NewServer(
+		sso.WithAuditRecorder(audit.New(sink)),
+		sso.WithConfigSnapshots(applied, func(context.Context) (map[string]any, error) { return running, nil }),
+		sso.WithConfigAuditStore(store),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	// Diff-only views before any apply: byte-identical today's contract.
+	code, body := cfgAuditGet(t, httpSrv.URL, "/api/v1/admin/config/applied")
+	if code != http.StatusOK || body[configaudit.KeyApplied].(map[string]any)["rate_limit"] != float64(10) {
+		t.Fatalf("pre-apply applied view must be the startup capture, got %d %+v", code, body)
+	}
+
+	// Apply the peer snapshot with the mandatory approval flag.
+	peer := map[string]any{"rate_limit": float64(30), "db_dsn": "peer-secret-dsn"}
+	applyBody := `{"snapshot":` + mustJSONString(t, peer) + `,"digest":"` + applyDigest(t, peer) + `","reason":"ticket-42"}`
+	code, body, raw := cfgAuditPostQuery(t, httpSrv.URL, "/api/v1/admin/config/apply", "approve=true", applyBody)
+	if code != http.StatusOK {
+		t.Fatalf("apply = %d, body=%s", code, raw)
+	}
+	if body[configaudit.KeyVersion] == "" {
+		t.Fatalf("apply response missing version: %s", raw)
+	}
+	if body[configaudit.KeyApplied].(map[string]any)["rate_limit"] != float64(30) {
+		t.Errorf("apply response must carry the peer snapshot, got %+v", body)
+	}
+
+	// Apply a SECOND snapshot so rollback has a stored predecessor to restore.
+	peer2 := map[string]any{"rate_limit": float64(40), "db_dsn": "peer2-secret-dsn"}
+	apply2 := `{"snapshot":` + mustJSONString(t, peer2) + `,"digest":"` + applyDigest(t, peer2) + `","reason":"ticket-43"}`
+	code, _, raw2 := cfgAuditPostQuery(t, httpSrv.URL, "/api/v1/admin/config/apply", "approve=true", apply2)
+	if code != http.StatusOK {
+		t.Fatalf("second apply = %d, body=%s", code, raw2)
+	}
+
+	// Applied view now serves the declared peer baseline (redacted).
+	code, body = cfgAuditGet(t, httpSrv.URL, "/api/v1/admin/config/applied")
+	if code != http.StatusOK {
+		t.Fatalf("GET applied after apply = %d", code)
+	}
+	out := body[configaudit.KeyApplied].(map[string]any)
+	if out["rate_limit"] != float64(40) || out["db_dsn"] != "***" {
+		t.Errorf("applied view must serve the redacted peer baseline, got %+v", out)
+	}
+
+	// History carries the config apply entries.
+	code, body = cfgAuditGet(t, httpSrv.URL, "/api/v1/admin/config/history?resource=config")
+	if code != http.StatusOK || int(body[configaudit.KeyCount].(float64)) != 2 {
+		t.Fatalf("history after applies = %d %+v", code, body)
+	}
+
+	// Approval gate: without ?approve=true the write is refused, store untouched.
+	code, body, _ = cfgAuditPostQuery(t, httpSrv.URL, "/api/v1/admin/config/apply", "", applyBody)
+	if code != http.StatusBadRequest || body[core.KeyError] != core.ErrConfigApplyApprovalRequired {
+		t.Fatalf("apply without approval = %d %+v, want 400 %q", code, body, core.ErrConfigApplyApprovalRequired)
+	}
+	entries, _ := store.List(context.Background(), configaudit.Filter{Resource: "config"})
+	if len(entries) != 2 {
+		t.Fatalf("rejected apply must not append history, got %d entries", len(entries))
+	}
+
+	// Split-brain gate: a digest mismatch is a hard 409, store untouched.
+	code, body, _ = cfgAuditPostQuery(t, httpSrv.URL, "/api/v1/admin/config/apply", "approve=true",
+		`{"snapshot":{"rate_limit":99},"digest":"deadbeef","reason":"r"}`)
+	if code != http.StatusConflict || body[core.KeyError] != core.ErrConfigApplyConflict {
+		t.Fatalf("apply with bad digest = %d %+v, want 409 %q", code, body, core.ErrConfigApplyConflict)
+	}
+
+	// Rollback restores the FIRST applied peer baseline and audits.
+	code, body, raw = cfgAuditPostQuery(t, httpSrv.URL, "/api/v1/admin/config/rollback", "approve=true", `{"reason":"revert-42"}`)
+	if code != http.StatusOK {
+		t.Fatalf("rollback = %d, body=%s", code, raw)
+	}
+	code, body = cfgAuditGet(t, httpSrv.URL, "/api/v1/admin/config/applied")
+	if code != http.StatusOK || body[configaudit.KeyApplied].(map[string]any)["rate_limit"] != float64(30) {
+		t.Fatalf("applied view after rollback must restore the first baseline, got %d %+v", code, body)
+	}
+	code, body = cfgAuditGet(t, httpSrv.URL, "/api/v1/admin/config/history?resource=config")
+	if code != http.StatusOK || int(body[configaudit.KeyCount].(float64)) != 3 {
+		t.Fatalf("history after rollback = %d %+v", code, body)
+	}
+
+	// Audit trail distinguishes applied from rolled back (metadata only).
+	if sink.Len() != 3 {
+		t.Fatalf("expected 3 audit events, got %d", sink.Len())
+	}
+	got, err := sink.Query(context.Background(), audit.Query{Limit: 4})
+	if err != nil {
+		t.Fatalf("sink Query: %v", err)
+	}
+	types := map[audit.EventType]bool{}
+	for _, ev := range got {
+		types[ev.Type] = true
+	}
+	if !types[audit.EventAdminConfigApplied] || !types[audit.EventAdminConfigRolledBack] {
+		t.Errorf("expected apply + rollback audit events, got %v", types)
+	}
+	if strings.Contains(raw, "peer-secret-dsn") {
+		t.Error("rollback response leaks a secret")
+	}
+}
+
+func TestConfigAuditAPI_ApplyRollbackUnmountedWithoutStoreOrSnapshots(t *testing.T) {
+	srv := sso.NewServer()
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+	for _, path := range []string{"/api/v1/admin/config/apply", "/api/v1/admin/config/rollback"} {
+		code, _, _ := cfgAuditPostQuery(t, httpSrv.URL, path, "approve=true", `{"snapshot":{"a":1},"digest":"x","reason":"r"}`)
+		if code != http.StatusNotFound {
+			t.Errorf("POST %s = %d, want 404 (unmounted) without store+snapshots", path, code)
+		}
+	}
+
+	// Snapshots WITHOUT a store: snapshot routes live, apply/rollback stay 404.
+	srv2 := sso.NewServer(sso.WithConfigSnapshots(map[string]any{"a": 1}, nil))
+	httpSrv2 := httptest.NewServer(srv2.Handler())
+	t.Cleanup(httpSrv2.Close)
+	code, _, _ := cfgAuditPostQuery(t, httpSrv2.URL, "/api/v1/admin/config/apply", "approve=true", `{"snapshot":{"a":1},"digest":"x","reason":"r"}`)
+	if code != http.StatusNotFound {
+		t.Errorf("apply without a store = %d, want 404", code)
+	}
+
+	// Store WITHOUT snapshots: history lives, apply/rollback stay 404.
+	srv3 := sso.NewServer(sso.WithConfigAuditStore(configaudit.NewMemoryStore(0)))
+	httpSrv3 := httptest.NewServer(srv3.Handler())
+	t.Cleanup(httpSrv3.Close)
+	code, _, _ = cfgAuditPostQuery(t, httpSrv3.URL, "/api/v1/admin/config/apply", "approve=true", `{"snapshot":{"a":1},"digest":"x","reason":"r"}`)
+	if code != http.StatusNotFound {
+		t.Errorf("apply without snapshots = %d, want 404", code)
+	}
+	if code, _ := cfgAuditGet(t, httpSrv3.URL, "/api/v1/admin/config/history"); code != http.StatusOK {
+		t.Errorf("history with only a store must stay mounted, got %d", code)
+	}
+}
+
+func mustJSONString(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(raw)
 }
 
 func TestServer_StartConfigDriftDetection_PublishesDigestAndDetectsMismatch(t *testing.T) {

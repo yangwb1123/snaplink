@@ -1,6 +1,17 @@
 # Design: unified observability for `interfaces/middleware` (access log + single trace/audit source)
 
-Status: proposed. Scope: `interfaces/middleware`, `interfaces/sso` (assembly),
+Status: committed (Decision 1 AccessLogger, Decision 2 slot, BodyLogPolicy,
+the capture/redaction/sampling machinery it requires, Decision 7 Correlation,
+Decision 8 span-first `EventFromRequest`, and the Decision 9 config surface are
+implemented). The legacy `Tracing`/`RequestID` middleware and the
+header-parse-only audit path were removed; `request_id`/`trace_id` now follow
+the current correlation contract described below. Drift rulings vs this
+document: `interfaces/middleware` is at its 10-file ceiling, so
+`accesslog.go` does not exist — `AccessLogger`/`BodyLogPolicy`/redaction live
+in the existing `request_log.go`; `WithRequestLogging` is repurposed to the
+policy signature and `WithAccessLogging` is added, per Decision 3/9; the DEBUG
+`RequestLogger` and its `debugRequestLogging` fields are deleted, per
+Decision 2/3). Scope: `interfaces/middleware`, `interfaces/sso` (assembly),
 `cmd/sso-server`, `cmd/sso-minimal`, `config`, `platform/tracing`,
 `platform/audit`. Direction 3 of the middleware observability requirements:
 replace "DEBUG-gated request logging + two independent propagation chains"
@@ -11,6 +22,42 @@ audit events".
 The three improvements are ordered by dependency: 1 and 2 are the log side
 (2 depends on 1's capture stack), 3 is the correlation side. Decisions below
 follow the same order.
+
+## Status addendum: Decision 7 + Decision 8 implemented
+
+Decision 7 (`Correlation`) and Decision 8 (span-first `EventFromRequest`) are
+implemented — the "unified OTel correlation" half is complete. The legacy
+`Tracing`/`RequestID` middleware, the `X-Parent-Span-Id` header surface,
+`WithTracingMiddleware`/`WithRequestIDMiddleware`, the `requestIDMW` field, the
+router-level `Use(TracingMiddleware())` install, and `middleware.Tracing`'s
+traceparent parse/format/rewrite are deleted exactly per the Decision 7
+removal list; `buildMiddlewareChain` installs `middleware.Correlation` in the
+same outermost slot; `EventFromRequest` and the login-anomaly dispatch read
+the live span first with the traceparent header as the manual-propagator
+fallback. `cmd/sso-server` logs a boot-time note (Info — spi.Logger has no
+Warn level) when `WithTracing` is active but `tracing.Active()` reports no
+provider. Drift rulings vs this document (current code wins):
+
+| # | Design reference | Drift (code is authoritative) |
+|---|---|---|
+| D7-1 | New file `interfaces/middleware/correlation.go` | `interfaces/middleware` is at its 10-file ceiling (same ruling as B11's `accesslog.go` → `request_log.go`); `Correlation` + `newRequestID` live in `middleware.go`, the file that previously held the deleted legacy surface |
+| D7-2 | "otelhttp injects Traceparent itself" | otelhttp v0.68.0 does NOT inject response headers (verified upstream: `handler.go` has no `propagator.Inject` on the response); `Correlation` sets `Traceparent` explicitly from the live span context — the design's documented fallback, asserted by `TestCorrelation_WithProvider_StampsSpanHeaders` |
+| D7-3 | `cmd/sso-minimal/app.go:102` `WithTracingMiddleware()` under `edition.tracingEnabled()` | Stale line reference: the minimal edition wires options via `composition.Edition.ExtraOptions` (`minimalExtraOptions`); the call is replaced by `sso.WithTracing("sso-minimal")` there |
+| D8-1 | `trace.SpanFromContext(...).Parent()` in `EventFromRequest` | otel's public `Span` interface has no `Parent()` in v1.43.0; parent extraction lives in `platform/tracing.ParentSpanID` (the SDK-type-asserting seam) — same result, one helper |
+| D8-2 | `X-Parent-Span-Id` header parsed into `Event.ParentSpanID` | Deleted: parent ids come from the span's actual parent only (span-first); the header-parse fallback carries trace/span ids but never a parent |
+| D8-3 | `dispatchLoginAnomaly` not mentioned | Same span-first rule applied to the anomaly `LoginEvent.TraceID` via a shared `requestTraceID` helper (accessors_threat.go) — the anomaly is another trace consumer and would otherwise silently lose correlation now that Correlation no longer rewrites the request traceparent header |
+| D7-4 | `sso-server` boot warning level | spi.Logger has no Warn level; the design's mitigation (a) is emitted at Info, documented in `main_wiring.go` |
+
+Wire-visible behavior changes this addendum accepts (design "What could break
+design" item 1): a default `sso-server`/`sso-minimal` without an OTLP endpoint
+stops emitting `X-Trace-Id`/`Traceparent` and audit/access-log `trace_id`
+(no-op provider → invalid span) — the intended one-switch semantics; `X-Request-Id`
+and audit `RequestID` keep working in every shape. Tests that pinned the old
+behavior were updated to the new contract (edition tests assert X-Request-Id
+presence only; the minimal credential-oracle test wires an in-memory
+provider; the feature-gate hot-reload tests now assert the outer-chain
+correlation header on both baseline and gated-off responses and strip the
+per-request random value before byte comparison).
 
 ## Decision 1: AccessLogger — always-on INFO access log
 
@@ -517,7 +564,7 @@ acceptance CI bounds the rate statistically over 1000 requests.)
 
 ## Test plan (maps 1:1 to acceptance checks)
 
-- **A1 (access log record):** `interfaces/middleware/accesslog_test.go` —
+- **A1 (access log record):** `interfaces/middleware/request_log_test.go` —
   full chain including trustedProxies + correlation: exactly one INFO
   `"access"` record with `status`, `duration_ms`, `client_ip` (validated
   real IP under XFF spoofing), `request_id`; zero-value policy ⇒ no
@@ -530,10 +577,9 @@ acceptance CI bounds the rate statistically over 1000 requests.)
   `client_secret=xxx`, JSON `{"code":"123456"}`, nested JSON; log line
   contains only `[redacted]`; grep the entire record for the raw values
   (including the `[redacted]`-adjacent key) ⇒ absent.
-- **B2 (allowlist + cap):** `/token` never logs bodies even with
-  `AllowAllPaths: true`... (no — `/token` is only exempt when not
-  allowlisted; the test asserts non-allowlisted path ⇒ no body fields,
-  allowlisted path ⇒ body truncated at 4 KB).
+- **B2 (allowlist + cap):** `/token` never logs bodies unless explicitly
+  allowlisted; the test asserts that a non-allowlisted path has no body fields
+  and an allowlisted path is truncated at 4 KB.
 - **B3 (sampling):** `SampleRate: 0.25` over 1000 requests ⇒ capture count
   inside the 99.9% binomial CI (≈ 250 ± 45).
 - **A3 (single source):** `test/` `package ssotest` — server with only
@@ -546,22 +592,22 @@ acceptance CI bounds the rate statistically over 1000 requests.)
   an in-memory exporter; `go test ./... -race`, `go test ./test/ -run TestE2E -v`,
   `make ci`.
 
-## Migration steps (ordered)
+## Implementation checklist (completed in dependency order)
 
 1. Extract `peertrust.ClientIP`; `audit.ClientIP` delegates (no behavior
    change, existing tests green).
 2. Add `BodyLogPolicy` + `AccessLogger` + capture stack to
-   `interfaces/middleware`; delete `request_log.go`; rewrite
-   `request_logging_test.go` for the policy shape.
+   `interfaces/middleware/request_log.go`; update the request-logging tests for
+   the policy shape.
 3. Wire the slot in `buildMiddlewareChain`; add `WithAccessLogging` option +
    `accessLogPolicy` field; repurpose `WithRequestLogging(policy)`.
 4. Add `Correlation` to `interfaces/middleware`; switch
-   `buildMiddlewareChain` to it; delete the legacy `Tracing`/`RequestID`
+   `buildMiddlewareChain` to it; remove the legacy `Tracing`/`RequestID`
    surface and its call sites (Decision 7 removal list).
 5. Change `EventFromRequest` to span-first; update `handlers.go` comment.
 6. Config: `logging.access_log.*`, defaulting, `ServerOptions` wiring,
    reload table entry; update `docs/config-reference.md` +
    `docs/observability.md` (stack diagram, field table, deprecation notes).
-7. Full gate: `go build ./... && go vet ./...`,
-   `go test -run 'TestMaintainability_|TestArchitecture_' .`, then
-   `go test ./... -race`, `go test ./test/ -run TestE2E -v`, `make ci`.
+7. Apply the full gate for release validation: `go build ./... && go vet
+   ./...`, `go test -run 'TestMaintainability_|TestArchitecture_' .`, then
+   `go test ./... -race`, `go test ./test/ -run TestE2E -v`, and `make ci`.

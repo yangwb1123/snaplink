@@ -134,6 +134,10 @@ func WithConfigAuditStore(store configaudit.Store) Option {
 	return func(s *Server) { s.configAuditStore = store }
 }
 
+func WithConfigCanaryController(controller *configaudit.CanaryController) Option {
+	return func(s *Server) { s.configCanaryController = controller }
+}
+
 // WithConfigSnapshots wires the effective-config snapshots the
 // GET /api/v1/admin/config/{running,applied,diff} endpoints serve. applied
 // is the redacted config as loaded at startup — capture it ONCE, right

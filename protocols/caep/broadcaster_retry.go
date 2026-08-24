@@ -199,3 +199,84 @@ func ValidateReceiverEndpoint(raw string) error {
 	}
 	return nil
 }
+
+// WithTenantUserStore wires the tenant-membership store used to resolve a
+// user-scoped event (a lifecycle transition) to the user's OWN tenant(s),
+// whose clients are then fanned out per the registered-receiver rule. nil
+// (the default) makes user-scoped events resolve to no receivers —
+// conservative silence, the same posture as an unscoped admin_token_revoked
+// (no membership data ⇒ no broadcast, never broadcast-to-all). Mirror of
+// the existing NewTransmitter type-assertion pattern (TenantScopedClientStore).
+func WithTenantUserStore(store core.TenantUserStore) Option {
+	return func(t *Transmitter) { t.tenants = store }
+}
+
+// resolveClients returns the affected receiver clients per the mapped
+// event's scope. scopeClient resolves the single named client;
+// scopeTenant fans out across the tenant's clients (and ONLY that
+// tenant's — the cross-tenant-no-leak guarantee); scopeUser fans out
+// across the user's OWN tenants' clients (see resolveLifecycleClients). A
+// lookup failure returns no clients (fail-open: the revocation already
+// happened). Relocated from broadcaster.go (which was at the line budget).
+func (t *Transmitter) resolveClients(ctx context.Context, m mappedEvent) []*core.Client {
+	switch m.scope {
+	case scopeClient:
+		if m.affectedClientID == "" {
+			return nil
+		}
+		c, err := t.clients.Get(ctx, m.affectedClientID)
+		if err != nil || c == nil {
+			return nil
+		}
+		return []*core.Client{c}
+	case scopeTenant:
+		if t.tenantScoped == nil || m.tenantID == "" {
+			return nil
+		}
+		clients, err := t.tenantScoped.ListByTenant(ctx, m.tenantID)
+		if err != nil {
+			return nil
+		}
+		return clients
+	case scopeUser:
+		return t.resolveLifecycleClients(ctx, m)
+	default:
+		return nil
+	}
+}
+
+// resolveLifecycleClients fans a user-scoped event out to the clients of
+// the user's OWN tenant(s) — and ONLY those tenants: ListByUser returns
+// the user's memberships (never a guess about which tenant a user belongs
+// to), and ListByTenant is called per membership, so a transition for a
+// user of tenant T can never reach tenant U's clients. Each receiver
+// client is still filtered in Record by its REGISTERED
+// AttrReceiverEndpoint/AttrReceiverMQTTTopic. A missing store, a lookup
+// error, or no membership returns no clients (fail-open: the transition
+// already committed locally).
+func (t *Transmitter) resolveLifecycleClients(ctx context.Context, m mappedEvent) []*core.Client {
+	if t.tenants == nil || t.tenantScoped == nil || m.userID == "" {
+		return nil
+	}
+	memberships, err := t.tenants.ListByUser(ctx, m.userID)
+	if err != nil {
+		return nil
+	}
+	var out []*core.Client
+	seen := make(map[string]struct{})
+	for _, mem := range memberships {
+		if mem == nil || mem.TenantID == "" {
+			continue
+		}
+		if _, dup := seen[mem.TenantID]; dup {
+			continue
+		}
+		seen[mem.TenantID] = struct{}{}
+		clients, err := t.tenantScoped.ListByTenant(ctx, mem.TenantID)
+		if err != nil {
+			continue // per-tenant fail-open: one tenant's outage skips only it
+		}
+		out = append(out, clients...)
+	}
+	return out
+}

@@ -25,14 +25,14 @@ def check(root: Path = None) -> list[str]:
     root = root or Path.cwd()
     violations = []
     for dirpath in sorted(root.rglob("*")):
-        if not dirpath.is_dir():
+        if not dirpath.is_dir() or dirpath.is_symlink():
             continue
         rel = str(dirpath.relative_to(root))
         if any(part in EXEMPT_DIRS for part in Path(rel).parts):
             continue
-        if rel.startswith("."):
-            continue
-        subdirs = [d for d in dirpath.iterdir() if d.is_dir() and not d.name.startswith(".")]
+        subdirs = [d for d in dirpath.iterdir()
+                   if d.is_dir() and not d.is_symlink()
+                   and d.name not in EXEMPT_DIRS]
         subdir_count = len(subdirs)
         if subdir_count > MAX_SUBDIRS:
             violations.append(f"{rel}/ has {subdir_count} subdirs (max {MAX_SUBDIRS})")

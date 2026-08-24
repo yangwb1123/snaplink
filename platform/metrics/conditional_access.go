@@ -5,6 +5,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+func registerAuthzMetrics(factory promauto.Factory, m *Metrics) {
+	m.AuthzChecksTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameAuthzChecksTotal,
+			Help: "Authorization decisions returned by Authorizer.Check, by bounded allow or deny outcome.",
+		},
+		[]string{LabelDecision},
+	)
+}
+
 // registerConditionalAccessMetrics registers the zero-trust conditional-access
 // (CAP) decision counter. Split into its own file so metrics_ctor.go stays
 // within the per-file line budget; the vector is nil-safe at the observe site

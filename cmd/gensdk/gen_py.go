@@ -155,6 +155,7 @@ const pyClientHeader = `class SSOClient:
         auth: bool = False,
         form: bool = False,
         form_blocked_fields: Optional[List[str]] = None,
+        client_auth: bool = False,
     ) -> Any:
         url = self.base_url + path
         if query:
@@ -164,13 +165,13 @@ const pyClientHeader = `class SSOClient:
         headers = {"Accept": "application/json"}
         authenticated_body = self._with_client_auth(body, headers) if client_auth else body
         data = None
-        if body is not None:
+        if authenticated_body is not None:
             if form:
                 headers["Content-Type"] = "application/x-www-form-urlencoded"
-                data = _form_encode(body, form_blocked_fields).encode("utf-8")
+                data = _form_encode(authenticated_body, form_blocked_fields).encode("utf-8")
             else:
                 headers["Content-Type"] = "application/json"
-                data = json.dumps(body).encode("utf-8")
+                data = json.dumps(authenticated_body).encode("utf-8")
         if auth and self.get_access_token:
             token = self.get_access_token()
             if token:

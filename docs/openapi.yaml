@@ -377,6 +377,132 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/activation/prepare:
+    post:
+      tags: [auth]
+      summary: Prepare a one-time product activation for hosted login.
+      description: |
+        Opt-in public-client activation endpoint. The license or invitation
+        credential is accepted only in this TLS-protected JSON body. The
+        response contains an opaque short-lived ticket; it does not disclose
+        the resolved tenant or entitlement. The ticket is bound to the
+        client/product pair and is consumed by the authenticated claim route.
+        Raw credentials MUST NOT be placed in an authorization URL, OAuth
+        state, token, or log.
+      operationId: postActivationPrepare
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationPrepareRequest"
+      responses:
+        "200":
+          description: Short-lived activation ticket.
+          headers:
+            Cache-Control: { schema: { type: string, enum: [no-store] } }
+            Pragma: { schema: { type: string, enum: [no-cache] } }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationPrepareResponse"
+        "400":
+          description: The credential, client, product, or tenant hint is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The activation backend is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/me/activation/claim:
+    post:
+      tags: [me]
+      summary: Claim a prepared activation for the authenticated subject.
+      description: |
+        Consumes the one-time activation ticket after OAuth/OIDC login. The
+        client and subject are taken from the validated bearer token, never
+        from the request body. A repeated claim for the same subject is
+        idempotent; a ticket cannot be claimed by another subject.
+      operationId: postMyActivationClaim
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationClaimRequest"
+      responses:
+        "200":
+          description: User-scoped product/account context.
+          headers:
+            Cache-Control: { schema: { type: string, enum: [no-store] } }
+            Pragma: { schema: { type: string, enum: [no-cache] } }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationContextResponse"
+        "400":
+          description: The ticket is missing, expired, or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: The activation backend is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/me/account-context:
+    get:
+      tags: [me]
+      summary: Read the authenticated subject's product/account context.
+      description: |
+        Returns only the current subject's previously claimed context. The
+        product is explicit so a user with multiple product bindings cannot
+        receive an ambiguous tenant projection.
+      operationId: getMyAccountContext
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: product_id
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        "200":
+          description: User-scoped product/account context.
+          headers:
+            Cache-Control: { schema: { type: string, enum: [no-store] } }
+            Pragma: { schema: { type: string, enum: [no-cache] } }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationContextResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No activation has been claimed for this subject/product.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The activation backend is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /.well-known/jwks.json:
     get:
       tags: [discovery]
@@ -4929,29 +5055,31 @@ paths:
   /api/v1/admin/authz/policy-bundle:
     get:
       tags: [admin]
-      summary: Export the role-definition authorization policy bundle.
+      summary: Export the authorization policy bundle.
       description: |
-        Read-only export of the permissions role-DEFINITION model as a
+        Read-only export of the permissions policy model as a
         portable JSON bundle a service-mesh sidecar (OPA/Cedar/custom)
         pulls to enforce authorization LOCALLY — no per-request Authorizer
-        RPC. The bundle carries ONLY role definitions (code →
-        permissions[]) plus the static wildcard match semantics, NOT the
-        per-subject role assignments: a sidecar already has the caller's
-        roles from the token (the SSO server embeds them when
-        `WithEmbedPermissionsInLogin` is set), so the bundle stays
-        O(roles) and contains no subject PII.
+        RPC. The bundle carries role definitions, resource-catalog
+        semantics, and SSoD/DSoD conflict sets, NOT per-subject role
+        assignments: a sidecar already has the caller's roles from the
+        token (the SSO server embeds them when
+        `WithEmbedPermissionsInLogin` is set), so the bundle contains no
+        subject PII.
 
         Admin-gated — the admin middleware enforces `admin:read` (the path
         sits under `/api/v1/admin/`). Cacheable read (NOT a credential
         endpoint): stamps `public` Cache-Control + a strong content-based
-        ETag (sha256 over the canonical role bytes, EXCLUDING
-        `generated_at`) so the same role set yields the same ETag across
+        ETag (sha256 over the canonical policy bytes, EXCLUDING
+        `generated_at`) so unchanged policy yields the same ETag across
         regenerations; honors `If-None-Match` → 304. The cache is
-        invalidated on any role/menu mutation (locally and, when an
+        invalidated on role, resource, or SoD mutations (locally and, when an
         invalidation bus is wired, cluster-wide) so a sidecar's next pull
         sees a change before the cache TTL (`WithAuthzPolicyBundleCacheTTL`,
-        default 5m). A reference OPA Rego that reproduces the wildcard
-        match lives in `docs/examples/opa-authz-policy.rego`.
+        default 5m). A reference OPA Rego that reproduces wildcard,
+        parameterized-resource, require-mode, and active-role semantics lives
+        in `docs/examples/opa-authz-policy.rego` and is exercised by the
+        authorizer parity test.
       operationId: getAuthzPolicyBundle
       security:
         - bearerAuth: []
@@ -4963,7 +5091,7 @@ paths:
           description: The app whose role definitions to export.
       responses:
         "200":
-          description: The role-definition policy bundle.
+          description: The versioned authorization policy bundle.
           headers:
             Cache-Control:
               schema:
@@ -4972,7 +5100,7 @@ paths:
             ETag:
               schema:
                 type: string
-              description: Short sha256 prefix over the canonical role bytes (stable across rebuilds with unchanged roles).
+              description: Short sha256 prefix over the canonical policy bytes (stable across rebuilds with unchanged policy).
           content:
             application/json:
               schema:
@@ -5787,6 +5915,180 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "501":
           description: "`config_audit_not_available` — no running-config snapshot source wired."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/config/apply:
+    post:
+      tags: [admin]
+      summary: Declare a peer cluster's config snapshot as this cluster's new applied-config baseline (admin:write, ?approve=true).
+      description: |
+        The write counterpart of `POST .../config/cluster-diff`: the caller
+        supplies a PEER cluster's config snapshot (typically that peer's own
+        `GET .../config/running` body) plus the peer config's canonical
+        sha256 digest (`configaudit.Digest`'s sorted-key canonicalization —
+        the same fingerprint the cross-replica drift loop broadcasts) and a
+        mandatory `reason`. The server recomputes the digest over the RAW
+        snapshot and compares it byte-wise to the supplied one — a mismatch
+        is a hard 409 `config_apply_conflict` (split-brain: stale or
+        mixed-source submission) and nothing is recorded. Only the REDACTED
+        snapshot is stored, as a versioned baseline (previous versions are
+        retained for rollback), and a `config_history` entry
+        (`resource="config"`) is appended in the SAME transaction — a
+        failure leaves no half-state. After success, `GET .../config/applied`
+        serves the new baseline and `GET .../config/diff` diffs against it.
+        The live `running` view is never mutated by apply.
+
+        POST is a mutation, so the admin middleware requires `admin:write`
+        (the default HTTP scope for a non-GET admin path — no `SetMethodScope`
+        override, the exact opposite of cluster-diff's read downgrade). The
+        write is additionally gated by the mandatory `?approve=true` query
+        flag: without it the request is refused 400
+        `config_apply_approval_required` before any state is touched
+        (misoperation barrier). Every apply emits `admin_config_applied`
+        (apply_id / peer_digest / prev_id metadata only — never snapshot
+        content) and records the operator's actor + reason in history.
+        Canary mode is explicit with `?canary=true` and an optional bounded
+        `window` duration (default `60s`, accepted range `1s` through `24h`).
+        It requires an existing applied baseline, observes injected storage
+        health, confirms after a healthy window, and automatically restores the
+        predecessor on a definitive unhealthy result. Only one canary may be
+        observing; a restart fails safe by rolling it back. Unknown probe
+        results are fail-open. The live `running` view remains unchanged.
+        Mounted only when BOTH `WithConfigSnapshots` AND
+        `WithConfigAuditStore` are wired; otherwise 404. See
+        `docs/design/config-apply-mode.md`.
+      operationId: postConfigApply
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: approve
+          in: query
+          required: true
+          description: "Must be `true` — the mandatory explicit-approval flag."
+          schema: { type: string, example: "true" }
+        - name: canary
+          in: query
+          required: false
+          description: "Set to `true` to observe the applied baseline for a bounded window before confirming it."
+          schema: { type: string, enum: ["true", "false"], default: "false" }
+        - name: window
+          in: query
+          required: false
+          description: "Canary observation duration as a Go duration; defaults to `60s`, bounded to `1s` through `24h`, and is ignored unless `canary=true`."
+          schema: { type: string, example: "60s" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigApplyRequest"
+      responses:
+        "200":
+          description: The new applied baseline (redacted), version id, predecessor, redacted informational patch, and optional canary state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigApplyResponse"
+        "400":
+          description: "`config_apply_approval_required` (missing ?approve=true), or `invalid_request` for a missing `snapshot`/`digest`/`reason` or a malformed body."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Bearer lacks the `admin:write` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "`config_apply_conflict` — the recomputed snapshot digest does not match the supplied `digest`; `config_canary_in_progress` when another canary is observing; `config_canary_no_baseline` when a predecessor is unavailable; or `config_canary_conflict` when the candidate is no longer current."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: "`config_audit_not_available` when no store is wired, or `config_canary_not_available` when `canary=true` has no atomic canary store/health probes."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/config/rollback:
+    post:
+      tags: [admin]
+      summary: Re-declare the previous applied-config baseline as the new latest (admin:write, ?approve=true).
+      description: |
+        Reverses the latest `POST .../config/apply`: a NEW append-only
+        version whose snapshot is the previous version's snapshot becomes
+        the latest, so `GET .../config/applied` and the diff revert to that
+        baseline. The history entry's patch is the reverse of the reverted
+        apply, and the audit trail records `admin_config_rolled_back`
+        (metadata only). Stored baselines are redacted, so a rolled-back
+        snapshot restores secret-shaped leaves as `"***"` — re-supply real
+        values via the next apply. 409 `config_apply_no_previous` when no
+        baseline exists or the latest version has no predecessor. Same
+        gates as apply: mandatory `?approve=true` (400
+        `config_apply_approval_required` without it) and mandatory `reason`.
+        admin:write by the default HTTP scope rule; mounted only when BOTH
+        `WithConfigSnapshots` AND `WithConfigAuditStore` are wired.
+      operationId: postConfigRollback
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: approve
+          in: query
+          required: true
+          description: "Must be `true` — the mandatory explicit-approval flag."
+          schema: { type: string, example: "true" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigRollbackRequest"
+      responses:
+        "200":
+          description: The restored baseline (redacted), its version id, predecessor, and the redacted informational patch vs running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigApplyResponse"
+        "400":
+          description: "`config_apply_approval_required`, or `invalid_request` for a missing `reason` / malformed body."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Bearer lacks the `admin:write` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "`config_apply_no_previous` when no baseline or predecessor exists; `config_apply_conflict` when expected_version_id is stale; `config_canary_in_progress` while a canary observes."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: "`config_audit_not_available` when no store is wired, or `config_rollback_not_available` when expected_version_id is supplied but the backend lacks the atomic rollback extension."
           content:
             application/json:
               schema:
@@ -10855,6 +11157,273 @@ paths:
                 type: object
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/permissions/{client_id}/resources:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List catalog resources for a client and tenant bucket.
+      operationId: permissionListResources
+      parameters:
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: page_size
+          in: query
+          required: false
+          schema: { type: integer, format: int32 }
+        - name: page_token
+          in: query
+          required: false
+          schema: { type: string }
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Resource catalog page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListResourcesResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [admin]
+      summary: Register or update a catalog resource.
+      operationId: permissionRegisterResource
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Resource"
+      responses:
+        "200":
+          description: Registered resource with server timestamps.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterResourceResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/admin/permissions/{client_id}/resources/{id}:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: tenant_id
+        in: query
+        required: false
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Get one catalog resource.
+      operationId: permissionGetResource
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Catalog resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetResourceResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [admin]
+      summary: Delete a catalog resource; missing IDs are idempotent.
+      operationId: permissionDeleteResource
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Resource deleted or already absent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResourceResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/permissions/{client_id}/sod/conflicts:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [admin]
+      summary: Replace static separation-of-duty conflict sets.
+      description: |
+        Replaces the role-code sets that may never be assigned together
+        under this client. Assignments that would contain two roles from
+        one set fail with a failed-precondition error.
+      operationId: permissionSetConflictSets
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetConflictSetsRequest"
+      responses:
+        "200":
+          description: Conflict sets replaced.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      tags: [admin]
+      summary: List static separation-of-duty conflict sets.
+      operationId: permissionListConflictSets
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Static conflict sets.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListConflictSetsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/permissions/{client_id}/dsod/conflicts:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [admin]
+      summary: Replace dynamic separation-of-duty conflict sets.
+      description: |
+        Replaces the role-code sets that may not be activated together
+        in one session. Subjects may still hold the roles; activation is
+        rejected when the active subset crosses a declared set.
+      operationId: permissionSetActivationConflictSets
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetConflictSetsRequest"
+      responses:
+        "200":
+          description: Activation conflict sets replaced.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      tags: [admin]
+      summary: List dynamic separation-of-duty conflict sets.
+      operationId: permissionListActivationConflictSets
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Dynamic activation conflict sets.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListConflictSetsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/permissions/{client_id}/sessions/{session_id}/roles:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: session_id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [admin]
+      summary: Activate a role subset for a session.
+      description: |
+        Activates only roles already assigned to the subject. Dynamic
+        separation-of-duty conflict sets are checked atomically.
+      operationId: permissionActivateRoles
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivateRolesRequest"
+      responses:
+        "200":
+          description: Session roles activated.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      tags: [admin]
+      summary: List roles active in a session.
+      operationId: permissionListActiveRoles
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema: { type: string }
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Active session roles.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListActiveRolesResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [admin]
+      summary: Deactivate all roles for a session.
+      operationId: permissionDeactivateSession
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema: { type: string }
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Session roles deactivated. A session-scoped Authorizer
+            check remains denied because the active projection is empty; it
+            does not fall back to the assigned role set.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/scim/v2/ServiceProviderConfig:
     get:
       tags: [scim]
@@ -11691,6 +12260,12 @@ paths:
     get:
       tags: [authorization]
       summary: Check whether a subject has a relation to an object.
+      description: |
+        Mounted by `WithRebacEngine`. On the standard router the precompiled
+        check capability is generation-managed; a disabled or drained
+        generation is indistinguishable from an unregistered route (native
+        404). The route shape and authorization contract do not change during
+        a generation transition.
       operationId: checkAuthorization
       security:
         - bearerAuth: []
@@ -13183,6 +13758,12 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     NotFound:
       description: The requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: The request conflicts with an existing resource.
       content:
         application/json:
           schema:
@@ -15352,6 +15933,16 @@ components:
         redirect_uris:
           type: array
           items: { type: string }
+        redirect_uri_patterns:
+          type: array
+          items: { type: string }
+          description: |
+            Snaplink extension (not part of RFC 7591): opt-in HTTPS redirect
+            patterns. Each pattern has one complete interior path-segment
+            wildcard, with a concrete host and literal prefix/suffix; invalid
+            values are rejected with 400 invalid_client_metadata. Patterns are
+            additive to redirect_uris, which remains required for authorization
+            code registrations.
         token_endpoint_auth_method:
           type: string
           enum:
@@ -15416,6 +16007,14 @@ components:
         id_token_encrypted_response_enc: { type: string }
         userinfo_encrypted_response_alg: { type: string }
         userinfo_encrypted_response_enc: { type: string }
+        id_token_signed_response_alg:
+          type: string
+          description: |
+            OIDC Core §3.1.3.1 / RFC 7591 §2 — the JWS algorithm the AS
+            uses to sign THIS client's ID Tokens. Empty = the server's
+            default issuer. The value must be one the server actually
+            signs with (its `id_token_signing_alg_values_supported`);
+            anything else is rejected with 400 invalid_client_metadata.
 
     ClientMetadata:
       type: object
@@ -15435,6 +16034,13 @@ components:
         redirect_uris:
           type: array
           items: { type: string }
+        redirect_uri_patterns:
+          type: array
+          items: { type: string }
+          description: |
+            Snaplink extension: the validated HTTPS redirect patterns returned
+            by registration and RFC 7592 GET/PUT management. Patterns are
+            additive to the exact redirect_uris allowlist.
         login_page_uri:
           type: string
           format: uri
@@ -15654,6 +16260,23 @@ components:
           items:
             $ref: "#/components/schemas/ConfigPatchOp"
 
+    ConfigCanaryState:
+      type: object
+      required: [id, version_id, previous_version_id, status, started_at, deadline]
+      properties:
+        id: { type: string }
+        version_id: { type: string }
+        previous_version_id: { type: string }
+        actor: { type: string }
+        digest: { type: string }
+        reason: { type: string }
+        started_at: { type: string, format: date-time }
+        deadline: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [observing, confirmed, rolled_back]
+        detail: { type: string }
+
     ConfigClusterDiffRequest:
       type: object
       required: [snapshot]
@@ -15665,6 +16288,69 @@ components:
         snapshot:
           type: object
           additionalProperties: true
+
+    ConfigApplyRequest:
+      type: object
+      required: [snapshot, digest, reason]
+      description: |
+        A peer cluster's config snapshot to declare as this cluster's new
+        applied-config baseline, plus its canonical sha256 digest
+        (`configaudit.Digest`'s sorted-key JSON canonicalization — the drift
+        loop's fingerprint) and a mandatory operator reason. The server
+        recomputes the digest over the RAW snapshot and rejects the write
+        with 409 on a mismatch. The snapshot is REDACTED before storage;
+        secret-shaped leaves are never persisted or echoed.
+      properties:
+        snapshot:
+          type: object
+          additionalProperties: true
+        digest:
+          type: string
+          description: sha256 hex over the canonical sorted-key JSON form of `snapshot`.
+        reason:
+          type: string
+          description: Mandatory ticket/incident reference.
+
+    ConfigRollbackRequest:
+      type: object
+      required: [reason]
+      description: >-
+        Mandatory operator reason for the rollback. expected_version_id is an
+        optional atomic compare-and-swap guard used by the Operator; when it
+        is supplied, the current applied version must still match it.
+      properties:
+        reason:
+          type: string
+        expected_version_id:
+          type: string
+          description: >-
+            Optional expected current applied-baseline version. A mismatch is
+            a 409 config_apply_conflict and leaves the baseline unchanged.
+
+    ConfigApplyResponse:
+      type: object
+      required: [applied, version]
+      description: |
+        The result of an apply or rollback: the REDACTED applied baseline,
+        the new version id, its predecessor (empty for the first apply), and
+        the redacted informational patch from the baseline to this cluster's
+        running config (omitted when the running snapshot fails).
+      properties:
+        applied:
+          type: object
+          additionalProperties: true
+          description: The redacted applied snapshot.
+        version:
+          type: string
+        prev_version:
+          type: string
+          description: Empty on the first apply.
+        patch:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConfigPatchOp"
+        canary:
+          $ref: "#/components/schemas/ConfigCanaryState"
 
     ConfigHistoryEntry:
       type: object
@@ -16507,6 +17193,49 @@ components:
           type: array
           items: { $ref: "#/components/schemas/MenuItem" }
 
+    ConflictSet:
+      type: object
+      required: [role_codes]
+      properties:
+        role_codes:
+          type: array
+          minItems: 2
+          items: { type: string }
+          description: Role codes that cannot be held or activated together.
+
+    SetConflictSetsRequest:
+      type: object
+      required: [conflict_sets]
+      properties:
+        conflict_sets:
+          type: array
+          items: { $ref: "#/components/schemas/ConflictSet" }
+
+    ListConflictSetsResponse:
+      type: object
+      required: [conflict_sets]
+      properties:
+        conflict_sets:
+          type: array
+          items: { $ref: "#/components/schemas/ConflictSet" }
+
+    ActivateRolesRequest:
+      type: object
+      required: [user_id, roles]
+      properties:
+        user_id: { type: string }
+        roles:
+          type: array
+          items: { type: string }
+
+    ListActiveRolesResponse:
+      type: object
+      required: [roles]
+      properties:
+        roles:
+          type: array
+          items: { $ref: "#/components/schemas/Role" }
+
     DCRResponse:
       type: object
       required: [client_id, client_id_issued_at, client_secret_expires_at]
@@ -16535,6 +17264,13 @@ components:
         redirect_uris:
           type: array
           items: { type: string }
+        redirect_uri_patterns:
+          type: array
+          items: { type: string }
+          description: |
+            Snaplink extension: validated HTTPS redirect patterns. A matching
+            pattern is an alternative to an exact redirect_uris entry; an empty
+            list preserves exact-match-only behavior.
         token_endpoint_auth_method:
           type: string
         grant_types:
@@ -16581,6 +17317,12 @@ components:
         id_token_encrypted_response_enc: { type: string }
         userinfo_encrypted_response_alg: { type: string }
         userinfo_encrypted_response_enc: { type: string }
+        id_token_signed_response_alg:
+          type: string
+          description: |
+            OIDC Core §3.1.3.1 / RFC 7591 §2 — the JWS algorithm the AS
+            uses to sign THIS client's ID Tokens. Empty = the server's
+            default issuer.
 
     User:
       type: object
@@ -16709,6 +17451,52 @@ components:
           type: array
           items:
             type: string
+
+    Resource:
+      type: object
+      required: [id, type, name]
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        client_id: { type: string }
+        type: { type: string, example: http_api }
+        name: { type: string }
+        requires_auth: { type: boolean }
+        description: { type: string }
+        attributes:
+          type: object
+          additionalProperties: { type: string }
+        required_permissions:
+          type: array
+          items: { type: string }
+        require_mode:
+          type: string
+          enum: [any, all]
+        created_at: { type: string, format: date-time, readOnly: true }
+        updated_at: { type: string, format: date-time, readOnly: true }
+
+    RegisterResourceResponse:
+      type: object
+      properties:
+        resource: { $ref: "#/components/schemas/Resource" }
+
+    GetResourceResponse:
+      type: object
+      properties:
+        resource: { $ref: "#/components/schemas/Resource" }
+
+    ListResourcesResponse:
+      type: object
+      required: [resources, total_size, next_page_token]
+      properties:
+        next_page_token: { type: string }
+        total_size: { type: integer, format: int32 }
+        resources:
+          type: array
+          items: { $ref: "#/components/schemas/Resource" }
+
+    DeleteResourceResponse:
+      type: object
 
     RoleListResponse:
       type: object
@@ -16847,13 +17635,17 @@ components:
         trace_id:
           type: string
           description: >-
-            Present only when the Tracing middleware populated a W3C trace ID
-            for the request and the handler emits its error envelope via one
-            of the trace-id-aware helpers (interfaces/sso's errorBody /
-            authzErrorBody family). Same value as the X-Trace-Id response
-            header — lets a client hand support one identifier that
-            correlates to server-side audit/trace records. Omitted (not an
-            empty string) when no trace context is available.
+            Present only when a real OTel provider is active and the
+            correlation middleware (WithTracing → middleware.Correlation,
+            design docs/design/middleware-observability-unified.md Decision
+            7/8) stamped the request's span trace ID on the context, AND the
+            handler emits its error envelope via one of the trace-id-aware
+            helpers (interfaces/sso's errorBody / authzErrorBody family).
+            Same value as the X-Trace-Id response header — lets a client
+            hand support one identifier that correlates to server-side
+            audit/trace records. Omitted (not an empty string) when no
+            trace context is available (no provider = the deliberate
+            no-tracing state; X-Request-Id is unaffected).
           example: 4bf92f3577b34da6a3ce929d0e0e4736
 
     TenantMembership:
@@ -16864,6 +17656,66 @@ components:
         user_id: { type: string }
         role: { type: string, enum: [member, admin, guest] }
         created_at: { type: string, format: date-time }
+
+    ActivationPrepareRequest:
+      type: object
+      additionalProperties: false
+      required: [client_id, product_id]
+      description: Exactly one of license_key and invitation_code is required.
+      properties:
+        client_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Public OAuth client that will complete hosted login.
+        product_id: { type: string, minLength: 1, maxLength: 256 }
+        license_key:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: Paid product activation credential; never place it in a URL.
+        invitation_code:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: Optional invitation credential.
+        tenant_hint:
+          type: string
+          maxLength: 256
+          description: Non-authoritative tenant hint; the server resolves the tenant.
+        locale: { type: string, maxLength: 35 }
+        app_version: { type: string, maxLength: 128 }
+
+    ActivationPrepareResponse:
+      type: object
+      required: [activation_ticket, product_id, expires_in]
+      properties:
+        activation_ticket:
+          type: string
+          description: Opaque, one-time, short-lived ticket for the bearer claim route.
+        product_id: { type: string }
+        expires_in: { type: integer, format: int64, minimum: 1 }
+
+    ActivationClaimRequest:
+      type: object
+      additionalProperties: false
+      required: [activation_ticket, product_id]
+      properties:
+        activation_ticket: { type: string, minLength: 1 }
+        product_id: { type: string, minLength: 1, maxLength: 256 }
+
+    ActivationContextResponse:
+      type: object
+      required: [context]
+      properties:
+        context:
+          type: object
+          required: [product_id, tenant_id]
+          properties:
+            product_id: { type: string }
+            tenant_id: { type: string }
+            entitlement:
+              $ref: "#/components/schemas/CommerceEntitlement"
 
     AdminSession:
       type: object
@@ -17299,20 +18151,21 @@ components:
 
     AuthzPolicyBundle:
       type: object
-      required: [version, client_id, roles, wildcard_semantics]
+      required: [version, client_id, roles, resources, ssod_conflict_sets, dsod_conflict_sets, wildcard_semantics]
       description: |
-        Portable role-definition export for decentralized (sidecar)
-        authorization. Carries role definitions + the wildcard match
-        rules, never per-subject assignments.
+        Portable authorization export for decentralized (sidecar)
+        authorization. Version 2 carries role definitions, resource
+        decision semantics, and static/dynamic separation-of-duty sets;
+        it never carries per-subject assignments.
       properties:
         version:
           type: integer
           description: Bundle schema version; a sidecar branches on it.
-          example: 1
+          example: 2
         generated_at:
           type: string
           format: date-time
-          description: When the export rendered. Informational only — NOT part of the ETag (the ETag is hashed over the role content), so the same role set yields the same ETag across regenerations.
+          description: When the export rendered. Informational only — NOT part of the ETag (the ETag is hashed over decision-relevant policy content).
         client_id:
           type: string
           description: The app whose role definitions this bundle exports.
@@ -17320,6 +18173,23 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RoleBundle"
+        resources:
+          type: array
+          description: Resource catalog entries projected into decision semantics; timestamps are omitted.
+          items:
+            $ref: "#/components/schemas/AuthzResourceBundle"
+        ssod_conflict_sets:
+          type: array
+          description: Role sets that may not be held together.
+          items:
+            type: array
+            items: { type: string }
+        dsod_conflict_sets:
+          type: array
+          description: Role sets that may not be active together in one session.
+          items:
+            type: array
+            items: { type: string }
         wildcard_semantics:
           $ref: "#/components/schemas/WildcardSemantics"
 
@@ -17340,6 +18210,28 @@ components:
           items: { type: string }
           description: Granted permission codes (sorted for a stable canonical form).
           example: ["order:*", "user:*"]
+
+    AuthzResourceBundle:
+      type: object
+      required: [id, type, name, requires_auth, required_permissions, require_mode]
+      description: Decision-relevant resource catalog projection; timestamps are intentionally omitted.
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        client_id: { type: string }
+        type: { type: string }
+        name: { type: string }
+        requires_auth: { type: boolean }
+        description: { type: string }
+        attributes:
+          type: object
+          additionalProperties: { type: string }
+        required_permissions:
+          type: array
+          items: { type: string }
+        require_mode:
+          type: string
+          enum: [any, all]
 
     WildcardSemantics:
       type: object

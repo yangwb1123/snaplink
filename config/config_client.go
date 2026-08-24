@@ -1,6 +1,13 @@
 package config
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/core"
+)
 
 // ClientConfig is a registered relying-party application.
 //
@@ -8,10 +15,15 @@ import "time"
 // registered TokenIssuer to use) drive the per-app dynamic policy: same SDK,
 // different login flows + different token formats per APP.
 type ClientConfig struct {
-	ID                    string   `yaml:"id"`
-	Secret                string   `yaml:"secret"`
-	Name                  string   `yaml:"name"`
-	RedirectURIs          []string `yaml:"redirect_uris"`
+	ID           string   `yaml:"id"`
+	Secret       string   `yaml:"secret"`
+	Name         string   `yaml:"name"`
+	RedirectURIs []string `yaml:"redirect_uris"`
+	// RedirectURIPatterns mirrors sso.Client.RedirectURIPatterns (the opt-in
+	// snaplink-extension redirect-URI patterns, validated at boot with the
+	// shared core grammar; see docs/design/redirect-uri-patterns.md).
+	// Empty (default) = exact-match allowlist only, byte-identical.
+	RedirectURIPatterns   []string `yaml:"redirect_uri_patterns,omitempty"`
 	AllowedScopes         []string `yaml:"allowed_scopes"`
 	AllowedAuthenticators []string `yaml:"allowed_authenticators"`
 	LoginPageURI          string   `yaml:"login_page_uri,omitempty"`
@@ -47,11 +59,20 @@ type ClientConfig struct {
 	DeviceCodeTTL             time.Duration `yaml:"device_code_ttl,omitempty"`
 	DeviceCodePollInterval    time.Duration `yaml:"device_code_poll_interval,omitempty"`
 	UserinfoSignedResponseAlg string        `yaml:"userinfo_signed_response_alg,omitempty"`
-	BackchannelLogoutURI      string        `yaml:"backchannel_logout_uri,omitempty"`
-	SubjectType               string        `yaml:"subject_type,omitempty"`
-	SectorIdentifierURI       string        `yaml:"sector_identifier_uri,omitempty"`
-	FrontchannelLogoutURI     string        `yaml:"frontchannel_logout_uri,omitempty"`
-	JWKS                      []ClientJWK   `yaml:"jwks,omitempty"`
+	// IDTokenSignedResponseAlg mirrors
+	// sso.Client.IDTokenSignedResponseAlg (OIDC Core §3.1.3.1 / RFC 7591 §2
+	// `id_token_signed_response_alg`): the JWS algorithm the AS signs THIS
+	// client's ID Tokens with. Empty = the server's default id_token
+	// issuer (unchanged behavior). The value MUST match the wired signing
+	// alg (keys.signing.alg) — config validation rejects anything else at
+	// boot, matching the DCR rule that a client can only register an alg
+	// the AS can actually produce.
+	IDTokenSignedResponseAlg string      `yaml:"id_token_signed_response_alg,omitempty"`
+	BackchannelLogoutURI     string      `yaml:"backchannel_logout_uri,omitempty"`
+	SubjectType              string      `yaml:"subject_type,omitempty"`
+	SectorIdentifierURI      string      `yaml:"sector_identifier_uri,omitempty"`
+	FrontchannelLogoutURI    string      `yaml:"frontchannel_logout_uri,omitempty"`
+	JWKS                     []ClientJWK `yaml:"jwks,omitempty"`
 
 	// Per-client consent policy (operator-provisioned; never DCR-settable).
 	// SkipConsent bypasses the consent gate for trusted first-party clients;
@@ -68,6 +89,40 @@ type ClientConfig struct {
 	//     caep_receiver_auth: "Bearer <token>"
 	// caep_receiver_endpoint is validated https at boot.
 	Attributes map[string]string `yaml:"attributes,omitempty"`
+}
+
+func validateClientRedirectPatterns(client *ClientConfig) error {
+	for index, pattern := range client.RedirectURIPatterns {
+		if err := core.ValidateRedirectURIPattern(pattern); err != nil {
+			return fmt.Errorf("config: client %q redirect_uri_patterns[%d]: %w", client.ID, index, err)
+		}
+	}
+	return nil
+}
+
+func validateConfiguredClients(c *Config) error {
+	// The JWS name the server's own signing issuer produces for keys.signing.alg
+	// (same mapping serverbuildsign.BuildSigningIssuer uses);
+	// clients[].id_token_signed_response_alg may only name THIS alg — the cmd
+	// wires exactly one signing issuer, so any other value would be
+	// registered-but-never-honored (id_token omitted at issuance).
+	wiredAlg := canonicalSigningAlg(c.Keys.Signing.Alg)
+	for _, client := range c.Clients {
+		if client.ID == "" {
+			return errors.New("config: client.id required")
+		}
+		if err := validateClientRedirectPatterns(&client); err != nil {
+			return err
+		}
+		if client.LoginPageURI != "" && !sso.IsFederatedLoginPageURIValid(client.LoginPageURI) {
+			return fmt.Errorf("config: client %q login_page_uri must be HTTPS or loopback HTTP", client.ID)
+		}
+		if client.IDTokenSignedResponseAlg != "" && client.IDTokenSignedResponseAlg != wiredAlg {
+			return fmt.Errorf("config: client %q id_token_signed_response_alg %q is not the wired signing alg %q",
+				client.ID, client.IDTokenSignedResponseAlg, wiredAlg)
+		}
+	}
+	return nil
 }
 
 // ClientSecretRotationConfig opts into scheduled OAuth client-secret rotation

@@ -396,3 +396,70 @@ func TestPermissionAdmin_FullLifecycle(t *testing.T) {
 		t.Errorf("expected 6 audit events, got %d", got)
 	}
 }
+
+func TestPermissionAdmin_SoDBufconn(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	prov := permissions.NewMemoryProvider()
+	for _, code := range []string{"approver", "requester"} {
+		if err := prov.AddRole(ctx, "web", permissions.Role{Code: code}); err != nil {
+			t.Fatalf("AddRole %s: %v", code, err)
+		}
+	}
+	conn := startAdminGRPC(t, nil, nil, nil, prov, nil, nil)
+	c := adminv1.NewPermissionAdminServiceClient(conn)
+	_, err := c.SetConflictSets(ctx, &adminv1.SetConflictSetsRequest{
+		ClientId: "web", ConflictSets: []*adminv1.ConflictSet{{RoleCodes: []string{"approver"}}},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("invalid conflict set code = %v, want InvalidArgument", status.Code(err))
+	}
+	_, err = c.SetConflictSets(ctx, &adminv1.SetConflictSetsRequest{
+		ClientId: "web", ConflictSets: []*adminv1.ConflictSet{{RoleCodes: []string{"approver", "requester"}}},
+	})
+	if err != nil {
+		t.Fatalf("SetConflictSets: %v", err)
+	}
+	_, err = c.AssignRoles(ctx, &adminv1.AssignRolesRequest{
+		ClientId: "web", UserId: "alice", Roles: []string{"approver", "requester"},
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("conflicting AssignRoles code = %v, want FailedPrecondition", status.Code(err))
+	}
+	_, err = c.SetConflictSets(ctx, &adminv1.SetConflictSetsRequest{ClientId: "web"})
+	if err != nil {
+		t.Fatalf("clear SSoD: %v", err)
+	}
+	if _, err := c.AssignRoles(ctx, &adminv1.AssignRolesRequest{
+		ClientId: "web", UserId: "alice", Roles: []string{"approver", "requester"},
+	}); err != nil {
+		t.Fatalf("AssignRoles after clear: %v", err)
+	}
+	if _, err := c.SetActivationConflictSets(ctx, &adminv1.SetActivationConflictSetsRequest{
+		ClientId: "web", ConflictSets: []*adminv1.ConflictSet{{RoleCodes: []string{"approver", "requester"}}},
+	}); err != nil {
+		t.Fatalf("SetActivationConflictSets: %v", err)
+	}
+	_, err = c.ActivateRoles(ctx, &adminv1.ActivateRolesRequest{
+		ClientId: "web", UserId: "alice", SessionId: "sid-1", Roles: []string{"unassigned"},
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("unassigned activation code = %v, want FailedPrecondition", status.Code(err))
+	}
+	if _, err := c.ActivateRoles(ctx, &adminv1.ActivateRolesRequest{
+		ClientId: "web", UserId: "alice", SessionId: "sid-1", Roles: []string{"approver"},
+	}); err != nil {
+		t.Fatalf("ActivateRoles: %v", err)
+	}
+	active, err := c.ListActiveRoles(ctx, &adminv1.ListActiveRolesRequest{ClientId: "web", UserId: "alice", SessionId: "sid-1"})
+	if err != nil || len(active.Roles) != 1 || active.Roles[0].Code != "approver" {
+		t.Fatalf("ListActiveRoles = %+v, %v", active, err)
+	}
+	if _, err := c.DeactivateSession(ctx, &adminv1.DeactivateSessionRequest{ClientId: "web", UserId: "alice", SessionId: "sid-1"}); err != nil {
+		t.Fatalf("DeactivateSession: %v", err)
+	}
+	active, err = c.ListActiveRoles(ctx, &adminv1.ListActiveRolesRequest{ClientId: "web", UserId: "alice", SessionId: "sid-1"})
+	if err != nil || len(active.Roles) != 0 {
+		t.Fatalf("ListActiveRoles after deactivate = %+v, %v", active, err)
+	}
+}

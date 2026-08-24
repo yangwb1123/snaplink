@@ -148,34 +148,35 @@ func (s *Server) EnforceRefreshDepthPolicy(ctx HandlerContext, clientID, subject
 	})
 }
 
-// idTokenIssuerForClient selects the oidc.IDTokenIssuer that should mint
-// the ID token for the given client, mirroring issuerForClient so a
-// tenant's id_tokens are signed by the SAME key as its access tokens —
-// closing the crypto-isolation gap where id_token previously always used
-// the one shared s.idTokenIssuer.
+// idTokenIssuerForClient selects the oidc.IDTokenIssuer that mints the ID
+// token for the given client, mirroring issuerForClient so a tenant's
+// id_tokens are signed by the SAME key as its access tokens (closing the
+// crypto-isolation gap where id_token previously always used the shared
+// s.idTokenIssuer).
 //
-// A per-tenant mapping (WithTenantTokenIssuer) deliberately governs ALL of
-// that tenant's token types at once: there is no separate id_token tenant
-// map, because isolating access tokens but not id_tokens for the same
-// tenant would silently re-open this very gap. The registered TokenIssuer
-// object is reused — the default Ed25519/ECDSA/RSA issuers each satisfy
-// oidc.IDTokenIssuer, so one signing key + one JWKS entry already covers
-// access + id (+ JARM + userinfo).
+// Resolution order:
+//  1. Client.IDTokenSignedResponseAlg set → the issuer wired for that alg
+//     via WithIDTokenIssuerAlg; an unwired alg FAILS CLOSED (error → caller
+//     omits id_token) — never sign with another key. DCR/config validation
+//     already rejects unwired algs, so this is the defensive backstop.
+//  2. Otherwise the tenant mapping (WithTenantTokenIssuer) governs ALL of
+//     that tenant's token types at once (no separate id_token map — that
+//     would re-open the gap); the registered TokenIssuer is reused (the
+//     default Ed25519/ECDSA/RSA issuers satisfy oidc.IDTokenIssuer). No
+//     mapping → the shared s.idTokenIssuer, unchanged behavior.
 //
-// Returns (issuer, emit, err):
-//   - No tenant mapping → (s.idTokenIssuer, s.idTokenIssuer != nil, nil):
-//     unchanged shared behavior, pure backward-compat.
-//   - Tenant mapping naming an UNREGISTERED issuer → (nil, false, error):
-//     fail closed exactly like issuerForClient — a misconfiguration must
-//     not leak the tenant onto a shared key. The caller logs + omits.
-//   - Tenant mapping whose registered issuer does NOT implement
-//     oidc.IDTokenIssuer (e.g. an opaque/session strategy) → (nil, false,
-//     nil): emit=false, the caller OMITS id_token. Falling back to the
-//     shared s.idTokenIssuer here would sign this tenant's id_token with
-//     another key — the opposite of isolation — so we fail closed by
-//     omission (the access-token branch is unaffected; only id_token is
-//     withheld, exactly as if no issuer were wired).
+// Returns (issuer, emit, err): no mapping → (s.idTokenIssuer, !=nil, nil);
+// unregistered tenant issuer → (nil, false, error) fail closed like
+// issuerForClient; tenant strategy without oidc.IDTokenIssuer → (nil,
+// false, nil) emit=false so the caller omits id_token.
 func (s *Server) idTokenIssuerForClient(c *Client) (oidc.IDTokenIssuer, bool, error) {
+	if c != nil && c.IDTokenSignedResponseAlg != "" {
+		iss, ok := s.idTokenIssuerAlgs[c.IDTokenSignedResponseAlg]
+		if !ok {
+			return nil, false, fmt.Errorf("id_token signing alg %q not wired", c.IDTokenSignedResponseAlg)
+		}
+		return iss, true, nil
+	}
 	if c == nil || c.TenantID == "" {
 		return s.idTokenIssuer, s.idTokenIssuer != nil, nil
 	}
@@ -318,11 +319,9 @@ func (s *Server) dispatchLoginAnomaly(ctx HandlerContext, tenantID, subjectID, c
 	if info, ok := GeoFromHandlerContext(ctx); ok {
 		event.Geo = info
 	}
-	if tp := r.Header.Get(HeaderTraceparent); tp != "" {
-		if tc, err := tracer.ParseTraceparent(tp); err == nil {
-			event.TraceID = tc.TraceID
-		}
-	}
+	// Span-first (same rule as audit.EventFromRequest, Decision 8): the OTel
+	// span is the single trace-correlation source.
+	event.TraceID = requestTraceID(r)
 	s.anomalyRunner.Dispatch(r.Context(), event)
 }
 

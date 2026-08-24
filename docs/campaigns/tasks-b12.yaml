@@ -1,0 +1,204 @@
+# B12 implementation batch: per-client id_token alg (FAPI unblock) +
+# FAPI conformance completion + OTel correlation (observability design 7/8).
+#
+# Direction set (baseline verified 2026-08-15 at HEAD 78bb614f):
+#   1. Per-client id_token_signed_response_alg — B11's FAPI BLOCKER.md
+#      proved the pinned OIDF suite's admin-login ID-token decoder
+#      hardcodes RS256 while FAPI requires PS256/ES256/EdDSA; snaplink
+#      has NO per-client id_token signing alg (grep: zero references;
+#      IDTokenIssuerForClient at interfaces/sso/accessors_handlers.go:187
+#      is per-TENANT only). This is a standard OIDC client attribute
+#      (id_token_signed_response_alg) and the product-level unblock.
+#   2. FAPI 2.0 conformance completion — depends on direction 1 landing:
+#      the harness variant (config-fapi.yaml + --fapi, committed
+#      b3074cd1) is ready; the run was blocked at suite login. With a
+#      per-client alg the login client registers RS256 and the FAPI
+#      module can run.
+#   3. OTel correlation — docs/design/middleware-observability-unified.md
+#      Decision 7 (single correlation point: OTel span is the only
+#      propagation source; X-Trace-Id/X-Request-Id headers; core.WithTraceID)
+#      + Decision 8 (audit/access-log correlation). B11-3 explicitly
+#      marked 7/8 not implemented. NOTE: interfaces/middleware is at its
+#      10 non-test file ceiling — no new file (merge into middleware.go
+#      or the file the design's own citations justify).
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b12.yaml
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative. Files are referenced by PATH — read them with
+#     your tools, do not expect them inlined.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report (table of commands
+#     with real results; never claim a test passed that you did not run).
+#   - Engineering budgets: no file over 500 lines, no function over 50 lines
+#     / cyclo 15, no new maintainability exemptions, no skipDirs /
+#     layerExemptions additions, no layer violations.
+#   - Update docs/config-reference.md + docs/openapi.yaml + CHANGELOG.md in
+#     the same commit when a public contract changes.
+#   - Commit with a conventional imperative message + AI co-author trailer.
+#     The post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库。任务：实现每客户端 id_token 签名算法选择
+    （Client.IDTokenSignedResponseAlg，RFC 风格 id_token_signed_response_alg），
+    先写有界设计、再实现。这是 FAPI conformance 阻塞（B11 BLOCKER.md
+    实证：套件登录解码器硬编码 RS256）的产品级解锁路径，也是标准 OIDC
+    客户端属性。
+
+    契约（先读，后实现，契约优先于本提示）：
+    - docs/campaigns/reports/b11-fapi-conformance.md 的 BLOCKER 段与
+      test/oidc-conformance/results/39ecdf7a-fapi/BLOCKER.md（根因与
+      修复建议：per-client alg 或 helper RS256 issuer——本任务实现前者）
+    - shared/core/types.go 的 Client 结构（JWE 字段先例：
+      IDTokenEncryptedResponseAlg/_Enc；新字段与之并排）
+    - protocols/oauth/handle_register.go（DCR 字段解析与校验；RFC 7591
+      注册请求的 id_token_signed_response_alg 需接受并存储）
+    - interfaces/sso/accessors_handlers.go:187（IDTokenIssuerForClient
+      ——现为 per-tenant；本任务扩展到 per-client alg 选择）
+    - interfaces/sso/server_finish_login.go（id_token 铸币路径）
+    - protocols/oidc/metadata.go:44（discovery 的
+      id_token_signing_alg_values_supported 广告）
+    - infrastructure/defaultimpl/{ed25519,ecdsa,rsa}_jwt_issuer.go 与
+      multialg 测试（多算法签发能力现状）
+    - config/config_snapshot.go 的 clients[] 段（静态配置字段同步）
+
+    第一步——设计文档（必须先写）：
+    docs/design/per-client-id-token-alg.md，必须裁决：
+    1. 数据模型：Client.IDTokenSignedResponseAlg（空=现状单 issuer）；
+       DCR 注册字段（RFC 7591 命名）与静态配置键；校验（仅允许已
+       wired 算法的枚举，未知 alg → 400/配置校验失败）。
+    2. 签发选择：IDTokenIssuerForClient 如何按 alg 选择签发器——
+       多签发器 map（With 选项，如 WithIDTokenIssuerAlg(alg, issuer)）
+       vs 现有单签发器的组合适配；默认（未配置任何 per-client alg）
+       必须逐字节不变。
+    3. 密钥/算法匹配：选定 alg 的签发器缺失时 fail-closed 还是回退
+       （裁决并说明；倾向 fail-closed 与配置校验一致）。
+    4. discovery：id_token_signing_alg_values_supported 的广告来源
+       （现状值 vs wired 签发器集合）；FAPI 客户端可见性。
+    5. 安全边界：alg=none 拒绝；算法白名单（EdDSA/ES256-512/RS256/
+       PS256，AGENTS.md §3 已接受 JWS 算法）；at_hash 不受影响。
+    6. 验收断言（可测试）：静态配置+DCR 两路径均可设 alg；按 alg
+       签发（多 issuer 假实现断言选择）；未知 alg 拒绝；默认逐字节
+       不变；discovery 广告与 wired 集合一致；FAPI 相关测试不回归。
+
+    第二步——实现（按设计）：
+    1. Client 字段 + DCR + 静态配置 + 校验 + 签发选择 + discovery
+       广告（若裁决需要）+ openapi.yaml（DCR 字段）+ config-reference
+       （clients[] 键）+ CHANGELOG。
+    2. 测试（禁止 skip）：单测（字段解析/校验/选择矩阵）+ 集成测试
+       （DCR 注册带 alg 的客户端 → 登录 → id_token alg 断言；
+       默认无字段 → 现状字节不变）；现有 oidc/multialg 测试全绿。
+    3. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./interfaces/sso/... ./protocols/oauth/... ./protocols/oidc/... -count=1
+       go test ./test/ -run 'OIDC|Register|IDToken' -count=1
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+       python3 cli.py check-routes && python3 cli.py sdk-surface check
+    4. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b12-per-client-id-token-alg.md
+  timeout: 2400
+  validate: |
+    go build ./... && go vet ./... && go test ./interfaces/sso/... ./protocols/oidc/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：完成 FAPI 2.0 conformance 运行（依赖
+    B12-1 的 per-client id_token alg 落地；若该功能未在 HEAD 出现，
+    按本提示的 fallback 执行）。
+
+    契约（先读，后执行）：
+    - docs/campaigns/reports/b11-fapi-conformance.md（harness 变体
+      config-fapi.yaml + --fapi 已落地 b3074cd1；阻塞根因：套件登录
+      id_token 解码器硬编码 RS256）
+    - test/oidc-conformance/run-headless.sh / config-fapi.yaml /
+      docker-compose.yml（变体机制；默认拓扑字节不变纪律）
+    - 本批次 B12-1 的 per-client id_token alg（如已合并：Client 可在
+      DCR 注册时带 id_token_signed_response_alg）
+
+    执行要求：
+    1. 确认 HEAD 是否有 per-client id_token alg（git log / grep
+       IDTokenSignedResponseAlg；读 B12-1 报告）。
+    2. 若有：
+       a. harness 的套件登录客户端 DCR 注册增加
+          id_token_signed_response_alg: RS256（登录客户端是普通 OIDC
+          客户端，RS256 不违反 FAPI——FAPI 约束只针对 FAPI 客户端；
+          若设计裁决有其他取值则按设计）；
+       b. 运行 ./run-headless.sh --fapi --timeout 1200，如实报告每
+          阶段输出与最终统计（plan 创建、模块执行、SUCCESS/FAIL）；
+       c. 归档 results/<commit>-fapi/（plan/log/info/config/commit/
+          worktree）；与 basic 计划对比；FAPI 模块失败项逐条记录
+          （预期内失败如 https-URI 要求如实标注）；
+       d. 文档同步：README fapi 行更新为实测结果、docs/sso/oidc-
+          conformance.md 证据表增补、CHANGELOG（如 harness 变更）。
+    3. 若无（B12-1 未合并或功能缺失）：fallback——验证 harness 变体
+       完好（compose config 对比默认拓扑）、重跑 basic 计划证明零
+       回归、把 B12-1 缺失作为阻塞如实写入报告与证据包；不虚构。
+    4. 验证命令（必须实际运行并报告输出）：
+       cd test/oidc-conformance && <FAPI 运行命令>
+       cd /home/u1/workspace/demo/snaplink && go build ./... && go vet ./...
+       git status --porcelain
+    5. conventional commit（imperative + AI co-author trailer；如无
+       harness 变更则 docs 前缀）。
+  output: docs/campaigns/reports/b12-fapi-conformance.md
+  timeout: 2400
+  validate: |
+    go build ./... && go vet ./... && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：实现 OTel 统一关联（设计
+    middleware-observability-unified.md 的 Decision 7 + Decision 8：
+    单一关联点——OTel span 为唯一传播源；X-Trace-Id/X-Request-Id
+    响应头；audit 与 access log 同源 trace_id）。B11-3 已实现
+    Decision 1/2/3/9，本任务完成 7/8。
+
+    契约（先读，后实现，契约优先于本提示）：
+    - docs/design/middleware-observability-unified.md Decision 7/8 全文
+      （Correlation(operation) 中间件形状：wrap tracing.Middleware、
+      从 live span 读 SpanContext、core.WithTraceID、X-Trace-Id/
+      X-Request-Id 响应头、X-Request-Id 保留入站或生成 32-hex；
+      Decision 8 的 audit 关联要求）
+    - interfaces/middleware/middleware.go（现有 request-id 生成与
+      middleware order；AGENTS.md：探针在限流外、顺序不变）
+    - platform/tracing（tracing.Middleware 现状）
+    - shared/core（HeaderRequestID/HeaderTraceID/WithTraceID/
+      TraceIDFromContext）
+    - B11-3 的 access log（trace_id 字段来自 core.TraceIDFromContext——
+      本任务保证其与 OTel span 同源）
+    - 10 文件上限：interfaces/middleware 恰 10 个非测试 .go——禁止
+      新增文件；Correlation 并入 middleware.go（或设计裁决的既有
+      文件）；设计文档若要求新文件则记录偏差理由。
+
+    第一步——设计核实与裁决（写入实现注释或小型设计补充）：
+    1. 逐条核实 Decision 7/8 引用的代码（文件:行）现状；漂移以当前
+       代码为准并列出。
+    2. 现有 request-id/trace 传播与 Correlation 的关系：是否有重复
+       中间件/重复生成（请求 ID 生成器迁移）；默认行为（无 OTel
+       provider 时）必须字节不变或按设计裁决并说明。
+    3. 探针豁免与中间件顺序不变（探针路径不经 Correlation 或经但
+       无影响——以现有装配为准）。
+    4. audit 关联（Decision 8）：审计事件 trace_id 来源统一到 OTel
+       span——改动面与风险（audit 记录点是否已用
+       core.TraceIDFromContext）；若裁决为后续任务，明确写出边界。
+    5. 验收断言（可测试）：有 OTel span → 响应头 X-Trace-Id 与
+       access log trace_id 等于 span trace id；入站 X-Request-Id 保留；
+       无入站 → 32-hex 生成；无 provider → 行为与现状一致。
+
+    第二步——实现（按设计）：
+    1. Correlation 中间件（并入既有文件）+ 装配（探针豁免与顺序
+       不变）+ 现有 request-id 路径迁移（如裁决）。
+    2. 测试（禁止 skip）：中间件单测（span/header/生成/无 provider
+       回归）+ 装配级测试（真实请求 → 头与日志断言）。
+    3. 文档同步：docs/observability.md（关联段）、CHANGELOG.md；
+       设计文档 Decision 7/8 状态标注。
+    4. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./interfaces/middleware/... ./platform/tracing/... -count=1
+       go test ./interfaces/sso/... -count=1 -run 'Trace|Correl|Log'
+       go test ./test/ -run 'Trace|Correl|Log' -count=1
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    5. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b12-otel-correlation.md
+  timeout: 1800
+  validate: |
+    go build ./... && go vet ./... && go test ./interfaces/middleware/... ./platform/tracing/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}

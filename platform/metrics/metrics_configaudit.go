@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"strconv"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -29,4 +31,23 @@ func registerConnectionHealthMetrics(factory promauto.Factory, m *Metrics) {
 		},
 		[]string{LabelConnectionType, LabelOutcome},
 	)
+}
+
+func registerCORSBlockedMetrics(factory promauto.Factory, m *Metrics) {
+	m.CORSBlockedTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameCORSBlockedTotal,
+			Help: "CORS requests rejected by origin policy, by bounded reason and preflight status.",
+		},
+		[]string{LabelReason, LabelPreflight},
+	)
+}
+
+// ObserveCORSBlocked records the fixed disallowed-origin reason. Keeping the
+// reason inside this method prevents request input from becoming a label.
+func (m *Metrics) ObserveCORSBlocked(preflight bool) {
+	if m == nil || m.CORSBlockedTotal == nil {
+		return
+	}
+	m.CORSBlockedTotal.WithLabelValues(CORSBlockReasonDisallowedOrigin, strconv.FormatBool(preflight)).Inc()
 }

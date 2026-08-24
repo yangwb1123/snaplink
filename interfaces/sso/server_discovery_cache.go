@@ -2,6 +2,7 @@ package sso
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 func WithDiscoveryCacheTTL(d time.Duration) Option {
@@ -337,6 +339,61 @@ func (s *Server) InvalidateDiscoveryCache() {
 			s.logger.Error("invalidation bus publish failed", "kind", string(evt.Kind), "error", err)
 		}
 	}
+}
+
+// WithIDTokenIssuerAlg wires a DEDICATED id_token issuer for clients that
+// declare `id_token_signed_response_alg: <alg>` (OIDC Core §3.1.3.1 / RFC
+// 7591 §2 client metadata) — the product-level FAPI unblock: an RS256 login
+// client can coexist with ES256/PS256 FAPI clients on one issuer because each
+// RP's ID tokens are signed with the algorithm IT declared. The issuer MUST
+// also be registered via WithTokenIssuer so its public key lands in the
+// aggregated /.well-known/jwks.json and id_token_hint validation (silent
+// renewal / end_session) can verify tokens it signs. The default issuer
+// (WithIDTokenIssuer) stays untouched — clients without the field keep the
+// legacy resolution, byte-identical.
+//
+// alg is validated against the server's accepted JWS algorithm set
+// (security.AsymmetricJWSAlgs: EdDSA, ES256/384/512, RS256, PS256 — AGENTS.md
+// §3); anything else — including "none" — panics at construction, mirroring
+// WithRSAAlg's unsupported-alg panic.
+func WithIDTokenIssuerAlg(alg string, issuer oidc.IDTokenIssuer) Option {
+	return func(s *Server) {
+		if _, ok := security.AsymmetricJWSAlgs()[alg]; !ok {
+			panic(fmt.Sprintf("sso: unsupported id_token_signed_response_alg %q (want EdDSA, ES256/384/512, RS256, or PS256)", alg))
+		}
+		if s.idTokenIssuerAlgs == nil {
+			s.idTokenIssuerAlgs = make(map[string]oidc.IDTokenIssuer)
+		}
+		s.idTokenIssuerAlgs[alg] = issuer
+	}
+}
+
+// IDTokenSigningAlgValues returns the JWS algs this server can sign ID
+// Tokens with: the default issuer's live signing set (SigningAlgValues)
+// unioned with every alg wired via WithIDTokenIssuerAlg, deduped and sorted.
+// It is the SAME set discovery advertises as
+// id_token_signing_alg_values_supported AND the set DCR validation accepts
+// for id_token_signed_response_alg, so registration and advertisement can
+// never disagree. Byte-identical to SigningAlgValues when no per-alg issuers
+// are wired.
+func (s *Server) IDTokenSigningAlgValues(ctx context.Context) []string {
+	base := s.SigningAlgValues(ctx)
+	if len(s.idTokenIssuerAlgs) == 0 {
+		return base
+	}
+	seen := make(map[string]struct{}, len(base)+len(s.idTokenIssuerAlgs))
+	for _, a := range base {
+		seen[a] = struct{}{}
+	}
+	for a := range s.idTokenIssuerAlgs {
+		seen[a] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for a := range seen {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // writeDiscoveryDoc delegates to oidc.WriteDoc with the server's

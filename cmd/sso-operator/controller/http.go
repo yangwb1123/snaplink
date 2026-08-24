@@ -35,6 +35,38 @@ type clusterDiffResponse struct {
 	Patch []patchOp `json:"patch"`
 }
 
+// applyPath is appended to cluster B's BaseURL for the declared-baseline
+// write. The explicit rollback path lives in rollback.go beside its request
+// shape so the apply and rollback contracts cannot silently diverge.
+const applyPath = "/api/v1/admin/config/apply"
+
+// approveQuery is the mandatory explicit-approval query string the server
+// requires on every apply/rollback write (platform/configaudit.QueryApprove
+// == "approve"; a missing/false flag is a hard 400 before any state is
+// touched). The operator always sends it — the CR-side approval is the
+// one-shot annotation, this is the wire-side confirmation.
+const approveQuery = "approve=true"
+
+// applyRequestBody mirrors POST .../config/apply?approve=true's required
+// body: the PEER cluster's (already server-redacted) running snapshot, its
+// canonical sha256 digest (split-brain guard), and the operator's declared
+// reason.
+type applyRequestBody struct {
+	Snapshot map[string]interface{} `json:"snapshot"`
+	Digest   string                 `json:"digest"`
+	Reason   string                 `json:"reason"`
+}
+
+// configApplyResponse mirrors the apply endpoint's 200 body: the redacted
+// applied snapshot, the new version id, its predecessor, and an
+// informational redacted patch (the operator only uses Version).
+type configApplyResponse struct {
+	Applied     map[string]interface{} `json:"applied"`
+	Version     string                 `json:"version"`
+	PrevVersion string                 `json:"prev_version"`
+	Patch       []patchOp              `json:"patch"`
+}
+
 // apiErrorBody mirrors the {"error": "...", "error_description": "..."}
 // shape both endpoints use on non-2xx responses, so a failure message can
 // surface the server's own error code instead of just an HTTP status.
@@ -111,6 +143,46 @@ func postClusterDiff(ctx context.Context, hc *http.Client, baseURL, token string
 		return nil, fmt.Errorf("decode cluster-diff response: %w", err)
 	}
 	return parsed.Patch, nil
+}
+
+// postConfigApply performs the POST against clusterB. On success it returns
+// the parsed response with status 200. On failure it returns nil, the HTTP
+// status (0 for transport/parse errors), and a token-free error — the
+// status lets the caller classify 409 (split-brain conflict) vs 400
+// (refused) vs everything else for Status.Apply (see
+// docs/design/operator-config-apply.md Decision 3).
+func postConfigApply(ctx context.Context, hc *http.Client, baseURL, token, digest, reason string, snapshot map[string]interface{}) (*configApplyResponse, int, error) {
+	payload, err := json.Marshal(applyRequestBody{Snapshot: snapshot, Digest: digest, Reason: reason})
+	if err != nil {
+		return nil, 0, fmt.Errorf("encode apply request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+applyPath+"?"+approveQuery, bytes.NewReader(payload))
+	if err != nil {
+		return nil, 0, fmt.Errorf("build request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := hc.Do(httpReq)
+	if err != nil {
+		return nil, 0, fmt.Errorf("request %s: %w", applyPath, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("read response body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, fmt.Errorf("%s returned %d: %s", applyPath, resp.StatusCode, describeAPIError(body))
+	}
+
+	var parsed configApplyResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("decode apply response: %w", err)
+	}
+	return &parsed, resp.StatusCode, nil
 }
 
 // describeAPIError best-effort extracts the {"error", "error_description"}

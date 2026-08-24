@@ -49,6 +49,9 @@ repository's executable tests and does not replace them.
   project checks (e.g. `go build ./... && go vet ./...`, `gofmt -l`,
   `python cli.py check`) never land on disk. Works in serial, parallel,
   pipeline, and `run-review.py` modes, and integrates with retries/rounds.
+- Direct saves use the same bounded-output policy even without a validator:
+  responses over 64 KiB are rejected, symlink targets are refused, and
+  accepted files are atomically replaced from a temporary file.
 - Validators are declared like the project's engineering gates: the
   `validators` registry in `pi-batch.yaml` maps short names to commands
   (`quick: python cli.py check`, `gofmt`, `build`, `config`, `root`), and

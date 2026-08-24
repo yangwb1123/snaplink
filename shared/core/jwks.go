@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -468,4 +469,31 @@ func KeysetSlice[T any](rows []T, q PageQuery, keyID func(T) (string, string)) (
 		next = EncodeKeysetCursor(k, id)
 	}
 	return items, next, total, nil
+}
+
+// --- Client redirect-URI policy (exact allowlist + opt-in patterns) ---
+// The redirect gates (login/PAR/finish-login/end_session) sit beside the
+// client row-helper semantics: types.go is at its 500-line hard ceiling.
+// Grammar: docs/design/redirect-uri-patterns.md + redirect_patterns.go.
+
+// IsRedirectURIValid checks if the given redirect URI is registered: an
+// exact-match hit on RedirectURIs, or a hit against any RedirectURIPatterns
+// entry. Zero patterns = exact-match only (pre-feature behavior); an invalid
+// pattern never widens the gate (MatchRedirectURIPattern degrades to
+// no-match, so a stale store row cannot loosen the allowlist).
+func (c *Client) IsRedirectURIValid(uri string) bool {
+	if slices.Contains(c.RedirectURIs, uri) {
+		return true
+	}
+	for _, pattern := range c.RedirectURIPatterns {
+		if MatchRedirectURIPattern(pattern, uri) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsPostLogoutRedirectURIValid checks the post-logout redirect allowlist.
+func (c *Client) IsPostLogoutRedirectURIValid(uri string) bool {
+	return slices.Contains(c.PostLogoutRedirectURIs, uri)
 }

@@ -68,6 +68,7 @@ func (s ConformanceSuite) Run(t *testing.T) {
 		{"SoD_DynamicHoldBothActivateOne", testSoDDynamicHoldBothActivateOne},
 		{"SoD_DynamicActiveRolesScopedPerSession", testSoDDynamicActiveRolesScopedPerSession},
 		{"SoD_DynamicDeactivateSessionClears", testSoDDynamicDeactivateSessionClears},
+		{"SoD_DynamicAssignmentMutationClears", testSoDDynamicAssignmentMutationClears},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -5,13 +5,10 @@
 package kerberosauth
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
-	"github.com/yangwb1123/snaplink/interfaces/sso"
-	"github.com/yangwb1123/snaplink/platform/audit"
-	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/interfaces/ssoext"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
@@ -21,59 +18,20 @@ import (
 // module's package cannot import package main. The operator's forked main
 // constructs a Deps from its own server accessors inside the factory (see the
 // package doc for the copy-pasteable wiring). Mirrors saml.Deps.
+//
+// Deps EMBEDS the standard host-API bundle (interfaces/ssoext.
+// KerberosServerDeps — the exact seams the stock server hands a registered
+// Kerberos handler factory). Embedding (not aliasing) keeps every existing
+// field name: a fork's factory receives ssoext.KerberosServerDeps from
+// ssoext.RegisterKerberosHandlers and constructs
+// `kerberosauth.Deps{KerberosServerDeps: d, ...}` with no field-for-field
+// copy — see the package doc for the copy-pasteable adaptation.
 type Deps struct {
-	// ClientStore resolves the configured ClientID to the live sso.Client at
-	// request time (so an inactive/deleted client fails the mint, never a stale
-	// cache). REQUIRED.
-	ClientStore sso.ClientStore
-
-	// SessionManager creates the SSO session the minted tokens anchor to —
-	// through the manager (NOT a raw store) so a Kerberos login lands with the
-	// same expiry/refresh/revoke lifecycle as every other login. REQUIRED.
-	SessionManager sso.SessionManager
-
-	// UserProvider upserts the validated principal onto the one identity model
-	// (CreateOrUpdate), exactly as the SAML ACS + the login orchestrator do.
-	// REQUIRED.
-	UserProvider sso.UserProvider
-
-	// IssuerForClient is the server's per-tenant ACCESS-token issuer selector
-	// (tenant -> client strategy -> default). The handler resolves the minting
-	// client's issuer through it so a Kerberos-minted access token is signed
-	// with the SAME key as that tenant's tokens from /auth/login + /token —
-	// closing the per-tenant-signing surface the WebAuthn + SAML paths already
-	// close. REQUIRED. Set it to *sso.Server.IssuerForClient.
-	IssuerForClient func(c *sso.Client) (string, sso.TokenIssuer, error)
-
-	// IDTokenIssuerForClient OPTIONALLY selects the per-tenant id_token issuer
-	// so a Kerberos-minted id_token (when the client requests the openid scope)
-	// is signed by the tenant's key. Mirrors the server's fail-closed selector:
-	// err != nil ⇒ a misconfigured/unregistered tenant issuer (the mint fails
-	// closed rather than sign with the shared key); emit=false ⇒ the tenant
-	// strategy can't mint id_tokens (omit). Nil ⇒ no id_token is ever minted
-	// (the access token + session still mint) — byte-identical to an
-	// id_token-less build. Set it to *sso.Server.IDTokenIssuerForClient.
-	IDTokenIssuerForClient func(c *sso.Client) (oidc.IDTokenIssuer, bool, error)
-
-	// EncryptIDToken OPTIONALLY routes a freshly-signed id_token through the
-	// server's JWE response-encryption path (fail-closed: returns ("", false)
-	// when the client opted into encryption but it failed, so the caller omits
-	// the id_token rather than leak cleartext). Nil ⇒ no encryption layer (the
-	// signed token passes through). Set it to
-	// *sso.Server.EncryptIDTokenForClient. Only consulted when an id_token is
-	// minted.
-	EncryptIDToken func(ctx context.Context, client *sso.Client, signed string) (string, bool)
-
-	// AuditRecorder OPTIONALLY records a login_success (provider = Config.Name,
-	// AMR krb5) per minted token on the SAME pipeline the rest of the server
-	// uses. Nil ⇒ no audit event (the mint still succeeds). Mirrors the SAML
-	// IdP's recordAssertion.
-	AuditRecorder *audit.Recorder
-
-	// Logger is the server logger. Nil ⇒ a no-op logger. The handler logs
-	// validation failures (reason only, never the keytab or the token bytes)
-	// and mint failures here.
-	Logger spi.Logger
+	// KerberosServerDeps carries the root-module-typed seams the server passes
+	// a registered Kerberos handler factory (ClientStore / SessionManager /
+	// UserProvider, IssuerForClient, IDTokenIssuerForClient, EncryptIDToken,
+	// AuditRecorder, Logger).
+	ssoext.KerberosServerDeps
 }
 
 // HandlerSpec is the single HTTP route Build contributes — the Negotiate

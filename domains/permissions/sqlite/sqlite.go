@@ -5,21 +5,22 @@
 // AddRole/AssignRoles/SetMenus on one replica surface on every
 // replica's next lookup.
 //
-// Three tables:
+// Four tables:
+//
 //   - roles(client_id, role_code) PK pair + name + description +
 //     permissions (JSON array of permission codes).
+//
 //   - assignments(user_id, client_id) PK pair + roles (JSON array
 //     of role codes). RemoveRole cascades a strip across this
 //     table.
+//
 //   - menus(client_id) PK + tree (JSON-encoded MenuTree). Each
 //     client has at most one menu tree.
 //
-// Resources (the operator-managed catalog the MemoryProvider also
-// exposes via memory_resources.go) are NOT covered here — they
-// live behind a separate Provider extension interface that admin
-// tooling exercises directly; operators wanting cluster-shared
-// resources can bring a Redis / future SQLite resource store
-// alongside this one.
+//   - resources(id) PK + tenant/client/type/name uniqueness,
+//     policy JSON, and dispatch columns for the runtime catalog.
+//
+//   - conflict declarations and session-active role rows for SSoD/DSoD.
 package sqlite
 
 import (
@@ -27,6 +28,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/platform/migrate"
@@ -39,6 +41,8 @@ import (
 // IF NOT EXISTS statements and get stamped v1; future changes append.
 var migrations = []migrate.Migration{
 	{Version: 1, Name: "baseline_permissions", SQL: schema},
+	{Version: 2, Name: "resource_catalog", SQL: resourceSchema},
+	{Version: 3, Name: "separation_of_duty", SQL: sodSchema},
 }
 
 const schema = `
@@ -67,6 +71,61 @@ CREATE INDEX IF NOT EXISTS idx_permissions_assignments_client
     ON permissions_assignments(client_id);
 `
 
+const resourceSchema = `
+CREATE TABLE IF NOT EXISTS permissions_resources (
+    id                         TEXT PRIMARY KEY,
+    tenant_id                  TEXT NOT NULL DEFAULT '',
+    client_id                  TEXT NOT NULL DEFAULT '',
+    type                       TEXT NOT NULL,
+    name                       TEXT NOT NULL,
+    requires_auth              INTEGER NOT NULL DEFAULT 0,
+    description                TEXT NOT NULL DEFAULT '',
+    attributes_json            TEXT NOT NULL DEFAULT '{}',
+    required_permissions_json  TEXT NOT NULL DEFAULT '[]',
+    require_mode               TEXT NOT NULL DEFAULT '',
+    created_at                 INTEGER NOT NULL,
+    updated_at                 INTEGER NOT NULL,
+    dispatch_key               TEXT NOT NULL DEFAULT '',
+    dispatch_method            TEXT NOT NULL DEFAULT '',
+    dispatch_segments          INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (tenant_id, client_id, type, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_resources_scope
+    ON permissions_resources(tenant_id, client_id, type, name);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_resources_dispatch
+    ON permissions_resources(tenant_id, client_id, dispatch_method, dispatch_segments);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_resources_dispatch_key
+    ON permissions_resources(tenant_id, client_id, type, dispatch_key);
+`
+
+const sodSchema = `
+CREATE TABLE IF NOT EXISTS permissions_conflict_sets (
+    client_id  TEXT NOT NULL,
+    mode       TEXT NOT NULL,
+    set_index  INTEGER NOT NULL,
+    role_code  TEXT NOT NULL,
+    PRIMARY KEY (client_id, mode, set_index, role_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_conflicts_scope
+    ON permissions_conflict_sets(client_id, mode, set_index);
+
+CREATE TABLE IF NOT EXISTS permissions_active_roles (
+    user_id    TEXT NOT NULL,
+    client_id  TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    role_code  TEXT NOT NULL,
+    role_index INTEGER NOT NULL,
+    PRIMARY KEY (user_id, client_id, session_id, role_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_active_session
+    ON permissions_active_roles(user_id, client_id, session_id, role_index);
+`
+
 // Provider is the SQLite-backed [permissions.Provider].
 type Provider struct {
 	db *sql.DB
@@ -74,7 +133,7 @@ type Provider struct {
 
 // New opens dsn, migrates the schema, returns the provider.
 func New(dsn string) (*Provider, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", sqliteTransactionDSN(dsn))
 	if err != nil {
 		return nil, fmt.Errorf("permissions/sqlite: open: %w", err)
 	}
@@ -88,6 +147,25 @@ func New(dsn string) (*Provider, error) {
 		return nil, fmt.Errorf("permissions/sqlite: migrate: %w", err)
 	}
 	return &Provider{db: db}, nil
+}
+
+func sqliteTransactionDSN(dsn string) string {
+	lower := strings.ToLower(dsn)
+	params := make([]string, 0, 2)
+	if !strings.Contains(lower, "_txlock=") {
+		params = append(params, "_txlock=immediate")
+	}
+	if !strings.Contains(lower, "_pragma=busy_timeout") {
+		params = append(params, "_pragma=busy_timeout(5000)")
+	}
+	if len(params) == 0 {
+		return dsn
+	}
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	return dsn + separator + strings.Join(params, "&")
 }
 
 // NewWithDB wraps an existing *sql.DB. Caller owns the connection
@@ -127,4 +205,7 @@ var (
 	_ permissions.Provider              = (*Provider)(nil)
 	_ permissions.MenuLister            = (*Provider)(nil)
 	_ permissions.GroupMembershipWriter = (*Provider)(nil)
+	_ permissions.ResourceProvider      = (*Provider)(nil)
+	_ permissions.SoDProvider           = (*Provider)(nil)
+	_ permissions.SessionRoleActivator  = (*Provider)(nil)
 )

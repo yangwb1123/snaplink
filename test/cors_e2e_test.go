@@ -72,3 +72,36 @@ func TestCORSE2E_PreflightReturns204(t *testing.T) {
 		t.Errorf("Allow-Methods = %q, want POST", got)
 	}
 }
+
+func TestCORSE2E_PathOverridePreflightUsesOverrideOriginPolicy(t *testing.T) {
+	srv := minServer(t, sso.WithCORS(cors.Policy{
+		AllowedOrigins: []string{"https://app.example.com"},
+		PathOverrides: map[string]cors.Policy{
+			"/.well-known/jwks.json": {AllowedOrigins: []string{"*"}},
+		},
+	}))
+
+	for _, tc := range []struct {
+		path       string
+		wantStatus int
+		wantOrigin string
+	}{
+		{path: "/.well-known/jwks.json", wantStatus: http.StatusNoContent, wantOrigin: "*"},
+		{path: "/token", wantOrigin: ""},
+	} {
+		req, _ := http.NewRequest(http.MethodOptions, srv.URL+tc.path, nil)
+		req.Header.Set("Origin", "https://other.example.com")
+		req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("OPTIONS %s: %v", tc.path, err)
+		}
+		if tc.wantStatus != 0 && resp.StatusCode != tc.wantStatus {
+			t.Errorf("OPTIONS %s status = %d, want %d", tc.path, resp.StatusCode, tc.wantStatus)
+		}
+		if got := resp.Header.Get("Access-Control-Allow-Origin"); got != tc.wantOrigin {
+			t.Errorf("OPTIONS %s Allow-Origin = %q, want %q", tc.path, got, tc.wantOrigin)
+		}
+		_ = resp.Body.Close()
+	}
+}

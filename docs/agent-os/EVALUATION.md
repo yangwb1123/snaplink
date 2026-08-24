@@ -20,13 +20,12 @@ the whole release gate: run the committed Go gates and `make ci` as well.
 | U5 | Architecture dependency direction holds (no *new* violations; pre-existing debt is allow-listed) | `checks/architecture.py` |
 | U6 | *(reserved — see note below)* | — |
 | U7 | *(reserved — see note below)* | — |
-| U8 | Root file count ≤ 15 non-exempt | `checks/root_files.py` (currently reported as known debt without failing `accept`) |
-| U9 | No business code (`*_handler.go`, `*_service.go`, `*_store.go`, `*_grant.go`) at repo root | `checks/root_business_code.py` (currently reported as known debt without failing `accept`) |
+| U8 | Root file count ≤ 15 non-exempt | `checks/root_files.py` (repository debt is reported as `DIAGNOSTIC`; the criterion is not falsely marked PASS) |
+| U9 | No business code (`*_handler.go`, `*_service.go`, `*_store.go`, `*_grant.go`) at repo root | `checks/root_business_code.py` (repository debt is reported as `DIAGNOSTIC`; the criterion is not falsely marked PASS) |
 
-Coverage is also printed as "Section 4" by `checks/acceptance.py`, but the
-current coverage runner does not propagate a failing `go test` subprocess and
-can print `SKIP` for unmatched package keys. Treat it as a diagnostic until
-that implementation is repaired; it is not evidence that tests passed.
+Coverage is also printed as "Section 4" by `checks/acceptance.py`. It is
+blocking: a failing test subprocess, unresolved package target, or missing
+coverage row fails the acceptance command.
 
 > U4/U6/U7 are placeholders in the current acceptance suite. Their underlying
 > gates exist and already run inside `go test ./...` (per-function complexity,

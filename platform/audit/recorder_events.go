@@ -10,6 +10,7 @@ package audit
 
 import (
 	"context"
+	"net/http"
 	"strconv"
 
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -160,6 +161,24 @@ func RecordCIBAPingFailed(rec *Recorder, ctx context.Context, clientID, authReqI
 		SetMeta(e, "auth_req_id", authReqID)
 	}
 	rec.Record(ctx, e)
+}
+
+// RecordCORSOriginBlocked emits the single audit event for a CORS origin
+// rejection. The request is retained so correlation, trusted client IP and
+// user-agent enrichment use the same extraction path as handler events.
+func RecordCORSOriginBlocked(rec *Recorder, r *http.Request, origin string, preflight bool, reason string) {
+	if rec == nil || r == nil {
+		return
+	}
+	e := eventFromHTTPRequest(r)
+	e.Type = EventCORSOriginBlocked
+	e.Outcome = OutcomeFailure
+	e.Reason = reason
+	SetMeta(e, "origin", origin)
+	SetMeta(e, "method", r.Method)
+	SetMeta(e, "path", r.URL.Path)
+	SetMeta(e, "preflight", strconv.FormatBool(preflight))
+	rec.Record(r.Context(), e)
 }
 
 // RecordRefreshTokenReuse emits a refresh_token_reuse_detected event

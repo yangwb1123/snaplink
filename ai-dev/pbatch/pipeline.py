@@ -122,6 +122,15 @@ def _combine_outputs(prev_outputs: list) -> str:
     return "\n\n".join(parts)
 
 
+def _collect_upstream(from_outputs, stage_outputs: dict) -> tuple[list[str], list[str], list[str]]:
+    """Resolve one or more explicitly selected upstream stages."""
+    raw = from_outputs if isinstance(from_outputs, (list, tuple)) else [from_outputs]
+    names = [str(name).strip() for name in raw if str(name).strip()]
+    missing = [name for name in names if name not in stage_outputs]
+    outputs = [path for name in names for path in stage_outputs.get(name, [])]
+    return names, outputs, missing
+
+
 def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "", timeout_override: int = 0, reuse: bool = False) -> tuple[list[Task], list[str]]:
     """Combine every upstream artifact into one prompt per task template so
     downstream roles see all evidence (input_stem becomes 'combined') instead
@@ -258,14 +267,15 @@ def _run_meta_stage(stage: Stage, stage_outputs: dict, model_override: str = "",
     inputs, fold the role deliverables back into the evidence, and iterate
     until the orchestrator reports no more roles or max_iterations is
     reached (self-optimizing: the role set is discovered at run time)."""
-    if stage.from_outputs not in stage_outputs:
-        log.error("Previous stage '%s' not found", stage.from_outputs)
+    source_names, upstream, missing = _collect_upstream(stage.from_outputs, stage_outputs)
+    if missing:
+        log.error("Previous stage(s) not found: %s", ", ".join(missing))
         return [], False
     if not stage.output_dir:
         log.error("Meta stage '%s' requires output_dir for role deliverables", stage.name)
         return [], False
 
-    combined = _combine_outputs(stage_outputs[stage.from_outputs])
+    combined = _combine_outputs(upstream)
     if not combined:
         log.warning("No upstream outputs available for meta stage '%s'", stage.name)
         return [], True
@@ -430,10 +440,10 @@ def _stage_from_dir_tasks(stage: Stage, reuse: bool, model_override: str, timeou
 def _stage_from_outputs_tasks(stage: Stage, stage_outputs: dict, reuse: bool, model_override: str, timeout_override: int) -> tuple[list[Task], list[str]]:
     """Tasks fed by the previous stage's artifacts: one combined task per
     template (aggregate) or one task per artifact per template."""
-    if stage.from_outputs not in stage_outputs:
-        log.error("Previous stage '%s' not found", stage.from_outputs)
+    source_names, prev_outputs, missing = _collect_upstream(stage.from_outputs, stage_outputs)
+    if missing:
+        log.error("Previous stage(s) not found: %s", ", ".join(missing))
         return [], []
-    prev_outputs = stage_outputs[stage.from_outputs]
     tasks: list[Task] = []
     reused: list[str] = []
     if stage.aggregate:
@@ -461,8 +471,8 @@ def _stage_from_outputs_tasks(stage: Stage, stage_outputs: dict, reuse: bool, mo
                 reused.append(output_path)
                 continue
             tasks.append(_task_from_def(task_def, prompt, output_path, model_override, timeout_override))
-    log.info("Loaded %d tasks from %d outputs of stage '%s'",
-             len(tasks), len(prev_outputs), stage.from_outputs)
+    log.info("Loaded %d tasks from %d outputs of stage(s) '%s'",
+             len(tasks), len(prev_outputs), ", ".join(source_names))
     return tasks, reused
 
 
@@ -545,7 +555,8 @@ def _build_stage_tasks(stage: Stage, stage_outputs: dict, reuse: bool, model_ove
         tasks, reused_outputs = _stage_from_dir_tasks(stage, reuse, model_override, timeout_override)
     elif stage.from_outputs:
         tasks, reused_outputs = _stage_from_outputs_tasks(stage, stage_outputs, reuse, model_override, timeout_override)
-        if stage.from_outputs not in stage_outputs and not tasks:
+        _, _, missing = _collect_upstream(stage.from_outputs, stage_outputs)
+        if missing and not tasks and not reused_outputs:
             return [], [], ([], False)
     else:
         log.error("Stage '%s' must have either 'from_dir' or 'from_outputs'", stage.name)

@@ -3,6 +3,7 @@ package grpcadmin
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"sort"
 	"testing"
 
@@ -222,4 +223,51 @@ func TestSnapshotAdminService_ListPagination(t *testing.T) {
 
 	_, err = fx.svc.List(ctx, &adminv1.ListSnapshotsRequest{PageToken: "!!!not-valid-base64!!!"})
 	requireCode(t, err, codes.InvalidArgument)
+}
+
+// TestSnapshotAdminService_RestoreLedger_NeverPersistsRotatedSecrets proves
+// the Decision-1 audit guard end to end: the restore RPC response carries
+// the rotated plaintext (the sanctioned recovery channel), while the durable
+// operation ledger and audit events carry the client ID only.
+func TestSnapshotAdminService_RestoreLedger_NeverPersistsRotatedSecrets(t *testing.T) {
+	t.Parallel()
+	sink := audit.NewMemorySink(50)
+	fx := newSnapshotFixture(sink)
+	ctx := context.Background()
+	fx.src.AddSeed(&sso.Client{ID: "web-app", Name: "Web", Active: true, Secret: "seed-secret"})
+
+	exp, err := fx.svc.Export(ctx, &adminv1.ExportSnapshotRequest{})
+	requireOK(t, err, "Export")
+
+	restore, err := fx.svc.Restore(ctx, &adminv1.RestoreSnapshotRequest{
+		Id: exp.Meta.SnapshotId, Mode: string(snapshot.ModeMerge),
+	})
+	requireOK(t, err, "Restore")
+	if len(restore.Report.CredentialRecovery) != 1 {
+		t.Fatalf("expected one credential_recovery entry, got %+v", restore.Report.CredentialRecovery)
+	}
+	secret := restore.Report.CredentialRecovery[0].Secret
+	if secret == "" || restore.Report.CredentialRecovery[0].ClientId != "web-app" {
+		t.Fatalf("RPC response must carry the rotated plaintext for web-app: %+v", restore.Report.CredentialRecovery[0])
+	}
+
+	// The durable ledger must carry the client ID but never the secret.
+	tracked, err := fx.ops.Get(ctx, restore.OperationId)
+	requireOK(t, err, "operation get")
+	if tracked.ResultJSON == nil || !bytes.Contains(tracked.ResultJSON, []byte("web-app")) {
+		t.Fatalf("ledger ResultJSON missing client id: %s", tracked.ResultJSON)
+	}
+	if bytes.Contains(tracked.ResultJSON, []byte(secret)) {
+		t.Fatalf("ledger ResultJSON carries the rotated secret plaintext: %s", tracked.ResultJSON)
+	}
+
+	// Audit events likewise: no rotated secret bytes anywhere.
+	events, err := sink.Query(ctx, audit.Query{})
+	requireOK(t, err, "sink.Query")
+	for _, e := range events {
+		raw, _ := json.Marshal(e)
+		if bytes.Contains(raw, []byte(secret)) {
+			t.Fatalf("audit event carries the rotated secret: %s", raw)
+		}
+	}
 }

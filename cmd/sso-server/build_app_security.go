@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,9 +13,9 @@ import (
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
 	"github.com/yangwb1123/snaplink/domains/threataction"
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
-	"github.com/yangwb1123/snaplink/interfaces/cors"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/platform/configaudit"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/rotation"
 )
 
@@ -164,16 +165,9 @@ func (b *appBuilder) wireMTLSLockoutProxiesCORS() error {
 			"cidrs", tp.CIDRs,
 			"hops", tp.Hops)
 	}
-	if c := cfg.Security.CORS; c.Enabled && len(c.AllowedOrigins) > 0 {
-		b.opts = append(b.opts, sso.WithCORS(cors.Policy{
-			AllowedOrigins:   c.AllowedOrigins,
-			AllowedMethods:   c.AllowedMethods,
-			AllowedHeaders:   c.AllowedHeaders,
-			ExposedHeaders:   c.ExposedHeaders,
-			AllowCredentials: c.AllowCredentials,
-			MaxAge:           c.MaxAge,
-		}))
-		logger.Info("security: cors enabled", "allowed_origins", c.AllowedOrigins)
+	if c := cfg.Security.CORS; c.Enabled && (len(c.AllowedOrigins) > 0 || len(c.PathOverrides) > 0) {
+		b.opts = append(b.opts, sso.WithCORS(c.ToPolicy()))
+		logger.Info("security: cors enabled", "allowed_origins", c.AllowedOrigins, "path_overrides", len(c.PathOverrides))
 	}
 	return nil
 }
@@ -196,18 +190,9 @@ func (b *appBuilder) wireSecurityHeaders() {
 		"csp_directives_overridden", len(sh.CSPDirectives) > 0)
 }
 
-// --- Governance plane: credential rotation, config-audit, break-glass -------
-//
-// Two-phase shape: wireGovernance appends Options BEFORE NewServer,
-// startGovernanceWorkers launches background loops AFTER it, each under the
-// standard cancel+done shutdown lifecycle (main_shutdown.go stopScheduler).
+// Governance wiring appends options before NewServer and starts loops after it.
 
-// wireGovernance appends the credential-rotation, config-audit, and break-glass
-// Options and builds their backing registry/store, leaving the loops for
-// startGovernanceWorkers. Each sub-wire is a no-op (byte-identical build) when
-// its config section is disabled. threatExec is the Active ITDR executor from
-// wireThreatAction (nil when threat_action is disabled), threaded through to
-// wireTokenAnomaly so tokenanomaly.Detector shares it with anomaly.Runner.
+// wireGovernance builds governance options and defers loops until after server construction.
 func (b *appBuilder) wireGovernance(threatExec threataction.ThreatExecutor) error {
 	if err := b.wireCredentialRotation(); err != nil {
 		return err
@@ -236,15 +221,7 @@ func (b *appBuilder) wireGovernance(threatExec threataction.ThreatExecutor) erro
 	return b.wireDegradation()
 }
 
-// wireTokenAnomaly builds the wave-4 token-behavior anomaly subsystem
-// (token_anomaly.enabled) and appends its two Options. The detector is a
-// metering.Store decorator, so enabling it ALSO wires the wave-1 token-usage
-// recorder (WithTokenUsageRecorder) as its telemetry substrate: the recorder
-// drains usage events into the detector off the request path, and
-// startGovernanceWorkers starts the periodic RunTokenAnomalyDetection sweep. The
-// recorder is Started here (pre-NewServer) so its drainer is alive before the
-// first event; it is Closed at shutdown. No-op (byte-identical build) when the
-// section is disabled.
+// wireTokenAnomaly builds the off-path detector, recorder, and sweep.
 func (b *appBuilder) wireTokenAnomaly(threatExec threataction.ThreatExecutor) error {
 	rec, detector, err := serverbuildplatform.BuildTokenAnomaly(b.cfg.TokenAnomaly, b.logger, threatExec)
 	if err != nil {
@@ -266,10 +243,7 @@ func (b *appBuilder) wireTokenAnomaly(threatExec threataction.ThreatExecutor) er
 	return nil
 }
 
-// wireTokenPolicy builds the token-policy governance store (external bundle or
-// inline rules) and wires sso.WithTokenPolicy — clamps access-token TTLs down
-// and denies dangerous scope combos, plus mounts GET /api/v1/admin/token-policies.
-// No-op (byte-identical build) when the token_policies section is absent.
+// wireTokenPolicy builds the token-policy store and admin read surface.
 func (b *appBuilder) wireTokenPolicy() error {
 	store, err := serverbuildplatform.BuildTokenPolicyStore(b.cfg.TokenPolicies)
 	if err != nil {
@@ -283,12 +257,7 @@ func (b *appBuilder) wireTokenPolicy() error {
 	return nil
 }
 
-// wireConditionalAccess builds the zero-trust conditional-access store +
-// engine config and wires sso.WithConditionalAccess, mounting GET
-// /api/v1/admin/access-policies. The engine only becomes a live /auth/login
-// Policy Enforcement Point when access_policies.enforce is true; otherwise it
-// stays advisory-only (Server.EvaluateConditionalAccess + the admin view).
-// No-op when the access_policies section is absent.
+// wireConditionalAccess builds the conditional-access store and admin surface.
 func (b *appBuilder) wireConditionalAccess() error {
 	store, capCfg, err := serverbuildplatform.BuildConditionalAccess(b.cfg.AccessPolicies)
 	if err != nil {
@@ -302,11 +271,7 @@ func (b *appBuilder) wireConditionalAccess() error {
 	return nil
 }
 
-// wireSessionTrustDecay wires the zero-trust session-trust-decay feature
-// (sso.WithSessionTrustDecay): trust bound at login decays over time, the
-// ContinuousVerificationAgent (started in startGovernanceWorkers) marks below-
-// floor sessions, and Server.RequireSessionTrust gates high-risk operations.
-// No-op (byte-identical) when the section is absent or the curve is invalid.
+// wireSessionTrustDecay wires the decay curve and continuous-verification gate.
 func (b *appBuilder) wireSessionTrustDecay() {
 	cfg := b.cfg.SessionTrustDecay
 	if cfg.Interval <= 0 || cfg.Factor <= 0 || cfg.Factor >= 1 {
@@ -327,11 +292,7 @@ func (b *appBuilder) wireSessionTrustDecay() {
 		"interval", cfg.Interval, "factor", cfg.Factor, "floor", cfg.Floor)
 }
 
-// wireDegradation builds the degraded-service Manager and wires
-// sso.WithDegradationManager, mounting the admin /api/v1/admin/dr/mode read+toggle.
-// The manager holds no background loop of its own — the admin endpoint (and any
-// external health loop calling SetMode) is the operator's toggle seam. No-op when
-// the degradation section is disabled.
+// wireDegradation builds the degraded-service manager and optional auto driver.
 func (b *appBuilder) wireDegradation() error {
 	mgr, err := serverbuildplatform.BuildDegradationManager(b.cfg.Degradation)
 	if err != nil {
@@ -343,22 +304,20 @@ func (b *appBuilder) wireDegradation() error {
 	b.degradationMgr = mgr
 	b.opts = append(b.opts, sso.WithDegradationManager(mgr))
 	if b.cfg.Degradation.AutoReadOnlyOnStoreLoss {
-		// No continuous storage-health push loop exists in cmd today (health is
-		// pull-based via /readyz + the storage-health admin report), so there is
-		// no clean seam to auto-drive SetMode. Surface the intent: an operator or
-		// external health loop drives read_only via the mounted dr/mode endpoint.
-		b.logger.Info("degradation: auto_read_only_on_store_loss set — no auto-driver seam; drive SetMode(read_only) via POST /api/v1/admin/dr/mode",
-			"initial_mode", mgr.Mode())
+		// Auto driver: polls the storage-health sources, drives SetMode(read_only)
+		// after the grace window — see serverbuildplatform.BuildDegradationAutoDriver.
+		if drv := serverbuildplatform.BuildDegradationAutoDriver(b.cfg.Degradation, mgr, b.storageHealthSources, b.logger); drv != nil {
+			ctx, cancel := context.WithCancel(context.Background())
+			b.autoReadOnlyCancel, b.autoReadOnlyDone = cancel, drv.Run(ctx)
+			b.logger.Info("degradation: auto read_only driver armed", "interval", drv.Interval(), "grace", drv.Grace(), "stores", drv.StoreCount())
+		}
 		return nil
 	}
 	b.logger.Info("degradation: degraded-service gate enabled", "initial_mode", mgr.Mode())
 	return nil
 }
 
-// wireCredentialRotation builds the rotation Registry + Scheduler (seeding the
-// webhook-HMAC rotator from the audit webhook signing secret, plus the OAuth
-// client-secret rotator when enabled) and wires the Server's read access to
-// the governance inventory.
+// wireCredentialRotation builds the rotation registry/scheduler and inventory.
 func (b *appBuilder) wireCredentialRotation() error {
 	reg, sched, err := serverbuildplatform.BuildCredentialRotation(
 		b.cfg.Rotation, b.cfg.ClientSecretRotation, []byte(b.cfg.Audit.Webhook.SigningSecret),
@@ -378,8 +337,7 @@ func (b *appBuilder) wireCredentialRotation() error {
 	return nil
 }
 
-// wireConfigAudit builds the config-history store, captures the redacted
-// applied-config snapshot once, and appends the snapshot/history/drift Options.
+// wireConfigAudit builds the store, snapshots, canary, and drift options.
 func (b *appBuilder) wireConfigAudit() error {
 	cfg := b.cfg.ConfigAudit
 	if !cfg.Enabled {
@@ -398,16 +356,45 @@ func (b *appBuilder) wireConfigAudit() error {
 		return serverbuildplatform.EffectiveConfigSnapshot(fullCfg)
 	}
 	b.configAuditStore = store
+	b.configCanaryController = b.buildConfigCanaryController(store)
 	b.opts = append(b.opts,
 		sso.WithConfigAuditStore(store),
 		sso.WithConfigSnapshots(applied, running),
 	)
+	if b.configCanaryController != nil {
+		b.opts = append(b.opts, sso.WithConfigCanaryController(b.configCanaryController))
+	}
 	if cfg.Drift.Interval > 0 {
 		b.opts = append(b.opts, sso.WithConfigDriftDetection(cfg.Drift.Interval, b.driftReplicaID()))
 	}
 	b.logger.Info("config audit enabled",
 		"backend", configAuditBackend(cfg.Backend), "drift_interval", cfg.Drift.Interval)
 	return nil
+}
+
+func (b *appBuilder) buildConfigCanaryController(store configaudit.Store) *configaudit.CanaryController {
+	canaryStore, ok := store.(configaudit.CanaryStore)
+	if !ok {
+		return nil
+	}
+	probes := make([]configaudit.CanaryProbe, 0, len(b.storageHealthSources))
+	for _, src := range b.storageHealthSources {
+		if src.Name == "" || strings.HasPrefix(src.Name, "audit-") || src.Ping == nil {
+			continue
+		}
+		source := src
+		probes = append(probes, configaudit.CanaryProbe{Name: source.Name, Check: func(ctx context.Context) configaudit.CanaryHealth {
+			err := source.Ping(ctx)
+			if err == nil {
+				return configaudit.CanaryHealthy
+			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return configaudit.CanaryUnknown
+			}
+			return configaudit.CanaryUnhealthy
+		}})
+	}
+	return configaudit.NewCanaryController(canaryStore, probes, b.logger, b.recorder)
 }
 
 // startGovernanceWorkers launches the governance background loops after the
@@ -435,6 +422,11 @@ func (b *appBuilder) startGovernanceWorkers(srv *sso.Server) error {
 			return fmt.Errorf("config drift detection: %w", err)
 		}
 		b.configDriftCancel, b.configDriftDone = cancel, done
+	}
+	if b.configCanaryController != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		b.configCanaryCancel = cancel
+		b.configCanaryDone = b.configCanaryController.Run(ctx)
 	}
 	if b.sessionTrustDecayOn {
 		ctx, cancel := context.WithCancel(context.Background())

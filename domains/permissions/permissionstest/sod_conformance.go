@@ -254,3 +254,31 @@ func testSoDDynamicDeactivateSessionClears(t *testing.T, p permissions.Provider)
 		t.Fatalf("DeactivateSession (repeat): %v", err)
 	}
 }
+
+// testSoDDynamicAssignmentMutationClears requires a fresh activation after
+// membership changes. Otherwise a role removed and later re-assigned could
+// silently regain authority from an old session projection.
+func testSoDDynamicAssignmentMutationClears(t *testing.T, p permissions.Provider) {
+	act, ok := p.(permissions.SessionRoleActivator)
+	if !ok {
+		t.Skip("provider doesn't implement SessionRoleActivator")
+	}
+	ctx := context.Background()
+	_ = p.AddRole(ctx, "web", permissions.Role{Code: "viewer"})
+	if err := p.AssignRoles(ctx, "jane", "web", []string{"viewer"}); err != nil {
+		t.Fatalf("AssignRoles: %v", err)
+	}
+	if err := act.ActivateRoles(ctx, "jane", "web", "sess-1", []string{"viewer"}); err != nil {
+		t.Fatalf("ActivateRoles: %v", err)
+	}
+	if err := p.UnassignRoles(ctx, "jane", "web", []string{"viewer"}); err != nil {
+		t.Fatalf("UnassignRoles: %v", err)
+	}
+	if err := p.AssignRoles(ctx, "jane", "web", []string{"viewer"}); err != nil {
+		t.Fatalf("AssignRoles after unassign: %v", err)
+	}
+	active, err := act.ActiveRoles(ctx, "jane", "web", "sess-1")
+	if err != nil || len(active) != 0 {
+		t.Fatalf("ActiveRoles after assignment mutation = %v, %v; want empty", active, err)
+	}
+}

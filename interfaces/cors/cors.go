@@ -9,9 +9,9 @@
 // caching).
 //
 // Sensible defaults: AllowedMethods covers GET / POST / PUT / DELETE
-// / OPTIONS; AllowedHeaders covers Authorization + Content-Type. An
-// empty AllowedOrigins skips CORS entirely (the middleware is a
-// no-op).
+// / OPTIONS; AllowedHeaders covers Authorization + Content-Type. Empty
+// AllowedOrigins and PathOverrides skips CORS entirely (the middleware is a
+// no-op); a non-empty PathOverrides map can enable only selected paths.
 package cors
 
 import (
@@ -28,7 +28,7 @@ type Policy struct {
 	// server. "*" wildcards every origin (the browser then refuses to
 	// send credentials per the CORS spec — combine with
 	// AllowCredentials only when you've enumerated specific origins).
-	// Empty = CORS disabled (the middleware is a no-op).
+	// Empty with no PathOverrides = CORS disabled (the middleware is a no-op).
 	AllowedOrigins []string
 
 	// AllowedMethods is the list returned in the preflight response.
@@ -41,7 +41,7 @@ type Policy struct {
 
 	// ExposedHeaders is the list the browser may read from the
 	// actual response (beyond the CORS-safelisted defaults). Useful
-	// when SPAs need to read X-Request-ID, X-RateLimit-Remaining, etc.
+	// when SPAs need to read X-Request-ID, Retry-After, etc.
 	ExposedHeaders []string
 
 	// AllowCredentials sets Access-Control-Allow-Credentials: true.
@@ -63,6 +63,27 @@ type Policy struct {
 	// that need a different CORS posture than the router-level default
 	// (e.g. a permissive /.well-known/jwks.json vs a strict /token).
 	PathOverrides map[string]Policy
+}
+
+// BlockObserver receives disallowed-origin requests before the middleware
+// forwards them to the wrapped handler. Implementations must be fail-open:
+// observation must never change the response or prevent the handler running.
+type BlockObserver interface {
+	OriginBlocked(r *http.Request, preflight bool)
+}
+
+type middlewareOptions struct {
+	blockObserver BlockObserver
+}
+
+// Option customizes middleware-side observability without changing the
+// existing Middleware(Policy) call shape.
+type Option func(*middlewareOptions)
+
+// WithBlockObserver reports each non-empty Origin rejected by the selected
+// policy. The request pointer preserves correlation and trusted-peer context.
+func WithBlockObserver(observer BlockObserver) Option {
+	return func(opts *middlewareOptions) { opts.blockObserver = observer }
 }
 
 // corsConfig holds the precomputed CORS values shared across all
@@ -169,9 +190,15 @@ func (c *corsConfig) writePreflight(w http.ResponseWriter) {
 // the request path is checked against overrides BEFORE the default
 // policy — so /.well-known/jwks.json can have a permissive policy
 // while /token stays locked down.
-func Middleware(p Policy) func(http.Handler) http.Handler {
+func Middleware(p Policy, options ...Option) func(http.Handler) http.Handler {
 	if len(p.AllowedOrigins) == 0 && len(p.PathOverrides) == 0 {
 		return func(next http.Handler) http.Handler { return next }
+	}
+	var cfgOptions middlewareOptions
+	for _, option := range options {
+		if option != nil {
+			option(&cfgOptions)
+		}
 	}
 
 	defaultCfg := buildConfig(p)
@@ -182,22 +209,37 @@ func Middleware(p Policy) func(http.Handler) http.Handler {
 			cfg := resolveCORSConfig(r.URL.Path, defaultCfg, overrideCfgs)
 
 			origin := r.Header.Get(HeaderOrigin)
-			if origin == "" || !cfg.originAllowed(origin) {
-				// No origin, or not allowed — drop CORS headers
-				// entirely. The browser blocks the response on its end.
+			if origin == "" {
+				// No origin — this is not a browser CORS request.
+				next.ServeHTTP(w, r)
+				return
+			}
+			preflight := isPreflight(r)
+			if !cfg.originAllowed(origin) {
+				notifyBlockObserver(cfgOptions.blockObserver, r, preflight)
+				// Drop CORS headers entirely. The browser blocks the response
+				// on its end; the wrapped handler still owns the HTTP response.
 				next.ServeHTTP(w, r)
 				return
 			}
 
 			cfg.writeCommonHeaders(w, origin)
 
-			if isPreflight(r) {
+			if preflight {
 				cfg.writePreflight(w)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func notifyBlockObserver(observer BlockObserver, r *http.Request, preflight bool) {
+	if observer == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	observer.OriginBlocked(r, preflight)
 }
 
 // buildOverrideConfigs constructs a sorted-by-length (longest first)
@@ -216,7 +258,8 @@ func buildOverrideConfigs(overrides map[string]Policy) []prefixCORSConfig {
 	// Sort by prefix length descending so the most specific match wins.
 	for i := 0; i < len(cfgs); i++ {
 		for j := i + 1; j < len(cfgs); j++ {
-			if len(cfgs[j].prefix) > len(cfgs[i].prefix) {
+			if len(cfgs[j].prefix) > len(cfgs[i].prefix) ||
+				(len(cfgs[j].prefix) == len(cfgs[i].prefix) && cfgs[j].prefix < cfgs[i].prefix) {
 				cfgs[i], cfgs[j] = cfgs[j], cfgs[i]
 			}
 		}

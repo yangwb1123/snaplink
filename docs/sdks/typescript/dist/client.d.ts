@@ -68,6 +68,37 @@ export interface AccessPolicyList {
     policies: AccessPolicy[];
     total: number;
 }
+export interface ActivationClaimRequest {
+    activation_ticket: string;
+    product_id: string;
+}
+export interface ActivationContextResponse {
+    context: {
+        entitlement?: CommerceEntitlement;
+        product_id: string;
+        tenant_id: string;
+    };
+}
+/** Exactly one of license_key and invitation_code is required. */
+export interface ActivationPrepareRequest {
+    app_version?: string;
+    /** Public OAuth client that will complete hosted login. */
+    client_id: string;
+    /** Optional invitation credential. */
+    invitation_code?: string;
+    /** Paid product activation credential; never place it in a URL. */
+    license_key?: string;
+    locale?: string;
+    product_id: string;
+    /** Non-authoritative tenant hint; the server resolves the tenant. */
+    tenant_hint?: string;
+}
+export interface ActivationPrepareResponse {
+    /** Opaque, one-time, short-lived ticket for the bearer claim route. */
+    activation_ticket: string;
+    expires_in: number;
+    product_id: string;
+}
 export interface AddRoleResponse {
     role?: Role;
 }
@@ -76,6 +107,10 @@ export interface AdminClient {
     active?: boolean;
     allowed_authenticators?: string[];
     allowed_scopes?: string[];
+    /** Unix timestamp. 0 means the secret never expires (legacy/public */
+    client_secret_expires_at?: number;
+    /** Read-only grant-type allowlist, enforced at /token */
+    grant_types?: string[];
     id?: string;
     /** Hosted-login continuation URL for OIDC/SAML federation. HTTPS is */
     login_page_uri?: string;
@@ -83,6 +118,8 @@ export interface AdminClient {
     redirect_uris?: string[];
     /** Write-only. Never echoed on Get/List responses; use */
     secret?: string;
+    /** Read-only over the admin API: surfaced for operator verification */
+    tenant_id?: string;
     token_strategy?: "jwt" | "session";
 }
 export interface AdminOperation {
@@ -218,16 +255,35 @@ export interface AuthorizationDetail {
     /** URI or string identifying the action class. Allowlisted */
     type: string;
 }
-/** Portable role-definition export for decentralized (sidecar) */
+/** Portable authorization export for decentralized (sidecar) */
 export interface AuthzPolicyBundle {
     /** The app whose role definitions this bundle exports. */
     client_id: string;
-    /** When the export rendered. Informational only — NOT part of the ETag (the ETag is hashed over the role content), so the same role set yields the same ETag across regenerations. */
+    /** Role sets that may not be active together in one session. */
+    dsod_conflict_sets: string[][];
+    /** When the export rendered. Informational only — NOT part of the ETag (the ETag is hashed over decision-relevant policy content). */
     generated_at?: string;
+    /** Resource catalog entries projected into decision semantics; timestamps are omitted. */
+    resources: AuthzResourceBundle[];
     roles: RoleBundle[];
+    /** Role sets that may not be held together. */
+    ssod_conflict_sets: string[][];
     /** Bundle schema version; a sidecar branches on it. */
     version: number;
     wildcard_semantics: WildcardSemantics;
+}
+/** Decision-relevant resource catalog projection; timestamps are intentionally omitted. */
+export interface AuthzResourceBundle {
+    attributes?: Record<string, string>;
+    client_id?: string;
+    description?: string;
+    id: string;
+    name: string;
+    require_mode: "any" | "all";
+    required_permissions: string[];
+    requires_auth: boolean;
+    tenant_id?: string;
+    type: string;
 }
 /** Exhausted BCL delivery inputs and retry state. Never contains a signed logout token. */
 export interface BCLFailure {
@@ -345,6 +401,8 @@ export interface ClientMetadata {
     login_page_uri?: string;
     name?: string;
     post_logout_redirect_uris?: string[];
+    /** Snaplink extension: the validated HTTPS redirect patterns returned */
+    redirect_uri_patterns?: string[];
     redirect_uris?: string[];
     /** Nanoseconds. */
     refresh_token_ttl?: number;
@@ -356,6 +414,28 @@ export interface ClientMetadata {
     tenant_id?: string;
     token_strategy?: "jwt" | "session";
     userinfo_signed_response_alg?: string;
+}
+export interface CommerceEntitlement {
+    active: boolean;
+    effective_at: string;
+    expires_at?: string;
+    features: Record<string, boolean>;
+    generated_at: string;
+    limits: Record<string, CommerceLimitGrant>;
+    plan: CommercePlanRef;
+    revision: number;
+    subscription_id: string;
+    tenant_id: string;
+}
+/** An explicit finite or unlimited quota grant. When `unlimited` is true, */
+export interface CommerceLimitGrant {
+    hard: number;
+    soft: number;
+    unlimited?: boolean;
+}
+export interface CommercePlanRef {
+    id: string;
+    version: number;
 }
 /** A peer cluster's config snapshot to diff against this cluster's own */
 export interface ConfigClusterDiffRequest {
@@ -507,10 +587,14 @@ export interface DCRRequest {
     grant_types?: string[];
     id_token_encrypted_response_alg?: string;
     id_token_encrypted_response_enc?: string;
+    /** OIDC Core §3.1.3.1 / RFC 7591 §2 — the JWS algorithm the AS */
+    id_token_signed_response_alg?: string;
     jwks?: {
         keys: Record<string, unknown>[];
     };
     post_logout_redirect_uris?: string[];
+    /** Snaplink extension (not part of RFC 7591): opt-in HTTPS redirect */
+    redirect_uri_patterns?: string[];
     redirect_uris?: string[];
     require_pkce?: boolean;
     response_types?: string[];
@@ -543,10 +627,14 @@ export interface DCRResponse {
     grant_types?: string[];
     id_token_encrypted_response_alg?: string;
     id_token_encrypted_response_enc?: string;
+    /** OIDC Core §3.1.3.1 / RFC 7591 §2 — the JWS algorithm the AS */
+    id_token_signed_response_alg?: string;
     jwks?: {
         keys: Record<string, unknown>[];
     };
     post_logout_redirect_uris?: string[];
+    /** Snaplink extension: validated HTTPS redirect patterns. A matching */
+    redirect_uri_patterns?: string[];
     redirect_uris?: string[];
     /** RFC 7592 management bearer — authenticates subsequent */
     registration_access_token?: string;
@@ -1640,7 +1728,7 @@ export declare class SSOClient {
         client_id: string;
         identifier: string;
     }): Promise<void>;
-    /** Export the role-definition authorization policy bundle. */
+    /** Export the authorization policy bundle. */
     getAuthzPolicyBundle(query?: {
         clientId?: string;
     }): Promise<AuthzPolicyBundle>;
@@ -2506,6 +2594,8 @@ export declare class SSOClient {
     }>;
     /** Fetch a single network policy. */
     getNetPolicy(name: string): Promise<NetPolicyEnvelope>;
+    /** Prepare a one-time product activation for hosted login. */
+    postActivationPrepare(body: ActivationPrepareRequest): Promise<ActivationPrepareResponse>;
     /** Upstream IdP federation return URL. */
     getAuthCallback(query?: {
         code?: string;
@@ -2721,6 +2811,12 @@ export declare class SSOClient {
         sub?: string;
         iss?: string;
     }): Promise<void>;
+    /** Read the authenticated subject's product/account context. */
+    getMyAccountContext(query?: {
+        productId?: string;
+    }): Promise<ActivationContextResponse>;
+    /** Claim a prepared activation for the authenticated subject. */
+    postMyActivationClaim(body: ActivationClaimRequest): Promise<ActivationContextResponse>;
     /** List physical devices owned by the authenticated subject. */
     listMyPhysicalDevices(): Promise<{
         devices: Record<string, unknown>[];

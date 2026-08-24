@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yangwb1123/snaplink/interfaces/ssoext"
 	"github.com/yangwb1123/snaplink/platform/metrics"
-	"github.com/yangwb1123/snaplink/platform/registrar"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
@@ -18,26 +18,46 @@ import (
 // key in JWKS and token headers. It is called once at startup; a returned
 // error fails boot closed.
 //
+// ExternalSignerFactory is a DEPRECATED type alias to
+// ssoext.ExternalSignerFactory: the canonical registrar for
+// keys.signing.external lives in interfaces/ssoext, and this alias exists so
+// pre-existing fork binaries that reference
+// serverbuildsign.ExternalSignerFactory or call RegisterExternalSigner keep
+// compiling unchanged (an alias is the SAME type, so no conversion or
+// re-declaration is needed). New code should use
+// ssoext.ExternalSignerFactory directly.
+//
 // The returned crypto.Signer is bridged into the issuer's signing seam by
 // defaultimpl/cryptosigner, so its public key MUST match the configured
 // keys.signing.alg family (Ed25519 for eddsa, P-256 ECDSA for es256, RSA
 // for rs256/ps256). The kid is typically the stable KMS key id / ARN.
-type ExternalSignerFactory func(ctx context.Context) (crypto.Signer, string, error)
+type ExternalSignerFactory = ssoext.ExternalSignerFactory
 
 // ExternalSignerRegistry holds operator-registered KMS/HSM signer
-// factories. The vendor KMS SDK (AWS/GCP/Azure/PKCS#11) lives in the
-// operator's forked binary, not this module — the operator calls
-// RegisterExternalSigner from their main before running the server, then
-// selects the factory by name via keys.signing.external. This mirrors how
-// the repo keeps etcd and push-transport SDKs out of the SPI.
-var ExternalSignerRegistry = registrar.New[ExternalSignerFactory]()
+// factories, reachable via keys.signing.external. It is a DEPRECATED alias
+// to the canonical ssoext.ExternalSignerRegistry — the SAME registrar
+// pointer, so registration and lookup here and in ssoext hit one name space
+// (no double-registry drift; keys.signing.external resolution stays
+// byte-identical). Do not reassign. The vendor KMS SDK (AWS/GCP/Azure/
+// PKCS#11) lives in the operator's forked binary, not this module.
+//
+// Kept so pre-existing fork code and tests referencing
+// serverbuildsign.ExternalSignerRegistry keep working; new code should use
+// ssoext.ExternalSignerRegistry. This mirrors how the repo keeps etcd and
+// push-transport SDKs out of the SPI.
+var ExternalSignerRegistry = ssoext.ExternalSignerRegistry
 
 // RegisterExternalSigner registers a KMS/HSM signer factory under name,
 // reachable via keys.signing.external. Intended to be called from an
-// operator's forked main during init/startup. Panics on an empty name, a
-// nil factory, or a duplicate name (all unrecoverable wiring mistakes).
+// operator's forked main during init/startup.
+//
+// DEPRECATED: delegates to the canonical ssoext.RegisterExternalSigner,
+// kept so pre-existing fork binaries that call this from their main keep
+// working unchanged; new code should call ssoext.RegisterExternalSigner
+// directly. Panics on an empty name, a nil factory, or a duplicate name
+// (all unrecoverable wiring mistakes) — identical behavior to before.
 func RegisterExternalSigner(name string, f ExternalSignerFactory) {
-	ExternalSignerRegistry.Register(name, f)
+	ssoext.RegisterExternalSigner(name, f)
 }
 
 // ExternalSignerHealthWindow bounds how long a failed external-signing
@@ -195,12 +215,13 @@ func normalizeAlgLabel(alg string) string {
 }
 
 // lookupExternalSigner returns the factory registered under name.
+// Delegates to the canonical ssoext registry.
 func lookupExternalSigner(name string) (ExternalSignerFactory, bool) {
-	return ExternalSignerRegistry.Lookup(name)
+	return ssoext.LookupExternalSigner(name)
 }
 
 // registeredExternalSigners returns the sorted names of all registered
 // factories, for diagnostics.
 func registeredExternalSigners() []string {
-	return ExternalSignerRegistry.Names()
+	return ssoext.RegisteredExternalSigners()
 }

@@ -1,5 +1,6 @@
 import json
 import sys
+import urllib.parse
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -71,7 +72,10 @@ class PackageTest(unittest.TestCase):
         path, headers, body = _Handler.calls[-1]
         self.assertEqual(path, "/token")
         self.assertEqual(headers["Authorization"], "Basic YmFja2VuZDpzZWNyZXQ=")
-        self.assertEqual(json.loads(body), {"grant_type": "client_credentials"})
+        self.assertEqual(
+            urllib.parse.parse_qs(body.decode(), keep_blank_values=True),
+            {"grant_type": ["client_credentials"]},
+        )
 
 
 if __name__ == "__main__":

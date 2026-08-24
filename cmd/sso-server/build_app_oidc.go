@@ -17,7 +17,6 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/internal/handler"
-	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
 	"github.com/yangwb1123/snaplink/platform/metrics"
 	"github.com/yangwb1123/snaplink/platform/sse"
 	"github.com/yangwb1123/snaplink/protocols/caep"
@@ -198,28 +197,46 @@ func (b *appBuilder) wireSSEEvents() {
 // process-local (MemorySubscriptionStore / MemoryDeadLetterStore); a
 // restart loses them, matching MemorySink's discipline for the primary
 // audit ring buffer.
-func (b *appBuilder) wireWebhookEngine() {
+func (b *appBuilder) wireWebhookEngine() error {
 	wc := b.cfg.Webhooks
 	if !wc.Enabled {
-		return
+		return b.wireExternalAuditWorker()
 	}
-	opts := []webhook.Option{
-		webhook.WithLogger(b.logger),
-		webhook.WithFailureRecorder(b.recorder),
+	runtime, err := serverbuildauthn.BuildManagedWebhookRuntime(wc, b.recorder, b.logger)
+	if err != nil {
+		return err
 	}
-	if wc.DeliveryTimeout > 0 {
-		opts = append(opts, webhook.WithDeliveryTimeout(wc.DeliveryTimeout))
-	}
-	if wc.Retry.MaxAttempts > 0 || wc.Retry.InitialBackoff > 0 || wc.Retry.MaxBackoff > 0 {
-		opts = append(opts, webhook.WithDeliveryRetry(wc.Retry.MaxAttempts, wc.Retry.InitialBackoff, wc.Retry.MaxBackoff))
-	}
-	eng := webhook.NewEngine(
-		webhook.NewMemorySubscriptionStore(),
-		webhook.NewMemoryDeadLetterStore(wc.DeadLetterCapacity),
-		opts...,
+	b.opts = append(b.opts,
+		sso.WithWebhookEngine(runtime.CurrentEngine()),
+		sso.WithWebhookRuntime(runtime),
+		sso.WithReadyCheck("webhook-exporter", runtime.Ready),
 	)
-	b.opts = append(b.opts, sso.WithWebhookEngine(eng))
 	b.logger.Info("webhooks: generic event/webhook egress engine enabled — manage subscriptions via POST /api/v1/admin/webhooks/subscriptions")
+	return b.wireExternalAuditWorker()
+}
+
+func (b *appBuilder) wireExternalAuditWorker() error {
+	cfg := b.cfg.Audit.ExternalWorker
+	if !cfg.Enabled {
+		return nil
+	}
+	runtime, err := serverbuildauthn.BuildExternalAuditRuntime(cfg, b.recorder, b.logger)
+	if err != nil {
+		return fmt.Errorf("audit.external_worker: %w", err)
+	}
+	b.recorder.AddSink(runtime)
+	b.opts = append(b.opts, sso.WithReadyCheck("external-audit-worker", runtime.Ready))
+	b.externalAuditClose = runtime.Close
+	return nil
+}
+
+func (b *appBuilder) closeBuildFailure() {
+	if b.netCancel != nil {
+		b.netCancel()
+	}
+	if b.externalAuditClose != nil {
+		_ = b.externalAuditClose(context.Background())
+	}
 }
 
 // wireFederation wires OpenID Federation 1.0 entity config, trust-chain

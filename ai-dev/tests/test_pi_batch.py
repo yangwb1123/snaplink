@@ -9,6 +9,7 @@ The runner is loaded through importlib because its filename contains dashes.
 """
 
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,12 @@ PI_BATCH = Path(__file__).resolve().parent.parent / "pi-batch.py"
 
 
 def load_batch():
+    # The repository also contains a root-level pbatch package. Full-repo
+    # pytest collection may import that package before this fixture; clear its
+    # cache so this suite always exercises ai-dev/pbatch instead.
+    for name in list(sys.modules):
+        if name == "pbatch" or name.startswith("pbatch."):
+            del sys.modules[name]
     spec = importlib.util.spec_from_file_location("pi_batch_under_test", PI_BATCH)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod  # dataclass and module internals need the module registered
@@ -162,6 +169,71 @@ def test_aggregate_merges_upstream_outputs(tmp_path, fake_agent):
     assert "content of task2.md" in results1[0].task.prompt
 
 
+def test_aggregate_joins_only_selected_upstream_stages(tmp_path, fake_agent):
+    """A DAG join persists a bounded, explicitly selected evidence set."""
+    mod = load_batch()
+    mod.config.AGENT_BIN = str(fake_agent)
+    selected_a = tmp_path / "selected-a.out.md"
+    selected_b = tmp_path / "selected-b.out.md"
+    ignored = tmp_path / "ignored.out.md"
+    selected_a.write_text("finding from A", encoding="utf-8")
+    selected_b.write_text("finding from B", encoding="utf-8")
+    ignored.write_text("finding that was not selected", encoding="utf-8")
+    template = tmp_path / "join.md"
+    template.write_text("{input_content}", encoding="utf-8")
+    stage = mod.Stage(
+        name="join", from_outputs=["a", "b"], aggregate=True,
+        tasks=[{"prompt_template": str(template),
+                "output": str(tmp_path / "join.out.md")}],
+    )
+
+    results, ok = mod.execute_stage(
+        stage, {"a": [str(selected_a)], "b": [str(selected_b)],
+                "ignored": [str(ignored)]},
+    )
+
+    assert ok is True
+    assert len(results) == 1
+    prompt = results[0].task.prompt
+    assert "finding from A" in prompt
+    assert "finding from B" in prompt
+    assert "finding that was not selected" not in prompt
+    assert (tmp_path / "join.out.md").exists()
+
+
+def test_pipeline_serialization_preserves_stage_controls():
+    """Pipeline exports retain stage controls and pipeline metadata."""
+    mod = load_batch()
+    stage = mod.Stage(
+        name="review",
+        from_outputs="design",
+        meta=True,
+        meta_prompt="review {input_content}",
+        role_dir="roles",
+        output_dir="outputs",
+        max_iterations=4,
+        gate=True,
+    )
+    exported = mod.Pipeline(
+        stages=[stage], decision_log="DECISIONS.md", archive_dir="archive",
+        name="release",
+    ).to_dict()
+    assert exported["decision_log"] == "DECISIONS.md"
+    assert exported["archive_dir"] == "archive"
+    assert exported["name"] == "release"
+    saved = exported["stages"][0]
+    assert saved["meta"] is True
+    assert saved["gate"] is True
+    assert saved["max_iterations"] == 4
+
+
+def test_relative_task_output_uses_task_workdir(tmp_path):
+    """A relative deliverable must follow the agent cwd, not the runner cwd."""
+    mod = load_batch()
+    task = mod.Task(prompt="review", output="artifacts/result.md", cwd=str(tmp_path))
+    assert task.output_path() == tmp_path / "artifacts" / "result.md"
+
+
 def test_fanout_default_creates_one_task_per_artifact(tmp_path, fake_agent):
     mod = load_batch()
     mod.config.AGENT_BIN = str(fake_agent)
@@ -195,6 +267,31 @@ def test_agent_provider_error_rejects_task_and_does_not_save(tmp_path, error_age
     assert result.returncode == 0  # the process itself succeeded
     mod.save_result(task, result)
     assert not output.exists()
+
+
+def test_save_result_rejects_oversized_output(tmp_path):
+    mod = load_batch()
+    output = tmp_path / "result.md"
+    task = mod.Task(prompt="review", output=str(output))
+    result = mod.TaskResult(task=task, success=True,
+                            stdout="x" * (mod.config.OUTPUT_MAX_BYTES + 1))
+    mod.save_result(task, result)
+    assert not output.exists()
+
+
+def test_save_result_refuses_symlink_output(tmp_path):
+    mod = load_batch()
+    target = tmp_path / "target.md"
+    target.write_text("keep", encoding="utf-8")
+    link = tmp_path / "result.md"
+    try:
+        os.symlink(target, link)
+    except (NotImplementedError, OSError):
+        pytest.skip("symlinks unavailable")
+    task = mod.Task(prompt="review", output=str(link))
+    result = mod.TaskResult(task=task, success=True, stdout="replace")
+    mod.save_result(task, result)
+    assert target.read_text(encoding="utf-8") == "keep"
 
 
 def test_agent_nonzero_exit_does_not_save(tmp_path):
@@ -1243,12 +1340,12 @@ def test_gate_verdict_blocks_later_stages(tmp_path):
         f"    from_outputs: design\n    gate: true\n    mode: serial\n"
         "    tasks:\n"
         "      - prompt: \"Review the design and output VERDICT: PASS or FAIL with reasons.\"\n"
-        "        output: gate.md\n"
+        f"        output: {tmp_path / 'gate.md'}\n"
         "  - name: impl\n"
         f"    from_outputs: gate\n    mode: serial\n"
         "    tasks:\n"
         "      - prompt: \"Implement per approved design.\"\n"
-        "        output: impl.md\n",
+        f"        output: {tmp_path / 'impl.md'}\n",
         encoding="utf-8",
     )
     result = subprocess.run(
@@ -1296,12 +1393,12 @@ def test_gate_verdict_passes_and_decision_log(tmp_path):
         f"    from_outputs: design\n    gate: true\n    mode: serial\n"
         "    tasks:\n"
         "      - prompt: \"Review the design and output VERDICT: PASS or FAIL with reasons.\"\n"
-        "        output: gate.md\n"
+        f"        output: {tmp_path / 'gate.md'}\n"
         "  - name: impl\n"
         f"    from_outputs: gate\n    mode: serial\n"
         "    tasks:\n"
         "      - prompt: \"Implement per approved design.\"\n"
-        "        output: impl.md\n",
+        f"        output: {tmp_path / 'impl.md'}\n",
         encoding="utf-8",
     )
     result = subprocess.run(
@@ -1385,7 +1482,7 @@ def test_archive_outputs_pipeline_after_gate_pass(tmp_path):
         f"    from_outputs: design\n    gate: true\n    mode: serial\n"
         "    tasks:\n"
         "      - prompt: \"Review and output VERDICT: PASS or FAIL.\"\n"
-        "        output: gate.md\n",
+        f"        output: {tmp_path / 'gate.md'}\n",
         encoding="utf-8",
     )
     ok = subprocess.run([sys.executable, str(PI_BATCH), str(pipeline), "--agent-bin", str(agent)],
@@ -1413,7 +1510,7 @@ def test_archive_outputs_pipeline_after_gate_pass(tmp_path):
         f"    from_outputs: design\n    gate: true\n    mode: serial\n"
         "    tasks:\n"
         "      - prompt: \"Review and output VERDICT: PASS or FAIL.\"\n"
-        "        output: gate2.md\n",
+        f"        output: {tmp_path / 'gate2.md'}\n",
         encoding="utf-8",
     )
     fail = subprocess.run([sys.executable, str(PI_BATCH), str(pipeline2), "--agent-bin", str(fail_agent)],

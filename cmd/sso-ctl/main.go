@@ -27,7 +27,6 @@ import (
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/configcmd"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/entitiescmd"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/generate"
-	"github.com/yangwb1123/snaplink/cmd/sso-ctl/hashcmd"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/importcmd"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/legacysync"
 	"github.com/yangwb1123/snaplink/cmd/sso-ctl/migratecmd"
@@ -56,7 +55,7 @@ var subcommands = map[string]func([]string) int{
 	"sessions":     sessionscmd.Run,
 	"snapshot":     snapshotcmd.Run,
 	"config":       configcmd.Run,
-	"hash":         hashcmd.Run,
+	"hash":         runHash,
 	"tokens":       tokenscmd.Run,
 	"generate":     generate.Run,
 	"tenants":      entitiescmd.RunTenants,
@@ -93,7 +92,7 @@ Usage:
   %s <command> [arguments]
 
 Commands:
-  audit-verify   Verify the audit-log hash chain (from a file or the live API).
+  audit-verify   Verify the audit-log hash chain (from a file, the live API, or a sqlite/postgres audit store).
   audit-export   Export or offline-verify a tamper-evident bulk audit bundle (compliance evidence).
   soc2-report    Build a SOC2-flavored evidence pack over a verified audit-export bundle.
   clients        List OAuth clients or inspect a specific client.

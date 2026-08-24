@@ -29,7 +29,7 @@ def _by_id(items: list[dict]) -> dict[str, dict]:
 def test_profile_build_uses_configured_target_inputs_and_verifier(profile: str):
     build = _by_id(_release_config()["builds"])[f"snaplink-{profile}"]
     expected = {
-        "prototype": ("./cmd/sso-minimal", "snaplink"),
+        "prototype": ("./cmd/sso-prototype", "snaplink"),
         "minimal": ("./cmd/sso-minimal", "snaplink"),
         "full": ("./cmd/sso-server", "snaplink"),
         "billing": ("./cmd/snaplink-billing", "snaplink-billing"),
@@ -112,6 +112,17 @@ def test_release_workflow_prepares_evidence_before_goreleaser():
     assert prepare < release
     assert "${GITHUB_REF_NAME}" in workflow
     assert '>> "${GITHUB_ENV}"' in workflow
+
+
+def test_release_workflow_attests_goreleaser_subjects_after_publish():
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    release = workflow.index("goreleaser/goreleaser-action")
+    attest = workflow.index("actions/attest@v4")
+
+    assert release < attest
+    assert "attestations: write" in workflow
+    assert "artifact-metadata: write" in workflow
+    assert "subject-checksums: dist/checksums.txt" in workflow
 
 
 def test_inventory_is_the_public_modules_command_shape():

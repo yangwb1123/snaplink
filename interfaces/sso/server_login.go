@@ -190,13 +190,6 @@ func (s *Server) rejectDisallowedLoginOrigin(ctx HandlerContext) bool {
 	if s.isOriginAllowed(origin) {
 		return false
 	}
-	s.logger.Info("origin_blocked",
-		"origin", origin,
-		"path", ctx.Request().URL.Path,
-		"method", ctx.Request().Method,
-		"client_ip", ctx.Request().RemoteAddr,
-		"user_agent", ctx.Request().UserAgent(),
-	)
 	ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, core.ErrInvalidRequest))
 	return true
 }

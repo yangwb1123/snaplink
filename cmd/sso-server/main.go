@@ -216,7 +216,8 @@ type app struct {
 
 	// auditAsyncSink is non-nil when audit.async.enabled wraps the
 	// configured sink; Close drains the buffer during shutdown.
-	auditAsyncSink *audit.AsyncSink
+	auditAsyncSink     *audit.AsyncSink
+	externalAuditClose func(context.Context) error
 
 	// auditKafkaSink is non-nil when audit.kafka.enabled wired a Kafka
 	// producer sink; shutdownSubsystems Close's it (flush + disconnect) if
@@ -357,6 +358,8 @@ type app struct {
 	configAuditStore      configaudit.Store
 	configDriftCancel     context.CancelFunc
 	configDriftDone       <-chan struct{}
+	configCanaryCancel    context.CancelFunc
+	configCanaryDone      <-chan struct{}
 	breakGlassCancel      context.CancelFunc
 	breakGlassDone        <-chan struct{}
 
@@ -377,10 +380,12 @@ type app struct {
 	tokenAnomalySweepDone   <-chan struct{}
 
 	// degradationMgr is the DR degraded-service Manager (degradation.enabled),
-	// nil when off. No shutdown handle — the manager owns no goroutine; its only
-	// runtime surface is the admin /api/v1/admin/dr/mode toggle. Held so the mode
-	// is inspectable and an external health loop can drive SetMode.
-	degradationMgr *sso.DegradationManager
+	// nil when off. Held so the mode is inspectable and an external health loop
+	// can drive SetMode. The auto read_only driver's loop (auto flag) stops via
+	// autoReadOnlyCancel/Done through stopScheduler; both nil when off.
+	degradationMgr     *sso.DegradationManager
+	autoReadOnlyCancel context.CancelFunc
+	autoReadOnlyDone   <-chan struct{}
 
 	// userAutoDeprovisionCancel/Done stop the domains/userlifecycle
 	// dormancy-sweep loop (user_lifecycle.auto_deprovision.enabled); nil/zero
@@ -413,6 +418,7 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcTLSCert, gr
 	defer closeAppStores(a)
 	wireRateLimitReload(reloader, a.server, a.redisClient)
 	wireFeatureGateReload(reloader, a.server)
+	wireWebhookReload(reloader, a.server)
 
 	// Phase C: bootstrap runner — applies pending init steps (seed admin
 	// role, admin user, default netpolicy, admin client). Must complete
@@ -461,4 +467,28 @@ func validateOnlyBoot(flags runtimeFlags, logger *slogLogger, cfg *config.Config
 		fail("grpc transport: %v", err)
 	}
 	logger.Info("config valid", "build_profile", buildinfo.BuildProfile, "required_capabilities", cfg.Server.RequiredCapabilities)
+}
+
+// wireSnapshotCredentialSeams wires the v3 credential-portability seams:
+// the webauthn user store (passkeys), the TOTP enrollment store (seeds), and
+// the pipeline's own sealer (the seed envelope derives from it). Every seam
+// is optional and type-asserted — a build without webauthn/totp wiring (or
+// without snapshot encryption) simply omits the category, with zero
+// behavior change to the default artifact. The sealer must be the SAME
+// instance the pipeline uses, or seed exports would hard-fail (safe
+// direction, but invisible) — srw.pipeline carries it.
+func (b *appBuilder) wireSnapshotCredentialSeams(srw *snapshotReleaseWiring) {
+	if srw.snapshotter == nil || srw.restorer == nil || srw.pipeline == nil {
+		return
+	}
+	if b.webauthnUsers != nil {
+		srw.snapshotter.WebAuthn = b.webauthnUsers
+		srw.restorer.WebAuthn = b.webauthnUsers
+	}
+	if totpStore, ok := b.totpEnrollStore.(authenticators.TOTPStore); ok {
+		srw.snapshotter.TOTP = totpStore
+		srw.restorer.TOTP = totpStore
+	}
+	srw.snapshotter.Sealer = srw.pipeline.Sealer
+	srw.restorer.Sealer = srw.pipeline.Sealer
 }

@@ -100,8 +100,6 @@ func TestRcovOptions_KitchenSink(t *testing.T) {
 		sso.WithSubjectClientIndex(defaultimpl.NewMemorySubjectClientIndex()),
 		sso.WithMeshExtAuthz("/mesh/ext-authz"),
 		sso.WithAuditAPI(),
-		sso.WithTracingMiddleware(),
-		sso.WithRequestIDMiddleware(),
 
 		// Discovery / metadata.
 		sso.WithOperatorMetadata("https://policy", "https://tos", "https://docs"),
@@ -132,6 +130,7 @@ func TestRcovOptions_KitchenSink(t *testing.T) {
 
 		// Permissions + network + geo + region.
 		sso.WithPermissionProvider(permissions.NewMemoryProvider()),
+		sso.WithRARCatalogCheck(),
 		sso.WithEmbedPermissionsInLogin(),
 		sso.WithNetworkPolicy(netStore, classifier),
 		sso.WithNetworkPolicyAPI(),
@@ -172,6 +171,9 @@ func TestRcovOptions_KitchenSink(t *testing.T) {
 	}
 	if srv.Permissions() == nil {
 		t.Error("Permissions provider not wired")
+	}
+	if srv.ResourceCatalog() == nil {
+		t.Error("ResourceCatalog should expose the catalog-capable provider")
 	}
 	if srv.NetStore() == nil {
 		t.Error("NetStore not wired")

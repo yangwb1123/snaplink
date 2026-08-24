@@ -323,7 +323,7 @@ func (s *Server) deriveMeshIdentity(ctx context.Context, claims *core.TokenClaim
 	if local, lerr := s.resolveLocalSubject(ctx, claims.Subject); lerr == nil && local != "" {
 		lookupSub = local
 	}
-	roles, rerr := s.permissions.Roles(ctx, lookupSub, claims.ClientID)
+	roles, rerr := s.meshIdentityRoles(ctx, lookupSub, claims.ClientID, claims.SID)
 	if rerr != nil || len(roles) == 0 {
 		return
 	}

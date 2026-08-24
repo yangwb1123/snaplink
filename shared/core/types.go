@@ -20,10 +20,16 @@ import (
 //   - TokenStrategy names which TokenIssuer mints this app's tokens
 //     (empty = use Server's default strategy).
 type Client struct {
-	ID                    string   `json:"id"`
-	Secret                string   `json:"-"`
-	Name                  string   `json:"name"`
-	RedirectURIs          []string `json:"redirect_uris"`
+	ID           string   `json:"id"`
+	Secret       string   `json:"-"`
+	Name         string   `json:"name"`
+	RedirectURIs []string `json:"redirect_uris"`
+	// RedirectURIPatterns is the opt-in snaplink-extension list of
+	// redirect-URI patterns (RFC 7591 has no such attribute; grammar +
+	// security model: docs/design/redirect-uri-patterns.md). A redirect_uri
+	// that fails exact-match against RedirectURIs may still validate when it
+	// satisfies one pattern. Empty = exact-match allowlist only, byte-identical.
+	RedirectURIPatterns   []string `json:"redirect_uri_patterns,omitempty" yaml:"redirect_uri_patterns,omitempty"`
 	AllowedScopes         []string `json:"allowed_scopes"`
 	AllowedAuthenticators []string `json:"allowed_authenticators,omitempty"`
 	AllowedProviderIDs    []string `json:"allowed_provider_ids,omitempty"`
@@ -196,6 +202,16 @@ type Client struct {
 	// access token's signature.
 	UserinfoSignedResponseAlg string `json:"userinfo_signed_response_alg,omitempty" yaml:"userinfo_signed_response_alg,omitempty"`
 
+	// IDTokenSignedResponseAlg is the OIDC Core §3.1.3.1 / RFC 7591 §2
+	// client metadata naming the JWS algorithm the AS signs THIS client's
+	// ID Tokens with. Empty (default) = the server's default id_token
+	// issuer (unchanged behavior). When set, the per-alg issuer wired via
+	// WithIDTokenIssuerAlg mints this client's id_tokens; DCR and static-
+	// config validation reject an alg outside the wired set, and issuance
+	// fails closed (id_token omitted, never signed with another key) if
+	// the issuer is ever absent at runtime.
+	IDTokenSignedResponseAlg string `json:"id_token_signed_response_alg,omitempty" yaml:"id_token_signed_response_alg,omitempty"`
+
 	// IDTokenEncryptedResponseAlg / IDTokenEncryptedResponseEnc are
 	// the OIDC Core §2 / §10.2 client metadata naming the JWE key-
 	// management (`alg`) + content-encryption (`enc`) algorithms the
@@ -363,17 +379,6 @@ type Client struct {
 	// scored", not "distrusted"; cold start gets a neutral score, not this.
 	ClientTrustScore float64   `json:"client_trust_score,omitempty"`
 	ClientTrustSetAt time.Time `json:"client_trust_set_at,omitempty"`
-}
-
-// IsRedirectURIValid checks if the given redirect URI is registered.
-func (c *Client) IsRedirectURIValid(uri string) bool {
-	return slices.Contains(c.RedirectURIs, uri)
-}
-
-// IsPostLogoutRedirectURIValid checks the post-logout redirect
-// URI allowlist for RP-Initiated Logout.
-func (c *Client) IsPostLogoutRedirectURIValid(uri string) bool {
-	return slices.Contains(c.PostLogoutRedirectURIs, uri)
 }
 
 // AreResourcesAllowed reports whether every requested resource

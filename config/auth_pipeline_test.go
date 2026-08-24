@@ -23,8 +23,10 @@ func TestAuthPipelineConfigValidationAndOptions(t *testing.T) {
 		t.Fatalf("attribute not normalized: %#v", config.AuthPipeline.RequiredProfileAttributes)
 	}
 	options := config.ServerOptions()
-	if len(options) != 3 {
-		t.Fatalf("options=%d, want issuer plus two auth hooks", len(options))
+	// Baseline is WithIssuer + the always-on access log (default-on via
+	// logging.access_log), plus the two auth-pipeline hooks.
+	if len(options) != 4 {
+		t.Fatalf("options=%d, want issuer + access log + two auth hooks", len(options))
 	}
 	_ = sso.NewServer(options...)
 }

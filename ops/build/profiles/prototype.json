@@ -8,7 +8,7 @@
     "sso-prototype-runtime"
   ],
   "build": {
-    "package": "./cmd/sso-minimal",
+    "package": "./cmd/sso-prototype",
     "binary": "snaplink",
     "program": "snaplink",
     "composition_module": "sso-prototype-runtime"

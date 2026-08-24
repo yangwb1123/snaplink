@@ -6,6 +6,17 @@ improvements. Every decision below was checked against current code and the
 AGENTS.md budgets; where the spec proposed a location that would breach a gate
 (the grpcadmin file fan-out), this document says so and relocates.
 
+## Shipped status (2026-08-21)
+
+The SoD slice described below is implemented. Its admin methods are additive
+methods on `PermissionAdminService` in `grpcadmin/admin_domains.go`, not a
+separate service; current names and routes are the generated proto/OpenAPI
+contract. Durable providers, central session activation, fail-closed live
+session authorization, decision audit metadata, and OPA parity are all landed.
+The OPA drift test uses the direct test dependency
+`github.com/open-policy-agent/opa/v1/rego`; it is not part of the server's
+runtime imports.
+
 Layer map used throughout:
 
 ```text
@@ -242,7 +253,7 @@ idempotent, timestamps stamped) inside one transaction.
   registered resources) see zero change — but the conformance fixtures must
   include the zero-match case to prove it.
 
-## Decision: make SoD operable end-to-end (durable, configurable, enforced)
+## Historical design record: make SoD operable end-to-end (durable, configurable, enforced)
 
 ### Problem restated
 
@@ -466,13 +477,10 @@ sidecar cannot reproduce resource-gated or SoD-aware decisions.
 - Drift detection: a conformance test runs a shared fixture set (granted
   roles × resource lookups × wanted permissions, including wildcards,
   require-all, empty-active-set, and no-match fallback) through both the
-  server `Check` and the OPA policy and asserts identical decisions. OPA is
-  NOT in `go.mod` today; the decision is a test-only Go dependency
-  (`github.com/open-policy-agent/opa/rego`) so CI is hermetic — it never
-  ships in the binary and the "root go.mod unchanged" rule applies only to
-  `cli.py configure` module builds. Fallback if the dependency weight is
-  rejected in review: exec the `opa` CLI with skip-if-absent (non-hermetic,
-  documented as weaker).
+  server `Check` and the OPA policy and asserts identical decisions. OPA is a
+  direct test dependency (`github.com/open-policy-agent/opa/v1/rego`) so CI is
+  hermetic; the package is imported only by parity tests and is not a runtime
+  server import.
 - `MatchResource` and the rego matcher share the fixture set, so the drift
   test is what prevents the two from diverging later.
 

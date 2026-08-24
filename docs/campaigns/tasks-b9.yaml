@@ -1,0 +1,219 @@
+# B9 implementation batch: KMS ssoext registrars + sso-ctl audit DSN paths
+# + OIDF listing evidence kit.
+#
+# Direction set (baseline verified 2026-08-15 at HEAD 6194c446):
+#   1. KMS family ssoext registrars — docs/deferred-backlog.md line ~36:
+#      "The KMS family (awskms/gcpkms/azurekeyvault/pkcs11 external
+#      signers) is the remaining work" after B8-2 migrated
+#      LDAP/Kerberos/RADIUS. The in-cmd registrar exists
+#      (cmd/sso-server/serverbuildsign/external_signer.go:
+#      ExternalSignerFactory + ExternalSignerRegistry + health/metrics
+#      wrapper) but lives in cmd/, so forks cannot import the types.
+#   2. sso-ctl audit DSN paths — two committed requirement docs
+#      (cmd-sso-ctl-audit-dsn-requirements.md REQ-1/2/3/5/6,
+#      cmd-sso-ctl-auditexport-postgres-from-url-requirements.md
+#      REQ-1 + acceptance A1-A3/B1-B2) are unimplemented: audit-export is
+#      sqlite-only (main.go:186 auditsqlite.OpenReadOnly hardcoded),
+#      audit-verify has no --dsn store source, and the shared
+#      cmd/sso-ctl/auditstore reader does not exist. Verified: the
+#      postgres AuditSink already implements Query (audit_query.go:79) and
+#      auditexport.QueryPager anticipates a remote HTTP adapter.
+#   3. OIDF listing evidence kit — ROADMAP P0 #2 remaining executable
+#      part after B8-1 (HTTPS topology 60 SUCCESS + 0 FAILURE at
+#      results/7400ba0c-https/): package the evidence into a
+#      certification-readiness kit and sweep the stale status lines.
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b9.yaml
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative. Files are referenced by PATH — read them with
+#     your tools, do not expect them inlined.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report (table of commands
+#     with real results; never claim a test passed that you did not run).
+#   - Engineering budgets: no file over 500 lines, no function over 50 lines
+#     / cyclo 15, no new maintainability exemptions, no skipDirs /
+#     layerExemptions additions, no layer violations (architecture gate;
+#     nested modules with their own go.mod are outside the root gate).
+#   - Update docs/config-reference.md + CHANGELOG.md in the same commit when
+#     a public contract changes.
+#   - Commit with a conventional imperative message + AI co-author trailer.
+#     The post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库。任务：为 KMS 外部签名器族（awskms/gcpkms/
+    azurekeyvault/pkcs11）补齐 interfaces/ssoext 类型化注册器
+    （deferred-backlog 声明的最后剩余迁移工作；LDAP/Kerberos/RADIUS 与
+    SAML 是已承诺的模板）。
+
+    契约（先读，后实现，契约优先于本提示）：
+    - docs/deferred-backlog.md 第 ~36 行 "Nested protocol/infrastructure
+      modules" 段（KMS family is the remaining work）
+    - cmd/sso-server/serverbuildsign/external_signer.go（现有进程内注册
+      器：ExternalSignerFactory = func(ctx) (crypto.Signer, string, error)、
+      ExternalSignerRegistry = registrar.New[...]、RegisterExternalSigner
+      panic 纪律、SignerHealth/instrumentedSigner/readyz 接线——
+      健康与指标包装必须保留在 cmd 层或按设计迁移，行为不变）
+    - cmd/sso-server/serverbuildsign/build_signing_issuers.go:17-33
+      （keys.signing.external 名称查表 + fail-closed boot 错误）
+    - interfaces/ssoext/ldap_registry.go（B8-2 刚落地的模板：Deps 仅
+      stdlib + 根模块类型、Register/Lookup/Registered、进程本地、
+      非热插件注册表注释纪律、模块侧 build.go 嵌入 Deps）
+    - 四个嵌套模块：infrastructure/kms/{awskms,gcpkms,azurekeyvault,
+      pkcs11}/（各自 go.mod；awskms/signer.go:156 New(client, keyID,
+      opts...) 等自有构造器）
+
+    设计要点（写入设计或实现注释，必须裁决）：
+    1. ssoext KMS 注册器形状：单注册器（saml 模板）vs 每厂商一个；
+       工厂类型即现有 ExternalSignerFactory 形状（crypto.Signer 是
+       stdlib，Deps 可含 spi.Logger/metrics 等根模块类型）。
+    2. serverbuildsign 对齐：keys.signing.external 查表行为必须逐字节
+       不变；避免双注册表漂移——ssoext 为规范注册器，serverbuildsign
+       的 RegisterExternalSigner/lookup 委托或别名到 ssoext（设计须
+       说明兼容性：现有 fork 调用 serverbuildsign.RegisterExternalSigner
+       的代码如何迁移）。
+    3. 模块侧适配：四模块各加 build.go 适配（嵌入 ssoext Deps、工厂
+       闭包在 fork main 侧持有厂商 SDK 客户端），与 ldap/radius 的
+       build.go 形状对齐。
+    4. 硬边界：零维护性豁免、零 skipDirs/layerExemptions、根模块分层
+       不变（ssoext 属 interfaces 层；infrastructure 嵌套模块经自身
+       go.mod + replace 引用 ssoext 是既有先例）；新文件 ≤500 行、
+       函数 ≤50 行/cyclo ≤15；interfaces/ssoext 目录 ≤10 非测试 .go
+       文件（当前 4 个注册器 + 4 个测试；新增不得超过上限，必要时
+       合并为单文件）。
+
+    测试（禁止 skip）：
+    - interfaces/ssoext 注册器合同测试（注册→查表→重复 panic→未注册
+      ok=false→Names 排序），形状对齐 ldap_registry_test.go
+    - serverbuildsign 现有测试全绿（健康/指标/查表行为不回归）
+    - 四模块各自 go test ./... -count=1
+    - 验证命令（必须实际运行并报告输出）：
+      go build ./... && go vet ./...
+      go test ./interfaces/ssoext/... -count=1
+      go test ./cmd/sso-server/serverbuildsign/... -count=1
+      (cd infrastructure/kms/awskms && go test ./... -count=1) 及
+      gcpkms/azurekeyvault/pkcs11 同理
+      go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+      各模块 go mod tidy -diff 确认无意外变更
+    文档同步（同提交）：deferred-backlog 嵌套模块段更新（KMS 已迁移、
+      无剩余或标注最终边界）、DIRECTORY_MAP ssoext 行、CHANGELOG Added。
+    conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b9-kms-ssoext-registrars.md
+  timeout: 1800
+  validate: |
+    go build ./... && go vet ./... && go test ./interfaces/ssoext/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：实现 sso-ctl 审计 DSN 读路径（两份已承诺
+    需求文档落地：共享 auditstore 读取器 + audit-verify --dsn +
+    audit-export postgres/--from-url）。
+
+    契约（先读，后实现，契约优先于本提示；验收断言以需求文档为准）：
+    - docs/architect-analysis/auto/cmd-sso-ctl-audit-dsn-requirements.md
+      （REQ-1 audit-verify --dsn sqlite；REQ-2 --dsn postgres；REQ-3
+      audit-export --dsn postgres；REQ-5 共享只读 opener；REQ-6 CLI 契约
+      与文档。REQ-4 audit-agg 标为 proposed/flagged —— 不在本任务范围，
+      报告须注明排除）
+    - docs/architect-analysis/auto/cmd-sso-ctl-auditexport-postgres-from-url-requirements.md
+      （REQ-1 非迁移 postgres 只读 opener 契约：wrap postgres.Open、
+      不运行迁移、schema_migrations_audit 版本校验 fail-closed、返回
+      现有 *AuditSink；接受度 A1-A3 postgres 导出 HeadHash==链头、
+      --verify 0、篡改 1；B1-B2 广告端点不 404、弱 bearer 401、
+      --from-url 无 --bearer → exit 2）
+    - 已实证 seam：platform/audit/auditexport/auditexport.go:68-70
+      QueryPager（文档明言 remote HTTP-backed adapter 可只实现此一方法）；
+      infrastructure/postgres/audit_query.go:79 *AuditSink.Query 已存在
+      （newest-first + Limit/Offset，与 sqlite 语义一致）；
+      platform/audit/sqlite/sink.go:156-169 OpenReadOnly 契约注释（模板）；
+      cmd/sso-ctl/auditverify/main.go:144 的 bearer 纪律（无 --bearer →
+      exit 2）。
+    - 环境：docker 容器 docker-db_postgres-1 正在运行（或按
+      infrastructure/postgres/postgres_test.go:13 SSO_TEST_POSTGRES_DSN
+      约定自建）；postgres 集成测试现有 skip 模式可参考。
+
+    实现要求：
+    1. 共享读取器 cmd/sso-ctl/auditstore/（REQ-5）：dialect 分类器
+       （postgres://|postgresql:// vs sqlite）+ sqlite OpenReadOnly +
+       postgres 非迁移只读 opener（schema 版本校验、fail-closed、
+       命名诊断）+ QueryPager 面；audit-verify 与 audit-export 两命令
+       复用同一 opener（REQ-5 协调：唯一 opener）。
+    2. audit-verify 增加 --dsn（sqlite/postgres 双后端），行为与现有
+       --from-url 路径并行；audit-export 增加 --dsn postgres 支持与
+       --from-url 模式（远程 HTTP 适配器实现 QueryPager；弱/缺 bearer
+       → exit 2，服务端 401）；--verify 路径不变。
+    3. CLI 契约 + 文档：sso-ctl 帮助文本、docs/config-reference.md 或
+       sso-ctl 相关文档、CHANGELOG Added 同提交更新。
+    4. 测试（禁止 skip；postgres 不可达时如实报告 not_executed 及
+       原因，但 sqlite 路径与 --from-url 服务端断言必须实跑）：
+       - auditstore 分类器表驱动测试 + sqlite 读/倒序/分页测试
+       - postgres e2e（A1-A3）：stock server audit.backend=postgres
+         发 token → audit-export 导出 → HeadHash==链头 → --verify 0 →
+         字节篡改 → --verify 1
+       - --from-url（B1-B2）：广告端点 GET /api/v1/audit/events 不 404；
+         无 bearer → 服务端 401 / CLI exit 2
+       - 现有 auditverify/auditexport 测试全绿
+    5. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./cmd/sso-ctl/... -count=1
+       go test ./test/ -run 'AuditExport|AuditVerify|AuditDSN' -count=1
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    6. 硬边界：audit 导出严格只读（永不迁移 schema）；零豁免；
+       cmd/sso-ctl 目录预算（≤10 非测试 .go/目录）。
+    conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b9-ssoctl-audit-dsn.md
+  timeout: 1800
+  validate: |
+    go build ./... && go vet ./... && go test ./cmd/sso-ctl/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：OIDF 认证就绪证据包 + ROADMAP 真值化
+    （ROADMAP P0 #2 的收尾文档工作）。
+
+    契约（先读）：
+    - docs/sso/oidc-conformance.md（B7-1/B8-1 已更新的证据真值；含
+      "Smoke run evidence" 与 remaining 边界声明）
+    - test/oidc-conformance/README.md（headless 用法、模块 allowlist、
+      results/ 归档约定）
+    - ROADMAP.md P0 #2 段（当前状态表述 PARTIAL：headless 已跑、缺
+      HTTPS 拓扑官方运行与 OIDF listing —— B8-1 之后 HTTPS 本地拓扑
+      已 60 SUCCESS + 0 FAILURE，状态表述过时）
+    - 现有归档（本地磁盘，gitignore）：results/34ea1d3d/（HTTP 59+1）、
+      results/af3bc485/（HTTP 59+1）、results/7400ba0c/（HTTP 59+1）、
+      results/7400ba0c-https/（HTTPS 60+0）
+
+    执行要求：
+    1. 将 docs/sso/oidc-conformance.md 重构为"认证就绪证据包"：
+       - 证据表：每次运行（日期/commit/拓扑/统计/归档路径/复现命令），
+         含 HTTP 基线三连与 HTTPS 60+0 里程碑；
+       - 复现手册：从零到归档的精确命令序列（config validate →
+         run-headless.sh [--issuer-https] → 归档校验），命令必须与本
+         仓库当前实现一致（逐条核对 run-headless.sh/README，禁止凭
+         记忆写命令）；
+       - 模块覆盖矩阵：README allowlist 模块 ↔ 证据中的 plan 覆盖，
+         标注未覆盖模块（如 fapi/ciba/jarm 需特殊接线）；
+       - 剩余阻塞清单：外部可达 HTTPS 发行者官方运行（需部署）、OIDF
+         账户与 listing 提交流程、自签证书限制说明（本地证据不可作为
+         官方认证声明）。
+    2. ROADMAP P0 #2 状态更新为如实的最新进度（HTTPS 本地拓扑已绿、
+       剩余=外部官方运行 + OIDF listing + 归档上传策略），不改其他段。
+    3. 证据真实性核验（必须实际执行并报告）：归档完整性（每个归档
+       plan.json/oidcc-server.log.json/info.json/config.yaml/commit.txt
+       存在且 commit.txt 与归档名一致）；至少一次 config 校验
+       （docker compose --env-file config.env run --rm --no-deps
+       sso-server --validate-only --config /etc/sso/conformance.yaml
+       -grpc-listen '' 或 run-headless.sh 内的等效命令）；无生产代码
+       变更（git status 仅文档）。
+    4. 硬边界：不改 harness 行为、不改 allowlist、不新增认证声明
+       （"Implemented ≠ certified" 边界保留并写清 listing 前置条件）。
+    5. 验证命令（必须实际运行并报告输出）：
+       git status --porcelain
+       go build ./... && go vet ./...（确认无代码变更）
+       ls 各归档目录并核对 commit.txt
+    6. conventional commit（imperative + AI co-author trailer；docs
+       前缀）。
+  output: docs/campaigns/reports/b9-oidf-evidence-kit.md
+  timeout: 1500
+  validate: |
+    python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}

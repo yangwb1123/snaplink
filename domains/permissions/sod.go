@@ -155,6 +155,11 @@ func validateConflictSets(sets [][]string) error {
 	return nil
 }
 
+// ValidateConflictSets exposes the shared declaration hygiene to durable
+// providers. Keeping validation here prevents memory and SQL/Redis peers from
+// accepting different conflict-set shapes.
+func ValidateConflictSets(sets [][]string) error { return validateConflictSets(sets) }
+
 // findConflict scans sets for the first declared conflict set with
 // two-or-more codes present in candidateCodes, returning a populated
 // *ConflictError describing the collision (nil when candidateCodes is
@@ -167,6 +172,16 @@ func findConflict(clientID string, sets [][]string, candidateCodes []string) *Co
 		if len(hit) >= 2 {
 			return &ConflictError{ClientID: clientID, Set: append([]string(nil), set...), Roles: hit}
 		}
+	}
+	return nil
+}
+
+// CheckRoleConflict reports the first declared conflict set hit by a role
+// candidate. Durable providers use the same error shape as MemoryProvider so
+// admin callers and authorization adapters stay backend-independent.
+func CheckRoleConflict(clientID string, sets [][]string, candidateCodes []string) error {
+	if conflict := findConflict(clientID, sets, candidateCodes); conflict != nil {
+		return conflict
 	}
 	return nil
 }
@@ -304,17 +319,26 @@ func splitSessionKey(key string) (userID, clientID string, ok bool) {
 	return parts[0], parts[1], true
 }
 
-// stripActiveRole removes roleCode from every session's active set under
-// clientID. Called by RemoveRole (memory.go) under m.mu so a
-// deleted-then-recreated role code can't silently reactivate in a stale
-// session without a fresh ActivateRoles call.
-func (m *MemoryProvider) stripActiveRole(clientID, roleCode string) {
-	for key, codes := range m.activeRoles {
+// clearClientActiveRoles invalidates every session projection under clientID
+// after a role definition changes, requiring fresh activation everywhere.
+func (m *MemoryProvider) clearClientActiveRoles(clientID string) {
+	for key := range m.activeRoles {
 		_, kClient, ok := splitSessionKey(key)
-		if !ok || kClient != clientID || !slices.Contains(codes, roleCode) {
-			continue
+		if ok && kClient == clientID {
+			delete(m.activeRoles, key)
 		}
-		m.activeRoles[key] = slices.DeleteFunc(append([]string{}, codes...), func(c string) bool { return c == roleCode })
+	}
+}
+
+// clearActiveRoles invalidates every session projection for a subject after
+// an assignment mutation. Requiring fresh activation is safer than trying to
+// preserve a subset whose assignment provenance may have changed.
+func (m *MemoryProvider) clearActiveRoles(userID, clientID string) {
+	for key := range m.activeRoles {
+		kUser, kClient, ok := splitSessionKey(key)
+		if ok && kUser == userID && kClient == clientID {
+			delete(m.activeRoles, key)
+		}
 	}
 }
 

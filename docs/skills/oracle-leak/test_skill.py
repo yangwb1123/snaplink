@@ -4,8 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from run import review
+skill_dir = Path(__file__).resolve().parent
+sys.path.insert(0, str(skill_dir.parent))
+from shared.loader import load_skill_run
+
+review = load_skill_run(skill_dir, "skill_oracle_leak_run").review
 
 
 class TestOracleLeakReview(unittest.TestCase):

@@ -24,14 +24,25 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PermissionAdminService_ListRoles_FullMethodName       = "/snaplink.admin.v1.PermissionAdminService/ListRoles"
-	PermissionAdminService_AddRole_FullMethodName         = "/snaplink.admin.v1.PermissionAdminService/AddRole"
-	PermissionAdminService_UpdateRole_FullMethodName      = "/snaplink.admin.v1.PermissionAdminService/UpdateRole"
-	PermissionAdminService_RemoveRole_FullMethodName      = "/snaplink.admin.v1.PermissionAdminService/RemoveRole"
-	PermissionAdminService_ListAssignments_FullMethodName = "/snaplink.admin.v1.PermissionAdminService/ListAssignments"
-	PermissionAdminService_AssignRoles_FullMethodName     = "/snaplink.admin.v1.PermissionAdminService/AssignRoles"
-	PermissionAdminService_UnassignRoles_FullMethodName   = "/snaplink.admin.v1.PermissionAdminService/UnassignRoles"
-	PermissionAdminService_SetMenus_FullMethodName        = "/snaplink.admin.v1.PermissionAdminService/SetMenus"
+	PermissionAdminService_ListRoles_FullMethodName                  = "/snaplink.admin.v1.PermissionAdminService/ListRoles"
+	PermissionAdminService_AddRole_FullMethodName                    = "/snaplink.admin.v1.PermissionAdminService/AddRole"
+	PermissionAdminService_UpdateRole_FullMethodName                 = "/snaplink.admin.v1.PermissionAdminService/UpdateRole"
+	PermissionAdminService_RemoveRole_FullMethodName                 = "/snaplink.admin.v1.PermissionAdminService/RemoveRole"
+	PermissionAdminService_ListAssignments_FullMethodName            = "/snaplink.admin.v1.PermissionAdminService/ListAssignments"
+	PermissionAdminService_AssignRoles_FullMethodName                = "/snaplink.admin.v1.PermissionAdminService/AssignRoles"
+	PermissionAdminService_UnassignRoles_FullMethodName              = "/snaplink.admin.v1.PermissionAdminService/UnassignRoles"
+	PermissionAdminService_SetMenus_FullMethodName                   = "/snaplink.admin.v1.PermissionAdminService/SetMenus"
+	PermissionAdminService_RegisterResource_FullMethodName           = "/snaplink.admin.v1.PermissionAdminService/RegisterResource"
+	PermissionAdminService_GetResource_FullMethodName                = "/snaplink.admin.v1.PermissionAdminService/GetResource"
+	PermissionAdminService_ListResources_FullMethodName              = "/snaplink.admin.v1.PermissionAdminService/ListResources"
+	PermissionAdminService_DeleteResource_FullMethodName             = "/snaplink.admin.v1.PermissionAdminService/DeleteResource"
+	PermissionAdminService_SetConflictSets_FullMethodName            = "/snaplink.admin.v1.PermissionAdminService/SetConflictSets"
+	PermissionAdminService_ListConflictSets_FullMethodName           = "/snaplink.admin.v1.PermissionAdminService/ListConflictSets"
+	PermissionAdminService_SetActivationConflictSets_FullMethodName  = "/snaplink.admin.v1.PermissionAdminService/SetActivationConflictSets"
+	PermissionAdminService_ListActivationConflictSets_FullMethodName = "/snaplink.admin.v1.PermissionAdminService/ListActivationConflictSets"
+	PermissionAdminService_ActivateRoles_FullMethodName              = "/snaplink.admin.v1.PermissionAdminService/ActivateRoles"
+	PermissionAdminService_ListActiveRoles_FullMethodName            = "/snaplink.admin.v1.PermissionAdminService/ListActiveRoles"
+	PermissionAdminService_DeactivateSession_FullMethodName          = "/snaplink.admin.v1.PermissionAdminService/DeactivateSession"
 )
 
 // PermissionAdminServiceClient is the client API for PermissionAdminService service.
@@ -50,6 +61,17 @@ type PermissionAdminServiceClient interface {
 	AssignRoles(ctx context.Context, in *AssignRolesRequest, opts ...grpc.CallOption) (*AssignRolesResponse, error)
 	UnassignRoles(ctx context.Context, in *UnassignRolesRequest, opts ...grpc.CallOption) (*UnassignRolesResponse, error)
 	SetMenus(ctx context.Context, in *SetMenusRequest, opts ...grpc.CallOption) (*SetMenusResponse, error)
+	RegisterResource(ctx context.Context, in *RegisterResourceRequest, opts ...grpc.CallOption) (*RegisterResourceResponse, error)
+	GetResource(ctx context.Context, in *GetResourceRequest, opts ...grpc.CallOption) (*GetResourceResponse, error)
+	ListResources(ctx context.Context, in *ListResourcesRequest, opts ...grpc.CallOption) (*ListResourcesResponse, error)
+	DeleteResource(ctx context.Context, in *DeleteResourceRequest, opts ...grpc.CallOption) (*DeleteResourceResponse, error)
+	SetConflictSets(ctx context.Context, in *SetConflictSetsRequest, opts ...grpc.CallOption) (*SetConflictSetsResponse, error)
+	ListConflictSets(ctx context.Context, in *ListConflictSetsRequest, opts ...grpc.CallOption) (*ListConflictSetsResponse, error)
+	SetActivationConflictSets(ctx context.Context, in *SetActivationConflictSetsRequest, opts ...grpc.CallOption) (*SetActivationConflictSetsResponse, error)
+	ListActivationConflictSets(ctx context.Context, in *ListActivationConflictSetsRequest, opts ...grpc.CallOption) (*ListActivationConflictSetsResponse, error)
+	ActivateRoles(ctx context.Context, in *ActivateRolesRequest, opts ...grpc.CallOption) (*ActivateRolesResponse, error)
+	ListActiveRoles(ctx context.Context, in *ListActiveRolesRequest, opts ...grpc.CallOption) (*ListActiveRolesResponse, error)
+	DeactivateSession(ctx context.Context, in *DeactivateSessionRequest, opts ...grpc.CallOption) (*DeactivateSessionResponse, error)
 }
 
 type permissionAdminServiceClient struct {
@@ -140,6 +162,116 @@ func (c *permissionAdminServiceClient) SetMenus(ctx context.Context, in *SetMenu
 	return out, nil
 }
 
+func (c *permissionAdminServiceClient) RegisterResource(ctx context.Context, in *RegisterResourceRequest, opts ...grpc.CallOption) (*RegisterResourceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterResourceResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_RegisterResource_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionAdminServiceClient) GetResource(ctx context.Context, in *GetResourceRequest, opts ...grpc.CallOption) (*GetResourceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetResourceResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_GetResource_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionAdminServiceClient) ListResources(ctx context.Context, in *ListResourcesRequest, opts ...grpc.CallOption) (*ListResourcesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListResourcesResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_ListResources_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionAdminServiceClient) DeleteResource(ctx context.Context, in *DeleteResourceRequest, opts ...grpc.CallOption) (*DeleteResourceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteResourceResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_DeleteResource_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionAdminServiceClient) SetConflictSets(ctx context.Context, in *SetConflictSetsRequest, opts ...grpc.CallOption) (*SetConflictSetsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetConflictSetsResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_SetConflictSets_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionAdminServiceClient) ListConflictSets(ctx context.Context, in *ListConflictSetsRequest, opts ...grpc.CallOption) (*ListConflictSetsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListConflictSetsResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_ListConflictSets_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionAdminServiceClient) SetActivationConflictSets(ctx context.Context, in *SetActivationConflictSetsRequest, opts ...grpc.CallOption) (*SetActivationConflictSetsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetActivationConflictSetsResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_SetActivationConflictSets_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionAdminServiceClient) ListActivationConflictSets(ctx context.Context, in *ListActivationConflictSetsRequest, opts ...grpc.CallOption) (*ListActivationConflictSetsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListActivationConflictSetsResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_ListActivationConflictSets_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionAdminServiceClient) ActivateRoles(ctx context.Context, in *ActivateRolesRequest, opts ...grpc.CallOption) (*ActivateRolesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ActivateRolesResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_ActivateRoles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionAdminServiceClient) ListActiveRoles(ctx context.Context, in *ListActiveRolesRequest, opts ...grpc.CallOption) (*ListActiveRolesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListActiveRolesResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_ListActiveRoles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionAdminServiceClient) DeactivateSession(ctx context.Context, in *DeactivateSessionRequest, opts ...grpc.CallOption) (*DeactivateSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeactivateSessionResponse)
+	err := c.cc.Invoke(ctx, PermissionAdminService_DeactivateSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PermissionAdminServiceServer is the server API for PermissionAdminService service.
 // All implementations must embed UnimplementedPermissionAdminServiceServer
 // for forward compatibility.
@@ -156,6 +288,17 @@ type PermissionAdminServiceServer interface {
 	AssignRoles(context.Context, *AssignRolesRequest) (*AssignRolesResponse, error)
 	UnassignRoles(context.Context, *UnassignRolesRequest) (*UnassignRolesResponse, error)
 	SetMenus(context.Context, *SetMenusRequest) (*SetMenusResponse, error)
+	RegisterResource(context.Context, *RegisterResourceRequest) (*RegisterResourceResponse, error)
+	GetResource(context.Context, *GetResourceRequest) (*GetResourceResponse, error)
+	ListResources(context.Context, *ListResourcesRequest) (*ListResourcesResponse, error)
+	DeleteResource(context.Context, *DeleteResourceRequest) (*DeleteResourceResponse, error)
+	SetConflictSets(context.Context, *SetConflictSetsRequest) (*SetConflictSetsResponse, error)
+	ListConflictSets(context.Context, *ListConflictSetsRequest) (*ListConflictSetsResponse, error)
+	SetActivationConflictSets(context.Context, *SetActivationConflictSetsRequest) (*SetActivationConflictSetsResponse, error)
+	ListActivationConflictSets(context.Context, *ListActivationConflictSetsRequest) (*ListActivationConflictSetsResponse, error)
+	ActivateRoles(context.Context, *ActivateRolesRequest) (*ActivateRolesResponse, error)
+	ListActiveRoles(context.Context, *ListActiveRolesRequest) (*ListActiveRolesResponse, error)
+	DeactivateSession(context.Context, *DeactivateSessionRequest) (*DeactivateSessionResponse, error)
 	mustEmbedUnimplementedPermissionAdminServiceServer()
 }
 
@@ -189,6 +332,39 @@ func (UnimplementedPermissionAdminServiceServer) UnassignRoles(context.Context, 
 }
 func (UnimplementedPermissionAdminServiceServer) SetMenus(context.Context, *SetMenusRequest) (*SetMenusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetMenus not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) RegisterResource(context.Context, *RegisterResourceRequest) (*RegisterResourceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterResource not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) GetResource(context.Context, *GetResourceRequest) (*GetResourceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetResource not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) ListResources(context.Context, *ListResourcesRequest) (*ListResourcesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListResources not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) DeleteResource(context.Context, *DeleteResourceRequest) (*DeleteResourceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteResource not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) SetConflictSets(context.Context, *SetConflictSetsRequest) (*SetConflictSetsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetConflictSets not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) ListConflictSets(context.Context, *ListConflictSetsRequest) (*ListConflictSetsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListConflictSets not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) SetActivationConflictSets(context.Context, *SetActivationConflictSetsRequest) (*SetActivationConflictSetsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetActivationConflictSets not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) ListActivationConflictSets(context.Context, *ListActivationConflictSetsRequest) (*ListActivationConflictSetsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListActivationConflictSets not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) ActivateRoles(context.Context, *ActivateRolesRequest) (*ActivateRolesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ActivateRoles not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) ListActiveRoles(context.Context, *ListActiveRolesRequest) (*ListActiveRolesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListActiveRoles not implemented")
+}
+func (UnimplementedPermissionAdminServiceServer) DeactivateSession(context.Context, *DeactivateSessionRequest) (*DeactivateSessionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeactivateSession not implemented")
 }
 func (UnimplementedPermissionAdminServiceServer) mustEmbedUnimplementedPermissionAdminServiceServer() {
 }
@@ -356,6 +532,204 @@ func _PermissionAdminService_SetMenus_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PermissionAdminService_RegisterResource_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterResourceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).RegisterResource(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_RegisterResource_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).RegisterResource(ctx, req.(*RegisterResourceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionAdminService_GetResource_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetResourceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).GetResource(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_GetResource_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).GetResource(ctx, req.(*GetResourceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionAdminService_ListResources_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListResourcesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).ListResources(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_ListResources_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).ListResources(ctx, req.(*ListResourcesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionAdminService_DeleteResource_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteResourceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).DeleteResource(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_DeleteResource_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).DeleteResource(ctx, req.(*DeleteResourceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionAdminService_SetConflictSets_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetConflictSetsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).SetConflictSets(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_SetConflictSets_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).SetConflictSets(ctx, req.(*SetConflictSetsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionAdminService_ListConflictSets_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListConflictSetsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).ListConflictSets(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_ListConflictSets_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).ListConflictSets(ctx, req.(*ListConflictSetsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionAdminService_SetActivationConflictSets_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetActivationConflictSetsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).SetActivationConflictSets(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_SetActivationConflictSets_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).SetActivationConflictSets(ctx, req.(*SetActivationConflictSetsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionAdminService_ListActivationConflictSets_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListActivationConflictSetsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).ListActivationConflictSets(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_ListActivationConflictSets_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).ListActivationConflictSets(ctx, req.(*ListActivationConflictSetsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionAdminService_ActivateRoles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ActivateRolesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).ActivateRoles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_ActivateRoles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).ActivateRoles(ctx, req.(*ActivateRolesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionAdminService_ListActiveRoles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListActiveRolesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).ListActiveRoles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_ListActiveRoles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).ListActiveRoles(ctx, req.(*ListActiveRolesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionAdminService_DeactivateSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeactivateSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionAdminServiceServer).DeactivateSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionAdminService_DeactivateSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionAdminServiceServer).DeactivateSession(ctx, req.(*DeactivateSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PermissionAdminService_ServiceDesc is the grpc.ServiceDesc for PermissionAdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -394,6 +768,50 @@ var PermissionAdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetMenus",
 			Handler:    _PermissionAdminService_SetMenus_Handler,
+		},
+		{
+			MethodName: "RegisterResource",
+			Handler:    _PermissionAdminService_RegisterResource_Handler,
+		},
+		{
+			MethodName: "GetResource",
+			Handler:    _PermissionAdminService_GetResource_Handler,
+		},
+		{
+			MethodName: "ListResources",
+			Handler:    _PermissionAdminService_ListResources_Handler,
+		},
+		{
+			MethodName: "DeleteResource",
+			Handler:    _PermissionAdminService_DeleteResource_Handler,
+		},
+		{
+			MethodName: "SetConflictSets",
+			Handler:    _PermissionAdminService_SetConflictSets_Handler,
+		},
+		{
+			MethodName: "ListConflictSets",
+			Handler:    _PermissionAdminService_ListConflictSets_Handler,
+		},
+		{
+			MethodName: "SetActivationConflictSets",
+			Handler:    _PermissionAdminService_SetActivationConflictSets_Handler,
+		},
+		{
+			MethodName: "ListActivationConflictSets",
+			Handler:    _PermissionAdminService_ListActivationConflictSets_Handler,
+		},
+		{
+			MethodName: "ActivateRoles",
+			Handler:    _PermissionAdminService_ActivateRoles_Handler,
+		},
+		{
+			MethodName: "ListActiveRoles",
+			Handler:    _PermissionAdminService_ListActiveRoles_Handler,
+		},
+		{
+			MethodName: "DeactivateSession",
+			Handler:    _PermissionAdminService_DeactivateSession_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

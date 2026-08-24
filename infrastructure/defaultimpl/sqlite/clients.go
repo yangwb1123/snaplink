@@ -86,14 +86,19 @@ func (s *ClientStore) DB() *sql.DB {
 // Ping reports SQLite connection health for [sso.WithReadyCheck]
 // wiring.
 func (s *ClientStore) Ping(ctx context.Context) error {
-	if s == nil || s.db.Load() == nil {
+	db := s.db.Load()
+	if s == nil || db == nil {
 		return errors.New("sqlite: client store closed")
 	}
-	return s.db.Load().PingContext(ctx)
+	return db.PingContext(ctx)
 }
 
 func (s *ClientStore) Get(ctx context.Context, clientID string) (*sso.Client, error) {
-	row := s.db.Load().QueryRowContext(ctx, clientSelectByCol("id"), clientID)
+	db := s.db.Load()
+	if db == nil {
+		return nil, errors.New("sqlite: client store closed")
+	}
+	row := db.QueryRowContext(ctx, clientSelectByCol("id"), clientID)
 	c, err := scanClient(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, sso.ErrNoSuchClient
@@ -105,6 +110,15 @@ func (s *ClientStore) ValidateSecret(ctx context.Context, clientID, clientSecret
 	c, err := s.Get(ctx, clientID)
 	if err != nil {
 		return err
+	}
+	// A client with NO stored secret must never authenticate — not even
+	// against an empty presented value (memory-store parity; see the
+	// memory implementation's comment for the fresh-node-restore
+	// rationale). The FAPI client-auth method gate runs before credential
+	// validation, so an enforce-mode Basic violation still reports
+	// invalid_request.
+	if c.Secret == "" {
+		return errors.New("client has no secret configured")
 	}
 	current := compareClientSecret(c.Secret, clientSecret)
 	previous := time.Now().Before(c.SecretOverlapUntil) && compareClientSecret(c.PreviousSecret, clientSecret)
@@ -130,10 +144,11 @@ func (s *ClientStore) ValidateSecret(ctx context.Context, clientID, clientSecret
 // returns, never a nil-pointer panic: the client-secret expiry scanner
 // sweeps on a timer and must fail open when the store is closed under it.
 func (s *ClientStore) List(ctx context.Context) ([]*sso.Client, error) {
-	if s == nil || s.db.Load() == nil {
+	db := s.db.Load()
+	if s == nil || db == nil {
 		return nil, errors.New("sqlite: client store closed")
 	}
-	rows, err := s.db.Load().QueryContext(ctx, clientSelectAll()+" ORDER BY id ASC")
+	rows, err := db.QueryContext(ctx, clientSelectAll()+" ORDER BY id ASC")
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list clients: %w", err)
 	}
@@ -153,7 +168,11 @@ func (s *ClientStore) List(ctx context.Context) ([]*sso.Client, error) {
 // fingerprint of the client set so the discovery-doc cache can skip its
 // full List() + re-projection when nothing discovery-relevant changed.
 func (s *ClientStore) Stats(ctx context.Context) (int, string, error) {
-	rows, err := s.db.Load().QueryContext(ctx, `SELECT id, allowed_scopes FROM clients`)
+	db := s.db.Load()
+	if db == nil {
+		return 0, "", errors.New("sqlite: client store closed")
+	}
+	rows, err := db.QueryContext(ctx, `SELECT id, allowed_scopes FROM clients`)
 	if err != nil {
 		return 0, "", fmt.Errorf("sqlite: stats clients: %w", err)
 	}
@@ -185,7 +204,11 @@ func (s *ClientStore) Stats(ctx context.Context) (int, string, error) {
 // partial index — empty tenant_id rows aren't indexed (they belong
 // to no tenant) so a tenant-scoped read never touches them.
 func (s *ClientStore) ListByTenant(ctx context.Context, tenantID string) ([]*sso.Client, error) {
-	rows, err := s.db.Load().QueryContext(ctx, clientSelectByCol("tenant_id")+" ORDER BY id ASC", tenantID)
+	db := s.db.Load()
+	if db == nil {
+		return nil, errors.New("sqlite: client store closed")
+	}
+	rows, err := db.QueryContext(ctx, clientSelectByCol("tenant_id")+" ORDER BY id ASC", tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list by tenant: %w", err)
 	}
@@ -214,12 +237,14 @@ const clientInsertSQL = `
             require_signed_request_object, require_par,
             device_code_ttl, device_code_poll_interval,
             userinfo_signed_response_alg,
+            id_token_signed_response_alg,
             idtoken_encrypted_response_alg, idtoken_encrypted_response_enc,
             userinfo_encrypted_response_alg, userinfo_encrypted_response_enc,
             backchannel_logout_uri, subject_type, sector_identifier_uri,
             frontchannel_logout_uri, federation, attributes, secret_rotated_at,
             client_trust_score, client_trust_set_at,
-            previous_secret, secret_overlap_until, secret_expires_at
+            previous_secret, secret_overlap_until, secret_expires_at,
+            redirect_uri_patterns
         ) VALUES (
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
@@ -229,12 +254,14 @@ const clientInsertSQL = `
             ?, ?,
             ?, ?,
             ?,
+            ?,
             ?, ?,
             ?, ?,
             ?, ?, ?,
             ?, ?, ?, ?,
 			?, ?,
-			?, ?, ?
+			?, ?, ?,
+			?
         )`
 
 func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
@@ -258,7 +285,11 @@ func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.Load().ExecContext(ctx, clientInsertSQL, args...); err != nil {
+	db := s.db.Load()
+	if db == nil {
+		return errors.New("sqlite: client store closed")
+	}
+	if _, err := db.ExecContext(ctx, clientInsertSQL, args...); err != nil {
 		if isUniqueViolation(err) {
 			return sso.ErrClientExists
 		}
@@ -279,7 +310,11 @@ func (s *ClientStore) Put(ctx context.Context, c *sso.Client) error {
 	}
 	upsertSQL := strings.Replace(clientInsertSQL,
 		"INSERT INTO clients", "INSERT OR REPLACE INTO clients", 1)
-	if _, err := s.db.Load().ExecContext(ctx, upsertSQL, args...); err != nil {
+	db := s.db.Load()
+	if db == nil {
+		return errors.New("sqlite: client store closed")
+	}
+	if _, err := db.ExecContext(ctx, upsertSQL, args...); err != nil {
 		return fmt.Errorf("sqlite: put client: %w", err)
 	}
 	return nil
@@ -297,12 +332,14 @@ const clientUpdateSQL = `
             require_signed_request_object = ?, require_par = ?,
             device_code_ttl = ?, device_code_poll_interval = ?,
             userinfo_signed_response_alg = ?,
+            id_token_signed_response_alg = ?,
             idtoken_encrypted_response_alg = ?, idtoken_encrypted_response_enc = ?,
             userinfo_encrypted_response_alg = ?, userinfo_encrypted_response_enc = ?,
             backchannel_logout_uri = ?, subject_type = ?, sector_identifier_uri = ?,
             frontchannel_logout_uri = ?, federation = ?, attributes = ?, secret_rotated_at = ?,
             client_trust_score = ?, client_trust_set_at = ?,
-            previous_secret = ?, secret_overlap_until = ?, secret_expires_at = ?
+            previous_secret = ?, secret_overlap_until = ?, secret_expires_at = ?,
+            redirect_uri_patterns = ?
         WHERE id = ?`
 
 func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
@@ -317,7 +354,11 @@ func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
 	// (which moves to the trailing WHERE clause), so drop args[0] and
 	// re-append c.ID.
 	args = append(args[1:], c.ID)
-	res, err := s.db.Load().ExecContext(ctx, clientUpdateSQL, args...)
+	db := s.db.Load()
+	if db == nil {
+		return errors.New("sqlite: client store closed")
+	}
+	res, err := db.ExecContext(ctx, clientUpdateSQL, args...)
 	if err != nil {
 		return fmt.Errorf("sqlite: update client: %w", err)
 	}
@@ -330,7 +371,11 @@ func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
 // Delete is idempotent — missing ids return nil (matches the
 // interface contract).
 func (s *ClientStore) Delete(ctx context.Context, clientID string) error {
-	_, err := s.db.Load().ExecContext(ctx, `DELETE FROM clients WHERE id = ?`, clientID)
+	db := s.db.Load()
+	if db == nil {
+		return errors.New("sqlite: client store closed")
+	}
+	_, err := db.ExecContext(ctx, `DELETE FROM clients WHERE id = ?`, clientID)
 	if err != nil {
 		return fmt.Errorf("sqlite: delete client: %w", err)
 	}
@@ -342,7 +387,11 @@ func (s *ClientStore) Delete(ctx context.Context, clientID string) error {
 // secret_rotated_at (never tracked) is excluded by the `> 0` guard — see
 // core.Client.SecretRotatedAt for why zero must not mean "overdue".
 func (s *ClientStore) ListDueForRotation(ctx context.Context, olderThan time.Time) ([]string, error) {
-	rows, err := s.db.Load().QueryContext(ctx,
+	db := s.db.Load()
+	if db == nil {
+		return nil, errors.New("sqlite: client store closed")
+	}
+	rows, err := db.QueryContext(ctx,
 		`SELECT id FROM clients
 		 WHERE active = 1 AND secret <> '' AND secret_rotated_at > 0 AND secret_rotated_at <= ?
 		 ORDER BY id ASC`,
@@ -373,12 +422,14 @@ func clientSelectAll() string {
         require_signed_request_object, require_par,
         device_code_ttl, device_code_poll_interval,
         userinfo_signed_response_alg,
+        id_token_signed_response_alg,
         idtoken_encrypted_response_alg, idtoken_encrypted_response_enc,
         userinfo_encrypted_response_alg, userinfo_encrypted_response_enc,
         backchannel_logout_uri, subject_type, sector_identifier_uri,
         frontchannel_logout_uri, federation, attributes, secret_rotated_at,
         client_trust_score, client_trust_set_at,
-        previous_secret, secret_overlap_until, secret_expires_at
+        previous_secret, secret_overlap_until, secret_expires_at,
+        redirect_uri_patterns
         FROM clients`
 }
 

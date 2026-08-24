@@ -27,6 +27,44 @@
 // client's allowed_authenticators so clients may select it via
 // provider=<name> at /auth/login.
 //
+// The standard host-API path (interfaces/ssoext on platform/registry/typed, the
+// same typed seam SAML uses) is a NAME-ADDRESSED factory the fork's own boot
+// composition consumes: the fork registers the factory under a name its own
+// config selects (stock config deliberately has NO ldap section — directory
+// auth is a fork-binary integration), and the factory receives
+// ssoext.LDAPServerDeps from the registry and hands them straight to Build via
+// the embedded LDAPServerDeps field. Copy-pasteable:
+//
+//	package main
+//
+//	import (
+//		"context"
+//
+//		"github.com/yangwb1123/snaplink/interfaces/ssoext"
+//		ldapauth "github.com/yangwb1123/snaplink/ldap"
+//	)
+//
+//	func init() {
+//		// Register the factory under the name the fork's own config selects
+//		// (e.g. ldap.directory="corp-ad"); the fork's boot code looks it up,
+//		// invokes it, and registers the returned authenticators on the server.
+//		ssoext.RegisterLDAPAuthenticators("corp-ad", func(ctx context.Context, d ssoext.LDAPServerDeps) (*ssoext.LDAPAuthenticatorSet, error) {
+//			res, err := ldapauth.Build(ldapauth.Deps{
+//				LDAPServerDeps: d, // no field-for-field copy — the embedding IS the adaptation
+//			}, ldapauth.Config{
+//				Name:    "corp-ad",                              // provider=corp-ad
+//				URLs:    []string{"ldaps://dc1.corp.example.com:636"},
+//				BaseDN:  "ou=people,dc=corp,dc=example,dc=com",
+//				UserFilter: "(&(objectClass=user)(sAMAccountName=%s))", // AD
+//				IDAttribute: "sAMAccountName",
+//			})
+//			if err != nil {
+//				return nil, err
+//			}
+//			return &ssoext.LDAPAuthenticatorSet{Authenticators: res.Authenticators}, nil
+//		})
+//	}
+//
 // # Operator-fork wiring (copy-pasteable)
 //
 //	package main

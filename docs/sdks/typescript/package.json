@@ -19,9 +19,16 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "prepack": "npm run build"
   },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "sideEffects": false,
   "files": [
     "dist",
+    "browser-login.ts",
     "client.ts",
     "hosted-login.ts",
     "index.ts"

@@ -1,7 +1,7 @@
 # Feature Matrix
 
 OAuth 2.0 / OIDC / SSO capability matrix, verified against the current code on
-2026-07-29.
+2026-08-19.
 
 This table records implemented code, not certification and not default
 availability on every deployment:
@@ -42,11 +42,14 @@ Generated from [`ops/build/capabilities.json`](../ops/build/capabilities.json); 
 
 | Capability | Availability | Default | Feature gate | Required store(s) | Surface(s) |
 |---|---|---|---|---|---|
+| Hosted-login product activation (`activation.hosted-login`) | `sdk`<br>`stock-binary` | `conditional` | — | `ActivationStore` | `/api/v1/activation/prepare`<br>`/api/v1/me/activation/claim`<br>`/api/v1/me/account-context` |
 | Admin control plane (`admin.control-plane`) | `sdk`<br>`stock-binary` | `conditional` | `feature_gates.admin_api` | `AdminTokenStore` | `/api/v1/admin/*` |
 | Embedded API docs viewer (`api.docs-viewer`) | `sdk` | `disabled` | `feature_gates.admin_api` | — | `/api/v1/admin/docs` |
+| External audit worker (`audit.external-worker`) | `stock-binary` | `disabled` | — | — | `audit sink`<br>`/readyz` |
 | Audit Governance desired-state provisioner (`audit.governance-provisioner`) | `standalone-binary` | `disabled` | — | `Audit Governance control API` | `/livez`<br>`/readyz`<br>`/metrics`<br>`Audit Governance control API` |
 | Kafka audit sink (`audit.kafka`) | `stock-binary`<br>`module-only` | `disabled` | — | — | `audit sink` |
-| Fine-grained authorization (`authorization.fga`) | `sdk`<br>`stock-binary` | `disabled` | — | `RebacStore`<br>`RebacEngine` | `/authz/*` |
+| Fine-grained authorization (`authorization.fga`) | `sdk`<br>`stock-binary` | `disabled` | — | `RebacStore`<br>`RebacEngine` | `/authz/*`<br>`/readyz` |
+| Role and resource authorization (`authorization.rbac`) | `sdk`<br>`stock-binary` | `conditional` | — | `permissions.Provider` | `/permissions/me`<br>`/authz/*`<br>`/api/v1/admin/permissions/*` |
 | Public tenant branding (`branding.public`) | `sdk`<br>`stock-binary` | `conditional` | `feature_gates.branding` | `TenantStore` | `/branding` |
 | CAEP and Shared Signals (`caep.shared-signals`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.caep` | `CAEPStreamStore`<br>`JTIReplayStore` | `/.well-known/ssf-configuration`<br>`/ssf/*` |
 | OpenID Connect CIBA (`ciba.core`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.ciba` | `CIBAStore` | `/backchannel-authentication`<br>`/token` |
@@ -87,8 +90,10 @@ Generated from [`ops/build/capabilities.json`](../ops/build/capabilities.json); 
 
 Build an edition with, for example,
 `python cli.py configure --profile minimal --version v1.1.1 --build`.
-`prototype` and `minimal` currently share the `cmd/sso-minimal` physical
-dependency graph despite exposing different runtime surfaces. See
+`prototype` and `minimal` have dedicated composition roots
+(`cmd/sso-prototype` / `cmd/sso-minimal`) with distinct physical dependency
+graphs — each links only its own root — while sharing the `interfaces/sso`
+SDK surface. See
 [plugin-system.md](plugin-system.md) for lifecycle boundaries.
 
 “Implemented” does not mean OpenID Certified. Certification evidence is tracked
@@ -109,7 +114,13 @@ are tracked in [deferred-backlog.md](deferred-backlog.md).
 | RFC 8707 resource indicators | every issuance | `Client.AllowedResources` | `shared/core/types.go` + issuance handlers under `interfaces/sso/` |
 | RFC 9126 PAR | `/par` | `WithPARStore` | `protocols/oauth/handle_par.go` |
 | RFC 7591/7592 DCR | `/register[/:id]` | `WithDynamicClientRegistration` | `protocols/oauth/handle_register.go` |
+| OIDC per-client ID Token signing algorithm | `/register[/:id]` + `id_token` + discovery/JWKS | `id_token_signed_response_alg` in DCR/static client config; SDK: `WithIDTokenIssuerAlg`; only wired asymmetric algorithms are accepted; empty preserves the default issuer | `shared/core/types.go` + `protocols/oauth/oauthvalidate/dcr_validate.go` + `interfaces/sso/server_helpers.go` + `interfaces/sso/server_discovery_cache.go` + `config/config_client.go` |
+| Snaplink redirect-URI patterns | `/register[/:id]` + authorization redirect gates | Opt-in `redirect_uri_patterns` on DCR or static client config; exact-match allowlists remain the default | `shared/core/redirect_patterns.go` + `protocols/oauth/oauthvalidate/dcr_validate.go` |
+| Snaplink config baseline apply/canary | `/api/v1/admin/config/{apply,rollback}` | `config_audit.enabled`; apply requires `admin:write` + `?approve=true`; canary opt-in is `?canary=true&window=60s` and requires an atomic Memory/SQLite store plus storage-health probes | `platform/configaudit/` + `docs/design/config-canary-apply.md` |
+| SSOConfigDrift declarative operator apply/rollback | `SSOConfigDrift` reconciliation + `POST /api/v1/admin/config/{apply,rollback}` | Apply: `spec.apply.enabled` + reason + one-shot `sso.snaplink.io/apply-approve: "true"`; rollback: `spec.rollback.enabled` + reason + expected version + one-shot `sso.snaplink.io/rollback-approve: "true"`; report-only default; CAS conflicts are fail-safe | `cmd/sso-operator/apiv1alpha1/ssoconfigdrift_types.go` + `cmd/sso-operator/controller/{ssoconfigdrift_controller.go,rollback.go}` + `docs/design/operator-config-rollback.md` |
 | OIDC Core ID Token | `id_token` w/ `openid` | `WithIDTokenIssuer`; `at_hash` when `access_token` in same response | `protocols/oidc/types.go` + `interfaces/sso/server_finish_login.go` + `infrastructure/defaultimpl/ed25519_issue.go` + `infrastructure/defaultimpl/ecdsa_issue.go` + `infrastructure/defaultimpl/rsa_issue.go` |
+| Structured access logging | every non-probe HTTP request | `WithAccessLogging`; stock `logging.access_log.*` defaults on; SDK default off; body capture is separately policy-controlled | `interfaces/middleware/request_log.go` + `interfaces/sso/server_routes.go` + `config/config_server.go` |
+| OTel request correlation and span-first audit | HTTP request/response, error body, audit and access log | `WithTracing(operation)` plus `platform/tracing.Init`; a no-op provider leaves trace IDs empty while request IDs remain available | `interfaces/middleware/middleware.go` + `interfaces/sso/server_routes.go` + `platform/audit/handler_helpers.go` + `platform/tracing/` |
 | OIDC Discovery 1.0 | `/.well-known/openid-configuration` | always | `interfaces/sso/server_discovery.go` + `interfaces/sso/server_discovery_config.go` + `protocols/oidc/oidcsupport/discovery_doc_cache.go` |
 | RFC 8414 AS Metadata (alias, same handler/body as OIDC discovery) | `/.well-known/oauth-authorization-server` | always | `interfaces/sso/server_discovery.go` |
 | OIDC RP-Initiated Logout | `/end_session` | always; `id_token_hint` must validate as an ID Token, never an access token | `protocols/oidc/handle_end_session.go` |
@@ -132,7 +143,7 @@ are tracked in [deferred-backlog.md](deferred-backlog.md).
 | OAuth 2.1 strict | `/auth/login` | `WithOAuth21StrictMode` | `interfaces/sso/options.go` + `interfaces/sso/server_finish_login.go` |
 | Credential wire strictness (opt-in) | `/token`, `/token/introspect`, `/token/revoke`, `/par` | `server.require_form_content_type`; SDK: `sso.WithCredentialFormOnly`; default unset/`false` = byte-identical legacy JSON acceptance | `protocols/oauth/oauthwire/bind_strict.go` + `interfaces/sso/server_token.go` + `protocols/oauth/handle_introspect.go` + `protocols/oauth/handle_revoke.go` + `protocols/oauth/handle_par.go` |
 | FAPI 2.0 profile | `/auth/login` + `/token` + discovery | `WithFAPIProfile(Inspection\|Enforce)` | `protocols/fapi/` + `interfaces/sso/server_discovery_config.go` |
-| RFC 9396 RAR | `authorization_details` | per-client allowlist | `protocols/oauth/oauthvalidate/rar.go` + `interfaces/sso/server_login.go` |
+| RFC 9396 RAR | `authorization_details` | per-client allowlist + optional PAR resource-catalog verification | `protocols/oauth/oauthvalidate/rar.go` + `protocols/oauth/handle_par.go` |
 | Global scope registry (scope-matrix-v2) | `/token` (all 8 grant branches, on effective scopes post-resolution) | `oauth.scope_registry.enabled`; SDK: `sso.WithScopeRegistry`; unwired default = byte-identical | `protocols/oauth/scoperegistry/` + `interfaces/scopecontract/` + `interfaces/sso/server_token.go` + `interfaces/sso/server_discovery_cache.go` |
 | RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL fetch: `WithJARFetcher`; required: `Client.RequireSignedRequestObject` | `interfaces/sso/server_jar.go` + `shared/security/securityverify/jar_fetch.go` |
 | RFC 9101 §6.4 JWE JAR | `request` (JWE) | `WithJARDecrypter`; enc key in JWKS `use:enc` | `shared/security/jwe.go` |
@@ -162,9 +173,9 @@ are tracked in [deferred-backlog.md](deferred-backlog.md).
 | Multi-region data residency | `/auth/login` + `/userinfo` + mesh + WebAuthn | `WithRegionMiddleware` + `WithTenantResidencyCheck` (+ optional `WithResidencyPolicyStore` for a durable policy source; contract in `docs/config-reference.md`) | `domains/region/` + `interfaces/sso/server_tenant_residency.go` |
 | SCIM 2.0 | `/api/v1/scim/v2/` | `scim.NewHandler(users, basePath, ...)` | `protocols/scim/handler.go` |
 | SCIM 2.0 push provisioning (outbound) | pushes to a downstream SCIM app's `/Users` + `/Groups` | `scim.push.enabled` / `sso.WithSCIMProvisioner` | `protocols/scimprovision/http_provisioner.go` + `protocols/scimprovision/sink.go` |
-| FGA / ReBAC product API | `/authz/tuples`, `/authz/tuples/batch`, `/authz/graph`, `/authz/check` | tuple routes: `WithRebacStore`; check: `WithRebacEngine`; client-credentials gated; memory + SQLite stores | `platform/lifecycle/rebac/` + `infrastructure/defaultimpl/sqlite/authz_stores.go` + `interfaces/sso/server_routes.go` |
+| FGA / ReBAC product API | `/authz/tuples`, `/authz/tuples/batch`, `/authz/graph`, `/authz/check` | tuple routes: `WithRebacStore`; check: `WithRebacEngine`; client-credentials gated; memory + SQLite stores; standard-router check route uses a generation lease and contributes `rebac-check` readiness | `platform/lifecycle/rebac/` + `infrastructure/defaultimpl/sqlite/authz_stores.go` + `interfaces/sso/server_routes.go` |
 | API-docs viewer (self-contained utility, admin-gated; not a product frontend) | `/api/v1/admin/docs` + `/api/v1/admin/docs/openapi.json` | SDK-only `sso.WithAPIDocsUI` | `interfaces/apidocs/` |
 | CSP Level 3 + Permissions-Policy + Clear-Site-Data | API responses + `/logout`, `/me/account/erase` | `WithSecurityHeaders` / `WithSecurityHeadersPolicy`; separately deployed frontends configure their own static-asset CSP | `internal/handler/security_headers.go` |
 | OpenID Federation 1.0 entity + operational endpoints | `/.well-known/openid-federation`, `/fetch`, `/.well-known/openid-federation-{list,resolve,trust-mark-status,historical-keys}` | `WithFederationEntity(cfg, signer)`; individual routes also depend on subordinates/resolver/historical-key store | `domains/federation/` + `interfaces/sso/server_federation.go` |
-| User-lifecycle state machine + unified end-user auth/token gate + transition revocation + optional auto-deprovision sweep | `GET`/`POST /api/v1/admin/users/:id/lifecycle`; `/auth/login`, user `/token` grants, validation and introspection | `WithUserLifecycle(store)` (+ `WithUserAutoDeprovision(cfg, activity)`); stock `user_lifecycle.backend` supports memory or shared Postgres/Cockroach, and every non-active transition revokes sessions/refresh tokens | `domains/userlifecycle/` + `infrastructure/userlifecyclepostgres/` + `protocols/lifecyclereactions/` + `cmd/sso-server/build_stores.go` |
+| User-lifecycle state machine + unified end-user auth/token gate + transition revocation + optional auto-deprovision sweep + CAEP/SSF lifecycle event channel | `GET`/`POST /api/v1/admin/users/:id/lifecycle`; `/auth/login`, user `/token` grants, validation and introspection; offline-validating RPs receive signed SETs (`risc/account-disabled` + `caep/session-revoked` on non-active targets, `risc/account-enabled` on reactivation) pushed to the affected tenant's opted-in clients | `WithUserLifecycle(store)` (+ `WithUserAutoDeprovision(cfg, activity)`); stock `user_lifecycle.backend` supports memory or shared Postgres/Cockroach, and every non-active transition revokes sessions/refresh tokens; the CAEP transmitter maps `admin_user_lifecycle_changed` via `caep.WithTenantUserStore` (nil ⇒ lifecycle events resolve to no receivers — the stock binary does not wire tenant membership) | `domains/userlifecycle/` + `infrastructure/userlifecyclepostgres/` + `protocols/lifecyclereactions/` + `protocols/caep/event_mapper.go` + `cmd/sso-server/build_stores.go` |
 | Durable identity linking / account-merge conflict resolution | `GET`/`DELETE /me/identities` + built-in OIDC federation subject mapping | `WithIdentityLinkStore(store)` (+ `WithIdentityMergePolicy(policy)`); cmd: `self_service.identity_link.{enabled,backend,merge_policy}`; memory + SQLite + Postgres | `domains/identitylink/` + `infrastructure/identitylinkpostgres/` + `cmd/sso-server/build_stores.go` |

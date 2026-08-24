@@ -1,20 +1,22 @@
 // Package middleware holds the general HTTP middleware functions
 // — bearer-token validation, CORS, logging, panic recovery,
-// and W3C trace context propagation. Domain-specific middleware
-// (admin auth, tenant resolution, geo enrichment) lives in their
-// respective subpackages (admin/, tenant/, geo/).
+// and request correlation (OTel span + request ID). Domain-specific
+// middleware (admin auth, tenant resolution, geo enrichment) lives
+// in their respective subpackages (admin/, tenant/, geo/).
 package middleware
 
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"runtime/debug"
 	"strings"
 
-	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/tracing"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/spi"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Recover catches panics from downstream handlers and middlewares,
@@ -104,61 +106,65 @@ func Logger(l spi.Logger) core.MiddlewareFunc {
 // requestIDBytes is the size in bytes of generated IDs (16 → 32 hex chars).
 const requestIDBytes = 16
 
-// tracer is the package-level helper for parsing/formatting W3C traceparent.
-// Stateless — safe to share.
-var tracer = audit.NewTracer()
-
-// Tracing combines two correlation strategies:
+// Correlation is the ONE middleware that ties a request to a trace and a
+// request ID (Decision 7 of docs/design/middleware-observability-unified.md).
+// It wraps tracing.Middleware (the otelhttp span) and, from the LIVE span
+// context, stamps:
+//   - request context: core.WithTraceID (error bodies keep their trace_id)
+//   - response headers: X-Trace-Id (trace ID) and X-Request-Id
+//   - request header: X-Request-Id (preserve incoming, else generate 32-hex)
 //
-//   - X-Request-Id (one HTTP hop) — preserve incoming, otherwise generate.
-//   - W3C Traceparent (full call chain) — preserve incoming trace, but
-//     create a fresh span here so downstream calls see us as the parent.
+// It no longer parses or rewrites Traceparent, and it does not build its
+// own trace context — the OTel span is the only source of truth. With the
+// SDK's no-op provider (no tracing.Init endpoint) the span context is
+// invalid: X-Trace-Id/Traceparent stay absent and audit/access-log trace
+// IDs are empty — the honest "no tracing" state — while X-Request-Id and
+// audit RequestID keep working in every shape (Decision 12 semantics).
 //
-// Both flow back to the caller via response headers and into the request
-// header so audit helpers can pick them up without extra plumbing.
-func Tracing() core.MiddlewareFunc {
-	return func(ctx core.HandlerContext) {
-		r := ctx.Request()
-		w := ctx.ResponseWriter()
-
-		// Request ID (single hop).
-		reqID := r.Header.Get(core.HeaderRequestID)
-		if reqID == "" {
-			reqID = newRequestID()
-			r.Header.Set(core.HeaderRequestID, reqID)
-		}
-		w.Header().Set(core.HeaderRequestID, reqID)
-
-		// Trace context (full chain).
-		var parent audit.TraceContext
-		if h := r.Header.Get(core.HeaderTraceparent); h != "" {
-			if tc, err := tracer.ParseTraceparent(h); err == nil {
-				parent = tc
+// interfaces/middleware is at its 10-file ceiling, so this lives in
+// middleware.go (the file that previously held the deleted legacy
+// Tracing/RequestID surface) instead of a new correlation.go — same drift
+// ruling B11 recorded for accesslog.go → request_log.go.
+func Correlation(operation string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		// The inner handlerfunc runs while the otelhttp span is live, so the
+		// span context read here is the request's own span — the single
+		// source of truth for X-Trace-Id, context trace_id, and the
+		// Traceparent response header. otelhttp v0.68.0 does not inject the
+		// response header itself (verified upstream: handler.go has no
+		// propagator.Inject on the response), so the wrapper owns that wire
+		// contract explicitly — the design's documented fallback.
+		return tracing.Middleware(operation)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reqID := r.Header.Get(core.HeaderRequestID)
+			if reqID == "" {
+				reqID = newRequestID()
+				r.Header.Set(core.HeaderRequestID, reqID)
 			}
-		}
-		current := tracer.StartChild(parent)
-
-		// Store the trace ID in the request context so error handlers
-		// and audit helpers can surface it to the caller.
-		*r = *r.WithContext(core.WithTraceID(r.Context(), current.TraceID))
-
-		r.Header.Set(core.HeaderTraceparent, tracer.FormatTraceparent(current))
-		w.Header().Set(core.HeaderTraceparent, tracer.FormatTraceparent(current))
-		// X-Trace-Id is the human-facing trace identifier — a stable,
-		// concise value the client can relay to support for debugging.
-		// It is the W3C TraceID portion of the traceparent, trimmed to
-		// a readable prefix length.
-		w.Header().Set(core.HeaderTraceID, current.TraceID)
-		if current.ParentSpanID != "" {
-			r.Header.Set(core.HeaderParentSpanID, current.ParentSpanID)
-		}
+			w.Header().Set(core.HeaderRequestID, reqID)
+			if sc := trace.SpanContextFromContext(r.Context()); sc.IsValid() && sc.HasTraceID() {
+				// Mutate the request struct IN PLACE (same pointer the
+				// access logger and handlers hold downstream) so the trace
+				// ID survives the otelhttp WithContext rebind — the pattern
+				// the legacy Tracing middleware used at router level.
+				*r = *r.WithContext(core.WithTraceID(r.Context(), sc.TraceID().String()))
+				w.Header().Set(core.HeaderTraceID, sc.TraceID().String())
+				w.Header().Set(core.HeaderTraceparent, formatTraceparent(sc))
+			}
+			next.ServeHTTP(w, r)
+		}))
 	}
 }
 
-// RequestID is kept as a back-compat alias of Tracing.
-// New code should call Tracing directly.
-func RequestID() core.MiddlewareFunc { return Tracing() }
+// formatTraceparent renders a W3C traceparent from a live span context.
+// Flags carry the span's actual sampled bit — an unsampled span emits
+// "00" (downstream honors the head-sampling decision), never a forged 01.
+func formatTraceparent(sc trace.SpanContext) string {
+	return "00-" + sc.TraceID().String() + "-" + sc.SpanID().String() + "-" + fmt.Sprintf("%02x", sc.TraceFlags())
+}
 
+// newRequestID returns a fresh 32-hex request ID (16 random bytes). Moved
+// here with the legacy Tracing/RequestID surface per Decision 7's removal
+// list; the generator is unchanged.
 func newRequestID() string {
 	var b [requestIDBytes]byte
 	_, _ = rand.Read(b[:])

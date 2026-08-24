@@ -64,6 +64,10 @@ func shutdownApp(t *testing.T, a *app) {
 		a.configDriftCancel()
 		waitBounded(a.configDriftDone)
 	}
+	if a.configCanaryCancel != nil {
+		a.configCanaryCancel()
+		waitBounded(a.configCanaryDone)
+	}
 	if a.breakGlassCancel != nil {
 		a.breakGlassCancel()
 		waitBounded(a.breakGlassDone)

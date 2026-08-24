@@ -28,7 +28,7 @@ func freshPermissionProvider(t *testing.T) *PermissionProvider {
 	}
 	t.Cleanup(func() { _ = p.Close() })
 	if _, err := p.db.ExecContext(context.Background(),
-		"TRUNCATE permissions_roles, permissions_assignments, permissions_menus"); err != nil {
+		"TRUNCATE permissions_roles, permissions_assignments, permissions_menus, permissions_conflict_sets, permissions_active_roles"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return p
@@ -57,7 +57,7 @@ func TestPermissionProvider_Conformance(t *testing.T) {
 				t.Fatalf("NewPermissionProviderWithDB: %v", err)
 			}
 			if _, err := db.ExecContext(context.Background(),
-				"TRUNCATE permissions_roles, permissions_assignments, permissions_menus"); err != nil {
+				"TRUNCATE permissions_roles, permissions_assignments, permissions_menus, permissions_conflict_sets, permissions_active_roles"); err != nil {
 				t.Fatalf("truncate: %v", err)
 			}
 			return p

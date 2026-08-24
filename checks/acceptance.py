@@ -25,6 +25,11 @@ def nok(msg: str):
     print(f"  \033[31mFAIL\033[0m {msg}")
 
 
+def diagnostic(msg: str):
+    """Report non-blocking repository debt without presenting it as a pass."""
+    print(f"  \033[33mDIAGNOSTIC\033[0m {msg}")
+
+
 def run_py(module: str, *args: str) -> tuple[int, str]:
     result = subprocess.run(
         [sys.executable, "-m", module] + list(args),
@@ -64,7 +69,7 @@ def run() -> int:
     if not new_lines:
         ok("architecture")
         for d in debt_lines:
-            print(f"    KNOWN DEBT: {d.replace('FAIL:', '').strip()}")
+            diagnostic(f"architecture known debt: {d.replace('FAIL:', '').strip()}")
     else:
         nok("architecture -- NEW violations")
         for l in new_lines:
@@ -94,7 +99,7 @@ def run() -> int:
     if rc == 0:
         ok("root file count")
     else:
-        print("    KNOWN DEBT: root files exceed limit -- apply skills/project-reorganization/")
+        diagnostic("root files exceed limit -- apply skills/project-reorganization/")
         print(f"    {out.split(chr(10))[0]}")
 
     print("[U9] No business code in root")
@@ -103,7 +108,7 @@ def run() -> int:
         ok("root business code")
     else:
         biz_count = len([l for l in out.split("\n") if l.startswith("  ")])
-        print(f"    KNOWN DEBT: {biz_count} business code files in root")
+        diagnostic(f"{biz_count} business code files in root")
         print("    Apply: skills/project-reorganization/ Step 1-4")
 
     print()

@@ -178,6 +178,7 @@ func buildRegisteredClient(req *DCRRequest, policy *DCRPolicy, id, secret, regTo
 		Secret:                  secret,
 		Name:                    req.ClientName,
 		RedirectURIs:            append([]string(nil), req.RedirectURIs...),
+		RedirectURIPatterns:     append([]string(nil), req.RedirectURIPatterns...),
 		AllowedScopes:           SplitScope(req.Scope),
 		AllowedAuthenticators:   append([]string(nil), req.AllowedAuthenticators...),
 		TokenStrategy:           tokenStrategy,
@@ -201,6 +202,7 @@ func buildRegisteredClient(req *DCRRequest, policy *DCRPolicy, id, secret, regTo
 		IDTokenEncryptedResponseEnc:  req.IDTokenEncryptedResponseEnc,
 		UserinfoEncryptedResponseAlg: req.UserinfoEncryptedResponseAlg,
 		UserinfoEncryptedResponseEnc: req.UserinfoEncryptedResponseEnc,
+		IDTokenSignedResponseAlg:     req.IDTokenSignedResponseAlg,
 	}
 	if !public {
 		client.SecretExpiresAt = clientrotation.ExpiresAt(time.Now(), clientrotation.DefaultLifetime)
@@ -221,6 +223,7 @@ func buildDCRResponse(req *DCRRequest, client *core.Client, ctx core.HandlerCont
 		RegistrationAccessToken: regToken,
 		RegistrationClientURI:   middleware.BaseURL(ctx.Request()) + PathRegister + "/" + client.ID,
 		RedirectURIs:            client.RedirectURIs,
+		RedirectURIPatterns:     client.RedirectURIPatterns,
 		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
 		GrantTypes:              req.GrantTypes,
 		ResponseTypes:           req.ResponseTypes,
@@ -243,6 +246,7 @@ func buildDCRResponse(req *DCRRequest, client *core.Client, ctx core.HandlerCont
 		IDTokenEncryptedResponseEnc:  client.IDTokenEncryptedResponseEnc,
 		UserinfoEncryptedResponseAlg: client.UserinfoEncryptedResponseAlg,
 		UserinfoEncryptedResponseEnc: client.UserinfoEncryptedResponseEnc,
+		IDTokenSignedResponseAlg:     client.IDTokenSignedResponseAlg,
 	}
 }
 
@@ -317,6 +321,7 @@ func buildUpdatedClient(req *DCRRequest, client *core.Client, rotation ratRotati
 	updated.RegistrationAccessTokenOverlapUntil = rotation.overlapUntil
 	updated.Name = req.ClientName
 	updated.RedirectURIs = append([]string(nil), req.RedirectURIs...)
+	updated.RedirectURIPatterns = append([]string(nil), req.RedirectURIPatterns...)
 	updated.AllowedScopes = SplitScope(req.Scope)
 	updated.AllowedAuthenticators = append([]string(nil), req.AllowedAuthenticators...)
 	updated.TokenStrategy = tokenStrategy
@@ -336,5 +341,6 @@ func buildUpdatedClient(req *DCRRequest, client *core.Client, rotation ratRotati
 	updated.IDTokenEncryptedResponseEnc = req.IDTokenEncryptedResponseEnc
 	updated.UserinfoEncryptedResponseAlg = req.UserinfoEncryptedResponseAlg
 	updated.UserinfoEncryptedResponseEnc = req.UserinfoEncryptedResponseEnc
+	updated.IDTokenSignedResponseAlg = req.IDTokenSignedResponseAlg
 	return &updated
 }

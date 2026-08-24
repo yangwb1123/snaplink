@@ -1,16 +1,18 @@
 # snaplink/sso — TypeScript SDK
 
 > **Scope:** generated client for the full documented API surface of
-> `docs/openapi.yaml`, plus a hand-written hosted-login URL helper. It is not
-> published to an npm registry and does not ship a login page, self-service
-> portal, setup UI, developer portal, or admin console. `sso-server` is a pure
-> API backend; those browser experiences are separate frontend projects.
+> `docs/openapi.yaml`, plus browser hosted-login orchestration. It is
+> publishable to npm as `@snaplink/sso-client` and does not ship a login page,
+> self-service portal, setup UI, developer portal, or admin console.
+> `sso-server` is a pure API backend; those browser experiences are separate
+> frontend projects.
 
 `client.ts` is **generated output**, committed the same way generated Go under
 `gen/proto/` is: checked in for consumers to use directly, regenerated from
 `docs/openapi.yaml` by a Go program rather than hand-maintained.
-`hosted-login.ts` is the small hand-written browser-navigation companion; it
-is exported through `index.ts` and is not overwritten by API generation.
+`hosted-login.ts` is the small hand-written browser-navigation companion and
+`browser-login.ts` is the public-client PKCE facade; both are exported through
+`index.ts` and are not overwritten by API generation.
 
 The directory is a valid npm package (`@snaplink/sso-client`) and can be
 consumed from a checked-out Snaplink repository with a `file:` dependency.
@@ -21,11 +23,12 @@ go run ./cmd/gensdk --lang=ts
 
 Regenerate after any change to `docs/openapi.yaml` or
 `ops/build/sdk-surface.json` (run `python cli.py sdk-surface generate`, which
-re-emits every language). There is no Node.js/npm build step in this repo — the
-generator is a plain Go program (`cmd/gensdk`) that parses the YAML spec
-(via the `goccy/go-yaml` dependency already in `go.mod`) and writes a
-plain `.ts` file; nothing here runs `npm install` or `tsc` as part of
-`make ci` or any other repo build target.
+re-emits every language). The generator is a plain Go program (`cmd/gensdk`)
+that parses the YAML spec (via the `goccy/go-yaml` dependency already in
+`go.mod`) and writes a plain `.ts` file. The package's npm build and browser
+tests run in `.github/workflows/sdk-ci.yml`; the protected npm publish path is
+`.github/workflows/sdk-typescript.yml`. The root `make ci` remains Go/API
+focused and does not install the Node toolchain.
 
 The generator reads `docs/openapi.yaml`; it does not discover Go route
 registration. A runtime endpoint missing from OpenAPI cannot appear in this
@@ -50,7 +53,8 @@ aliasing — so a call site is grep-able straight back to its
 `docs/openapi.yaml` operation. The generated client's method exceptions are
 `login()`/`logout()` (plus the `isLoggedIn`/`accessToken` getters): hand-written
 convenience wrappers around `postLogin`/`postLogout`, not generated from an
-operationId — see Usage below.
+operationId. The default browser facade is also exported as `snaplink` — see
+Usage below.
 
 ## Known simplifications in the generator
 
@@ -83,6 +87,64 @@ operationId — see Usage below.
   sending it (use the flat `code`/`assertion` fields instead).
 
 ## Usage
+
+### One-call browser login without a BFF
+
+For a browser SPA, import the default `snaplink` facade and call the same
+login code on every application boot. The first call generates state and
+PKCE, then navigates to the existing Console hosted page at `/login/`. After
+the Console redirects back, the same call validates the callback, exchanges
+the code, and keeps the access token in memory:
+
+```ts
+import snaplink from "@snaplink/sso-client";
+
+const session = await snaplink.login({
+  baseUrl: "https://sso.example.com",
+  clientId: "my-public-spa",
+  loginPageUrl: "https://sso.example.com/login/",
+  redirectUri: `${location.origin}/auth/callback`,
+  returnTo: location.href,
+  scope: ["openid", "profile", "email"],
+});
+
+const me = await snaplink.api.getUserInfo();
+```
+
+For a paid product, prepare activation before the redirect. The SDK sends the
+license key only in the HTTPS request body, stores only the short-lived ticket
+in `sessionStorage`, and claims it automatically after the code exchange:
+
+```ts
+await snaplink.setup({
+  baseUrl: "https://sso.example.com",
+  clientId: "my-public-spa",
+  productId: "pro",
+  licenseKey: "license-from-your-checkout",
+});
+
+await snaplink.login({
+  baseUrl: "https://sso.example.com",
+  clientId: "my-public-spa",
+  redirectUri: `${location.origin}/auth/callback`,
+});
+
+const account = await snaplink.getAccountContext();
+```
+
+The equivalent one-call form is `login({ ..., setup: { productId,
+licenseKey } })`. Use `invitationCode` instead of `licenseKey` for an
+invitation. Do not put either credential in a URL, OAuth `state`, or browser
+local storage; the server resolves the tenant and returns the authoritative
+entitlement and limits.
+
+The application must register `redirectUri` on a public OAuth client and must
+allow the SPA origin through the server's CORS policy. Do not configure a
+client secret: this flow is Authorization Code + PKCE for a public client.
+`returnTo` is constrained to the current origin. When it points to a separate
+route, the SDK uses a one-time `sessionStorage` handoff to return there; the
+access token is then held in memory and is not written to `localStorage`.
+The authorization transaction expires after ten minutes by default.
 
 ### Hosted login: redirect without collecting credentials in the RP
 

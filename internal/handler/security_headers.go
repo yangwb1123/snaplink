@@ -110,7 +110,12 @@ func SecurityHeaders(policy SecurityHeadersPolicy) func(http.Handler) http.Handl
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			nonce := newCSPNonce()
-			r = r.WithContext(core.WithCSPNonce(r.Context(), nonce))
+			// In-place context mutation (the repo convention — see the
+			// tracing and login handlers) rather than rebinding r: outer
+			// middlewares holding this request pointer (the access log)
+			// must still see the CSP nonce context, and downstream code
+			// that captured the pointer keeps a consistent view.
+			*r = *r.WithContext(core.WithCSPNonce(r.Context(), nonce))
 			w2 := &securityHeadersWriter{ResponseWriter: w, policy: policy, nonce: nonce}
 			// HSTS must be set before WriteHeader so it survives a
 			// handler calling WriteHeader + Write directly.

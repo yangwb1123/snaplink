@@ -13,9 +13,9 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/rebac"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/wasmauthz"
 	"github.com/yangwb1123/snaplink/platform/metrics"
-	"github.com/yangwb1123/snaplink/platform/tracing"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
 
@@ -103,14 +103,15 @@ func (s *Server) Mount() {
 }
 
 // mountMiddleware lazily creates the router and installs the global middleware
-// chain (request-id/tracing, tenant, geo, region) in the order the audit
-// enrichment pipeline expects.
+// chain (tenant, geo, region) in the order the audit enrichment pipeline
+// expects. The request-id/trace correlation middleware is NOT Use()-registered
+// anymore — it moved to the outer chain (buildMiddlewareChain) so every
+// request (mounted route or not) gets identical correlation headers (Decision
+// 7 removal list: server_routes.go:113 `router.Use(TracingMiddleware())`
+// deleted).
 func (s *Server) mountMiddleware() {
 	if s.router == nil {
 		s.router = NewStdRouter()
-	}
-	if s.requestIDMW {
-		s.router.Use(TracingMiddleware())
 	}
 	if s.tenantStore != nil {
 		// Tenant resolves before geo so the audit enrichment
@@ -149,6 +150,7 @@ func (s *Server) mountCoreOAuthOIDC() {
 	s.router.GET(PathStatus, s.handleStatus)
 	s.router.GET(PathSetupStatus, s.handleSetupStatus)
 	s.router.POST(PathSetup, s.handleSetup)
+	s.mountActivationRoutes()
 	s.router.GET(PathJWKS, s.handleJWKS)
 	s.mountDiscovery()
 	// Login UI metadata endpoint — public, cacheable, unauthenticated.
@@ -164,7 +166,7 @@ func (s *Server) mountCoreOAuthOIDC() {
 		s.router.GET(PathAuthzGraph, s.handleAuthzReverseExpand)
 	}
 	if s.rebacEngine != nil {
-		s.router.GET(PathAuthzCheck, s.handleAuthzCheckAccess)
+		rebac.MountHotCheckRoute(s.router, s, s.handleAuthzCheckAccess)
 	}
 	s.router.POST(PathLogin, s.handleLogin)
 	// GET is for a real top-level browser navigation ONLY — the "Sign in with
@@ -377,24 +379,35 @@ func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
 		s.rateLimitStore = ratelimit.NewPolicyStore(s.resolvedRateLimitPolicy())
 		inner = ratelimit.DynamicMiddleware(s.rateLimitStore)(inner)
 	}
+	if s.accessLogPolicy != nil {
+		// Access log sits just inside trustedProxies (validated client_ip)
+		// and just outside rate limiting (429 rejections leave evidence).
+		inner = middleware.AccessLogger(s.logger, *s.accessLogPolicy)(inner)
+	}
 	if s.trustedProxies != nil {
 		// TrustedProxies sits just outside the rate limiter so that
 		// KeyByClientIP — called inside the rate-limit middleware — sees
 		// the validated real client IP from the request context rather than
 		// the raw X-Forwarded-For header. It must wrap BEFORE rate limiting;
 		// placing it after would let the limiter bucket on an unvalidated
-		// (forgeable) IP value.
+		// (forgeable) IP value. It also wraps OUTSIDE the access logger so
+		// the access record's client_ip is the validated real IP, and the
+		// request pointer the logger holds is the same one the router
+		// mutates (trace context propagates back up through the pointer).
 		inner = s.trustedProxies.Middleware(inner)
 	}
 	if s.metrics != nil {
 		inner = metrics.Middleware(s.metrics)(inner)
 	}
 	if s.tracingOperation != "" {
-		// Tracing wraps outermost so the span covers the full request
+		// Correlation wraps outermost so the span covers the full request
 		// lifecycle including time spent in metrics / ratelimit /
 		// bodyLimit middlewares — useful when debugging "where did the
-		// 200ms go" on a slow request.
-		inner = tracing.Middleware(s.tracingOperation)(inner)
+		// 200ms go" on a slow request. It replaces the raw otelhttp wrap
+		// (Decision 7): the OTel span is now the single correlation source
+		// that stamps X-Trace-Id/X-Request-Id/Traceparent and the request
+		// context trace_id, feeding the access log and audit events.
+		inner = middleware.Correlation(s.tracingOperation)(inner)
 	}
 	inner = s.wrapPanicRecovery(inner)
 	return inner
@@ -430,8 +443,8 @@ func (s *Server) SetRateLimitPolicy(p ratelimit.Policy) bool {
 }
 
 // wrapInnerMiddlewares applies the innermost slice of the chain in the exact
-// order it ran inline in buildMiddlewareChain: request/response debug logging,
-// then security headers, CORS, compression, and body limiting.
+// order it ran inline in buildMiddlewareChain: security headers, CORS,
+// compression, and body limiting.
 //
 // Security headers wrap the router innermost so they fire during response
 // writing — after inner handlers have set their own headers (Cache-Control:
@@ -442,14 +455,11 @@ func (s *Server) SetRateLimitPolicy(p ratelimit.Policy) bool {
 // traverse routing, but still get counted by metrics and rate-limited like
 // any other request — defensive against preflight floods.
 func (s *Server) wrapInnerMiddlewares(inner http.Handler) http.Handler {
-	if s.debugRequestLogging {
-		inner = middleware.RequestLogger(s.logger, s.debugRequestLogBodies)(inner)
-	}
 	if s.securityHeadersEnabled {
 		inner = handler.SecurityHeaders(s.resolvedSecurityHeadersPolicy())(inner)
 	}
 	if s.corsPolicy != nil {
-		inner = cors.Middleware(*s.corsPolicy)(inner)
+		inner = cors.Middleware(*s.corsPolicy, cors.WithBlockObserver(s))(inner)
 	}
 	inner = s.wrapCompression(inner)
 	if s.bodyLimit > 0 || len(s.bodyLimitByPath) > 0 {

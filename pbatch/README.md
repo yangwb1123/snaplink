@@ -33,7 +33,11 @@
 
 - **fail-closed**：坏 YAML/JSON/负数/NaN 在创建日志或子进程前以退出码 2 拒绝
 - **失败零产物**：拒绝/验证失败的结果不留文件；被拒产物保留有界摘录到 `.pi-batch/rejected/`
+- **安全落盘**：无验证器的直接输出同样限制为 64 KiB，拒绝符号链接目标，并通过临时文件原子替换
 - **证据有界注入**：`evidence.max_bytes`（64KiB）+ `max_sources`（64）
+- **阶段产物可续跑**：成功阶段原子写入 `.out.md`；后续阶段用
+  `from_outputs: [stage_a, stage_b]` 显式选择上游，再以 `aggregate: true`
+  合并有界证据，未选阶段不会被隐式注入。
 - **门禁守护**：`make ci`（502 测试）+ `quality.py --strict` + 3 个检查器自扫描
 - **检查器适用域**：designintelligence/backendexperience/knowledge 面向业务服务代码；
   CLI 工具本体（本包）用 quality + 测试门禁守护（backendexperience 的

@@ -20,6 +20,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
 	"github.com/yangwb1123/snaplink/platform/migrate"
 
@@ -139,6 +140,20 @@ func (s *UserStore) CreateUser(ctx context.Context, name, displayName string) (*
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: random handle: %w", err)
 	}
+	return s.createUser(ctx, name, displayName, handle)
+}
+
+// CreateUserWithHandle implements the optional
+// [webauthn.HandlePreservingUserCreator] capability: creates the user
+// with the exported handle (snapshot restore replay). The handle bytes
+// are copied so post-call mutation cannot corrupt stored state.
+func (s *UserStore) CreateUserWithHandle(ctx context.Context, name, displayName string, handle []byte) (*webauthn.User, error) {
+	cp := make([]byte, len(handle))
+	copy(cp, handle)
+	return s.createUser(ctx, name, displayName, cp)
+}
+
+func (s *UserStore) createUser(ctx context.Context, name, displayName string, handle []byte) (*webauthn.User, error) {
 	u := &webauthn.User{
 		Handle:      handle,
 		Name:        name,
@@ -263,6 +278,62 @@ func scanUser(row *sql.Row) (*webauthn.User, error) {
 		}
 	}
 	return &out, nil
+}
+
+// ListCredentials implements the optional [webauthn.CredentialLister]
+// capability: every enrolled credential as export-local deep copies with
+// the bulky Attestation blob zeroed (AttestationFormat survives —
+// go-webauthn's GetAppID reads it at login). The rows are freshly
+// scanned, so no live pointers escape.
+func (s *UserStore) ListCredentials(ctx context.Context) ([]webauthn.UserCredentialRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+        SELECT name, handle, display_name, credentials
+          FROM webauthn_users`)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: list webauthn_users: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []webauthn.UserCredentialRecord
+	for rows.Next() {
+		var (
+			u         webauthn.User
+			credsJSON string
+		)
+		if err := rows.Scan(&u.Name, &u.Handle, &u.DisplayName, &credsJSON); err != nil {
+			return nil, fmt.Errorf("sqlite: webauthn_user scan: %w", err)
+		}
+		if credsJSON == "" || credsJSON == "[]" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(credsJSON), &u.Credentials); err != nil {
+			return nil, fmt.Errorf("sqlite: unmarshal credentials: %w", err)
+		}
+		for _, c := range u.Credentials {
+			out = append(out, webauthn.UserCredentialRecord{
+				UserName:    u.Name,
+				Handle:      append([]byte(nil), u.Handle...),
+				DisplayName: u.DisplayName,
+				Credential:  projectionCredential(c),
+			})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: list webauthn_users rows: %w", err)
+	}
+	return out, nil
+}
+
+// projectionCredential deep-copies c and zeroes the Attestation blob,
+// producing the verification-relevant projection snapshots carry. Each
+// backend exporter applies the same projection (copy everything, zero the
+// blob) so artifacts are backend-independent.
+func projectionCredential(c gw.Credential) gw.Credential {
+	out := c
+	out.ID = append([]byte(nil), c.ID...)
+	out.PublicKey = append([]byte(nil), c.PublicKey...)
+	out.Transport = append([]protocol.AuthenticatorTransport(nil), c.Transport...)
+	out.Attestation = gw.CredentialAttestation{}
+	return out
 }
 
 func bytesEqual(a, b []byte) bool {

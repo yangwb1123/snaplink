@@ -1,8 +1,11 @@
 package oauth
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+
+	"github.com/yangwb1123/snaplink/domains/permissions"
 )
 
 func TestCloneRawJSON(t *testing.T) {
@@ -127,6 +130,45 @@ func TestValidateAuthorizationDetails_Limits(t *testing.T) {
 			}
 			if !tc.wantErr && err != nil {
 				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateAuthorizationDetailsCatalog(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	provider := permissions.NewMemoryProvider()
+	resources := []*permissions.Resource{
+		{ID: "http-users", TenantID: "tenant-a", ClientID: "rp", Type: permissions.ResourceTypeHTTPAPI, Name: "users", Attributes: map[string]string{"method": "POST", "path": "/api/users/:id"}},
+		{ID: "grpc-users", TenantID: "tenant-a", ClientID: "rp", Type: permissions.ResourceTypeGRPCAPI, Name: "users", Attributes: map[string]string{"service": "users.UserService", "method": "Delete"}},
+		{ID: "graphql-users", TenantID: "tenant-a", ClientID: "rp", Type: permissions.ResourceTypeGraphQLAPI, Name: "users", Attributes: map[string]string{"op": "mutation", "field": "deleteUser"}},
+	}
+	for _, resource := range resources {
+		if err := provider.RegisterResource(ctx, resource); err != nil {
+			t.Fatalf("RegisterResource(%s): %v", resource.ID, err)
+		}
+	}
+	tests := []struct {
+		name    string
+		raw     string
+		tenant  string
+		client  string
+		wantErr bool
+	}{
+		{name: "all catalog types resolve", raw: `[{"type":"http_api","method":"POST","path":"/api/users/42"},{"type":"grpc_api","service":"users.UserService","method":"Delete"},{"type":"graphql_api","op":"mutation","field":"deleteUser"}]`, tenant: "tenant-a", client: "rp"},
+		{name: "unknown resource", raw: `[{"type":"http_api","method":"POST","path":"/api/other/42"}]`, tenant: "tenant-a", client: "rp", wantErr: true},
+		{name: "tenant mismatch", raw: `[{"type":"http_api","method":"POST","path":"/api/users/42"}]`, tenant: "tenant-b", client: "rp", wantErr: true},
+		{name: "non-verifiable type stays shape-only", raw: `[{"type":"payment","amount":100}]`, tenant: "tenant-a", client: "rp"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateAuthorizationDetailsCatalog(json.RawMessage(test.raw), provider, test.tenant, test.client)
+			if test.wantErr && err == nil {
+				t.Fatal("expected catalog validation error")
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("unexpected catalog validation error: %v", err)
 			}
 		})
 	}

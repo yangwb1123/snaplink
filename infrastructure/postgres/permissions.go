@@ -15,6 +15,7 @@ import (
 // migrated by either backend reports the same version table.
 var permissionsMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline_permissions", SQL: permissionsSchema},
+	{Version: 2, Name: "separation_of_duty", SQL: permissionsSoDSchema},
 }
 
 // permissionsSchema is the Postgres baseline for the three permissions tables
@@ -45,6 +46,31 @@ CREATE TABLE IF NOT EXISTS permissions_menus (
 
 CREATE INDEX IF NOT EXISTS idx_permissions_assignments_client
     ON permissions_assignments(client_id);
+`
+
+const permissionsSoDSchema = `
+CREATE TABLE IF NOT EXISTS permissions_conflict_sets (
+    client_id  TEXT NOT NULL,
+    mode       TEXT NOT NULL,
+    set_index  INTEGER NOT NULL,
+    role_code  TEXT NOT NULL,
+    PRIMARY KEY (client_id, mode, set_index, role_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_conflicts_scope
+    ON permissions_conflict_sets(client_id, mode, set_index);
+
+CREATE TABLE IF NOT EXISTS permissions_active_roles (
+    user_id    TEXT NOT NULL,
+    client_id  TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    role_code  TEXT NOT NULL,
+    role_index INTEGER NOT NULL,
+    PRIMARY KEY (user_id, client_id, session_id, role_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_active_session
+    ON permissions_active_roles(user_id, client_id, session_id, role_index);
 `
 
 // PermissionProvider is the Postgres-backed [permissions.Provider]
@@ -109,4 +135,6 @@ var (
 	_ permissions.Provider              = (*PermissionProvider)(nil)
 	_ permissions.MenuLister            = (*PermissionProvider)(nil)
 	_ permissions.GroupMembershipWriter = (*PermissionProvider)(nil)
+	_ permissions.SoDProvider           = (*PermissionProvider)(nil)
+	_ permissions.SessionRoleActivator  = (*PermissionProvider)(nil)
 )

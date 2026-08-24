@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	gw "github.com/go-webauthn/webauthn/webauthn"
+	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
 	"github.com/yangwb1123/snaplink/domains/connections"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/shared/security"
@@ -16,11 +18,23 @@ type catRunner struct {
 	run func() (CategoryCounts, error)
 }
 
+// reportError appends a per-client (non-aborting) restore error to the
+// report. Mirrors runPlan's "%s: %v" error shape so consumers see one
+// uniform format.
+func (s *restoreSession) reportError(cat ResourceCategory, err error) {
+	if s == nil || s.rep == nil {
+		return
+	}
+	s.rep.Errors = append(s.rep.Errors, fmt.Sprintf("%s: %v", cat, err))
+}
+
 // runPlan executes a plan's runners in order, recording per-category counts
 // into rep and aborting on the first error. Categories the snapshot doesn't
 // cover or the caller excluded are skipped entirely (absent from the report,
 // matching the pre-split behavior). Phase B prune counts merge into the
-// Phase A counts of the same category (prunes only ever produce Deleted).
+// Phase A counts of the same category (prunes only ever produce Deleted);
+// RequiresRotation merges the same way so a Phase B runner can never erase
+// a Phase A prediction.
 func runPlan(ctx context.Context, rep *Report, snap *Snapshot, opts RestoreOptions, plan []catRunner) error {
 	for _, p := range plan {
 		if excluded(p.cat, opts.Exclude) || !snap.IncludesCategory(p.cat) {
@@ -32,6 +46,7 @@ func runPlan(ctx context.Context, rep *Report, snap *Snapshot, opts RestoreOptio
 			c.Updated += prev.Updated
 			c.Deleted += prev.Deleted
 			c.Skipped += prev.Skipped
+			c.RequiresRotation += prev.RequiresRotation
 		}
 		rep.Items[p.cat] = c
 		if err != nil {
@@ -46,13 +61,21 @@ func runPlan(ctx context.Context, rep *Report, snap *Snapshot, opts RestoreOptio
 // upsert in dependency order. Menus are deliberately here: replaceMenus
 // wipes via SetMenus's replace semantics per client-roster entry and has no
 // separate prune, so the wipe is a stage, not a Phase B prune.
-func (r *Restorer) stagePlan(ctx context.Context, snap *Snapshot, opts RestoreOptions) []catRunner {
+//
+// The two v3 credential categories run RIGHT AFTER users: webauthn
+// credentials and TOTP seeds both key on restored identities (a passkey
+// whose user does not exist as a restored identity is an orphan; a seed
+// whose user is absent is inert). The tenant→clients→users prefix order is
+// load-bearing and must not be disturbed.
+func (r *Restorer) stagePlan(ctx context.Context, snap *Snapshot, opts RestoreOptions, sess *restoreSession) []catRunner {
 	return []catRunner{
 		{CategoryTenants, func() (CategoryCounts, error) { return r.stageTenants(ctx, snap, opts) }},
 		{CategoryTenantDomains, func() (CategoryCounts, error) { return r.stageTenantDomains(ctx, snap, opts) }},
 		{CategoryConnections, func() (CategoryCounts, error) { return r.stageConnections(ctx, snap, opts) }},
-		{CategoryClients, func() (CategoryCounts, error) { return r.stageClients(ctx, snap, opts) }},
+		{CategoryClients, func() (CategoryCounts, error) { return r.stageClients(ctx, snap, opts, sess) }},
 		{CategoryUsers, func() (CategoryCounts, error) { return r.stageUsers(ctx, snap, opts) }},
+		{CategoryWebAuthn, func() (CategoryCounts, error) { return r.stageWebAuthn(ctx, snap, opts) }},
+		{CategoryTotpSeeds, func() (CategoryCounts, error) { return r.stageTotpSeeds(ctx, snap, opts, sess) }},
 		{CategoryPairwise, func() (CategoryCounts, error) { return r.stagePairwise(ctx, snap, opts) }},
 		{CategoryRoles, func() (CategoryCounts, error) { return r.stageRoles(ctx, snap, opts) }},
 		{CategoryMenus, func() (CategoryCounts, error) { return r.stageMenus(ctx, snap, opts) }},
@@ -436,4 +459,18 @@ func RollbackExcludeFor(src *Snapshot, originalExclude []ResourceCategory) []Res
 		}
 	}
 	return out
+}
+
+// replayCredentialExtensions persists the record's SDK-captured extension
+// metadata when the store supports it; an absent capability leaves the
+// extensions nil ("unknown") — the documented safe default. A setter error
+// aborts the category like any other replay error (fail-closed).
+func replayCredentialExtensions(ctx context.Context, extSetter webauthn.CredentialExtensionSetter, rec webauthn.UserCredentialRecord, cred *gw.Credential) error {
+	if extSetter == nil || !extensionsPresent(rec.Extensions) {
+		return nil
+	}
+	if err := extSetter.SetCredentialExtensions(ctx, rec.UserName, cred.ID, rec.Extensions); err != nil {
+		return fmt.Errorf("set webauthn extensions for %q: %w", rec.UserName, err)
+	}
+	return nil
 }

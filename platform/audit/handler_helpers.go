@@ -2,13 +2,14 @@ package audit
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/platform/geo"
+	"github.com/yangwb1123/snaplink/platform/tracing"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security/peertrust"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // tracer is the package-level helper for parsing W3C traceparent headers
@@ -26,31 +27,48 @@ const metaKeyRegionServing = "region.serving"
 
 // EventFromRequest builds an audit.Event pre-populated with HTTP +
 // transport metadata pulled from ctx: RequestID, TraceID/SpanID/
-// ParentSpanID (when TracingMiddleware ran), ActorIP, UserAgent,
+// ParentSpanID (span-first, Decision 8 of
+// docs/design/middleware-observability-unified.md), ActorIP, UserAgent,
 // tenant.* metadata (when tenant middleware ran), and geo.* metadata
 // (when the geo middleware is wired). Handlers fill the rest.
 //
-// TracingMiddleware populates the headers this function reads;
-// without that middleware installed, RequestID/TraceID/SpanID stay
-// empty. GeoMiddleware similarly populates the geo metadata keys;
-// without it, no geo.* metadata appears.
+// The OTel span is the single source of truth for trace correlation: a
+// live request span (real provider) wins over headers, even hostile ones.
+// Header parsing remains only as a fallback for callers outside the
+// middleware chain (embedded SDK users who propagate manually). Without
+// the Correlation middleware installed, RequestID stays empty; without a
+// real provider, TraceID/SpanID/ParentSpanID stay empty. GeoMiddleware
+// similarly populates the geo metadata keys; without it, no geo.*
+// metadata appears.
 func EventFromRequest(ctx core.HandlerContext) *Event {
-	r := ctx.Request()
+	e := eventFromHTTPRequest(ctx.Request())
+	EnrichTenant(ctx, e)
+	EnrichGeo(ctx, e)
+	EnrichRegion(ctx, e)
+	return e
+}
+
+func eventFromHTTPRequest(r *http.Request) *Event {
 	e := &Event{
-		RequestID:    r.Header.Get(core.HeaderRequestID),
-		ParentSpanID: r.Header.Get(core.HeaderParentSpanID),
-		ActorIP:      ClientIP(r),
-		UserAgent:    r.Header.Get("User-Agent"),
+		RequestID: r.Header.Get(core.HeaderRequestID),
+		ActorIP:   ClientIP(r),
+		UserAgent: r.Header.Get("User-Agent"),
 	}
-	if tp := r.Header.Get(core.HeaderTraceparent); tp != "" {
+	// Span first: ParentSpanID comes from the span's ACTUAL parent (the
+	// real span tree), not the legacy X-Parent-Span-Id header the deleted
+	// Tracing middleware reconstructed. tracing.ParentSpanID is the seam
+	// because otel's public Span interface exposes no Parent() (drift
+	// ruling vs the design's sample code, which called span.Parent()).
+	if sc := trace.SpanFromContext(r.Context()).SpanContext(); sc.IsValid() && sc.HasTraceID() {
+		e.TraceID = sc.TraceID().String()
+		e.SpanID = sc.SpanID().String()
+		e.ParentSpanID = tracing.ParentSpanID(r.Context())
+	} else if tp := r.Header.Get(core.HeaderTraceparent); tp != "" {
 		if tc, err := tracer.ParseTraceparent(tp); err == nil {
 			e.TraceID = tc.TraceID
 			e.SpanID = tc.SpanID
 		}
 	}
-	EnrichTenant(ctx, e)
-	EnrichGeo(ctx, e)
-	EnrichRegion(ctx, e)
 	return e
 }
 
@@ -120,21 +138,6 @@ func SetMeta(e *Event, key, val string) {
 // ClientIP extracts the apparent client IP using the standard
 // precedence: X-Forwarded-For (first hop) → X-Real-IP → RemoteAddr
 // (port stripped). Only trust forwarded headers behind a known edge.
-func ClientIP(r *http.Request) string {
-	if info, ok := peertrust.RequestInfoFrom(r); ok && info.ClientIP != "" {
-		return info.ClientIP
-	}
-	if h := r.Header.Get("X-Forwarded-For"); h != "" {
-		if i := strings.IndexByte(h, ','); i > 0 {
-			return strings.TrimSpace(h[:i])
-		}
-		return strings.TrimSpace(h)
-	}
-	if h := r.Header.Get("X-Real-IP"); h != "" {
-		return h
-	}
-	if i := strings.LastIndexByte(r.RemoteAddr, ':'); i > 0 {
-		return r.RemoteAddr[:i]
-	}
-	return r.RemoteAddr
-}
+// Delegates to the shared-kernel implementation (peertrust.ClientIP) so
+// the audit event path and the access log share one byte-identical rule.
+func ClientIP(r *http.Request) string { return peertrust.ClientIP(r) }

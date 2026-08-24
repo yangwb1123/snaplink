@@ -398,7 +398,7 @@ func TestGenerateTS_FormBranch(t *testing.T) {
 
 // TestGeneratePy_FormBranch (AC2(c)) pins the generated Python: the
 // _form_encode runtime, the form flag on the seven ops, the C1 guard,
-// body credentials retained in post_token (Python has no Basic path),
+// Basic authentication on the four confidential credential operations,
 // and the unchanged JSON-only/body-less methods.
 func TestGeneratePy_FormBranch(t *testing.T) {
 	ops, reg := realExtract(t)
@@ -406,7 +406,9 @@ func TestGeneratePy_FormBranch(t *testing.T) {
 	for _, want := range []string{
 		"def _form_encode(body: Dict[str, Any], blocked_fields: Optional[List[str]] = None) -> str:",
 		`headers["Content-Type"] = "application/x-www-form-urlencoded"`,
-		`data = _form_encode(body, form_blocked_fields).encode("utf-8")`,
+		"client_auth: bool = False,",
+		"authenticated_body = self._with_client_auth(body, headers) if client_auth else body",
+		`data = _form_encode(authenticated_body, form_blocked_fields).encode("utf-8")`,
 		"return urllib.parse.urlencode(encoded, doseq=True)",
 		`encoded[key] = "true" if value else "false"`,
 		// All seven ops carry form=True; post_token keeps the body

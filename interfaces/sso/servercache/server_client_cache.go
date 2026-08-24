@@ -321,6 +321,7 @@ func cloneClient(in *core.Client) *core.Client {
 	}
 	out := *in // copies every scalar field by value
 	out.RedirectURIs = cloneStrings(in.RedirectURIs)
+	out.RedirectURIPatterns = cloneStrings(in.RedirectURIPatterns)
 	out.AllowedScopes = cloneStrings(in.AllowedScopes)
 	out.AllowedAuthenticators = cloneStrings(in.AllowedAuthenticators)
 	out.AllowedResources = cloneStrings(in.AllowedResources)

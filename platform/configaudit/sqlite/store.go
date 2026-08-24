@@ -28,6 +28,8 @@ import (
 // changes append v2, v3, ... here rather than editing the baseline.
 var migrations = []migrate.Migration{
 	{Version: 1, Name: "baseline_config_history", SQL: schema},
+	{Version: 2, Name: "applied_config_baseline", SQL: appliedSchema},
+	{Version: 3, Name: "config_canary_state", SQL: canarySchema},
 }
 
 // schema mirrors configaudit.Entry field-by-field. The patch (a []Op slice)
@@ -51,12 +53,30 @@ CREATE INDEX IF NOT EXISTS idx_config_history_recorded_at ON config_history(reco
 CREATE INDEX IF NOT EXISTS idx_config_history_resource     ON config_history(resource);
 `
 
+// appliedSchema mirrors configaudit.AppliedVersion field-by-field; the
+// redacted snapshot is stored as a JSON blob. Rows are append-only (the
+// version chain), with the latest = the highest rowid.
+const appliedSchema = `
+CREATE TABLE IF NOT EXISTS config_applied (
+    id          TEXT PRIMARY KEY,
+    applied_at  INTEGER NOT NULL,
+    actor       TEXT NOT NULL,
+    digest      TEXT NOT NULL,
+    reason      TEXT NOT NULL DEFAULT '',
+    prev_id     TEXT NOT NULL DEFAULT '',
+    snapshot_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_config_applied_applied_at ON config_applied(applied_at);
+`
+
 // Store is the SQLite-backed [configaudit.Store].
 type Store struct {
 	db *sql.DB
 }
 
 var _ configaudit.Store = (*Store)(nil)
+var _ configaudit.ConditionalRollbackStore = (*Store)(nil)
 
 // New opens dsn, migrates the schema, and returns the store. Caller owns
 // Close().
@@ -177,6 +197,209 @@ func scanEntries(rows *sql.Rows) ([]configaudit.Entry, error) {
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// Apply atomically replaces the applied-config baseline with v (linking
+// v.PrevID to the current latest) and appends the matching config_history
+// entry in ONE transaction: any failure rolls back both, so there is no
+// half-state. The history entry's patch is the redacted Diff of the
+// redacted baselines (the only forms ever stored).
+func (s *Store) Apply(ctx context.Context, v configaudit.AppliedVersion) (configaudit.AppliedVersion, error) {
+	if s == nil || s.db == nil {
+		return v, errors.New("configaudit/sqlite: closed")
+	}
+	if v.ID == "" {
+		v.ID = newEntryID()
+	}
+	if v.AppliedAt.IsZero() {
+		v.AppliedAt = time.Now().UTC()
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return v, fmt.Errorf("configaudit/sqlite: apply begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	prev, err := latestApplied(ctx, tx)
+	if err != nil && !errors.Is(err, configaudit.ErrNoAppliedVersion) {
+		return v, err
+	}
+	if err := rejectObservingCanary(ctx, tx); err != nil {
+		return v, err
+	}
+	v.PrevID = prev.ID
+	snapshotJSON, err := json.Marshal(v.Snapshot)
+	if err != nil {
+		return v, fmt.Errorf("configaudit/sqlite: apply marshal snapshot: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+        INSERT INTO config_applied (id, applied_at, actor, digest, reason, prev_id, snapshot_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.AppliedAt.UnixNano(), v.Actor, v.Digest, v.Reason, v.PrevID, string(snapshotJSON),
+	); err != nil {
+		return v, fmt.Errorf("configaudit/sqlite: apply insert baseline: %w", err)
+	}
+	if err := insertApplyEntry(ctx, tx, v, prev); err != nil {
+		return v, err
+	}
+	if err := tx.Commit(); err != nil {
+		return v, fmt.Errorf("configaudit/sqlite: apply commit: %w", err)
+	}
+	return v, nil
+}
+
+// Applied returns the latest applied-config baseline, or
+// configaudit.ErrNoAppliedVersion before the first Apply.
+func (s *Store) Applied(ctx context.Context) (configaudit.AppliedVersion, error) {
+	if s == nil || s.db == nil {
+		return configaudit.AppliedVersion{}, errors.New("configaudit/sqlite: closed")
+	}
+	return latestApplied(ctx, s.db)
+}
+
+// Rollback re-declares the previous baseline as the new latest (a NEW
+// version whose Snapshot is the previous version's), appending the
+// config_history entry in the same transaction. ErrNoAppliedVersion when
+// there is no baseline or no predecessor.
+func (s *Store) Rollback(ctx context.Context, actor, reason string) (configaudit.AppliedVersion, error) {
+	return s.rollback(ctx, "", actor, reason)
+}
+
+// RollbackIfCurrent performs the atomic expected-version guarded rollback
+// used by the explicit operator path.
+func (s *Store) RollbackIfCurrent(ctx context.Context, expectedID, actor, reason string) (configaudit.AppliedVersion, error) {
+	return s.rollback(ctx, expectedID, actor, reason)
+}
+
+func (s *Store) rollback(ctx context.Context, expectedID, actor, reason string) (configaudit.AppliedVersion, error) {
+	if s == nil || s.db == nil {
+		return configaudit.AppliedVersion{}, errors.New("configaudit/sqlite: closed")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return configaudit.AppliedVersion{}, fmt.Errorf("configaudit/sqlite: rollback begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	cur, err := latestApplied(ctx, tx)
+	if err != nil {
+		return configaudit.AppliedVersion{}, err
+	}
+	if err := rejectObservingCanary(ctx, tx); err != nil {
+		return configaudit.AppliedVersion{}, err
+	}
+	if expectedID != "" && cur.ID != expectedID {
+		return configaudit.AppliedVersion{}, configaudit.ErrRollbackConflict
+	}
+	prev, err := rollbackPrevious(ctx, tx, cur)
+	if err != nil {
+		return configaudit.AppliedVersion{}, err
+	}
+	v := configaudit.AppliedVersion{
+		ID:        newEntryID(),
+		AppliedAt: time.Now().UTC(),
+		Actor:     actor,
+		Digest:    prev.Digest,
+		Reason:    reason,
+		PrevID:    cur.ID,
+		Snapshot:  prev.Snapshot,
+	}
+	if err := insertRollbackVersion(ctx, tx, v, cur); err != nil {
+		return configaudit.AppliedVersion{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return configaudit.AppliedVersion{}, fmt.Errorf("configaudit/sqlite: rollback commit: %w", err)
+	}
+	return v, nil
+}
+
+func insertRollbackVersion(ctx context.Context, tx *sql.Tx, v, cur configaudit.AppliedVersion) error {
+	snapshotJSON, err := json.Marshal(v.Snapshot)
+	if err != nil {
+		return fmt.Errorf("configaudit/sqlite: rollback marshal snapshot: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+        INSERT INTO config_applied (id, applied_at, actor, digest, reason, prev_id, snapshot_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.AppliedAt.UnixNano(), v.Actor, v.Digest, v.Reason, cur.ID, string(snapshotJSON),
+	); err != nil {
+		return fmt.Errorf("configaudit/sqlite: rollback insert baseline: %w", err)
+	}
+	return insertApplyEntry(ctx, tx, v, cur)
+}
+
+// latestApplied reads the newest config_applied row from db (a *sql.DB or
+// *sql.Tx — both satisfy the queryer interface). ErrNoAppliedVersion when
+// the table is empty.
+func latestApplied(ctx context.Context, q queryer) (configaudit.AppliedVersion, error) {
+	return scanApplied(ctx, q, `SELECT id, applied_at, actor, digest, reason, prev_id, snapshot_json
+        FROM config_applied ORDER BY applied_at DESC, rowid DESC LIMIT 1`)
+}
+
+// appliedByID reads one config_applied row by id.
+func appliedByID(ctx context.Context, q queryer, id string) (configaudit.AppliedVersion, error) {
+	return scanApplied(ctx, q, `SELECT id, applied_at, actor, digest, reason, prev_id, snapshot_json
+        FROM config_applied WHERE id = ?`, id)
+}
+
+// scanApplied runs query and scans the first row into an AppliedVersion.
+func scanApplied(ctx context.Context, q queryer, query string, args ...any) (configaudit.AppliedVersion, error) {
+	var (
+		v            configaudit.AppliedVersion
+		appliedAtNS  int64
+		snapshotJSON string
+	)
+	row := q.QueryRowContext(ctx, query, args...)
+	err := row.Scan(&v.ID, &appliedAtNS, &v.Actor, &v.Digest, &v.Reason, &v.PrevID, &snapshotJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return configaudit.AppliedVersion{}, configaudit.ErrNoAppliedVersion
+	}
+	if err != nil {
+		return configaudit.AppliedVersion{}, fmt.Errorf("configaudit/sqlite: scan applied: %w", err)
+	}
+	v.AppliedAt = time.Unix(0, appliedAtNS).UTC()
+	if snapshotJSON != "" {
+		if err := json.Unmarshal([]byte(snapshotJSON), &v.Snapshot); err != nil {
+			return configaudit.AppliedVersion{}, fmt.Errorf("configaudit/sqlite: unmarshal snapshot: %w", err)
+		}
+	}
+	return v, nil
+}
+
+// insertApplyEntry appends the config_history row for an apply/rollback:
+// resource "config", the redacted patch Diff(prev, new) — computed here,
+// inside the store's transaction, so a concurrent apply can never link the
+// wrong before/after pair (the read-modify-write is atomic).
+func insertApplyEntry(ctx context.Context, tx *sql.Tx, v configaudit.AppliedVersion, prev configaudit.AppliedVersion) error {
+	entry := configaudit.Entry{
+		ID:         newEntryID(),
+		RecordedAt: v.AppliedAt,
+		Actor:      v.Actor,
+		Resource:   "config",
+		ResourceID: v.ID,
+		Patch:      configaudit.RedactOps(configaudit.Diff(prev.Snapshot, v.Snapshot)),
+		Reason:     v.Reason,
+	}
+	patchJSON, err := json.Marshal(entry.Patch)
+	if err != nil {
+		return fmt.Errorf("configaudit/sqlite: marshal patch: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+        INSERT INTO config_history (
+            id, recorded_at, actor, tenant_id, resource, resource_id, patch_json, prev_hash, reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		entry.ID, entry.RecordedAt.UnixNano(), entry.Actor, entry.TenantID, entry.Resource,
+		entry.ResourceID, string(patchJSON), entry.PrevHash, entry.Reason,
+	); err != nil {
+		return fmt.Errorf("configaudit/sqlite: insert apply history: %w", err)
+	}
+	return nil
+}
+
+// queryer is the minimal *sql.DB / *sql.Tx shared interface scanApplied and
+// latestApplied need.
+type queryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // newEntryID mints a random hex ID, mirroring configaudit.MemoryStore's

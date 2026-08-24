@@ -18,6 +18,7 @@ const (
 	EventCallbackFailure EventType = "callback_failure"
 	EventClientAccess    EventType = "client_access"
 	EventPermissionQuery EventType = "permission_query"
+	EventPermissionCheck EventType = "permission_check"
 )
 
 // DCR (RFC 7591/7592) lifecycle events.
@@ -31,6 +32,11 @@ const (
 const (
 	EventNetPolicyApply  EventType = "netpolicy_apply"
 	EventNetPolicyDelete EventType = "netpolicy_delete"
+)
+
+// CORS rejection events.
+const (
+	EventCORSOriginBlocked EventType = "cors_origin_blocked"
 )
 
 // OIDC Back-Channel Logout 1.0 notification attempt.
@@ -236,11 +242,13 @@ var KnownEventTypes = map[EventType]struct{}{
 	// core auth + token lifecycle
 	EventLogin: {}, EventLoginFailure: {}, EventNewDeviceLogin: {}, EventNewLocation: {}, EventTrustDecay: {}, EventLogout: {}, EventTokenIssued: {},
 	EventTokenRevoked: {}, EventCodeSent: {}, EventCallbackFailure: {},
-	EventClientAccess: {}, EventPermissionQuery: {},
+	EventClientAccess: {}, EventPermissionQuery: {}, EventPermissionCheck: {},
 	// DCR
 	EventClientRegistered: {}, EventClientUpdated: {}, EventClientDeleted: {},
 	// network policy
 	EventNetPolicyApply: {}, EventNetPolicyDelete: {},
+	// CORS
+	EventCORSOriginBlocked: {},
 	// back-channel logout + partial revoke
 	EventLogoutNotified: {}, EventPartialRevokeFailure: {},
 	// tenant + lockout
@@ -289,7 +297,8 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventAdminRefreshTokensRevoked: {},
 	EventAdminTenantMemberAdded:    {}, EventAdminTenantMemberRemoved: {}, EventAdminRoleAdded: {},
 	EventAdminRoleUpdated: {}, EventAdminRoleRemoved: {}, EventAdminRoleAssigned: {},
-	EventAdminRoleUnassigned: {}, EventAdminMenusUpdated: {}, EventAdminTenantCreated: {},
+	EventAdminRoleUnassigned: {}, EventAdminMenusUpdated: {},
+	EventAdminResourceRegistered: {}, EventAdminResourceRemoved: {}, EventAdminTenantCreated: {},
 	EventAdminTenantUpdated: {}, EventAdminTenantDeleted: {}, EventAdminTenantStatusChanged: {},
 	EventAdminDomainCreated: {}, EventAdminDomainUpdated: {}, EventAdminDomainDeleted: {},
 	EventAdminSubjectExported: {}, EventAdminSubjectErased: {}, EventAdminGRPCCalled: {},
@@ -304,6 +313,9 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventAdminWebhookSubscriptionCreated:     {}, EventAdminWebhookSubscriptionDeleted: {},
 	EventAdminChangeProposed: {}, EventAdminChangeApproved: {}, EventAdminChangeRejected: {},
 	EventAdminChangeApplied: {}, EventAdminChangeApplyFailed: {},
+	// config apply/rollback (declared peer-config baseline write path)
+	EventAdminConfigApplied: {}, EventAdminConfigRolledBack: {},
+	EventConfigCanaryStarted: {}, EventConfigCanaryConfirmed: {}, EventConfigCanaryRolledBack: {},
 	EventAdminWriteQuotaExceeded: {}, EventAdminIPDenied: {},
 	// system / platform (event_types_system.go)
 	EventBootstrapStepApplied: {}, EventBootstrapStepSkipped: {}, EventBootstrapStepFailed: {},
@@ -319,8 +331,11 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventConnectionAuthenticatorBuildFailed: {},
 	EventIdempotencyCaptureMissing:          {}, EventTenantQuotaStoreFailure: {},
 	EventClientSecretExpiring: {}, EventAuditChainCheckpoint: {},
-	EventTenantQuotaProjectionApplied: {},
-	EventRoleResolutionFailed:         {},
+	EventTenantQuotaProjectionApplied:      {},
+	EventRoleResolutionFailed:              {},
+	EventWebhookLifecycleTransition:        {},
+	EventExternalWorkerLifecycleTransition: {},
+	EventReBACLifecycleTransition:          {},
 	// agent delegation + identity linking + cross-tenant exchange + DR
 	EventAgentDelegationTokenIssued: {}, EventAgentSessionRevoked: {},
 	EventIdentityUnlinked: {}, EventIdentityMerged: {}, EventIdentityMergeRejected: {},

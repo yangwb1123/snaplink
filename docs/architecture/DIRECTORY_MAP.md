@@ -14,21 +14,26 @@ shared/          dependency-free kernel        core · spi · security · i18n �
 domains/         business capabilities         tenant (commerce) · region (policy store: memory|sqlite) · permissions · federation · connections · metering (usageledger) · anomaly · authenticators · conditionalaccess · identitylink · threataction · tokenanomaly · tokenexchange · tokenpolicy · tokenusage · userlifecycle
 protocols/       identity-protocol use-cases   oauth · oidc · scim · fapi · caep · selfservice · compliance · lifecyclereactions · scimprovision
 platform/        cross-cutting capabilities    cluster · signingkeys · registry · netpolicy · metrics · tracing · bootstrap · buildinfo · releases · migrate · geo · audit · sse · configaudit · lifecycle (dr · rotation)
-interfaces/      inbound delivery + Server API grpcserver · adapters (Router backends std/gin/echo, byte-normalized unmatched responses; contract in docs/adapters.md, reference usage in docs/examples/embed-*) · admin · apidocs · commerce · metering · middleware · cors · ratelimit · ssoclient · snapshot · sso (public API-only Server)
+interfaces/      inbound delivery + Server API grpcserver · adapters (Router backends std/gin/echo, byte-normalized unmatched responses; contract in docs/adapters.md, reference usage in docs/examples/embed-*) · admin · apidocs · commerce · metering · middleware · cors · ratelimit · ssoclient · snapshot · sso (public API-only Server) · ssoext (operator-extension host API: typed name-addressed registrars on platform/registry/typed — SAML handlers + LDAP/Kerberos/RADIUS authenticator families + the canonical external-signer registry behind keys.signing.external)
 infrastructure/  concrete SPI impls            defaultimpl · auditgovernance · redis · postgres (tenantcommerce, tenantquota, usageledger) · sms · optional nested ldap/kerberos/radius/saml/extauthz/kafka/mqtt/kms modules
-internal/        unexported helpers            internal/auth/* (domains) · internal/{handler,adminuser} (interfaces)
+internal/        unexported helpers            internal/auth/* (domains) · internal/{handler,adminuser} (interfaces) · internal/composition (small-edition composition layer)
 cmd/ · config/ · docs/ · gen/ · proto/ · test/ · ops/ · checks/  composition/tooling
 ```
 
 `cmd/sso-server/servermodules` is the explicit cold-module registration hook
-for the stock compatibility composition. `prototype` and `minimal` target the
-dedicated `cmd/sso-minimal` composition root. `prototype` exposes SSO/OAuth,
-basic JSON logs and the stable `default` tenant seam; `minimal` adds OIDC and
-tracing. Both share `interfaces/sso` (the product SDK surface) but are
-physically isolated from the durable/admin/observability graph — the
-boundary is declared in `ops/build/profile-isolation.json` and proven by
+for the stock compatibility composition. `prototype` and `minimal` have
+dedicated composition roots — `cmd/sso-prototype` and `cmd/sso-minimal` —
+sharing edition-generic composition code in `internal/composition`.
+`prototype` exposes SSO/OAuth, basic JSON logs and the stable `default` tenant
+seam; `minimal` adds OIDC and tracing. Both share `interfaces/sso` (the
+product SDK surface) and are physically isolated from the durable/
+admin/observability graph — the boundary is declared in
+`ops/build/profile-isolation.json` and proven by
 `python cli.py profiles evidence` (packages, modules, symbols, size; see
-[`profile-isolation.md`](profile-isolation.md)). Neither
+[`profile-isolation.md`](profile-isolation.md)). Each small edition also
+isolates the other edition's composition root (prototype never links
+`cmd/sso-minimal` and vice versa), so the minimal-only OIDC surface code is
+compiled only into the minimal binary. Neither
 bundles a login UI or represents a production topology.
 
 `cmd/snaplink-billing`, `cmd/snaplink-stripe-adapter`, and

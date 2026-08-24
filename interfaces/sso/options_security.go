@@ -16,6 +16,10 @@ func WithJTIReplayStore(store security.JTIReplayStore) Option {
 	return func(s *Server) { s.jtiReplayStore = store }
 }
 
+// WithRARCatalogCheck enables PAR-time verification of catalog-backed RAR
+// entries when the permission provider exposes the resource extension.
+func WithRARCatalogCheck() Option { return func(s *Server) { s.rarCatalogCheck = true } }
+
 // WithJTIReplayFailClosed makes a TRANSIENT jti-replay STORE ERROR
 // reject the request instead of falling through (fail-open).
 //
@@ -417,7 +421,7 @@ func WithAuditRecorder(r *audit.Recorder) Option {
 // recorder is also wired, the Server taps its audit pipeline so the
 // transmitter sees every recorded event, maps the small mapped subset
 // (refresh-token-family reuse, tenant tokens revoked, scoped admin token
-// revoke) onto a signed Security Event Token (RFC 8417), and PUSHES it
+// revoke, user-lifecycle transitions) onto a signed Security Event Token (RFC 8417), and PUSHES it
 // async + best-effort to the AFFECTED client's registered receiver —
 // scoped to the event's client/tenant so one RP's revocation never leaks
 // to another. The SET is signed by the SAME key already in JWKS, so RPs
@@ -480,21 +484,6 @@ func WithCAEPReceiver(rcv *caep.Receiver) Option {
 func WithAuditAPI() Option {
 	return func(s *Server) { s.auditAPI = true }
 }
-
-// WithTracingMiddleware installs TracingMiddleware ahead of all routes.
-// It propagates W3C Traceparent (trace_id + span chaining) and X-Request-Id
-// (single-hop correlation) so audit events automatically pick them up.
-func WithTracingMiddleware() Option {
-	return func(s *Server) { s.requestIDMW = true }
-}
-
-// WithRequestIDMiddleware is a back-compat alias for WithTracingMiddleware.
-// New code should call WithTracingMiddleware directly.
-//
-// Deprecated: use WithTracingMiddleware. The middleware was renamed once
-// it grew W3C Traceparent propagation alongside the original X-Request-Id
-// stamping; the name is kept here so existing call sites still compile.
-func WithRequestIDMiddleware() Option { return WithTracingMiddleware() }
 
 // WithPermissionProvider enables the per-user permission/role/menu lookup
 // endpoints. Without this option, those endpoints respond 501.

@@ -2,6 +2,7 @@ package sso
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,13 +15,40 @@ import (
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
+// PathAdminConfigApply / PathAdminConfigRollback re-export core's paths here
+// for the apply/rollback route mounts below — aliases.go is at its frozen
+// 500-line budget, and this file hosts the config-audit mount already (the
+// same localization precedent as the compliance path consts above).
+const (
+	PathAdminConfigApply    = core.PathAdminConfigApply
+	PathAdminConfigRollback = core.PathAdminConfigRollback
+)
+
 // ConfigAuditStore returns nil when runtime configuration history is unwired.
 func (s *Server) ConfigAuditStore() configaudit.Store { return s.configAuditStore }
 
+// ConfigCanaryController returns the optional configuration-baseline canary.
+func (s *Server) ConfigCanaryController() *configaudit.CanaryController {
+	return s.configCanaryController
+}
+
 // AppliedConfigSnapshot returns the redacted effective configuration captured
-// at startup. The sentinel lets the HTTP layer distinguish unwired snapshots
-// from an internal failure and answer 501.
+// at startup, OR — after a POST /api/v1/admin/config/apply established a
+// declared peer-config baseline — the redacted latest applied baseline from
+// the config-audit store (see docs/design/config-apply-mode.md Decision 2).
+// The sentinel lets the HTTP layer distinguish unwired snapshots from an
+// internal failure and answer 501. The baseline lookup is fail-open: a store
+// read error logs and falls back to the startup capture (observability view,
+// never a decision input), and before the FIRST apply the store has no
+// baseline so every currently-reachable state is byte-identical to today.
 func (s *Server) AppliedConfigSnapshot() (map[string]any, error) {
+	if s.configAuditStore != nil {
+		if v, err := s.configAuditStore.Applied(context.Background()); err == nil && v.Snapshot != nil {
+			return v.Snapshot, nil
+		} else if err != nil && !errors.Is(err, configaudit.ErrNoAppliedVersion) {
+			s.logger.Error("config audit: applied baseline lookup failed, serving startup capture", "error", err)
+		}
+	}
 	if s.configAppliedSnapshot == nil {
 		return nil, configaudit.ErrSnapshotUnavailable
 	}
@@ -46,7 +74,10 @@ func (s *Server) applyConfigAuditWiring() {
 
 // mountConfigAuditAPI exposes snapshot routes only when a snapshot source
 // exists. History is independent so deployments that capture changes without
-// snapshots do not mount routes that would fail on every request.
+// snapshots do not mount routes that would fail on every request. The
+// apply/rollback write pair (declared peer-config baseline) mounts only when
+// BOTH a snapshot source AND a store exist — a build with either missing
+// keeps the route set byte-identical.
 func (s *Server) mountConfigAuditAPI(api Router) {
 	if s.configAppliedSnapshot != nil || s.configRunningSnapshotFn != nil {
 		api.GET(PathAdminConfigRunning, s.handleConfigRunning)
@@ -57,6 +88,10 @@ func (s *Server) mountConfigAuditAPI(api Router) {
 	if s.configAuditStore != nil {
 		api.GET(PathAdminConfigHistory, s.handleConfigHistory)
 	}
+	if (s.configAppliedSnapshot != nil || s.configRunningSnapshotFn != nil) && s.configAuditStore != nil {
+		api.POST(PathAdminConfigApply, s.handleConfigApply)
+		api.POST(PathAdminConfigRollback, s.handleConfigRollback)
+	}
 }
 
 func (s *Server) handleConfigRunning(ctx HandlerContext)     { configaudit.HandleRunning(s, ctx) }
@@ -64,6 +99,19 @@ func (s *Server) handleConfigApplied(ctx HandlerContext)     { configaudit.Handl
 func (s *Server) handleConfigDiff(ctx HandlerContext)        { configaudit.HandleDiff(s, ctx) }
 func (s *Server) handleConfigClusterDiff(ctx HandlerContext) { configaudit.HandleClusterDiff(s, ctx) }
 func (s *Server) handleConfigHistory(ctx HandlerContext)     { configaudit.HandleHistory(s, ctx) }
+
+// handleConfigApply / handleConfigRollback stamp the credentialed-response
+// no-store headers (the established write-endpoint hygiene, see
+// server_extensions.go tokenNoStoreHeaders) BEFORE delegating — the platform
+// handler stays transport-independent.
+func (s *Server) handleConfigApply(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	configaudit.HandleApply(s, ctx)
+}
+func (s *Server) handleConfigRollback(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	configaudit.HandleRollback(s, ctx)
+}
 
 // backupStampLayout is fixed-width + zero-padded so lexicographic order
 // of filenames equals chronological order — the pruner relies on it.

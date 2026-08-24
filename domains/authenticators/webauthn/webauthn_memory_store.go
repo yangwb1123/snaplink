@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	gw "github.com/go-webauthn/webauthn/webauthn"
 )
 
@@ -58,6 +59,20 @@ func (m *MemoryUserStore) CreateUser(_ context.Context, name, displayName string
 	if _, err := rand.Read(handle); err != nil {
 		return nil, fmt.Errorf("webauthn: random handle: %w", err)
 	}
+	return m.createUser(name, displayName, handle)
+}
+
+// CreateUserWithHandle implements the optional [HandlePreservingUserCreator]
+// capability: creates the user with the caller-supplied handle (the snapshot
+// restorer replays exported handles through it). The handle bytes are copied
+// so post-call mutation cannot corrupt stored state.
+func (m *MemoryUserStore) CreateUserWithHandle(_ context.Context, name, displayName string, handle []byte) (*User, error) {
+	cp := make([]byte, len(handle))
+	copy(cp, handle)
+	return m.createUser(name, displayName, cp)
+}
+
+func (m *MemoryUserStore) createUser(name, displayName string, handle []byte) (*User, error) {
 	u := &User{
 		Handle:      handle,
 		Name:        name,
@@ -121,7 +136,7 @@ func (m *MemoryUserStore) RemoveCredential(_ context.Context, name string, crede
 	return nil
 }
 
-// SetCredentialExtensions implements the optional [credentialExtensionSetter]
+// SetCredentialExtensions implements the optional [CredentialExtensionSetter]
 // capability: persists SDK-captured WebAuthn extension results (credProps /
 // largeBlob-support) alongside the identified credential, keyed by
 // base64url(credentialID) — the same encoding [MFAEnrollmentAdapter] uses
@@ -140,7 +155,70 @@ func (m *MemoryUserStore) SetCredentialExtensions(_ context.Context, name string
 	return nil
 }
 
-var _ credentialExtensionSetter = (*MemoryUserStore)(nil)
+// ListCredentials implements the optional [CredentialLister] capability:
+// every user's credentials as export-local deep copies. The exported
+// record's Attestation blob is zeroed (bulky, never read post-registration)
+// while AttestationFormat is preserved (go-webauthn's GetAppID reads it at
+// login). Credential and extension maps are copied, never aliased — a
+// caller mutating an exported record cannot corrupt the live store.
+func (m *MemoryUserStore) ListCredentials(_ context.Context) ([]UserCredentialRecord, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]UserCredentialRecord, 0)
+	for _, u := range m.byName {
+		for _, c := range u.Credentials {
+			rec := UserCredentialRecord{
+				UserName:    u.Name,
+				Handle:      append([]byte(nil), u.Handle...),
+				DisplayName: u.DisplayName,
+			}
+			rec.Credential = cloneCredential(c)
+			rec.Credential.Attestation = gw.CredentialAttestation{}
+			rec.Extensions = cloneExtensions(u.CredentialExtensions[base64.RawURLEncoding.EncodeToString(c.ID)])
+			out = append(out, rec)
+		}
+	}
+	return out, nil
+}
+
+// cloneCredential deep-copies a gw.Credential so exported records never
+// alias live store state. Only the byte slices and nested structs that
+// exist in practice are copied; scalar fields copy by value.
+func cloneCredential(c gw.Credential) gw.Credential {
+	out := c
+	out.ID = append([]byte(nil), c.ID...)
+	out.PublicKey = append([]byte(nil), c.PublicKey...)
+	out.Transport = append([]protocol.AuthenticatorTransport(nil), c.Transport...)
+	out.Attestation = cloneAttestation(c.Attestation)
+	return out
+}
+
+// cloneAttestation deep-copies the five attestation blob fields (the bulky
+// ClientDataJSON / AuthenticatorData / Object bytes are the reason the
+// exporter zeroes the whole blob after cloning — the copy never escapes
+// ListCredentials).
+func cloneAttestation(a gw.CredentialAttestation) gw.CredentialAttestation {
+	a.ClientDataJSON = append([]byte(nil), a.ClientDataJSON...)
+	a.ClientDataHash = append([]byte(nil), a.ClientDataHash...)
+	a.AuthenticatorData = append([]byte(nil), a.AuthenticatorData...)
+	a.Object = append([]byte(nil), a.Object...)
+	return a
+}
+
+// cloneExtensions copies a CredentialExtensions value (bool pointers).
+func cloneExtensions(ext CredentialExtensions) CredentialExtensions {
+	if ext.Discoverable != nil {
+		v := *ext.Discoverable
+		ext.Discoverable = &v
+	}
+	if ext.LargeBlobSupported != nil {
+		v := *ext.LargeBlobSupported
+		ext.LargeBlobSupported = &v
+	}
+	return ext
+}
+
+var _ CredentialExtensionSetter = (*MemoryUserStore)(nil)
 
 // MemorySessionStore is an in-process [SessionStore]. Production
 // multi-replica setups MUST plug a shared store — a session minted

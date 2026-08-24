@@ -83,6 +83,7 @@ func (b *appBuilder) seedClients(clientStore sso.ClientStore) error {
 			Secret:                           c.Secret,
 			Name:                             c.Name,
 			RedirectURIs:                     c.RedirectURIs,
+			RedirectURIPatterns:              c.RedirectURIPatterns,
 			AllowedScopes:                    c.AllowedScopes,
 			AllowedAuthenticators:            c.AllowedAuthenticators,
 			LoginPageURI:                     c.LoginPageURI,
@@ -103,6 +104,7 @@ func (b *appBuilder) seedClients(clientStore sso.ClientStore) error {
 			DeviceCodeTTL:                    c.DeviceCodeTTL,
 			DeviceCodePollInterval:           c.DeviceCodePollInterval,
 			UserinfoSignedResponseAlg:        c.UserinfoSignedResponseAlg,
+			IDTokenSignedResponseAlg:         c.IDTokenSignedResponseAlg,
 			BackchannelLogoutURI:             c.BackchannelLogoutURI,
 			SubjectType:                      c.SubjectType,
 			SectorIdentifierURI:              c.SectorIdentifierURI,
@@ -112,16 +114,23 @@ func (b *appBuilder) seedClients(clientStore sso.ClientStore) error {
 			SkipConsent:                      c.SkipConsent,
 			ConsentRefreshInterval:           c.ConsentRefreshInterval,
 		}
-		// Validate the CAEP receiver endpoint (https) at boot; plaintext would
-		// exfiltrate revocation SETs. Same anti-exfil rule the
-		// admin gRPC path enforces.
-		if ep := c.Attributes[caep.AttrReceiverEndpoint]; ep != "" {
-			if err := caep.ValidateReceiverEndpoint(ep); err != nil {
-				return fmt.Errorf("client %q caep_receiver_endpoint: %w", c.ID, err)
-			}
+		if err := validateSeededCaepReceiver(&c); err != nil {
+			return err
 		}
 		if err := clientStore.Add(context.Background(), seeded); err != nil && !errors.Is(err, sso.ErrClientExists) {
 			return fmt.Errorf("seed client %q: %w", c.ID, err)
+		}
+	}
+	return nil
+}
+
+// validateSeededCaepReceiver rejects a client whose caep_receiver_endpoint is
+// not https at boot; plaintext would exfiltrate revocation SETs (same anti-
+// exfil rule as the admin gRPC path).
+func validateSeededCaepReceiver(c *config.ClientConfig) error {
+	if ep := c.Attributes[caep.AttrReceiverEndpoint]; ep != "" {
+		if err := caep.ValidateReceiverEndpoint(ep); err != nil {
+			return fmt.Errorf("client %q caep_receiver_endpoint: %w", c.ID, err)
 		}
 	}
 	return nil
@@ -154,8 +163,7 @@ func (b *appBuilder) wireSigningIssuer() error {
 	b.opts = append(cfg.ServerOptions(),
 		sso.WithRouter(sso.NewStdRouter()),
 		sso.WithLogger(logger),
-		sso.WithTracingMiddleware(),   // legacy request-id middleware (not OTel)
-		sso.WithTracing("sso-server"), // OTel HTTP-span middleware; no-op until tracing.Init activates
+		sso.WithTracing("sso-server"), // single correlation switch: span tree + X-Trace-Id/X-Request-Id + audit trace_id; no-op until tracing.Init activates
 		sso.WithTokenIssuer(sso.TokenStrategyJWT, jwtIssuer),
 		sso.WithTokenIssuer(sso.TokenStrategySession, sessionIssuer),
 		sso.WithUserProvider(b.userProvider),
@@ -172,25 +180,13 @@ func (b *appBuilder) wireSigningIssuer() error {
 		// (anti alg-confusion); discovery also reflects this set.
 		sso.WithSupportedSigningAlgs(signingAlg),
 	)
+	// Additional per-client id_token signing keys (keys.id_token_algs).
+	if b.opts, err = serverbuildsign.BuildIDTokenAlgOptions(b.opts, cfg, b.redis, b.metricsRegistry, logger); err != nil {
+		return err
+	}
 	logger.Info("signing issuer configured", "alg", signingAlg)
 	b.registerIdentityHealth()
 	return nil
-}
-
-// registerIdentityHealth registers the /readyz checks + storage-health sources
-// for the external signer and the identity stores. The external KMS/HSM signer
-// is a runtime dependency the in-process key path never had, so its passive
-// probe trips /readyz when wedged; nil (in-process key) silently no-ops. Each
-// SQLite store's DB() handle drives migrate.Status; memory backends contribute
-// nothing.
-func (b *appBuilder) registerIdentityHealth() {
-	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "external-signer", b.externalSigner)
-	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-identity-clients", b.clientStore)
-	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-identity-users", b.userProvider)
-	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-identity-sessions", b.sessionMgr)
-	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-identity-clients", b.clientStore)
-	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-identity-users", b.userProvider)
-	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-identity-sessions", b.sessionMgr)
 }
 
 // wireAudit builds the audit recorder + sink stack (primary, webhook fan-out,
@@ -477,6 +473,7 @@ func (b *appBuilder) wireNetwork() error {
 // budget — pure field mapping, no behavior.
 func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.auditKafkaSink, a.consentStore, a.mfaEnrollStore = b.auditKafkaSink, b.consentStore, b.mfaEnrollStore
+	a.externalAuditClose = b.externalAuditClose
 	a.passwordResetRevoker = b.passwordResetRevoker
 	a.pushPruneCancel, a.pushPruneDone = b.pushPruneCancel, b.pushPruneDone
 	a.cibaPruneCancel, a.cibaPruneDone = b.cibaPruneCancel, b.cibaPruneDone
@@ -485,12 +482,14 @@ func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.configAuditStore = b.configAuditStore
 	a.credentialSchedCancel, a.credentialSchedDone = b.credentialSchedCancel, b.credentialSchedDone
 	a.configDriftCancel, a.configDriftDone = b.configDriftCancel, b.configDriftDone
+	a.configCanaryCancel, a.configCanaryDone = b.configCanaryCancel, b.configCanaryDone
 	a.breakGlassCancel, a.breakGlassDone = b.breakGlassCancel, b.breakGlassDone
 	a.continuousVerifyCancel, a.continuousVerifyDone = b.continuousVerifyCancel, b.continuousVerifyDone
 	a.capConvergenceCancel, a.capConvergenceDone = b.capConvergenceCancel, b.capConvergenceDone
 	a.tokenUsageRecorder = b.tokenUsageRecorder
 	a.tokenAnomalySweepCancel, a.tokenAnomalySweepDone = b.tokenAnomalySweepCancel, b.tokenAnomalySweepDone
 	a.degradationMgr = b.degradationMgr
+	a.autoReadOnlyCancel, a.autoReadOnlyDone = b.autoReadOnlyCancel, b.autoReadOnlyDone
 	a.userAutoDeprovisionCancel, a.userAutoDeprovisionDone = b.userAutoDeprovisionCancel, b.userAutoDeprovisionDone
 	a.clientSecretScanCancel, a.clientSecretScanDone = b.clientSecretScanCancel, b.clientSecretScanDone
 	if b.tenantQuotaRuntime != nil {

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/authenticators"
-	"github.com/yangwb1123/snaplink/interfaces/cors"
 	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/authpipeline"
@@ -167,11 +166,8 @@ func (c *Config) validate() error {
 	if err := c.validateFeatureConfig(); err != nil {
 		return err
 	}
-	level := strings.ToLower(c.Logging.Level)
-	switch level {
-	case "debug", "info", "error":
-	default:
-		return fmt.Errorf("config: invalid logging.level %q", c.Logging.Level)
+	if err := c.validateLogging(); err != nil {
+		return err
 	}
 	// Reject the SDK's internal sentinel. resolveIssuer + the OIDC
 	// discovery renderer treat sso.DefaultIssuer as "fall back to
@@ -183,7 +179,10 @@ func (c *Config) validate() error {
 	if c.Server.Issuer == sso.DefaultIssuer {
 		return fmt.Errorf("config: server.issuer must not equal the SDK sentinel %q — set it to your canonical public URL (e.g. https://sso.example.com) or accept the cmd default %q", sso.DefaultIssuer, DefaultServerIssuer)
 	}
-	if err := validateConfiguredClients(c.Clients); err != nil {
+	if err := validateConfiguredClients(c); err != nil {
+		return err
+	}
+	if err := validateIDTokenAlgs(c); err != nil {
 		return err
 	}
 	if c.Backup.Keep < 0 {
@@ -192,19 +191,33 @@ func (c *Config) validate() error {
 	return nil
 }
 
-func validateConfiguredClients(clients []ClientConfig) error {
-	for _, client := range clients {
-		if client.ID == "" {
-			return errors.New("config: client.id required")
-		}
-		if client.LoginPageURI != "" && !sso.IsFederatedLoginPageURIValid(client.LoginPageURI) {
-			return fmt.Errorf("config: client %q login_page_uri must be HTTPS or loopback HTTP", client.ID)
-		}
+// validateLogging validates the logging block: the level switch and the
+// always-on access-log posture (tri-state enabled flag + body policy).
+func (c *Config) validateLogging() error {
+	switch strings.ToLower(c.Logging.Level) {
+	case "debug", "info", "error":
+	default:
+		return fmt.Errorf("config: invalid logging.level %q", c.Logging.Level)
+	}
+	if err := c.Logging.AccessLog.validate(); err != nil {
+		return err
 	}
 	return nil
 }
 
 func (c *Config) validateFeatureConfig() error {
+	if err := c.Security.CORS.validate(); err != nil {
+		return err
+	}
+	if err := c.ReBAC.validate(); err != nil {
+		return err
+	}
+	if c.Audit.ExternalWorker.Enabled && !c.Audit.Enabled {
+		return errors.New("config: audit.external_worker.enabled requires audit.enabled")
+	}
+	if err := c.Audit.ExternalWorker.validate(); err != nil {
+		return err
+	}
 	if err := c.validateAuthPipeline(); err != nil {
 		return err
 	}
@@ -212,6 +225,9 @@ func (c *Config) validateFeatureConfig() error {
 		return err
 	}
 	if err := c.Authenticators.CodeDelivery.validate(); err != nil {
+		return err
+	}
+	if err := c.Activation.validate(); err != nil {
 		return err
 	}
 	if err := c.validateBCLFailureQueue(); err != nil {
@@ -292,6 +308,16 @@ func (c *Config) validateTopology() error {
 	if c.Server.Topology.AllowPerPodState && mode != TopologyModeMulti {
 		return errors.New("config: server.topology.allow_per_pod_state requires mode: multi")
 	}
+	if mode == TopologyModeMulti && !c.Server.Topology.AllowPerPodState && c.ReBAC.Enabled {
+		backend := strings.ToLower(strings.TrimSpace(c.ReBAC.Backend))
+		if backend == "" || backend == "memory" {
+			return errors.New("config: rebac.backend=memory is unsafe with server.topology.mode=multi; use sqlite")
+		}
+	}
+	if mode == TopologyModeMulti && !c.Server.Topology.AllowPerPodState &&
+		strings.EqualFold(strings.TrimSpace(c.Activation.Backend), "memory") {
+		return errors.New("config: activation.backend=memory is unsafe with server.topology.mode=multi; use activation.backend=postgres")
+	}
 	return nil
 }
 
@@ -310,33 +336,10 @@ func (c *Config) ServerOptions() []sso.Option {
 	if c.Server.DefaultTokenStrategy != "" {
 		opts = append(opts, sso.WithDefaultTokenStrategy(c.Server.DefaultTokenStrategy))
 	}
-	// Security middleware — body limit + rate limit + CORS. Each
-	// opt-in via its own block; absent / disabled blocks omit the
-	// corresponding sso.WithX call so the middleware is not wired.
-	if c.Security.BodyLimit.MaxBytes > 0 {
-		opts = append(opts, sso.WithBodyLimit(c.Security.BodyLimit.MaxBytes))
-	}
-	if c.Security.RateLimit.Enabled {
-		opts = append(opts, sso.WithRateLimit(c.Security.RateLimit.toPolicy()))
-	}
-	// Unlike the block above, ClientRegistrationRateLimit has NO "enabled"
-	// gate: omitting the section (or leaving PerSec/Burst at 0) is not
-	// "disabled" — sso.NewServer already seeds a conservative built-in
-	// limiter, so there is nothing to wire here in that case. Only an
-	// EXPLICIT override (Disabled, or a custom PerSec+Burst) needs an
-	// Option call.
-	if opt, ok := c.Security.ClientRegistrationRateLimit.serverOption(); ok {
-		opts = append(opts, opt)
-	}
-	if c.Security.CORS.Enabled && len(c.Security.CORS.AllowedOrigins) > 0 {
-		opts = append(opts, sso.WithCORS(c.Security.CORS.toPolicy()))
-	}
-	if c.Backup.Dir != "" {
-		opts = append(opts, sso.WithBackupDir(c.Backup.Dir))
-	}
-	if c.Backup.Keep > 0 {
-		opts = append(opts, sso.WithBackupRetention(c.Backup.Keep))
-	}
+	opts = append(opts, c.securityMiddlewareOptions()...)
+	opts = append(opts, c.backupOptions()...)
+	// Always-on access log: on by default unless explicitly disabled.
+	opts = append(opts, c.accessLogOptions()...)
 	// Only wired when the operator touched at least one feature_gates key —
 	// an all-nil FeatureGatesConfig is functionally identical to omitting
 	// the option (every gate already defaults to on), so skipping the call
@@ -480,18 +483,4 @@ func (r *RateLimitConfig) sqliteRateLimitPolicy() (ratelimit.Policy, error) {
 		policy.Prefixes = append(policy.Prefixes, ratelimit.PrefixRule{Prefix: p.Prefix, Limiter: lim})
 	}
 	return policy, nil
-}
-
-// toPolicy builds the cors.Policy implied by the YAML block. Empty
-// AllowedMethods / AllowedHeaders fall back to the cors package's
-// defaults (GET/POST/PUT/DELETE/OPTIONS, Authorization/Content-Type).
-func (c *CORSConfig) toPolicy() cors.Policy {
-	return cors.Policy{
-		AllowedOrigins:   c.AllowedOrigins,
-		AllowedMethods:   c.AllowedMethods,
-		AllowedHeaders:   c.AllowedHeaders,
-		ExposedHeaders:   c.ExposedHeaders,
-		AllowCredentials: c.AllowCredentials,
-		MaxAge:           c.MaxAge,
-	}
 }

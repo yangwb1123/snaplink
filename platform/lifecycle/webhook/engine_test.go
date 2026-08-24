@@ -383,3 +383,40 @@ func TestEngine_Close_AbortsInFlightDeliveryPromptly(t *testing.T) {
 			"cancellation isn't aborting the in-flight POST): %v", err)
 	}
 }
+
+func TestEngine_CloseGraceful_WaitsForInFlightDelivery(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	subs := webhook.NewMemorySubscriptionStore()
+	if _, err := subs.Create(context.Background(), webhook.EventSubscription{
+		URL: srv.URL, EventTypes: []audit.EventType{audit.EventLogin}, Secret: "secret",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	eng := webhook.NewEngine(subs, webhook.NewMemoryDeadLetterStore(0), webhook.WithHTTPClient(srv.Client()))
+	if err := eng.Record(context.Background(), &audit.Event{Type: audit.EventLogin}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("delivery did not start")
+	}
+	done := make(chan error, 1)
+	go func() { done <- eng.CloseGraceful(context.Background()) }()
+	select {
+	case err := <-done:
+		t.Fatalf("CloseGraceful returned before delivery completed: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("CloseGraceful: %v", err)
+	}
+}

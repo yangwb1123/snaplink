@@ -26,6 +26,19 @@
   ],
   "capabilities": [
     {
+      "id": "activation.hosted-login",
+      "name": "Hosted-login product activation",
+      "summary": "One-time license or invitation activation linked to a public hosted-login client.",
+      "availability": ["sdk", "stock-binary"],
+      "default_state": "conditional",
+      "feature_gate": null,
+      "required_stores": ["ActivationStore"],
+      "module_capabilities": [],
+      "config_keys": ["activation.backend", "activation.ticket_ttl", "activation.codes"],
+      "surfaces": ["/api/v1/activation/prepare", "/api/v1/me/activation/claim", "/api/v1/me/account-context"],
+      "sources": ["config/config_self.go", "cmd/sso-server/serverbuildstore/build_identity_stores.go", "domains/tenant/activation", "infrastructure/postgres/tenantactivation", "interfaces/activation", "interfaces/sso/server_routes.go"]
+    },
+    {
       "id": "admin.control-plane",
       "name": "Admin control plane",
       "summary": "Scoped administration, governance, audit and lifecycle APIs.",
@@ -50,6 +63,19 @@
       "config_keys": [],
       "surfaces": ["/api/v1/admin/docs"],
       "sources": ["interfaces/apidocs"]
+    },
+    {
+      "id": "audit.external-worker",
+      "name": "External audit worker",
+      "summary": "Lifecycle-supervised typed audit-batch delivery to a local provenance-admitted or remote mTLS worker.",
+      "availability": ["stock-binary"],
+      "default_state": "disabled",
+      "feature_gate": null,
+      "required_stores": [],
+      "module_capabilities": [],
+      "config_keys": ["audit.external_worker"],
+      "surfaces": ["audit sink", "/readyz"],
+      "sources": ["cmd/sso-server/serverbuildauthn/build_external_audit_worker.go", "platform/lifecycle/modules/external.go"]
     },
     {
       "id": "audit.governance-provisioner",
@@ -80,15 +106,28 @@
     {
       "id": "authorization.fga",
       "name": "Fine-grained authorization",
-      "summary": "Relationship tuples, graph expansion and authorization checks.",
+      "summary": "Relationship tuples, graph expansion and authorization checks with a lifecycle-managed product check route.",
       "availability": ["sdk", "stock-binary"],
       "default_state": "disabled",
       "feature_gate": null,
       "required_stores": ["RebacStore", "RebacEngine"],
       "module_capabilities": ["platform.authorization.v1"],
       "config_keys": ["rebac"],
-      "surfaces": ["/authz/*"],
-      "sources": ["platform/lifecycle/rebac"]
+      "surfaces": ["/authz/*", "/readyz"],
+      "sources": ["platform/lifecycle/rebac", "interfaces/sso/server_routes.go"]
+    },
+    {
+      "id": "authorization.rbac",
+      "name": "Role and resource authorization",
+      "summary": "Client-scoped RBAC with resource catalogs, separation-of-duty controls and session activation.",
+      "availability": ["sdk", "stock-binary"],
+      "default_state": "conditional",
+      "feature_gate": null,
+      "required_stores": ["permissions.Provider"],
+      "module_capabilities": [],
+      "config_keys": ["permissions"],
+      "surfaces": ["/permissions/me", "/authz/*", "/api/v1/admin/permissions/*"],
+      "sources": ["domains/permissions", "interfaces/grpcserver/authz.go"]
     },
     {
       "id": "branding.public",
@@ -361,7 +400,7 @@
       "module_capabilities": ["oauth.sso-prototype.v1"],
       "config_keys": ["oauth", "clients"],
       "surfaces": ["/auth/login", "/token"],
-      "sources": ["cmd/sso-minimal/commands.go"]
+      "sources": ["internal/composition/commands.go"]
     },
     {
       "id": "observability.core",

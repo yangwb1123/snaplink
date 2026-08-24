@@ -114,3 +114,129 @@ func TestMemoryStore_LimitAndCapacityEviction(t *testing.T) {
 func TestMemoryStore_SatisfiesStoreInterface(t *testing.T) {
 	var _ Store = NewMemoryStore(0)
 }
+
+func TestMemoryStore_Applied_EmptyReturnsErr(t *testing.T) {
+	s := NewMemoryStore(0)
+	if _, err := s.Applied(context.Background()); err != ErrNoAppliedVersion {
+		t.Fatalf("Applied on an empty store = %v, want ErrNoAppliedVersion", err)
+	}
+}
+
+func TestMemoryStore_Apply_AppendsHistoryAndChainsVersions(t *testing.T) {
+	s := NewMemoryStore(0)
+	ctx := context.Background()
+	v1, err := s.Apply(ctx, AppliedVersion{Actor: "a", Digest: "d1", Reason: "r1", Snapshot: map[string]any{"name": "sso-1"}})
+	if err != nil {
+		t.Fatalf("Apply 1: %v", err)
+	}
+	if v1.ID == "" || v1.AppliedAt.IsZero() || v1.PrevID != "" {
+		t.Errorf("first version must be ID/AppliedAt-assigned with no prev: %+v", v1)
+	}
+	v2, err := s.Apply(ctx, AppliedVersion{Actor: "b", Digest: "d2", Reason: "r2", Snapshot: map[string]any{"name": "sso-2"}})
+	if err != nil {
+		t.Fatalf("Apply 2: %v", err)
+	}
+	if v2.PrevID != v1.ID {
+		t.Errorf("second version must link prev = %s, got %q", v1.ID, v2.PrevID)
+	}
+	got, err := s.Applied(ctx)
+	if err != nil {
+		t.Fatalf("Applied: %v", err)
+	}
+	if got.ID != v2.ID || got.Snapshot["name"] != "sso-2" {
+		t.Errorf("Applied must return the latest version, got %+v", got)
+	}
+	// The apply appends a config_history entry with the redacted diff.
+	entries, err := s.List(ctx, Filter{Resource: "config"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 config entries, got %d", len(entries))
+	}
+	if entries[0].ResourceID != v2.ID || entries[0].Actor != "b" {
+		t.Errorf("newest entry must describe v2, got %+v", entries[0])
+	}
+	// Diff of redacted baselines: name changed sso-1 -> sso-2.
+	found := false
+	for _, op := range entries[0].Patch {
+		if op.Path == "/name" && op.Value == "sso-2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a /name replace op in the apply entry, got %+v", entries[0].Patch)
+	}
+}
+
+func TestMemoryStore_Apply_RedactsSecretsInHistory(t *testing.T) {
+	s := NewMemoryStore(0)
+	ctx := context.Background()
+	if _, err := s.Apply(ctx, AppliedVersion{Actor: "a", Digest: "d1", Snapshot: map[string]any{"db_dsn": "postgres://user:pass@h"}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if _, err := s.Apply(ctx, AppliedVersion{Actor: "b", Digest: "d2", Snapshot: map[string]any{"db_dsn": "postgres://user:pass2@h"}}); err != nil {
+		t.Fatalf("Apply 2: %v", err)
+	}
+	entries, err := s.List(ctx, Filter{Resource: "config"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, e := range entries {
+		for _, op := range e.Patch {
+			if op.Path == "/db_dsn" && op.Value != "***" {
+				t.Errorf("history patch must never carry a plaintext secret: %+v", e.Patch)
+			}
+		}
+	}
+}
+
+func TestMemoryStore_Rollback_RestoresPreviousAndStaysAppendOnly(t *testing.T) {
+	s := NewMemoryStore(0)
+	ctx := context.Background()
+	_, _ = s.Apply(ctx, AppliedVersion{Actor: "a", Digest: "d1", Snapshot: map[string]any{"rate_limit": float64(10)}})
+	v2, _ := s.Apply(ctx, AppliedVersion{Actor: "b", Digest: "d2", Snapshot: map[string]any{"rate_limit": float64(40)}})
+
+	v3, err := s.Rollback(ctx, "c", "revert")
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if v3.PrevID != v2.ID {
+		t.Errorf("rollback version must link the rolled-back-from version, got %q want %q", v3.PrevID, v2.ID)
+	}
+	if v3.Snapshot["rate_limit"] != float64(10) {
+		t.Errorf("rollback must restore the first snapshot, got %+v", v3.Snapshot)
+	}
+	got, err := s.Applied(ctx)
+	if err != nil {
+		t.Fatalf("Applied: %v", err)
+	}
+	if got.ID != v3.ID {
+		t.Errorf("Applied after rollback = %s, want the rollback version %s", got.ID, v3.ID)
+	}
+	if n := len(s.appliedVersions()); n != 3 {
+		t.Errorf("version chain must stay append-only (3 versions), got %d", n)
+	}
+	entries, err := s.List(ctx, Filter{Resource: "config"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 config entries (2 applies + 1 rollback), got %d", len(entries))
+	}
+	if entries[0].Actor != "c" {
+		t.Errorf("newest entry must be the rollback by c, got %+v", entries[0])
+	}
+}
+
+func TestMemoryStore_Rollback_NoPreviousReturnsErr(t *testing.T) {
+	s := NewMemoryStore(0)
+	ctx := context.Background()
+	if _, err := s.Rollback(ctx, "a", "r"); err != ErrNoAppliedVersion {
+		t.Errorf("Rollback on empty store = %v, want ErrNoAppliedVersion", err)
+	}
+	_, _ = s.Apply(ctx, AppliedVersion{Actor: "a", Digest: "d1", Snapshot: map[string]any{"a": 1}})
+	if _, err := s.Rollback(ctx, "a", "r"); err != ErrNoAppliedVersion {
+		t.Errorf("Rollback with a single version = %v, want ErrNoAppliedVersion", err)
+	}
+}

@@ -79,6 +79,33 @@ func equalStringSlices(a, b []string) bool {
 // through to the router's native http.NotFound, on every server built here.
 const fghrNeverMountedBaseline = "/definitely-not-a-real-route"
 
+// fghrStripPerRequestHeaders removes the outer-chain correlation headers
+// (X-Request-Id always; X-Trace-Id/Traceparent when a real OTel provider is
+// active), which carry per-request RANDOM values and would make a
+// byte-identical comparison vacuous. Their presence is asserted separately
+// (fghrAssertCorrelationHeader); the gate oracle under test is everything
+// else — status, body, and every other header.
+func fghrStripPerRequestHeaders(resp *fghrResponse) {
+	resp.header.Del("X-Request-Id")
+	resp.header.Del("X-Trace-Id")
+	resp.header.Del("Traceparent")
+}
+
+// fghrAssertCorrelationHeader fails unless the response carries X-Request-Id.
+// The outer-chain correlation middleware (WithTracing → middleware.Correlation,
+// Decision 7 of docs/design/middleware-observability-unified.md) runs for
+// EVERY request through the mux — mounted route or not — so a gated-off
+// response and a never-mounted baseline must BOTH carry it. The header is no
+// longer a per-route leak oracle: correlation moved out of the router's
+// per-route Use list into the outer chain, which is exactly why the
+// byte-identical comparison below strips it before comparing.
+func fghrAssertCorrelationHeader(t *testing.T, resp fghrResponse, label string) {
+	t.Helper()
+	if _, ok := resp.header["X-Request-Id"]; !ok {
+		t.Errorf("%s: response carries no X-Request-Id — outer-chain correlation did not run", label)
+	}
+}
+
 // TestSetAdminAPIGateEnabled_LiveToggleIsByteIdenticalTo404 proves scenario
 // (a): with admin_api ON at boot the admin surface is reachable; flipping
 // the LIVE gate off makes the SAME path answer byte-identically to a path
@@ -151,19 +178,23 @@ func TestSetAdminAPIGateEnabled_AlwaysReportsApplied_EvenWithoutAdminAPIStores(t
 
 // TestSetAdminAPIGateEnabled_ByteIdenticalWithGlobalTracingMiddleware
 // reproduces the exact scenario an adversarial review found broken in an
-// earlier version of this feature: WithTracingMiddleware adds a global,
-// Use()-registered middleware (stamping X-Request-Id/Traceparent/
-// X-Trace-Id) BEFORE mountAdminSurface runs, so it was baked into every
+// earlier version of this feature: the legacy WithTracingMiddleware added a
+// global, Use()-registered middleware (stamping X-Request-Id/Traceparent/
+// X-Trace-Id) BEFORE mountAdminSurface ran, so it was baked into every
 // admin route's own middleware list. A handler-only gate would still run
 // that middleware on a gated-off request — leaking headers a genuinely
 // never-mounted path never has, exactly the oracle this feature exists to
 // prevent. The fix (core.GatedRouter's route-matching-level gate) must
 // keep the gated-off response byte-identical to the baseline EVEN with
-// Tracing wired.
+// correlation wired. Decision 7 moved correlation to the outer chain: both
+// the baseline and the gated-off response now carry X-Request-Id (asserted
+// below), and the byte-identical comparison runs after stripping the
+// per-request random values — proving the gate itself still leaks nothing
+// route-shaped.
 func TestSetAdminAPIGateEnabled_ByteIdenticalWithGlobalTracingMiddleware(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
-		sso.WithTracingMiddleware(),
+		sso.WithTracing("test"),
 		sso.WithFeatureGates(sso.FeatureGates{AdminAPI: sso.Bool(true)}),
 	)
 	h := srv.Handler()
@@ -172,17 +203,15 @@ func TestSetAdminAPIGateEnabled_ByteIdenticalWithGlobalTracingMiddleware(t *test
 		t.Fatalf("GET /api/v1/admin/endpoints with admin_api on = 404, want reachable")
 	}
 	baseline := fghrGet(h, fghrNeverMountedBaseline)
-	if _, ok := baseline.header["X-Request-Id"]; ok {
-		t.Fatalf("sanity check failed: baseline itself carries X-Request-Id — Tracing ran for a path that should never match any route")
-	}
+	fghrAssertCorrelationHeader(t, baseline, "never-mounted baseline")
+	fghrStripPerRequestHeaders(&baseline)
 
 	if !srv.SetAdminAPIGateEnabled(false) {
 		t.Fatal("SetAdminAPIGateEnabled(false) = false, want true")
 	}
 	got := fghrGet(h, "/api/v1/admin/endpoints")
-	if _, ok := got.header["X-Request-Id"]; ok {
-		t.Errorf("gated-off admin response leaked X-Request-Id — Tracing middleware ran even though the gate was off")
-	}
+	fghrAssertCorrelationHeader(t, got, "gated-off admin response")
+	fghrStripPerRequestHeaders(&got)
 	fghrAssertIdentical(t, got, baseline, "admin_api live-disabled with Tracing wired")
 }
 
@@ -191,11 +220,11 @@ func TestSetAdminAPIGateEnabled_ByteIdenticalWithGlobalTracingMiddleware(t *test
 // still gates now that sso-server serves no static frontend of its own.
 // Registered on s.router (not a raw http.ServeMux entry) and so subject to
 // the exact same global-middleware-leak risk admin_api had — this test also
-// wires WithTracingMiddleware to reproduce that scenario precisely.
+// wires WithTracing to reproduce that scenario precisely.
 func TestSetBrandingGateEnabled_BrandingEndpoint_ByteIdenticalTo404(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
-		sso.WithTracingMiddleware(),
+		sso.WithTracing("test"),
 		sso.WithTenantStore(memory.New()),
 	)
 	h := srv.Handler()
@@ -204,14 +233,15 @@ func TestSetBrandingGateEnabled_BrandingEndpoint_ByteIdenticalTo404(t *testing.T
 		t.Fatalf("GET /branding with branding on = 404, want reachable (tenant store is wired)")
 	}
 	baseline := fghrGet(h, fghrNeverMountedBaseline)
+	fghrAssertCorrelationHeader(t, baseline, "never-mounted baseline")
+	fghrStripPerRequestHeaders(&baseline)
 
 	if !srv.SetBrandingGateEnabled(false) {
 		t.Fatal("SetBrandingGateEnabled(false) = false, want true (tenant store is wired)")
 	}
 	got := fghrGet(h, "/branding")
-	if _, ok := got.header["X-Request-Id"]; ok {
-		t.Errorf("gated-off branding response leaked X-Request-Id — Tracing middleware ran even though the gate was off")
-	}
+	fghrAssertCorrelationHeader(t, got, "gated-off branding response")
+	fghrStripPerRequestHeaders(&got)
 	fghrAssertIdentical(t, got, baseline, "branding live-disabled with Tracing wired")
 
 	if !srv.SetBrandingGateEnabled(true) {
@@ -239,7 +269,7 @@ func (fghrNopRevoker) RevokeAllForSubject(context.Context, string) (caep.Revocat
 func TestSetOIDCGateEnabled_LiveToggleByteIdenticalWithTracing(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
-		sso.WithTracingMiddleware(),
+		sso.WithTracing("test"),
 		sso.WithFeatureGates(sso.FeatureGates{OIDC: sso.Bool(true)}),
 	)
 	h := srv.Handler()
@@ -248,14 +278,15 @@ func TestSetOIDCGateEnabled_LiveToggleByteIdenticalWithTracing(t *testing.T) {
 		t.Fatalf("GET /userinfo with oidc on = 404, want reachable")
 	}
 	baseline := fghrGet(h, fghrNeverMountedBaseline)
+	fghrAssertCorrelationHeader(t, baseline, "never-mounted baseline")
+	fghrStripPerRequestHeaders(&baseline)
 
 	if !srv.SetOIDCGateEnabled(false) {
 		t.Fatal("SetOIDCGateEnabled(false) = false, want true (/userinfo is always mounted)")
 	}
 	got := fghrGet(h, "/userinfo")
-	if _, ok := got.header["X-Request-Id"]; ok {
-		t.Errorf("gated-off /userinfo response leaked X-Request-Id — Tracing middleware ran even though the gate was off")
-	}
+	fghrAssertCorrelationHeader(t, got, "gated-off /userinfo response")
+	fghrStripPerRequestHeaders(&got)
 	fghrAssertIdentical(t, got, baseline, "oidc live-disabled with Tracing wired")
 
 	if !srv.SetOIDCGateEnabled(true) {
@@ -271,7 +302,7 @@ func TestSetOIDCGateEnabled_LiveToggleByteIdenticalWithTracing(t *testing.T) {
 func TestSetCIBAGateEnabled_LiveToggleByteIdenticalWithTracing(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
-		sso.WithTracingMiddleware(),
+		sso.WithTracing("test"),
 		sso.WithFeatureGates(sso.FeatureGates{CIBA: sso.Bool(true)}),
 	)
 	h := srv.Handler()
@@ -286,14 +317,15 @@ func TestSetCIBAGateEnabled_LiveToggleByteIdenticalWithTracing(t *testing.T) {
 		t.Fatalf("POST /backchannel-authentication with ciba on = 404, want reachable")
 	}
 	baseline := fghrGet(h, fghrNeverMountedBaseline)
+	fghrAssertCorrelationHeader(t, baseline, "never-mounted baseline")
+	fghrStripPerRequestHeaders(&baseline)
 
 	if !srv.SetCIBAGateEnabled(false) {
 		t.Fatal("SetCIBAGateEnabled(false) = false, want true (the route is always mounted)")
 	}
 	got := post("/backchannel-authentication")
-	if _, ok := got.header["X-Request-Id"]; ok {
-		t.Errorf("gated-off CIBA response leaked X-Request-Id — Tracing middleware ran even though the gate was off")
-	}
+	fghrAssertCorrelationHeader(t, got, "gated-off CIBA response")
+	fghrStripPerRequestHeaders(&got)
 	fghrAssertIdentical(t, got, baseline, "ciba live-disabled with Tracing wired")
 
 	if !srv.SetCIBAGateEnabled(true) {
@@ -323,7 +355,7 @@ func TestSetCAEPGateEnabled_LiveToggleByteIdenticalWithTracing(t *testing.T) {
 	}
 	srv := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
-		sso.WithTracingMiddleware(),
+		sso.WithTracing("test"),
 		sso.WithCAEPReceiver(rcv),
 		sso.WithFeatureGates(sso.FeatureGates{CAEP: sso.Bool(true)}),
 	)
@@ -339,14 +371,15 @@ func TestSetCAEPGateEnabled_LiveToggleByteIdenticalWithTracing(t *testing.T) {
 		t.Fatalf("POST /ssf/receive with caep on = 404, want reachable")
 	}
 	baseline := fghrGet(h, fghrNeverMountedBaseline)
+	fghrAssertCorrelationHeader(t, baseline, "never-mounted baseline")
+	fghrStripPerRequestHeaders(&baseline)
 
 	if !srv.SetCAEPGateEnabled(false) {
 		t.Fatal("SetCAEPGateEnabled(false) = false, want true (a receiver is wired)")
 	}
 	got := post("/ssf/receive")
-	if _, ok := got.header["X-Request-Id"]; ok {
-		t.Errorf("gated-off CAEP response leaked X-Request-Id — Tracing middleware ran even though the gate was off")
-	}
+	fghrAssertCorrelationHeader(t, got, "gated-off CAEP response")
+	fghrStripPerRequestHeaders(&got)
 	fghrAssertIdentical(t, got, baseline, "caep live-disabled with Tracing wired")
 
 	if !srv.SetCAEPGateEnabled(true) {
@@ -378,7 +411,7 @@ func TestSetCAEPGateEnabled_NoReceiverWired_ReturnsFalseGracefully(t *testing.T)
 func TestSetFederationGateEnabled_LiveToggleByteIdenticalWithTracing(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
-		sso.WithTracingMiddleware(),
+		sso.WithTracing("test"),
 		sso.WithProtectedResourceMetadata(sso.ProtectedResourceMetadata{ResourceName: "Hot-Reload Test Resource"}),
 		sso.WithFeatureGates(sso.FeatureGates{Federation: sso.Bool(true)}),
 	)
@@ -388,14 +421,15 @@ func TestSetFederationGateEnabled_LiveToggleByteIdenticalWithTracing(t *testing.
 		t.Fatalf("GET /.well-known/oauth-protected-resource with federation on = 404, want reachable")
 	}
 	baseline := fghrGet(h, fghrNeverMountedBaseline)
+	fghrAssertCorrelationHeader(t, baseline, "never-mounted baseline")
+	fghrStripPerRequestHeaders(&baseline)
 
 	if !srv.SetFederationGateEnabled(false) {
 		t.Fatal("SetFederationGateEnabled(false) = false, want true (protected-resource metadata is wired)")
 	}
 	got := fghrGet(h, "/.well-known/oauth-protected-resource")
-	if _, ok := got.header["X-Request-Id"]; ok {
-		t.Errorf("gated-off federation response leaked X-Request-Id — Tracing middleware ran even though the gate was off")
-	}
+	fghrAssertCorrelationHeader(t, got, "gated-off federation response")
+	fghrStripPerRequestHeaders(&got)
 	fghrAssertIdentical(t, got, baseline, "federation live-disabled with Tracing wired")
 
 	if !srv.SetFederationGateEnabled(true) {
@@ -453,7 +487,7 @@ func TestSetFederationGateEnabled_HomeRealmSubFeatureAlsoToggles(t *testing.T) {
 func TestSetSelfServiceGateEnabled_LiveToggleByteIdenticalWithTracing(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
-		sso.WithTracingMiddleware(),
+		sso.WithTracing("test"),
 		sso.WithFeatureGates(sso.FeatureGates{SelfService: sso.Bool(true)}),
 	)
 	h := srv.Handler()
@@ -462,14 +496,15 @@ func TestSetSelfServiceGateEnabled_LiveToggleByteIdenticalWithTracing(t *testing
 		t.Fatalf("GET %s with self_service on = 404, want reachable", sso.PathMyPermissions)
 	}
 	baseline := fghrGet(h, fghrNeverMountedBaseline)
+	fghrAssertCorrelationHeader(t, baseline, "never-mounted baseline")
+	fghrStripPerRequestHeaders(&baseline)
 
 	if !srv.SetSelfServiceGateEnabled(false) {
 		t.Fatal("SetSelfServiceGateEnabled(false) = false, want true (/permissions/me is always mounted)")
 	}
 	got := fghrGet(h, sso.PathMyPermissions)
-	if _, ok := got.header["X-Request-Id"]; ok {
-		t.Errorf("gated-off self-service response leaked X-Request-Id — Tracing middleware ran even though the gate was off")
-	}
+	fghrAssertCorrelationHeader(t, got, "gated-off self-service response")
+	fghrStripPerRequestHeaders(&got)
 	fghrAssertIdentical(t, got, baseline, "self_service live-disabled with Tracing wired")
 
 	if !srv.SetSelfServiceGateEnabled(true) {

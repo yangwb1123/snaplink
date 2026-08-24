@@ -26,7 +26,7 @@ type controlAreaDef struct {
 // EventAdmin* ones) to avoid double counting a subject-export/erase
 // action under both the admin-actions and privacy buckets.
 //
-// auditspi/event_types_admin.go currently declares 60 EventAdmin* consts:
+// auditspi/event_types_admin.go currently declares 62 EventAdmin* consts:
 // most land in CC6.3 below, EventAdminSigningKeyRotated/
 // EventAdminCredentialCompromised/EventAdminCryptoKeyCompromised land in
 // CC6.6 (cryptographic/credential key management, not a generic privileged
@@ -46,9 +46,11 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventLoginFailure,
 			audit.EventAuthHookExecuted,
 			audit.EventAuthHookFailed,
+			audit.EventCORSOriginBlocked,
 			audit.EventLogout,
 			audit.EventClientAccess,
 			audit.EventPermissionQuery,
+			audit.EventPermissionCheck,
 			audit.EventIdentityMerged,
 			audit.EventIdentityMergeRejected,
 			audit.EventIdentityUnlinked,
@@ -117,6 +119,8 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventAdminRoleAssigned,
 			audit.EventAdminRoleUnassigned,
 			audit.EventAdminMenusUpdated,
+			audit.EventAdminResourceRegistered,
+			audit.EventAdminResourceRemoved,
 			audit.EventAdminTenantCreated,
 			audit.EventAdminTenantUpdated,
 			audit.EventAdminTenantDeleted,
@@ -139,6 +143,11 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventAdminChangeRejected,
 			audit.EventAdminChangeApplied,
 			audit.EventAdminChangeApplyFailed,
+			audit.EventAdminConfigApplied,
+			audit.EventAdminConfigRolledBack,
+			audit.EventConfigCanaryStarted,
+			audit.EventConfigCanaryConfirmed,
+			audit.EventConfigCanaryRolledBack,
 			audit.EventAdminWriteQuotaExceeded,
 			audit.EventAdminIPDenied,
 		},
@@ -171,6 +180,9 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventRefreshRotationVelocityExceeded,
 			audit.EventFAPIComplianceViolation,
 			audit.EventRoleResolutionFailed,
+			audit.EventExternalWorkerLifecycleTransition,
+			audit.EventWebhookLifecycleTransition,
+			audit.EventReBACLifecycleTransition,
 		},
 	},
 	{

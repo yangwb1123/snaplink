@@ -144,6 +144,90 @@ type ResourceProvider interface {
 	ResolveResource(ctx context.Context, lookup ResourceLookup) (*ResourceDecision, error)
 }
 
+// ResourceCatalogLister is an optional ResourceProvider extension used by
+// client-wide policy exports. ListResources deliberately requires an exact
+// tenant bucket for request-time isolation; bundle generation instead needs
+// every tenant row belonging to one client. Providers without this extension
+// remain usable through the no-tenant ListResources fallback.
+type ResourceCatalogLister interface {
+	ListAllResources(ctx context.Context, clientID string) ([]*Resource, error)
+}
+
+// ResourceCheckResult carries the decision-plane details needed by callers
+// that audit authorization without re-resolving the catalog. Reason is a
+// bounded value from the resource matcher, never a provider error string.
+type ResourceCheckResult struct {
+	Allowed    bool
+	ResourceID string
+	Reason     string
+}
+
+// CheckResource decides an optional resource-aware authorization request.
+// A nil lookup preserves the legacy flat permission decision. A catalog miss
+// also falls back to that decision so callers without a matching entry retain
+// the existing behavior. A found public or auth-only resource is allowed;
+// resources with required permissions use the projected require mode.
+func CheckResource(rp ResourceProvider, lookup *ResourceLookup, subjectPerms []Permission, want string) (bool, error) {
+	result, err := CheckResourceWithContext(context.Background(), rp, lookup, subjectPerms, want)
+	return result.Allowed, err
+}
+
+// CheckResourceWithContext is CheckResource with caller-controlled context
+// and bounded decision details for audit or tracing consumers.
+func CheckResourceWithContext(ctx context.Context, rp ResourceProvider, lookup *ResourceLookup, subjectPerms []Permission, want string) (ResourceCheckResult, error) {
+	if lookup == nil {
+		return flatResourceResult(subjectPerms, want), nil
+	}
+	if rp == nil {
+		return ResourceCheckResult{}, errors.New("permissions: resource provider required")
+	}
+	decision, err := rp.ResolveResource(ctx, *lookup)
+	if err != nil {
+		return ResourceCheckResult{}, err
+	}
+	if !decision.Found {
+		return flatResourceResult(subjectPerms, want), nil
+	}
+	if !decision.RequiresAuth || len(decision.RequiredPermissions) == 0 {
+		return ResourceCheckResult{Allowed: true, ResourceID: decision.ResourceID, Reason: "resource-public"}, nil
+	}
+	reason := "require-any"
+	if decision.RequireMode == RequireAll {
+		reason = "require-all"
+	}
+	return ResourceCheckResult{
+		Allowed:    resourcePermissionsMatch(subjectPerms, decision),
+		ResourceID: decision.ResourceID,
+		Reason:     reason,
+	}, nil
+}
+
+func flatResourceResult(subjectPerms []Permission, want string) ResourceCheckResult {
+	allowed := Matches(subjectPerms, want)
+	reason := "flat-miss"
+	if allowed {
+		reason = "flat-match"
+	}
+	return ResourceCheckResult{Allowed: allowed, Reason: reason}
+}
+
+func resourcePermissionsMatch(subjectPerms []Permission, decision *ResourceDecision) bool {
+	if decision.RequireMode == RequireAll {
+		for _, required := range decision.RequiredPermissions {
+			if !Matches(subjectPerms, required) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, required := range decision.RequiredPermissions {
+		if Matches(subjectPerms, required) {
+			return true
+		}
+	}
+	return false
+}
+
 // Sentinel errors. Admin RPCs map these to gRPC codes.
 var (
 	ErrResourceNotFound = errors.New("permissions: resource not found")

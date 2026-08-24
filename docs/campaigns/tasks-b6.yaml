@@ -1,0 +1,108 @@
+# B6 implementation batch: snapshot credential-aware recovery + adapters
+# delivery path.
+#
+# Direction set (each has a committed design; read the design FIRST):
+#   1. Credential-Aware Recovery for interfaces/snapshot
+#      (docs/design/interfaces-snapshot-credential-aware-recovery.md +
+#      -protocol-review.md) — fresh-node client secret regeneration,
+#      WebAuthn passkey portability, encrypted opt-in TOTP seed portability.
+#   2. Adapters delivery path (docs/design/adapters-delivery-path.md +
+#      docs/requirements/adapters-delivery-path.md) — testkit router
+#      injection + backend matrix e2e; embed-gin/embed-echo examples;
+#      adapters contract doc + adapters_check.py CI gate.
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b6.yaml
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report. Never claim a test
+#     passed that you did not run.
+#   - Engineering budgets: no file over 500 lines, no function over 50 lines
+#     / cyclo 15, no new maintainability exemptions, no skipDirs /
+#     layerExemptions additions, no layer violations (architecture gate).
+#   - Update docs/config-reference.md + CHANGELOG.md only when a public
+#     contract actually changes (snapshot: none per design; adapters: the
+#     docs/adapters.md guarantee-scope update the design mandates).
+#   - Commit with a conventional imperative message + AI co-author trailer.
+#     The post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库。任务：实现 Credential-Aware Recovery（快照凭据感知恢复）。
+
+    契约（先读，后实现，契约优先于本提示）：
+    - @/home/u1/workspace/demo/snaplink/docs/design/interfaces-snapshot-credential-aware-recovery.md
+    - @/home/u1/workspace/demo/snaplink/docs/design/interfaces-snapshot-credential-aware-recovery-protocol-review.md
+      （评审修正优先于主文档）
+
+    Scope（设计的三个决策 + 硬边界）：
+    1. Decision 1 — fresh-node client secret regeneration：恢复后无活记录
+       可回填时（preserveClientSecrets 遇 ErrNoSuchClient），restorer 通过
+       既有 ClientStore.RotateSecret SPI 为保密客户端再生 secret，新凭据只
+       经 restore RPC 响应返回。
+    2. Decision 2 — WebAuthn passkey 可移植：快照携带公钥材料（非机密），
+       恢复后凭据可继续使用；counter 回归语义按设计（no-prune 决策保留）。
+    3. Decision 3 — TOTP seed 可移植：仅当显式 operator 开关开启时，seed
+       进入独立密封信封（purpose-separated sealed envelope）；默认快照体
+       绝不携带明文凭据（client secret 保持 json:"-"）。
+    4. 硬边界：不触碰 Sealer/Redactor/TOTPStore/webauthn.UserStore 基接口、
+       不加新配置键、每个 seam 都是类型断言、零默认行为变化。
+
+    验收测试（按设计 §Test surface 落地，禁止 skip）：
+    - interfaces/snapshot/restore_preserve_secret_test.go（rotation 语义）
+    - snapshot_v3_test.go（webauthn round-trip + counter regression +
+      exporter-less store）
+    - TOTP round-trip：对密封信封做已知 seed 的子串扫描（明文扫描必须
+      失败 = fail-closed 证明）
+    - 现有 snapshot 测试全部保持绿（v1/v2 兼容读路径不回归）
+
+    验证命令（必须实际运行并报告输出）：
+      go build ./... && go vet ./...
+      go test ./interfaces/snapshot/... -count=1
+      go test ./test/ -run 'Snapshot|Restore' -count=1
+      go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b6-snapshot-credential-recovery.md
+  timeout: 2400
+  validate: |
+    go test ./interfaces/snapshot/... -count=1 && go build ./... && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：实现 adapters delivery path（适配器正式交付路径）。
+
+    契约（先读，后实现，契约优先于本提示）：
+    - @/home/u1/workspace/demo/snaplink/docs/design/adapters-delivery-path.md
+    - @/home/u1/workspace/demo/snaplink/docs/requirements/adapters-delivery-path.md
+
+    Scope（设计明确定义的三项改进；**零运行时行为变化**——本任务只加
+    测试代码、示例代码与文档；编译后的生产依赖图不得改变）：
+    1. testkit router 注入 + 后端矩阵 e2e：interfaces/adapters 的测试
+       kit 支持注入被测 router（std/gin/echo 三后端），矩阵 e2e 在
+       unmatched-route 面强制逐字节一致，JSON 错误体按设计 Decision 2
+       的语义契约（status + JSON value + Content-Type 前缀）断言。
+    2. embed-gin / embed-echo 示例：docs/examples/ 下可运行的嵌入示例
+       （gin/echo 后端），随 docs/examples 门禁编译。
+    3. 契约文档与 CI 门禁：docs/adapters.md 更新保证范围（逐字节 vs
+       语义契约的声明与矩阵一致）；adapters_check.py 的 CI 门禁覆盖
+       矩阵（python cli.py adapters 全绿）。
+
+    验收（禁止 skip）：
+    - 矩阵 e2e：std/gin/echo 三后端在 unmatched-route 面逐字节一致；
+      JSON 错误体满足语义契约。
+    - 示例编译：go build ./docs/examples/... 通过（含 embed-gin/embed-echo）。
+    - python cli.py adapters 全绿（static contract + conformance suite）。
+    - 既有 adapters 测试全部保持绿。
+
+    验证命令（必须实际运行并报告输出）：
+      go build ./... && go vet ./...
+      go test ./interfaces/adapters/... -count=1
+      go build ./docs/examples/...
+      python cli.py adapters
+      go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b6-adapters-delivery-path.md
+  timeout: 2400
+  validate: |
+    go test ./interfaces/adapters/... -count=1 && go build ./docs/examples/... && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}

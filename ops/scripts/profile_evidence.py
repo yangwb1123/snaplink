@@ -140,11 +140,17 @@ def run_evidence(skip_build: bool) -> int:
             )
     if len(rows) >= 2:
         small = next(r for r in rows if r["binary"] == "sso-minimal")
+        prototype = next(r for r in rows if r["binary"] == "sso-prototype")
         full = next(r for r in rows if r["binary"] == "sso-server")
         print(
             f"\nisolation delta: full links {full['packages'] - small['packages']} more "
             f"snaplink packages (+{full['size_mb'] - small['size_mb']:.1f} MB, "
-            f"+{full['symbols'] - small['symbols']} symbols)"
+            f"+{full['symbols'] - small['symbols']} symbols) than the minimal edition"
+        )
+        print(
+            f"composition roots: prototype/minimal share {min(prototype['packages'], small['packages'])} "
+            f"snaplink packages (prototype {prototype['packages']}, minimal {small['packages']}); "
+            "each links only its own cmd/ root"
         )
     if failures:
         raise EvidenceError("isolation boundary violated: " + " | ".join(failures))

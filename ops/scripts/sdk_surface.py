@@ -26,12 +26,29 @@ SURFACE_PATH = ROOT / "ops" / "build" / "sdk-surface.json"
 SCHEMA_PATH = ROOT / "ops" / "build" / "sdk-surface.schema.json"
 CAPABILITIES_PATH = ROOT / "ops" / "build" / "capabilities.json"
 OPENAPI_PATH = ROOT / "docs" / "openapi.yaml"
+PYTHON_PACKAGE_PATH = ROOT / "sdks" / "python" / "snaplink_sso" / "client.py"
 
 EXPECTED_SCHEMA_HEADER = "https://json-schema.org/draft/2020-12/schema"
 
 
 class SDKSurfaceError(Exception):
     """Raised for any registry/contract violation."""
+
+
+def validate_python_package(languages: list[dict]) -> None:
+    """Keep the installable Python package byte-identical to its vendorable output."""
+    if not any(lang.get("id") == "python" for lang in languages):
+        return
+    documented = ROOT / next(
+        lang["file"] for lang in languages if lang.get("id") == "python"
+    )
+    if not PYTHON_PACKAGE_PATH.exists():
+        raise SDKSurfaceError(f"Python package output missing: {PYTHON_PACKAGE_PATH}")
+    if documented.read_bytes() != PYTHON_PACKAGE_PATH.read_bytes():
+        raise SDKSurfaceError(
+            "Python package output differs from the documented generated client: "
+            f"{PYTHON_PACKAGE_PATH}"
+        )
 
 
 def load_openapi_operation_ids() -> set[str]:
@@ -85,6 +102,7 @@ def validate_registry() -> dict:
             raise SDKSurfaceError(
                 f"{SURFACE_PATH}: language {lang.get('id')!r} output {lang['file']} missing"
             )
+    validate_python_package(languages)
     groups = registry.get("groups", [])
     if not groups:
         raise SDKSurfaceError(f"{SURFACE_PATH}: groups must not be empty")

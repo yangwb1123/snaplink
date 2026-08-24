@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -38,6 +39,7 @@ func hashClientSecretField(value, label string) (string, error) {
 // current record first, exactly as it must to avoid clobbering Secret.
 func clientWriteArgs(c *sso.Client, secret, rat string) ([]any, error) {
 	redirects, _ := json.Marshal(c.RedirectURIs)
+	redirectPatterns, _ := json.Marshal(c.RedirectURIPatterns)
 	scopes, _ := json.Marshal(c.AllowedScopes)
 	auths, _ := json.Marshal(c.AllowedAuthenticators)
 	jwks, _ := json.Marshal(c.JWKS)
@@ -58,6 +60,7 @@ func clientWriteArgs(c *sso.Client, secret, rat string) ([]any, error) {
 		boolToInt(c.RequireSignedRequestObject), boolToInt(c.RequirePAR),
 		int64(c.DeviceCodeTTL), int64(c.DeviceCodePollInterval),
 		c.UserinfoSignedResponseAlg,
+		c.IDTokenSignedResponseAlg,
 		c.IDTokenEncryptedResponseAlg, c.IDTokenEncryptedResponseEnc,
 		c.UserinfoEncryptedResponseAlg, c.UserinfoEncryptedResponseEnc,
 		c.BackchannelLogoutURI, c.SubjectType, c.SectorIdentifierURI,
@@ -66,6 +69,7 @@ func clientWriteArgs(c *sso.Client, secret, rat string) ([]any, error) {
 		c.ClientTrustScore, unixNanoOrZero(c.ClientTrustSetAt),
 		c.PreviousSecret, unixNanoOrZero(c.SecretOverlapUntil),
 		unixNanoOrZero(c.SecretExpiresAt),
+		string(redirectPatterns),
 	}, nil
 }
 
@@ -140,6 +144,7 @@ func clientWritePrep(c *sso.Client) ([]any, error) {
 type clientScanRow struct {
 	c                                                      sso.Client
 	redirects, scopes, auths                               string
+	redirectPatterns                                       string
 	jwksBlob, resources, reqURIs, postLogout, authzDetails string
 	pkceM, attrsBlob                                       string
 	activeInt, requirePKCEInt                              int64
@@ -148,6 +153,7 @@ type clientScanRow struct {
 	rat                                                    string
 	refreshTTL, accessTTL, dcTTL, dcPoll                   int64
 	userinfoSigAlg                                         string
+	idtSignedAlg                                           string
 	idtEncAlg, idtEncEnc, uiEncAlg, uiEncEnc               string
 	bclURI, subjectType, sectorURI, fclURI                 string
 	secretRotatedAtUnixNs                                  int64
@@ -170,12 +176,14 @@ func (r *clientScanRow) scanInto(s scanner) error {
 		&r.requireSROInt, &r.requirePARInt,
 		&r.dcTTL, &r.dcPoll,
 		&r.userinfoSigAlg,
+		&r.idtSignedAlg,
 		&r.idtEncAlg, &r.idtEncEnc, &r.uiEncAlg, &r.uiEncEnc,
 		&r.bclURI, &r.subjectType, &r.sectorURI, &r.fclURI,
 		&r.federationInt, &r.attrsBlob, &r.secretRotatedAtUnixNs,
 		&r.c.ClientTrustScore, &r.clientTrustSetAtUnixNs,
 		&r.previousSecret, &r.secretOverlapUntilUnixNs,
 		&r.secretExpiresAtUnixNs,
+		&r.redirectPatterns,
 	)
 }
 
@@ -198,6 +206,7 @@ func (r *clientScanRow) scalars() {
 	c.DeviceCodeTTL = time.Duration(r.dcTTL)
 	c.DeviceCodePollInterval = time.Duration(r.dcPoll)
 	c.UserinfoSignedResponseAlg = r.userinfoSigAlg
+	c.IDTokenSignedResponseAlg = r.idtSignedAlg
 	c.IDTokenEncryptedResponseAlg = r.idtEncAlg
 	c.IDTokenEncryptedResponseEnc = r.idtEncEnc
 	c.UserinfoEncryptedResponseAlg = r.uiEncAlg
@@ -249,7 +258,11 @@ func (s *ClientStore) RotateSecretWithLifecycle(ctx context.Context, clientID st
 	if overlap > 0 {
 		until = now.Add(overlap)
 	}
-	res, err := s.db.Load().ExecContext(ctx, `UPDATE clients SET
+	db := s.db.Load()
+	if db == nil {
+		return "", errors.New("sqlite: client store closed")
+	}
+	res, err := db.ExecContext(ctx, `UPDATE clients SET
 		previous_secret = CASE WHEN ? > 0 THEN secret ELSE '' END,
 		secret_overlap_until = ?, secret = ?, secret_rotated_at = ?, secret_expires_at = ? WHERE id = ?`,
 		int64(overlap), unixNanoOrZero(until), hashed, unixNanoOrZero(now),
@@ -286,6 +299,7 @@ func (r *clientScanRow) jsonFields() error {
 		field string
 	}{
 		{r.redirects, &c.RedirectURIs, "redirect_uris"},
+		{r.redirectPatterns, &c.RedirectURIPatterns, "redirect_uri_patterns"},
 		{r.scopes, &c.AllowedScopes, "allowed_scopes"},
 		{r.auths, &c.AllowedAuthenticators, "allowed_authenticators"},
 		{r.jwksBlob, &c.JWKS, "jwks"},

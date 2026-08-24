@@ -3,15 +3,17 @@ package webhook
 import (
 	"errors"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
-// HandlerDeps is what the webhook admin HTTP handlers need. *sso.Server
-// satisfies this via its WebhookEngine() accessor plus the pre-existing
-// Auditor() accessor (already required by several other domain handlers).
+// HandlerDeps is the historical dependency surface for the webhook admin
+// handlers. Hosts may additionally expose WebhookRuntime() Runtime; the
+// optional method is discovered by webhookRuntime so old embedders that only
+// implement WebhookEngine() remain source-compatible.
 type HandlerDeps interface {
 	WebhookEngine() *Engine
 	Auditor() *audit.Recorder
@@ -134,7 +136,7 @@ func HandleDeleteSubscription(d HandlerDeps, ctx core.HandlerContext) {
 // HandleListDeadLetters implements GET /api/v1/admin/webhooks/deadletters
 // (optional ?subscription_id= filter).
 func HandleListDeadLetters(d HandlerDeps, ctx core.HandlerContext) {
-	eng := d.WebhookEngine()
+	eng := webhookRuntime(d)
 	if eng == nil || eng.DeadLetters() == nil {
 		ctx.JSON(http.StatusInternalServerError, errBody(core.ErrWebhookNotConfigured))
 		return
@@ -152,7 +154,7 @@ func HandleListDeadLetters(d HandlerDeps, ctx core.HandlerContext) {
 // HandleReplayDeadLetter implements POST
 // /api/v1/admin/webhooks/deadletters/:id/replay.
 func HandleReplayDeadLetter(d HandlerDeps, ctx core.HandlerContext) {
-	eng := d.WebhookEngine()
+	eng := webhookRuntime(d)
 	if eng == nil || eng.DeadLetters() == nil {
 		ctx.JSON(http.StatusInternalServerError, errBody(core.ErrWebhookNotConfigured))
 		return
@@ -205,12 +207,36 @@ func HandleReplayDeadLetter(d HandlerDeps, ctx core.HandlerContext) {
 // isn't wired (defensive: the routes are only mounted when an Engine IS
 // wired, but the check keeps handlers safe if called directly, e.g. tests).
 func subscriptionStoreOrErr(d HandlerDeps, ctx core.HandlerContext) (SubscriptionStore, bool) {
-	eng := d.WebhookEngine()
+	eng := webhookRuntime(d)
 	if eng == nil || eng.Subscriptions() == nil {
 		ctx.JSON(http.StatusInternalServerError, errBody(core.ErrWebhookNotConfigured))
 		return nil, false
 	}
 	return eng.Subscriptions(), true
+}
+
+func webhookRuntime(d HandlerDeps) Runtime {
+	if d == nil {
+		return nil
+	}
+	if runtimeDeps, ok := any(d).(interface{ WebhookRuntime() Runtime }); ok {
+		if runtime := runtimeDeps.WebhookRuntime(); !nilRuntime(runtime) {
+			return runtime
+		}
+	}
+	engine := d.WebhookEngine()
+	if engine == nil {
+		return nil
+	}
+	return engine
+}
+
+func nilRuntime(runtime Runtime) bool {
+	if runtime == nil {
+		return true
+	}
+	value := reflect.ValueOf(runtime)
+	return value.Kind() == reflect.Ptr && value.IsNil()
 }
 
 // recordSubscriptionAudit records an admin-mutation audit event for a

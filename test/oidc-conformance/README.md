@@ -4,11 +4,13 @@ This directory runs the [OpenID Foundation's Conformance Test
 Suite](https://gitlab.com/openid/conformance-suite) against a local
 `sso-server` instance built from this repository.
 
-> **No conformance claim:** this harness is not part of `make ci`, requires
-> browser interaction, and has no committed pass report or certification
-> artifact. “Implemented in the server” is not equivalent to “passed the OIDF
-> suite,” and snaplink must not be described as OIDF-certified on the basis of
-> this directory. Certification status lives in
+> **No conformance claim:** this harness is not part of `make ci`; it is
+> runnable headless (`./run-headless.sh`) and archives its evidence under
+> `results/<commit>[-https]/` (git-ignored; the archive is referenced from
+> [`docs/sso/oidc-conformance.md`](../../docs/sso/oidc-conformance.md)).
+> “Implemented in the server” is not equivalent to “passed the OIDF
+> suite,” and snaplink must not be described as OIDF-certified on the basis
+> of this directory. Certification status lives in
 > [`docs/sso/oidc-conformance.md`](../../docs/sso/oidc-conformance.md).
 
 ## Supported test profiles
@@ -27,7 +29,7 @@ the only supported profile set; anything else must not be run or claimed.
 | `session` | ✅ | Session management (`check_session_iframe`) |
 | `logout` | ✅ | RP-initiated logout |
 | `jarm` | ✅ | Requires `oauth.jar`/JARM wiring; opt-in |
-| `fapi` | ✅ | FAPI 2.0 code profile only, when FAPI wiring is enabled |
+| `fapi` | ⚠️ | FAPI 2.0 code profile (`--fapi`); the static-client fixture, per-test path pattern, PAR, DPoP resource calls, callback `state`/`iss`, and HTTPS cipher checks now run. The pinned `fapi2-security-profile-final-happy-flow` still stops when its second client appends a query to the dynamic callback: the server deliberately rejects query-bearing pattern candidates (`400 invalid_redirect_uri`) under the pattern grammar in `docs/design/redirect-uri-patterns.md`. Latest evidence: `results/1b2867c6-fapi-https/` |
 | `ciba` | ✅ | Only when a CIBA store is wired |
 | `implicit` | ❌ | Runtime rejects `id_token` response types |
 | `hybrid` | ❌ | Runtime rejects `code id_token` response types |
@@ -41,22 +43,60 @@ Prerequisites: Docker with compose v2, google-chrome, python3
 ### Headless (one command)
 
 ```bash
-./run-headless.sh                # runs oidcc-server, archives results/<commit>/
+./run-headless.sh                # HTTP issuer topology; archives results/<commit>/
+./run-headless.sh --issuer-https # HTTPS issuer topology; archives results/<commit>-https/
+./run-headless.sh --fapi         # FAPI 2.0 SP variant; archives results/<commit>-fapi/
+./run-headless.sh --fapi --issuer-https # HTTPS FAPI; archives results/<commit>-fapi-https/
 MODULE=oidcc-config-certification-test ./run-headless.sh
 ```
+
+`--fapi` mounts `config-fapi.yaml` (`oauth.compliance.profile=fapi_2` in
+inspection mode, PAR enabled, ES256 signing plus a dedicated RS256
+per-client id_token key via `keys.id_token_algs`), creates the
+`fapi2-security-profile-final-test-plan` plain_fapi / private_key_jwt /
+DPoP / unsigned-PAR / plain-response variant and runs the
+`fapi2-security-profile-final-happy-flow` module. The login client is
+registered via DCR with `id_token_signed_response_alg: RS256` because the
+pinned suite's own admin-login decoder is Spring Security's hard-coded-RS256
+`OidcIdTokenDecoderFactory` (see `results/39ecdf7a-fapi/BLOCKER.md`); the
+RS256 key in `config-fapi.yaml` serves exactly that client while the FAPI
+test clients stay on the ES256 primary. The default invocation is
+byte-identical to the committed behavior (`CONFORMANCE_CONFIG` defaults to
+`config.yaml`; verified by `docker compose --env-file config.env config`).
+
+Latest verified run at HEAD `1b2867c6` (HTTPS topology): the suite login and
+FAPI plan succeed; both static clients load their private-key fixtures, and
+the first per-test callback passes the pattern gate. The run also reaches
+PAR, token exchange, DPoP-protected `/userinfo`, callback `state`/`iss`
+handling, and the HTTPS cipher checks. The second client intentionally adds
+`?dummy1=lorem&dummy2=ipsum` to its callback; the current security contract
+rejects that query-bearing candidate with `400 invalid_redirect_uri`, so the
+module ends `INTERRUPTED`. This is a documented compatibility boundary, not
+a FAPI pass. A query-pattern extension would require a separate security
+design and contract review.
 
 The script builds the harness, registers the suite's OIDC login client via
 DCR plus an admin signup user on the server under test, creates the Basic
 certification plan with discovery configuration, starts the requested test
 module and drives a headless Chrome that auto-completes the JSON logins
 (snaplink's /auth/login is an API, not an HTML form), then archives the
-plan/log/info artifacts under `results/<commit>/`.
+plan/log/info artifacts under `results/<commit>[-https]/`.
+
+`--issuer-https` terminates TLS at an nginx `issuer-proxy` (self-signed
+`certs/`, host 8181 -> sso-server) and points the issuer at
+`https://sso-issuer:8181`, so the suite's https-only checks
+(`VerifyClientManagementCredentials`) run against the issuer. The mode
+builds a JVM truststore for the suite (default CAs + the self-signed cert,
+because the suite resolves its hardcoded Google login provider's discovery
+at startup) and requires `keytool` (JDK) on the host. The default HTTP
+invocation is byte-identical to the committed behavior.
 
 ### Interactive (browser)
 
 ```bash
 # 1. Validate the pinned server config (fails fast on schema drift):
-docker compose run --rm --no-deps sso-server --validate-only
+#    (empty -grpc-listen disables the gRPC plane; see docker-compose.yml)
+docker compose run --rm --no-deps sso-server --validate-only -grpc-listen ""
 
 # 2. Build and start the harness:
 docker compose up -d --build
@@ -72,7 +112,8 @@ docker compose up -d --build
 > The suite's HTTPS UI is fronted by the bundled nginx proxy (self-signed
 > cert under `certs/`, generated by the harness). The suite container
 > reaches the server under test via the `sso-issuer` extra_host entry
-> (host-gateway -> host port 8180).
+> (host-gateway -> host port 8180; port 8181 in `--issuer-https` mode,
+> terminated by the `issuer-proxy` service).
 
 The conformance-suite image is pinned to
 `registry.gitlab.com/openid/conformance-suite:release-v5.2.1` — deliberately
@@ -96,18 +137,19 @@ release that claims it:
 4. The raw suite results export (HTML/JSON) per plan.
 5. The Go build/module inventory (`go version -m ./bin/sso-server`).
 
-Store these under `results/<commit>/` (git-ignored; keep only the README
-template committed) and reference them from
+Store these under `results/<commit>[-https]/` (git-ignored; keep only the
+README template committed) and reference them from
 [`docs/sso/oidc-conformance.md`](../../docs/sso/oidc-conformance.md) before
-any certification claim is made. An HTTP-only local topology is a smoke
-environment; a certification run requires an externally reachable HTTPS
+any certification claim is made. The committed harness runs only local
+smoke topologies — an HTTP issuer, or an HTTPS issuer behind a self-signed
+local proxy; a certification run requires an externally reachable HTTPS
 issuer per OIDF guidance.
 
 ## Troubleshooting
 
 - Server startup: `docker compose logs sso-server`
 - Config rejected at boot: the server refuses to start; run
-  `docker compose run --rm --no-deps sso-server --validate-only` to see the
+  `docker compose run --rm --no-deps sso-server --validate-only -grpc-listen ""` to see the
   error without starting a container.
 - Redirect/network failure: verify the issuer and server URL are reachable
   from the conformance container (`docker compose exec conformance-suite

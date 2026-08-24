@@ -8,6 +8,10 @@ import (
 	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
+// freshAuditSink opens a writable audit sink and TRUNCATEs the shared
+// audit_events table. Callers must NOT run in parallel: a concurrent
+// TRUNCATE (or a parallel peer's assertions) would wipe or leak rows on
+// the same table, so every test in this file runs sequentially.
 func freshAuditSink(t *testing.T) *AuditSink {
 	t.Helper()
 	s, err := NewAuditSink(testConfig(t))
@@ -22,7 +26,6 @@ func freshAuditSink(t *testing.T) *AuditSink {
 }
 
 func TestAudit_RecordGetQuery(t *testing.T) {
-	t.Parallel()
 	s := freshAuditSink(t)
 	ctx := context.Background()
 	base := time.Now().UTC()
@@ -63,7 +66,6 @@ func TestAudit_RecordGetQuery(t *testing.T) {
 }
 
 func TestAudit_QueryFilterOrderAndFacets(t *testing.T) {
-	t.Parallel()
 	s := freshAuditSink(t)
 	ctx := context.Background()
 	base := time.Now().UTC()
@@ -100,7 +102,6 @@ func TestAudit_QueryFilterOrderAndFacets(t *testing.T) {
 }
 
 func TestAudit_PruneAndLastHash(t *testing.T) {
-	t.Parallel()
 	s := freshAuditSink(t)
 	ctx := context.Background()
 	base := time.Now().UTC()

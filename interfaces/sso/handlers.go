@@ -281,9 +281,11 @@ func (s *Server) ClassifyRequest(r *http.Request) *netpolicy.Policy {
 // audit.EventFromRequest pre-fills an Event with caller-side
 // metadata (IP, user-agent, request ID, trace context, plus geo
 // when the geo middleware is wired). Handlers fill the rest.
-// TracingMiddleware populates the headers this function reads;
-// without that middleware installed, RequestID/TraceID/SpanID
-// stay empty. GeoMiddleware similarly populates the geo metadata
+// The OTel span (from middleware.Correlation, Decision 7/8 of
+// docs/design/middleware-observability-unified.md) is the single
+// trace-correlation source; without a real provider, TraceID stays
+// empty and only RequestID (always populated by Correlation) is set.
+// GeoMiddleware similarly populates the geo metadata
 // keys; without it, no geo.* metadata appears.
 // audit.EnrichTenant lifts tenant routing results onto
 // Event.Metadata under the tenant.* prefix. No-op when the

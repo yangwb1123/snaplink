@@ -5,6 +5,49 @@ Source baseline: `docs/architect-analysis/auto/domains-permissions-analysis.md` 
 Scope: exactly 3 evidence-backed improvements. Every claim below was verified
 against the current tree.
 
+## Shipped implementation status (2026-08-21)
+
+The vertical slice described by this proposal is implemented. The executable
+code, generated proto/OpenAPI, and the following facts are authoritative; the
+gap analysis and proposed alternatives below are retained as historical design
+context.
+
+- The existing `PermissionAdminService` owns the additive SoD methods:
+  `SetConflictSets`, `ListConflictSets`, `SetActivationConflictSets`,
+  `ListActivationConflictSets`, `ActivateRoles`, `ListActiveRoles`, and
+  `DeactivateSession`. There is no separate `SoDAdminService`; the adapter is
+  split into `interfaces/grpcserver/grpcadmin/admin_domains.go` to preserve
+  file budgets. REST uses `/sod/conflicts`, `/dsod/conflicts`, and
+  `/sessions/{session_id}/roles` under the admin permissions prefix.
+- `ErrInvalidConflictSet` maps to `InvalidArgument`; `ErrRoleConflict` and
+  `ErrRoleNotAssigned` map to `FailedPrecondition`. Successful and failed SoD
+  mutations retain bounded audit metadata through the existing admin event
+  types, and declaration changes invalidate policy bundles.
+- Memory, SQLite, Postgres, and Redis implement the SoD interfaces. SQLite
+  stores normalized conflict/active-role rows and defaults new DSNs to an
+  immediate transaction lock plus a bounded busy timeout. Postgres uses the
+  existing serializable transaction/retry helper. Redis uses hash-tagged
+  per-client keys, atomic lifecycle scripts, and the explicit
+  `NewPermissionProviderWithActiveSessionTTL` constructor; the stock server
+  does not expose Redis as a permissions backend or implicitly derive this TTL
+  from `server.session_ttl`.
+- The first-party conformance factories execute all 11 SoD cases; optional
+  capability skips remain valid for hypothetical providers that do not expose
+  the additive interfaces.
+- Central session creation activates the full assigned role set. A conflict at
+  login is audit/logged and leaves an empty projection; logout/deletion paths
+  deactivate the projection. Session-scoped `Check` resolves the local subject,
+  verifies session liveness when wired, and denies invalid/stale sessions or
+  permissions outside the active projection. After `DeactivateSession`, there
+  is no fallback to the assigned set.
+- Policy bundle v2 includes resources and SSoD/DSoD sets. The checked-in OPA
+  policy is executed by a hermetic test-only dependency and is compared with
+  the live authorizer across active roles, wildcards, resource matching, and
+  empty projections.
+
+The original evidence and proposal sections below are historical and must not
+be read as claims that these surfaces are still absent.
+
 ## 1. Admin surface: declare conflict sets and manage session activation over gRPC/REST
 
 ### Problem
@@ -44,7 +87,7 @@ drive it.
   (additive; the package is STABLE but additions are allowed) with:
   `SetConflictSets`/`ListConflictSets` (SSoD),
   `SetActivationConflictSets`/`ListActivationConflictSets` (DSoD), and
-  `ActivateSessionRoles`/`ListActiveRoles`/`DeactivateSessionRoles`
+  `ActivateRoles`/`ListActiveRoles`/`DeactivateSession`
   (DSoD, carrying `session_id`), each with `google.api.http` annotations for
   REST parity. Regenerate `gen/proto/`.
 - Implement in `grpcadmin` with the existing pattern: map
@@ -59,7 +102,7 @@ drive it.
 
 ### Acceptance check
 
-- bufconn test against `grpcadmin`: after `SetConflictSets`, admin
+- bufconn test against `PermissionAdminService`: after `SetConflictSets`, admin
   `AssignRoles` of two conflicting roles returns FailedPrecondition with the
   offending codes; activating an unassigned role returns FailedPrecondition;
   a single-role conflict set returns InvalidArgument with no partial write.
@@ -115,10 +158,9 @@ compliance contract by not running it.
 
 ### Acceptance check
 
-- `permissionstest.ConformanceSuite` SoD subtests execute (no `t.Skip`)
-  against sqlite and postgres peers; restart-and-reread test proves conflict
-  sets and activations survive; a cross-replica test shows one replica's
-  `SetConflictSets` visible on another's next lookup.
+- `permissionstest.ConformanceSuite` registers 11 SoD cases and the first-party
+  sqlite, postgres, and redis factories execute them; restart-and-reread tests
+  prove conflict sets and activations survive their durable stores.
 - Atomicity: a rejected conflicting `AssignRoles` leaves no partial rows;
   `RemoveRole` removes the code from every `active_roles` row for that client.
 - Race runs with `-count=10+`; `make ci` passes.
@@ -180,8 +222,9 @@ ASSIGNED set, so a declared DSoD constraint has zero runtime effect —
   assigned set (backward compatible); `Check` with an unknown `session_id`
   denies (fail closed).
 - `ActivateRoles` on an unassigned code surfaces `ErrRoleNotAssigned` as its
-  mapped status; `DeactivateSession` clears the session, after which
-  session-scoped `Check` falls back to the assigned set.
+  mapped status; `DeactivateSession` clears the active projection, after which
+  session-scoped `Check` remains denied rather than falling back to the
+  assigned set.
 - `docs/error-codes.md`/`docs/feature-matrix.md`/`docs/openapi.yaml` updated;
   mandatory gates pass (`go build ./... && go vet ./...`,
   maintainability/architecture tests, `make ci`).

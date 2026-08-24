@@ -132,6 +132,39 @@ func TestWildcardWithCredentials_EchoesOrigin(t *testing.T) {
 	}
 }
 
+func TestPathOverride_UsesOverridePolicyForMatchingPrefix(t *testing.T) {
+	t.Parallel()
+	mw := cors.Middleware(cors.Policy{
+		AllowedOrigins: []string{"https://app.example.com"},
+		PathOverrides: map[string]cors.Policy{
+			"/.well-known/jwks.json": {AllowedOrigins: []string{"*"}},
+		},
+	})
+	wrapped := mw(echo200())
+
+	preflight := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodOptions, path, nil)
+		req.Header.Set("Origin", "https://other.example.com")
+		req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+		rec := httptest.NewRecorder()
+		wrapped.ServeHTTP(rec, req)
+		return rec
+	}
+
+	override := preflight("/.well-known/jwks.json")
+	if override.Code != http.StatusNoContent {
+		t.Errorf("override preflight status = %d, want 204", override.Code)
+	}
+	if got := override.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("override Allow-Origin = %q, want *", got)
+	}
+
+	defaultPolicy := preflight("/token")
+	if got := defaultPolicy.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("default policy unexpectedly allowed origin: %q", got)
+	}
+}
+
 func TestPreflight_EmitsAllowMethodsAndHeaders(t *testing.T) {
 	t.Parallel()
 	mw := cors.Middleware(cors.Policy{
@@ -190,7 +223,7 @@ func TestExposedHeaders(t *testing.T) {
 	t.Parallel()
 	mw := cors.Middleware(cors.Policy{
 		AllowedOrigins: []string{"*"},
-		ExposedHeaders: []string{"X-Request-ID", "X-RateLimit-Remaining"},
+		ExposedHeaders: []string{"X-Request-ID", "Retry-After"},
 	})
 	wrapped := mw(echo200())
 
@@ -199,7 +232,63 @@ func TestExposedHeaders(t *testing.T) {
 	rec := httptest.NewRecorder()
 	wrapped.ServeHTTP(rec, req)
 
-	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != "X-Request-ID, X-RateLimit-Remaining" {
+	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != "X-Request-ID, Retry-After" {
 		t.Errorf("Expose-Headers = %q", got)
+	}
+}
+
+type blockObserver struct {
+	requests   []*http.Request
+	preflights []bool
+}
+
+func (o *blockObserver) OriginBlocked(r *http.Request, preflight bool) {
+	o.requests = append(o.requests, r)
+	o.preflights = append(o.preflights, preflight)
+}
+
+func TestBlockObserver_ReportsOnlyDisallowedOrigins(t *testing.T) {
+	t.Parallel()
+	observer := &blockObserver{}
+	mw := cors.Middleware(cors.Policy{AllowedOrigins: []string{"https://app.example.com"}}, cors.WithBlockObserver(observer))
+	wrapped := mw(echo200())
+
+	denied := httptest.NewRequest(http.MethodGet, "/token", nil)
+	denied.Header.Set("Origin", "https://evil.example.com")
+	wrapped.ServeHTTP(httptest.NewRecorder(), denied)
+
+	preflight := httptest.NewRequest(http.MethodOptions, "/token", nil)
+	preflight.Header.Set("Origin", "https://evil.example.com")
+	preflight.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	wrapped.ServeHTTP(httptest.NewRecorder(), preflight)
+
+	allowed := httptest.NewRequest(http.MethodGet, "/token", nil)
+	allowed.Header.Set("Origin", "https://app.example.com")
+	wrapped.ServeHTTP(httptest.NewRecorder(), allowed)
+
+	if len(observer.requests) != 2 {
+		t.Fatalf("observer calls = %d, want 2", len(observer.requests))
+	}
+	if observer.requests[0] != denied || observer.requests[1] != preflight {
+		t.Error("observer did not receive the rejected request pointers")
+	}
+	if observer.preflights[0] || !observer.preflights[1] {
+		t.Errorf("preflight flags = %v, want [false true]", observer.preflights)
+	}
+}
+
+type panickingObserver struct{}
+
+func (panickingObserver) OriginBlocked(*http.Request, bool) { panic("observer failure") }
+
+func TestBlockObserver_PanicDoesNotBlockRequest(t *testing.T) {
+	t.Parallel()
+	mw := cors.Middleware(cors.Policy{AllowedOrigins: []string{"https://app.example.com"}}, cors.WithBlockObserver(panickingObserver{}))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/token", nil)
+	req.Header.Set("Origin", "https://evil.example.com")
+	mw(echo200()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 after observer panic", rec.Code)
 	}
 }

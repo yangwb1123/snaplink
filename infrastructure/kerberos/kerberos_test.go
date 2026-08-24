@@ -13,6 +13,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/ssoext"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 
@@ -98,12 +99,14 @@ func newHarness(t *testing.T, v kerberosauth.SPNEGOValidator, cfgMut func(*kerbe
 	}
 
 	res, err := kerberosauth.Build(kerberosauth.Deps{
-		ClientStore:            clients,
-		SessionManager:         sessions,
-		UserProvider:           users,
-		IssuerForClient:        func(c *sso.Client) (string, sso.TokenIssuer, error) { return "jwt", issuer, nil },
-		IDTokenIssuerForClient: func(c *sso.Client) (oidc.IDTokenIssuer, bool, error) { return issuer, true, nil },
-		AuditRecorder:          recorder,
+		KerberosServerDeps: ssoext.KerberosServerDeps{
+			ClientStore:            clients,
+			SessionManager:         sessions,
+			UserProvider:           users,
+			IssuerForClient:        func(c *sso.Client) (string, sso.TokenIssuer, error) { return "jwt", issuer, nil },
+			IDTokenIssuerForClient: func(c *sso.Client) (oidc.IDTokenIssuer, bool, error) { return issuer, true, nil },
+			AuditRecorder:          recorder,
+		},
 	}, cfg, v)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -137,13 +140,15 @@ func newHarnessNoAudit(t *testing.T, v kerberosauth.SPNEGOValidator) http.Handle
 		t.Fatalf("add client: %v", err)
 	}
 	res, err := kerberosauth.Build(kerberosauth.Deps{
-		ClientStore:    clients,
-		SessionManager: defaultimpl.NewMemorySessionManager(),
-		UserProvider:   defaultimpl.NewMemoryUserProvider(),
-		IssuerForClient: func(c *sso.Client) (string, sso.TokenIssuer, error) {
-			return "jwt", defaultimpl.NewEd25519JWTIssuer(), nil
+		KerberosServerDeps: ssoext.KerberosServerDeps{
+			ClientStore:    clients,
+			SessionManager: defaultimpl.NewMemorySessionManager(),
+			UserProvider:   defaultimpl.NewMemoryUserProvider(),
+			IssuerForClient: func(c *sso.Client) (string, sso.TokenIssuer, error) {
+				return "jwt", defaultimpl.NewEd25519JWTIssuer(), nil
+			},
+			// AuditRecorder deliberately nil.
 		},
-		// AuditRecorder deliberately nil.
 	}, kerberosauth.Config{
 		Name: "kerberos", KeytabBytes: []byte("kt"), ServicePrincipal: testSPN,
 		Realm: testRealm, ClientID: testClientID,
@@ -634,10 +639,12 @@ func TestBuild_Validation(t *testing.T) {
 		Realm: testRealm, ClientID: testClientID,
 	}
 	goodDeps := kerberosauth.Deps{
-		ClientStore:     defaultimpl.NewMemoryClientStore(),
-		SessionManager:  defaultimpl.NewMemorySessionManager(),
-		UserProvider:    defaultimpl.NewMemoryUserProvider(),
-		IssuerForClient: func(c *sso.Client) (string, sso.TokenIssuer, error) { return "jwt", nil, nil },
+		KerberosServerDeps: ssoext.KerberosServerDeps{
+			ClientStore:     defaultimpl.NewMemoryClientStore(),
+			SessionManager:  defaultimpl.NewMemorySessionManager(),
+			UserProvider:    defaultimpl.NewMemoryUserProvider(),
+			IssuerForClient: func(c *sso.Client) (string, sso.TokenIssuer, error) { return "jwt", nil, nil },
+		},
 	}
 	v := &fakeValidator{}
 

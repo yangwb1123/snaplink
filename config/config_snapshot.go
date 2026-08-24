@@ -362,14 +362,31 @@ type DegradationConfig struct {
 	// falling back to a request-shedding posture.
 	InitialMode string `yaml:"initial_mode"`
 
-	// AutoReadOnlyOnStoreLoss is an operator INTENT flag: the server should drop
-	// to read_only when a backing datastore's health signal is lost. cmd has no
-	// continuous storage-health push loop today (health is pull-based via
-	// /readyz + the storage-health admin report), so there is no clean seam to
-	// drive this automatically — the manager is EXPOSED via /api/v1/admin/dr/mode
-	// for an operator or an external health loop to call SetMode(read_only). The
-	// flag is honored as a boot-time log acknowledgement until such a loop exists.
+	// AutoReadOnlyOnStoreLoss is an operator INTENT flag: when set, the server
+	// drops to read_only when a backing datastore's health signal is lost. The
+	// composition root arms the in-process auto driver
+	// (platform/lifecycle/degradation.Driver, tuned by AutoReadOnly below),
+	// which polls the SAME storage-health sources the admin /storage-health
+	// report uses and drives SetMode(read_only) after the configured grace;
+	// recovery returns to InitialMode, and the admin dr/mode toggle stays.
 	AutoReadOnlyOnStoreLoss bool `yaml:"auto_read_only_on_store_loss"`
+
+	// AutoReadOnly tunes the auto driver; the zero section takes package defaults.
+	AutoReadOnly AutoReadOnlyConfig `yaml:"auto_read_only"`
+}
+
+// AutoReadOnlyConfig tunes the automatic read_only driver
+// (degradation.auto_read_only_on_store_loss): it polls the wired storage-health
+// sources (all except audit sinks — audit errors are fail-open by contract) and
+// flips read_only only after continuous Unhealthy verdicts for Grace; a healthy
+// sweep restores the configured initial_mode. Transitions use the SAME OnChange
+// path as the admin dr/mode toggle (audit + metric gauge).
+type AutoReadOnlyConfig struct {
+	// Interval is the poll cadence; <=0 takes degradation.DefaultAutoInterval.
+	Interval time.Duration `yaml:"interval"`
+	// Grace is the continuous-unhealthy window before the flip (hysteresis);
+	// <=0 takes degradation.DefaultAutoGrace.
+	Grace time.Duration `yaml:"grace"`
 }
 
 // SessionTrustDecayConfig opts into the zero-trust session-trust-decay feature

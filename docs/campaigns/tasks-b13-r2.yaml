@@ -1,0 +1,235 @@
+# B13-R2 rerun: complete the mid-refactor redirect-URI patterns work, then
+# run FAPI / canary / docs-truthiness against the fixed HEAD.
+#
+# Round 1 outcome (2026-08-16):
+#   - B13-1 (redirect-URI patterns): agent TIMED OUT (2400s) mid-refactor.
+#     The worktree is BROKEN (go build fails:
+#     config/config_load.go:220 references undefined
+#     validateClientRedirectPatterns) and NOT finalizable as-is. The
+#     design doc docs/design/redirect-uri-patterns.md is complete (six
+#     decisions). Observed intent:
+#       * shared/core/email_change.go was DELETED deliberately — its
+#         EmailChangeToken/EmailVerificationToken content moved into
+#         shared/core/invitation.go (comment: shared/core is at its
+#         frozen per-directory file ceiling) — to free a file slot;
+#       * a shared/uripattern/ package was created then REMOVED;
+#       * client-store persistence (sqlite migration v8, postgres
+#         clientSchemaV6), DCR wire/validation, config parsing, openapi/
+#         config-reference updates are partially present.
+#   - The batch was stopped (SIGTERM) before tasks 2-4 ran, so the canary
+#     task never hit the broken build.
+#
+# Sequencing: R2-A fixes HEAD first; R2-B (FAPI) needs the feature; R2-C
+# and R2-D are independent but run after to keep the worktree serial.
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b13-r2.yaml --reuse
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative. Files are referenced by PATH — read them with
+#     your tools, do not expect them inlined.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report. Never claim a test
+#     passed that you did not run.
+#   - Engineering budgets: no file over 500 lines, no function over 50 lines
+#     / cyclo 15, no new maintainability exemptions, no skipDirs /
+#     layerExemptions additions, no layer violations.
+#   - Commit with a conventional imperative message + AI co-author trailer.
+#     The post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库。任务：**完成**上一轮超时中断的 redirect-URI 模式
+    重构（B13-1；工作树损坏、重构中途——你的工作是读设计文档、按设计
+    完成实现、修复构建、跑全门禁、提交）。
+
+    现状（已核验）：
+    - go build 失败：config/config_load.go:220 引用未定义的
+      validateClientRedirectPatterns；其他半成品散落：
+      config/config_client.go、config/config_load.go、
+      infrastructure/defaultimpl/sqlite/clients*.go（迁移 v8 相关）、
+      infrastructure/postgres/clients*.go、interfaces/sso/servercache/
+      server_client_cache.go、protocols/oauth/handle_register*.go、
+      protocols/oauth/oauthvalidate/dcr_validate.go、shared/core/
+      {jwks,types,types_test,invitation}.go、cmd/sso-server/
+      build_app_core.go。
+    - shared/core/email_change.go 被删除是有意的（内容移入
+      invitation.go；注释说明 shared/core 处于冻结文件上限）。
+    - shared/uripattern/ 包曾被创建又移除——以设计文档为准决定最终
+      形态。
+    - 设计文档 docs/design/redirect-uri-patterns.md 完整（六项裁决：
+      数据模型/语法/校验时机/安全评审/FAPI 适配/验收断言）。
+
+    执行要求：
+    1. **先通读设计文档全文**（它是契约）；再逐文件审读工作树现状，
+       重建意图。完成实现（按设计，可调整上一轮的中间选择，但每处
+       调整须说明理由）：
+       - 语法实现落位（设计 Decision 2 指定 shared/uripattern 新包；
+         若上一轮移走则按设计恢复/重建；注意 shared/ 目录预算与
+         分层——shared 是叶子层，无向上依赖）；
+       - Client.RedirectURIPatterns 字段 + IsRedirectURIValid OR 语义
+         （精确列表不变）；
+       - DCR 注册/更新/回显（snaplink 扩展字段名）+ 校验（非法模式
+         拒绝）；
+       - 静态配置 clients[].redirect_uri_patterns + boot 校验
+         （validateClientRedirectPatterns 实现或修正调用点）；
+       - sqlite（迁移 v8）与 postgres（clientSchemaV6）持久化；
+       - openapi.yaml + config-reference.md + CHANGELOG.md 同步。
+    2. 测试（禁止 skip）：匹配器表驱动测试（含设计 Decision 2/4 的
+       对抗样例：不匹配/跨段/大小写/编码绕过/危险形态拒绝）+ DCR
+       往返 + 集成（带模式客户端登录回调）+ 既有 redirect 测试全绿。
+    3. 全部验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./shared/... ./protocols/oauth/... ./config/... -count=1
+       go test ./interfaces/sso/... -run 'Redirect|Login|Register' -count=1
+       go test ./test/ -run 'Redirect|PKCE|Login' -count=1
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+       python3 cli.py check-routes && python3 cli.py sdk-surface check
+       gofmt -l 本方向文件
+    4. 硬边界：默认零模式行为逐字节不变；零豁免；新文件 ≤500 行、
+       函数 ≤50 行/cyclo ≤15；shared/core 文件上限不破（若需文件
+       移动，沿用上一轮"合并既有文件"的纪律并说明）。
+    5. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b13-redirect-uri-patterns.md
+  timeout: 2400
+  validate: |
+    go build ./... && go vet ./... && go test ./shared/core/... ./protocols/oauth/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：完成 FAPI2 SP FINAL conformance 模块运行
+    （前置 R2-A 已把 redirect-URI 模式合并到 HEAD；若缺失按 fallback）。
+
+    契约（先读，后执行）：
+    - docs/campaigns/reports/b12-fapi-conformance.md（12+1 INTERRUPTED；
+      失败项 GetStaticClientConfiguration）
+    - docs/campaigns/reports/b13-redirect-uri-patterns.md（R2-A 设计
+      与实现；静态客户端模式形状）
+    - test/oidc-conformance/{run-headless.sh,config-fapi.yaml,
+      docker-compose.yml}（--fapi 变体；默认拓扑字节不变纪律）
+    - test/oidc-conformance/results/07832dda-fapi/（动态回调 URI 实证）
+
+    执行要求：
+    1. 确认 HEAD 有 redirect-URI 模式（grep RedirectURIPatterns + 读
+       R2-A 报告）。若缺失：fallback——验证 harness 完好 + 重跑
+       basic 零回归 + 阻塞如实记录，报告即结束（不虚构）。
+    2. 若有：
+       a. harness config-fapi.yaml 增补 FAPI 静态客户端（模块要求的
+          client_id 与 redirect_uri_patterns：形状如
+          https://localhost:8443/test/*/callback，以归档日志实测
+          动态 URI 为准）；
+       b. 运行 ./run-headless.sh --fapi --timeout 1200，如实报告每
+          阶段输出与最终统计（模块 SUCCESS/FAIL 明细；静态客户端
+          失败项是否翻转为 PASS；新失败项逐条记录）；
+       c. 归档 results/<commit>-fapi/（plan/log/info/config/commit/
+          worktree；gitignore 本地留存）；
+       d. 文档同步（同提交）：README fapi 行、docs/sso/oidc-
+          conformance.md 证据表、ROADMAP P0 #2 状态更新为如实进展、
+          CHANGELOG（如 harness 变更）。
+    3. 验证命令（必须实际运行并报告输出）：
+       cd test/oidc-conformance && <FAPI 运行命令>
+       cd /home/u1/workspace/demo/snaplink && go build ./... && go vet ./...
+       git status --porcelain
+    4. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b13-fapi-conformance.md
+  timeout: 2400
+  validate: |
+    go build ./... && go vet ./... && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：实现 canary 配置应用（配置治理的剩余
+    Partial 边界之一：canary rollout / automated remediation），先写
+    有界设计、再实现。apply/rollback 基线（B10-3）行为必须不变。
+
+    契约（先读，后实现，契约优先于本提示）：
+    - docs/deferred-backlog.md "Declarative multi-cluster configuration
+      governance" 段（Partial by design：apply+rollback 已实现；canary
+      rollout / automated remediation / GitOps reconciliation 未承诺）
+    - platform/configaudit/（Store.Apply/Applied/Rollback、handlers、
+      mount、memory/sqlite、redact、diff、digest——B10-3 设计
+      docs/design/config-apply-mode.md）
+    - platform/lifecycle/degradation/（B7-2 的自动降级驱动：健康信号
+      源）与 interfaces/sso 的 StorageHealthSource（/readyz 探针）
+    - docs/error-codes.md 的 config_apply_* 系列（新错误码同表登记）
+
+    第一步——设计文档（必须先写）：
+    docs/design/config-canary-apply.md，必须裁决：
+    1. 语义：canary 窗口（如 ?canary=true&window=60s）内如何观测——
+       复用 degradation Manager / storage-health 信号源 vs 独立健康
+       检查；判定标准（什么信号触发回滚）；窗口结束后的终态
+       （confirmed / rolled back）。
+    2. 状态机：apply → canary-observing → confirmed|rolled_back（含
+       中断/进程重启的恢复语义——canary 状态是否持久化，sqlite 迁移
+       若需）；与现有 Applied/Rollback/History 的关系。
+    3. 回滚触发：健康信号 fail-open/fail-closed 纪律（信号源错误不
+       误回滚？）；回滚动作复用现有 Rollback；审计事件
+       （config_canary_started/confirmed/rolled_back 或等效，登记
+       auditspi/auditreport）。
+    4. 权威与安全：canary 仍需 approve=true；窗口内并发 apply 拒绝
+       （409）；secret 脱敏不变。
+    5. 硬边界：非 canary 的 apply 路径逐字节不变；零豁免；无向上
+       依赖（configaudit 在 platform 层，健康信号经注入端口）。
+    6. 验收断言（可测试）：canary 窗口内健康 → confirmed；健康失败
+       → 自动回滚 + 审计；窗口内二次 apply → 409；进程重启恢复语义
+       （如持久化）；非 canary apply 回归全绿。
+
+    第二步——实现（按设计）：
+    1. Apply 扩展（canary 参数/状态）+ 观测循环 + 自动回滚 + 审计
+       + 错误码 + openapi + config-reference（如新配置键）+
+       CHANGELOG。
+    2. 测试（禁止 skip）：memory store 全状态机矩阵 + sqlite（如
+       持久化）+ 健康信号注入假实现 + 回归。
+    3. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./platform/configaudit/... -count=1
+       go test ./interfaces/sso/... -run 'Config' -count=1
+       python3 cli.py check-routes && python3 cli.py sdk-surface check
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    4. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b13-config-canary.md
+  timeout: 2400
+  validate: |
+    go build ./... && go vet ./... && go test ./platform/configaudit/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：ROADMAP/feature-matrix 真值化清扫
+    （B7-B12 六批次后的跨文档一致性；纯文档任务，不碰代码）。
+
+    契约（先读）：
+    - docs/ROADMAP.md（P0 #2 conformance 状态过时：缺 FAPI 12/13
+      进展与通配符解锁路径；P0 #5 "nested-module migration + release
+      signing remain"——嵌套模块迁移 B9 已完成；P1 各项逐一核对）
+    - docs/feature-matrix.md（规格表：config apply/rollback 端点
+      （B10-3）与 per-client id_token alg（B12）无对应行；lifecycle
+      CAEP 行已更新——核对其他 B7-B12 特性：访问日志、OTel 关联、
+      operator apply、canary（若 B13-R2-C 已合并）是否需补行；行格式
+      遵循既有 spec/端点/opt-in/文件四列）
+    - docs/deferred-backlog.md（B13-R2-C 若合并则更新 canary 边界；
+      逐项核对 B7-B12 交付后的状态词）
+    - docs/sso/oidc-conformance.md 与 test/oidc-conformance/README.md
+      （B13-R2-B 若已更新则核对一致性）
+
+    执行要求：
+    1. 逐项核对（grep + 读代码/文档实证，禁止凭记忆）：ROADMAP 每
+       个 P0/P1 项状态 vs 当前代码；feature-matrix 缺失行清单（含
+       证据：端点存在、文件存在）；deferred-backlog 状态词。
+    2. 更新（同一提交，最小改动，不重写文档）：
+       - ROADMAP：P0 #2 补 FAPI 进展与剩余项；P0 #5 改嵌套模块已
+         完成、列真实剩余；P1 逐项如实。
+       - feature-matrix：按行格式补 config 治理（apply/rollback/
+         canary 如已合并）与 per-client id_token alg 行（spec/端点/
+         opt-in/文件四列，参照既有行）。
+       - deferred-backlog：canary（如已合并）与任何过时状态词。
+    3. 验证（必须实际运行并报告输出）：
+       python3 cli.py capabilities generate（若 capability 注册表
+       变化需同步 feature-matrix 生成段；无变化则说明）
+       python3 cli.py sdk-surface check && python3 cli.py check-routes
+       git diff --stat（确认仅文档）
+       go build ./...（确认零代码变更）
+    4. 硬边界：不碰代码、不新增 capability 行（除非证据确凿且按
+       capabilities.json 流程）、不删除既有承诺行。
+    5. conventional commit（docs 前缀，imperative + AI co-author
+       trailer）。
+  output: docs/campaigns/reports/b13-docs-truthiness.md
+  timeout: 1200
+  validate: |
+    python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}

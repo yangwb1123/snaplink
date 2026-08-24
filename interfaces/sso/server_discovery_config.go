@@ -265,21 +265,33 @@ func (s *Server) applyMFAIssuerSigning(cfg *oidc.ProviderMetadata, ctx HandlerCo
 		cfg.Issuer = s.issuer
 	}
 	// Signing algs are derived from the wired signers (EdDSA for an
-	// Ed25519JWTIssuer, ES256 for an ECDSAJWTIssuer, both in a mixed
-	// deployment) or pinned by WithSupportedSigningAlgs. See
-	// (*Server).SigningAlgValues.
-	signingAlgs := s.SigningAlgValues(ctx.Request().Context())
-	if s.idTokenIssuer != nil {
+	// Ed25519JWTIssuer, ES256 for an ECDSAJWTIssuer) or pinned by
+	// WithSupportedSigningAlgs, unioned with per-alg issuers wired via
+	// WithIDTokenIssuerAlg. See (*Server).IDTokenSigningAlgValues.
+	signingAlgs := s.IDTokenSigningAlgValues(ctx.Request().Context())
+	if s.idTokenIssuer != nil || len(s.idTokenIssuerAlgs) > 0 {
 		cfg.IDTokenSigningAlgValuesSupported = signingAlgs
-		// Userinfo signing capability is gated on the issuer
-		// implementing the oidc.UserinfoSigner extension. The default
-		// Ed25519JWTIssuer does — third-party implementations may
-		// not, and the omitempty serialization correctly hides the
-		// claim in that case.
-		if _, ok := s.idTokenIssuer.(oidc.UserinfoSigner); ok {
+		// Userinfo signing capability is gated on any wired issuer
+		// implementing the oidc.UserinfoSigner extension (third-party
+		// implementations may not — omitempty hides the claim then).
+		if s.userinfoSignable() {
 			cfg.UserinfoSigningAlgValuesSupported = signingAlgs
 		}
 	}
+}
+
+// userinfoSignable reports whether any wired id_token issuer (default or
+// per-alg) can sign /userinfo responses (oidc.UserinfoSigner extension).
+func (s *Server) userinfoSignable() bool {
+	if _, ok := s.idTokenIssuer.(oidc.UserinfoSigner); ok {
+		return true
+	}
+	for _, iss := range s.idTokenIssuerAlgs {
+		if _, ok := iss.(oidc.UserinfoSigner); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // applyCIBABackchannel advertises the OIDC CIBA Core 1.0 §4 backchannel

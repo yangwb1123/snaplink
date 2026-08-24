@@ -8,13 +8,17 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/admin"
+	"github.com/yangwb1123/snaplink/interfaces/cors"
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/degradation"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 	"github.com/yangwb1123/snaplink/platform/sse"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
+
+var _ cors.BlockObserver = (*Server)(nil)
 
 // Disaster-recovery aliases keep the SDK option surface independent of the
 // lower-level lifecycle package.
@@ -165,6 +169,29 @@ func (s *Server) handleStorageHealth(ctx HandlerContext) {
 
 func (s *Server) logErrorCtx(ctx core.HandlerContext, msg string, kv ...any) {
 	handler.LogErrorCtx(s.BuildHandlerDeps(), ctx, msg, kv...)
+}
+
+// OriginBlocked is the single server-side CORS rejection observer. It keeps
+// request details in audit/log fields while exposing only bounded metrics.
+func (s *Server) OriginBlocked(r *http.Request, preflight bool) {
+	if r == nil {
+		return
+	}
+	if s.metrics != nil {
+		s.metrics.ObserveCORSBlocked(preflight)
+	}
+	if s.auditor != nil {
+		audit.RecordCORSOriginBlocked(s.auditor, r, r.Header.Get(cors.HeaderOrigin), preflight, metrics.CORSBlockReasonDisallowedOrigin)
+	}
+	s.logger.Info("origin_blocked",
+		"origin", r.Header.Get(cors.HeaderOrigin),
+		"method", r.Method,
+		"path", r.URL.Path,
+		"preflight", preflight,
+		"client_ip", audit.ClientIP(r),
+		"user_agent", r.UserAgent(),
+		"trace_id", core.TraceIDFromContext(r.Context()),
+	)
 }
 
 // handleStatus serves GET /api/v1/status — runtime server health + info.

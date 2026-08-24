@@ -2,6 +2,8 @@ package defaultmfa
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"sync"
 	"time"
 
@@ -91,6 +93,42 @@ func (m *MemoryTOTPEnrollmentStore) RemoveFactor(_ context.Context, userID, fact
 		delete(m.secrets, userID)
 	}
 	return nil
+}
+
+// ExportSeeds implements the optional [authenticators.SeedExporter]
+// capability: a copy of every enrolled (userID, secret) pair for snapshot
+// portability. Copying keeps a caller's post-export mutation from corrupting
+// the live store.
+func (m *MemoryTOTPEnrollmentStore) ExportSeeds(_ context.Context) ([]authenticators.SeedRecord, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]authenticators.SeedRecord, 0, len(m.secrets))
+	for userID, s := range m.secrets {
+		cp := make([]byte, len(s))
+		copy(cp, s)
+		out = append(out, authenticators.SeedRecord{UserID: userID, Secret: cp})
+	}
+	return out, nil
+}
+
+// ImportSeed implements the optional [authenticators.SeedImporter]
+// capability: restores one user's seed (byte-copy, matching
+// AddTOTPFactor's mutation-safety contract). An existing enrollment is
+// replaced — one secret per user, mirroring AddTOTPFactor's upsert.
+func (m *MemoryTOTPEnrollmentStore) ImportSeed(_ context.Context, userID string, secret []byte) error {
+	m.AddTOTPFactor(context.Background(), userID, randomFactorID(), "restored", secret)
+	return nil
+}
+
+// randomFactorID mints a factor ID for imported seeds. Import carries no
+// factor identity (the source store's factor_id is not part of the seed
+// record); a fresh random ID keeps the /me/mfa list view well-formed.
+func randomFactorID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "restored"
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 var (

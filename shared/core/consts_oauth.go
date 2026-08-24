@@ -106,6 +106,7 @@ const (
 const (
 	TokenTypeNameBearer = "Bearer"
 	TokenTypeNameDPoP   = "DPoP"
+	DPoPPrefix          = "DPoP "
 )
 
 // PKCE (RFC 7636) method names + verifier length bounds. The RFC mandates

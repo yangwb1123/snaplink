@@ -88,6 +88,17 @@ func (m *MemoryClientStore) ValidateSecret(_ context.Context, clientID, clientSe
 	if !ok {
 		return core.ErrNoSuchClient
 	}
+	// A client with NO stored secret must never authenticate — not even
+	// against an empty presented value. An empty stored secret is exactly
+	// the fresh-node-restore state (snapshot artifacts never carry
+	// secrets); accepting ("","") here would let anyone who knows only a
+	// client_id authenticate as a confidential client (RFC 6749 §2.3.1) at
+	// every credential endpoint that reaches ValidateSecret. The FAPI
+	// client-auth method gate runs before credential validation, so an
+	// enforce-mode Basic violation still reports invalid_request.
+	if c.Secret == "" {
+		return fmt.Errorf("client has no secret configured")
+	}
 	// compareClientSecret uses bcrypt.CompareHashAndPassword when the stored
 	// value starts with "$2" (a bcrypt hash), falling back to constant-time
 	// string compare for plaintext secrets in pre-migration / hand-authored

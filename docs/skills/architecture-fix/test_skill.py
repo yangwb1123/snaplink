@@ -4,8 +4,11 @@ import unittest
 import re
 from pathlib import Path
 import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from run import VIOLATION_FIXES
+skill_dir = Path(__file__).resolve().parent
+sys.path.insert(0, str(skill_dir.parent))
+from shared.loader import load_skill_run
+
+VIOLATION_FIXES = load_skill_run(skill_dir, "skill_architecture_fix_run").VIOLATION_FIXES
 
 
 class TestArchitectureFixes(unittest.TestCase):

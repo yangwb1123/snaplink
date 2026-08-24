@@ -62,6 +62,7 @@ var severityOverrides = map[auditspi.EventType]severityLevel{
 	// routine read-only queries — informational regardless of volume.
 	auditspi.EventClientAccess:    severityInfo,
 	auditspi.EventPermissionQuery: severityInfo,
+	auditspi.EventPermissionCheck: severityInfo,
 }
 
 // eventSeverity classifies e: an explicit override wins; otherwise a

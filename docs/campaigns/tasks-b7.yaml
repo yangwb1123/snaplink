@@ -1,0 +1,167 @@
+# B7 implementation batch: conformance evidence + degraded-mode auto driver
+# + handoff-gate sweep.
+#
+# Direction set (baseline verified 2026-08-15 at HEAD cf9b4569):
+#   1. OIDC conformance headless evidence re-run at current HEAD — ROADMAP
+#      P0 #2 remaining part (official HTTPS run + OIDF listing stay external);
+#      harness + pinned suite image + chrome are all present.
+#   2. Degraded-mode auto-transition driver — docs/deferred-backlog.md
+#      "Automatic degraded-mode transitions" (Deferred decision): the
+#      degradation Manager exists (platform/lifecycle/degradation/manager.go),
+#      config intent flag exists (config/config_snapshot.go:372
+#      DegradationConfig.AutoReadOnlyOnStoreLoss), and
+#      cmd/sso-server/build_app_security.go wireDegradation explicitly logs
+#      "no auto-driver seam" (build_app_security.go is AT the 500-line
+#      ceiling — do not add lines there). This direction promotes the
+#      deferred decision with a committed design + implementation.
+#   3. Full `make ci` handoff-gate sweep at HEAD — the last batch (B6) ended
+#      with pre-existing drift failures; those files are now committed, so
+#      the gate should be green. Fix only residual drift, nothing speculative.
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b7.yaml
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report. Never claim a test
+#     passed that you did not run.
+#   - Engineering budgets: no file over 500 lines, no function over 50 lines
+#     / cyclo 15, no new maintainability exemptions, no skipDirs /
+#     layerExemptions additions, no layer violations (architecture gate).
+#   - Update docs/config-reference.md + CHANGELOG.md in the same commit when
+#     a public contract changes (B7-2: yes; B7-1/B7-3: no).
+#   - Commit with a conventional imperative message + AI co-author trailer.
+#     The post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库（OAuth2/OIDC SSO SDK + sso-server）。任务：在
+    当前 HEAD 重跑 OIDC conformance headless 证据集并归档（ROADMAP P0 #2
+    的剩余可执行部分）。
+
+    契约（先读，后执行）：
+    - @/home/u1/workspace/demo/snaplink/test/oidc-conformance/README.md
+    - @/home/u1/workspace/demo/snaplink/docs/sso/oidc-conformance.md
+      （现有证据与"Remaining"边界：官方 HTTPS 外部拓扑运行与 OIDF 列表
+      不在本任务范围，如实保留为 remaining）
+
+    环境已核实（勿重复搭建）：google-chrome 存在；
+    registry.gitlab.com/openid/conformance-suite:release-v5.2.1 已拉取；
+    oidc-conformance-sso-server:latest 镜像已构建；docker compose v2 可用。
+
+    执行要求：
+    1. 运行 ./test/oidc-conformance/run-headless.sh（默认模块 oidcc-server；
+       超时不够可 --timeout 900）。必须如实报告实际输出与结果统计。
+    2. 结果归档：results/<commit>/ 下应包含 plan/log/info 归档；确认
+       目录内容与 README 声明的结构一致。若本次运行有 SUCCESS/FAIL 统计，
+       与既有归档（或 docs/sso/oidc-conformance.md 记录的 59 SUCCESS）对比
+       并说明差异（含预期失败项 VerifyClientManagementCredentials）。
+    3. 更新 docs/sso/oidc-conformance.md：补充本次 headless 运行的日期、
+       commit、结果摘要；不改动官方 HTTPS 运行与 OIDF 列表的 remaining
+       边界声明。
+    4. 不改生产代码。若发现 harness 本身缺陷（非环境问题），只记录到
+       报告，不擅自修改 harness 逻辑。
+    5. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       git status --porcelain 确认除归档与文档外无其他变更
+    6. conventional commit（imperative + AI co-author trailer，如无代码
+       变更则以 docs 前缀提交）。
+  output: docs/campaigns/reports/b7-oidc-conformance-evidence.md
+  timeout: 2400
+  validate: |
+    python3 /home/u1/ai-batch-runner/scripts/check-completion-report.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：实现降级模式自动转换驱动（promotes
+    docs/deferred-backlog.md "Automatic degraded-mode transitions" 的
+    Deferred decision），先写有界设计、再实现。
+
+    契约（先读，后实现，契约优先于本提示）：
+    - @/home/u1/workspace/demo/snaplink/docs/deferred-backlog.md
+      "Automatic degraded-mode transitions" 段
+    - @/home/u1/workspace/demo/snaplink/docs/config-reference.md 的
+      degradation 小节（第 ~704 行：auto_read_only_on_store_loss 目前仅
+      "Honored as a boot-time log acknowledgement"）
+    - @/home/u1/workspace/demo/snaplink/platform/lifecycle/degradation/
+      manager.go / policy.go / mode.go（Manager 已实现：SetMode 原子转换 +
+      OnChange hook 在锁外触发；无后台循环）
+    - @/home/u1/workspace/demo/snaplink/config/config_snapshot.go:356-372
+      （DegradationConfig；AutoReadOnlyOnStoreLoss 为 INTENT 标志）
+    - @/home/u1/workspace/demo/snaplink/cmd/sso-server/build_app_security.go
+      wireDegradation（~335-352：显式记录 "no auto-driver seam"）
+
+    第一步——设计文档（必须先写、先提交评审级完整度）：
+    docs/design/degradation-auto-driver.md，必须裁决：
+    1. 探针源：复用哪个现有存储健康 seam（/readyz 探针依赖、
+       storage-health 报告、或注入式健康检查 SPI）——必须代码实证，
+       禁止虚构接口；说明探针语义（哪些 store 丢失触发 read_only）。
+    2. 驱动循环：间隔配置（新配置键 vs 复用现有键）、宽限期/滞回
+       （瞬态抖动不抖动模式）、恢复语义（健康恢复 → 回到 initial_mode）、
+       优雅停机。
+    3. 失败模式：探针自身错误/超时视为 fail-open（不误切 read_only），
+       按 AGENTS.md 信任与失效模式纪律；模式转换经 OnChange 进入审计与
+       指标（与现有 admin dr/mode 切换同一路径）。
+    4. 硬边界：不触碰 Policy/Mode 语义、不改变默认行为（未启用或未设
+       auto 标志 = 字节不变）、不加维护性豁免、不新增向上依赖
+       （degradation 包在 platform/lifecycle 层，探针依赖只能向下）。
+
+    第二步——实现（按设计；验收断言在设计中必须可测试）：
+    1. driver 放 platform/lifecycle/degradation/（如 driver.go +
+       driver_test.go，假探针注入测试：store 丢失 → read_only；恢复 →
+       复原；探针抖动 → 不转换；探针错误 → fail-open 不转换）。
+    2. 接线：cmd/sso-server/build_governance.go 的
+       BuildDegradationManager（456 行，有余量）或新建 cmd 文件——
+       build_app_security.go 已到 500 行上限，禁止向其加行。
+       启用条件 = cfg.Degradation.Enabled && AutoReadOnlyOnStoreLoss。
+       替换 wireDegradation 中 "no auto-driver seam" 日志分支。
+    3. 配置：新键（如 degradation.auto_read_only.interval）→
+       docs/config-reference.md 同步；CHANGELOG.md Added 同提交更新。
+    4. 测试：driver 单测（假探针）+ 一个接线级测试（test/ 或
+       cmd/sso-server 下，证明启用 auto 标志后 wire 出 driver）；禁止
+       skip。
+    5. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./platform/lifecycle/degradation/... -count=1
+       go test ./cmd/sso-server/... -count=1 -run 'Degrad'
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+       python3 cli.py config-validate-all
+    6. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b7-degradation-auto-driver.md
+  timeout: 1800
+  validate: |
+    go build ./... && go vet ./... && go test ./platform/lifecycle/degradation/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：`make ci` 完整门禁清扫（handoff gate 在
+    当前 HEAD 必须全绿）。B6 批次结束时的已知 pre-existing drift
+    （snapshot 任务未提交文件导致的 fmt/预算/ci-modules 失败）已随
+    b2e0651d / bc79ad71 / cf9b4569 提交，理论上已消失；本任务证实并
+    修复剩余漂移。
+
+    契约（先读）：
+    - @/home/u1/workspace/demo/snaplink/Makefile 的 ci 目标
+    - @/home/u1/workspace/demo/snaplink/docs/agent-os/CHECKS_REGISTRY.md
+    - @/home/u1/workspace/demo/snaplink/AGENTS.md §2 工程门禁（预算表）
+
+    执行要求：
+    1. 运行 make ci，如实记录每一步输出（成功/失败）。
+    2. 对每个失败步骤：判断是 pre-existing（在 HEAD 独立复现，与本任务
+       无关）还是新引入；修复范围仅限"门禁漂移"（fmt、go.mod/go.sum
+       不同步、配置漂移、预算违规的文件拆分等），禁止顺手重构、禁止
+       添加豁免、禁止放宽阈值。
+    3. 若修复涉及 .go 文件，受文件行数预算约束（≤500 行/文件、≤50 行/
+       函数、cyclo ≤15、无新豁免）；拆分文件时遵循目录预算与分层。
+    4. 每个修复单独提交或一个"chore(ci): ..."提交（imperative + AI
+       co-author trailer），并说明根因。
+    5. 报告：以表格列出 ci 各步骤 → 状态（PASS/FAIL/未跑）→ 修复动作；
+       结论必须写 make ci 最终退出码。若存在无法在本仓库内修复的外部
+       依赖问题（如嵌套模块网络拉取失败），如实标注为环境问题并给出
+       证据，不得虚报。
+    6. 验证命令（必须实际运行并报告输出）：
+       make ci
+       （若 ci 已全绿，则本任务只提交报告文档）
+  output: docs/campaigns/reports/b7-make-ci-sweep.md
+  timeout: 2400
+  validate: |
+    python3 /home/u1/ai-batch-runner/scripts/check-completion-report.py {output}

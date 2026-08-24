@@ -229,9 +229,14 @@ enable/disable desired-state file. Each
 generation uses distinct durable lease ownership; an old generation stops new
 claims and drains its in-flight batch before close. A rejected reload preserves
 the active generation and degrades the static readiness check. This proves only
-that background exporter hot path. No stock `sso-server` business route is
-mounted through a slot, the primary audit sink is not replaceable, and the
-external-process supervisor is not implemented.
+that background exporter hot path. The stock `sso-server` also wires its
+precompiled ReBAC `/authz/check` business route and generic webhook audit
+exporter through the same lifecycle manager; the route has a static security
+shape, match-time leases, native-404 disable behavior and bounded transition
+audit. Tuple management, the primary audit sink and arbitrary business routes
+remain cold. The external-process SDK now provides the typed,
+digest-pinned Unix-domain supervisor and worker protocol described below; it is
+not automatically enabled for arbitrary stock-server YAML modules.
 
 Routes for hot modules have a static method/path/security shape created at
 boot. Route matching must acquire a generation lease before module middleware
@@ -288,9 +293,15 @@ private keys or reusable bearer credentials by default.
 5. **Production evidence:** prove the `full` composition against durable
    state, OAuth/OIDC controls, observability and supported topology.
 6. **Hot manager:** retain the implemented generation manager and route-slot
-   primitive; attach the transition observer to audit and migrate one low-risk
-   background module before classifying a product capability hot.
-7. **External supervisor:** add signed artifact policy and typed RPC processes.
+   primitive; the stock ReBAC `/authz/check` route and generic webhook
+   exporter are the first narrowly scoped hot capabilities.
+7. **External supervisor:** retain the implemented digest-pinned typed RPC
+   process boundary, detached Ed25519 artifact verification, and remote TLS /
+   SPIFFE identity checks. The stock server now exposes the narrow audit-batch
+   worker product: local workers require digest plus signed module/release/
+   profile provenance, while remote workers require mTLS with optional SPIFFE
+   pinning. Arbitrary third-party business-route workers remain a future
+   fixed-slot integration.
 8. **Release evidence:** publish per-profile SBOMs, locks, signatures and
    provenance.
 

@@ -101,7 +101,9 @@ func (s *SnapshotAdminService) applyTrackedRestore(
 	}
 	report, err := s.restorer.Restore(ctx, snap, opts)
 	if err != nil && !opts.RollbackOnError {
-		partial, _ := json.Marshal(report)
+		// The ledger must never persist rotated secrets — client IDs
+		// only (the RPC response is the sanctioned recovery channel).
+		partial, _ := json.Marshal(snapshot.RedactCredentialRecovery(report))
 		return nil, s.failRestoreOperation(ctx, operation, err, "restore "+in.Id, partial)
 	}
 	if err != nil {
@@ -120,7 +122,10 @@ func (s *SnapshotAdminService) finishTrackedRestore(
 	target := fmt.Sprintf("%s mode=%s dry_run=%t", in.Id, mode, in.DryRun)
 	recordAdminMeta(ctx, s.recorder, audit.EventSnapshotRestored, target,
 		restoreAuditMeta(safetyID, captureIntended, report.Committed, false, ""))
-	result, _ := json.Marshal(report)
+	// The operations ledger persists client IDs and user IDs, never the
+	// rotated plaintext secrets — the RPC response is the only sanctioned
+	// recovery channel (RedactCredentialRecovery strips them).
+	result, _ := json.Marshal(snapshot.RedactCredentialRecovery(report))
 	if err := operations.Finish(ctx, s.operations, operation, result, nil); err != nil {
 		return nil, status.Errorf(codes.Internal, "finish restore operation: %v", err)
 	}
@@ -143,11 +148,21 @@ func reportToProto(r *snapshot.Report) *adminv1.RestoreReport {
 		},
 		Errors: append([]string(nil), r.Errors...), Committed: r.Committed,
 		RolledBack: r.RolledBack, SafetySnapshotId: r.SafetySnapshotID,
+		MfaReenrollmentRequired: append([]string(nil), r.MFAReenrollmentRequired...),
+	}
+	// CredentialRecovery secrets are RPC-response-only: the wire is the
+	// one sanctioned recovery channel, so the plaintext rides here and
+	// nowhere persisted (see RedactCredentialRecovery).
+	for _, c := range r.CredentialRecovery {
+		out.CredentialRecovery = append(out.CredentialRecovery, &adminv1.CredentialRecovery{
+			ClientId: c.ClientID, Secret: c.Secret,
+		})
 	}
 	for category, counts := range r.Items {
 		out.Items[string(category)] = &adminv1.CategoryCounts{
 			Inserted: int32(counts.Inserted), Updated: int32(counts.Updated),
 			Deleted: int32(counts.Deleted), Skipped: int32(counts.Skipped),
+			RequiresRotation: int32(counts.RequiresRotation),
 		}
 	}
 	return out

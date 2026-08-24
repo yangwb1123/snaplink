@@ -10,5 +10,5 @@
     "strict": true,
     "target": "ES2022"
   },
-  "include": ["client.ts", "hosted-login.ts", "index.ts"]
+  "include": ["browser-login.ts", "client.ts", "hosted-login.ts", "index.ts"]
 }

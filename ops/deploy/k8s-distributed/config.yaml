@@ -71,6 +71,13 @@ oauth:
   refresh_token:
     enabled: true
     ttl: 720h
+  scope_registry:
+    enabled: true
+    extra_scopes:
+    - account:read
+    - account:write
+    - operation:read
+    - source:sync
 security:
   jti_replay:
     backend: redis
@@ -96,6 +103,7 @@ security:
     - https://webapp.ywbsd.site
     - https://im.ywbsd.site
     - http://192.168.31.198:8091
+    - https://accounts.ywbsd.site
     allowed_methods:
     - GET
     - POST
@@ -231,6 +239,33 @@ clients:
   - password
   token_strategy: jwt
   require_pkce: true
+  active: true
+- id: aero-account-console
+  secret: ""                         # public browser client; never add a client secret
+  name: Aero Account Console (acme)
+  tenant_id: acme                    # provision one client/runtime config per tenant
+  login_page_uri: https://sso.ywbsd.site/login/
+  redirect_uris:
+  - https://accounts.ywbsd.site/
+  post_logout_redirect_uris:
+  - https://accounts.ywbsd.site/
+  allowed_scopes:
+  - openid
+  - profile
+  - account:read
+  - account:write
+  - operation:read
+  - source:sync
+  allowed_resources:
+  - aero-id
+  allowed_authenticators:
+  - password
+  - google
+  - github
+  token_strategy: jwt
+  require_pkce: true
+  allowed_pkce_methods:
+  - S256
   active: true
 cluster:
   bus:

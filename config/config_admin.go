@@ -1,6 +1,13 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/yangwb1123/snaplink/interfaces/cors"
+	"github.com/yangwb1123/snaplink/shared/core"
+)
 
 type DPoPNonceConfig struct {
 	Enabled bool          `yaml:"enabled"`
@@ -97,9 +104,9 @@ type ClientRegistrationRateLimitConfig struct {
 	Burst    int     `yaml:"burst"`
 }
 
-// CORSConfig configures the CORS middleware. AllowedOrigins is the
-// only required field; leaving it empty disables CORS even when
-// Enabled=true (the middleware reduces to identity).
+// CORSConfig configures the CORS middleware. When Enabled is true, at least
+// one of AllowedOrigins or PathOverrides must be populated to install CORS;
+// an empty default origin list is valid when path-specific policies are used.
 type CORSConfig struct {
 	Enabled          bool          `yaml:"enabled"`
 	AllowedOrigins   []string      `yaml:"allowed_origins"`
@@ -108,6 +115,57 @@ type CORSConfig struct {
 	ExposedHeaders   []string      `yaml:"exposed_headers"`
 	AllowCredentials bool          `yaml:"allow_credentials"`
 	MaxAge           time.Duration `yaml:"max_age"`
+	// PathOverrides applies a separate CORS policy to each URL path prefix.
+	// The map key must start with /. Override Enabled fields are ignored;
+	// presence of an entry activates it, while an empty AllowedOrigins list
+	// deliberately emits no CORS headers for that prefix.
+	PathOverrides map[string]CORSConfig `yaml:"path_overrides"`
+}
+
+// validate rejects path overrides that cannot be represented by the
+// middleware. Nested overrides are rejected rather than silently discarded.
+func (c CORSConfig) validate() error {
+	for prefix, override := range c.PathOverrides {
+		if !strings.HasPrefix(prefix, "/") {
+			return fmt.Errorf("config: security.cors.path_overrides key %q must start with /", prefix)
+		}
+		if strings.HasPrefix(core.PathLogin, prefix) {
+			return fmt.Errorf("config: security.cors.path_overrides key %q overlaps %s origin gate", prefix, core.PathLogin)
+		}
+		if len(override.PathOverrides) > 0 {
+			return fmt.Errorf("config: security.cors.path_overrides[%q].path_overrides must not be nested", prefix)
+		}
+	}
+	return nil
+}
+
+// policyWithoutOverrides maps one CORS policy's fields. Override entries use
+// this helper so their own path_overrides map cannot be silently recursed.
+func (c CORSConfig) policyWithoutOverrides() cors.Policy {
+	return cors.Policy{
+		AllowedOrigins:   c.AllowedOrigins,
+		AllowedMethods:   c.AllowedMethods,
+		AllowedHeaders:   c.AllowedHeaders,
+		ExposedHeaders:   c.ExposedHeaders,
+		AllowCredentials: c.AllowCredentials,
+		MaxAge:           c.MaxAge,
+	}
+}
+
+// ToPolicy builds the cors.Policy implied by the YAML block. Empty
+// AllowedMethods / AllowedHeaders fall back to the cors package's defaults
+// (GET/POST/PUT/DELETE/OPTIONS, Authorization/Content-Type). Path override
+// entries are mapped one level deep using the same field semantics.
+func (c CORSConfig) ToPolicy() cors.Policy {
+	policy := c.policyWithoutOverrides()
+	if len(c.PathOverrides) == 0 {
+		return policy
+	}
+	policy.PathOverrides = make(map[string]cors.Policy, len(c.PathOverrides))
+	for prefix, override := range c.PathOverrides {
+		policy.PathOverrides[prefix] = override.policyWithoutOverrides()
+	}
+	return policy
 }
 
 // RARLimitsConfig bounds an RFC 9396 authorization_details payload's SHAPE
@@ -127,6 +185,15 @@ type RARLimitsConfig struct {
 	MaxBytes    int `yaml:"max_bytes"`
 	MaxElements int `yaml:"max_elements"`
 	MaxDepth    int `yaml:"max_depth"`
+}
+
+// RARCatalogCheckConfig enables PAR-time verification for first-party RFC
+// 9396 resource types (http_api, grpc_api, graphql_api). When enabled, the
+// server resolves those elements against a permission provider implementing
+// permissions.ResourceProvider; a provider without that extension keeps the
+// documented shape-only compatibility mode. Maps to sso.WithRARCatalogCheck.
+type RARCatalogCheckConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // ScopeLimitConfig caps the number of space-separated scopes accepted in a

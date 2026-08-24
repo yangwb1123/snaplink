@@ -55,6 +55,44 @@ func TestRcovMisc_MeshExtAuthz(t *testing.T) {
 	}
 }
 
+func TestRcovMisc_MeshUsesActivePermissionRoles(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	provider := permissions.NewMemoryProvider()
+	for _, role := range []permissions.Role{
+		{Code: "active", Permissions: []string{"request:approve"}},
+		{Code: "inactive", Permissions: []string{"request:create"}},
+	} {
+		if err := provider.AddRole(ctx, rcovClient, role); err != nil {
+			t.Fatalf("AddRole: %v", err)
+		}
+	}
+	if err := provider.AssignRoles(ctx, rcovUser, rcovClient, []string{"active", "inactive"}); err != nil {
+		t.Fatalf("AssignRoles: %v", err)
+	}
+	s := rcovNewServer(t, sso.WithPermissionProvider(provider))
+	access, _ := rcovDirectLogin(t, s)
+	claims, _, err := s.srv.ValidateAnyToken(ctx, access)
+	if err != nil || claims.SID == "" {
+		t.Fatalf("access claims = %+v, %v; want sid", claims, err)
+	}
+	initial := s.srv.MeshAuthorize(ctx, sso.MeshAuthorizeRequest{
+		Header: http.Header{"Authorization": []string{"Bearer " + access}},
+	})
+	if !initial.Allowed || len(initial.Roles) != 2 {
+		t.Fatalf("auto-activated mesh roles = %+v, allowed=%v; want assigned projection", initial.Roles, initial.Allowed)
+	}
+	if err := provider.ActivateRoles(ctx, rcovUser, rcovClient, claims.SID, []string{"active"}); err != nil {
+		t.Fatalf("ActivateRoles: %v", err)
+	}
+	result := s.srv.MeshAuthorize(ctx, sso.MeshAuthorizeRequest{
+		Header: http.Header{"Authorization": []string{"Bearer " + access}},
+	})
+	if !result.Allowed || len(result.Roles) != 1 || result.Roles[0] != "active" {
+		t.Fatalf("mesh roles = %+v, allowed=%v; want active projection", result.Roles, result.Allowed)
+	}
+}
+
 // TestRcovMisc_TokenExchange covers RFC 8693: a valid subject_token is exchanged
 // for a new access token; missing subject_token => invalid_request.
 func TestRcovMisc_TokenExchange(t *testing.T) {

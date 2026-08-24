@@ -31,6 +31,11 @@
 //     on every rebuild anyway (in-memory bucket state resets — a safe,
 //     side-effect-free change, not a correctness concern).
 //
+//   - webhooks.delivery_timeout and webhooks.retry.* — rebuild the
+//     lifecycle-managed exporter generation while preserving its subscription
+//     and dead-letter stores. webhooks.enabled and dead_letter_capacity still
+//     require a restart.
+//
 //   - feature_gates.{admin_api,web_spa,oidc,ciba,caep,federation,
 //     self_service} — interfaces/sso now mounts every one of these seven
 //     route groups UNCONDITIONALLY at Mount() time and wraps each
@@ -100,6 +105,8 @@ var safeReloadPaths = map[string]bool{
 // rather than matched leaf-by-leaf; see the package doc.
 var safeReloadPrefixes = []string{
 	"/security/rate_limit",
+	"/webhooks/delivery_timeout",
+	"/webhooks/retry",
 }
 
 const tenantQuotaProjectionSourcesPrefix = "/tenant/resource_quota/projection_ingress/sources"
@@ -157,6 +164,7 @@ type Reloader struct {
 	// argument lists).
 	setRateLimitPolicy              func(config.RateLimitConfig) error
 	setTenantQuotaProjectionSources func([]config.TenantQuotaProjectionSourceConfig) error
+	setWebhooks                     func(config.WebhooksConfig) error
 
 	// setAdminAPIGate / setBrandingGate apply a reloaded feature_gates.admin_api
 	// / feature_gates.web_spa value live — typically
@@ -197,6 +205,14 @@ func (r *Reloader) SetRateLimitHook(fn func(config.RateLimitConfig) error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.setRateLimitPolicy = fn
+}
+
+// SetWebhooksHook wires live delivery-policy replacement for the generic
+// webhook exporter. Nil makes matching changes appear in Result.Ignored.
+func (r *Reloader) SetWebhooksHook(fn func(config.WebhooksConfig) error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.setWebhooks = fn
 }
 
 // New builds a Reloader seeded with the config the process booted with.
@@ -280,6 +296,7 @@ func (r *Reloader) applyOps(ops []configaudit.Op, newCfg *config.Config) (Result
 		return res, err
 	}
 	rateLimitChanged := false
+	webhooksChanged := false
 	for _, op := range ops {
 		switch {
 		case safeReloadPaths[op.Path]:
@@ -296,10 +313,14 @@ func (r *Reloader) applyOps(ops []configaudit.Op, newCfg *config.Config) (Result
 		case strings.HasPrefix(op.Path, tenantQuotaProjectionSourcesPrefix):
 			continue
 		case hasSafePrefix(op.Path):
-			// Deferred to after the loop: every leaf under security.rate_limit
-			// rebuilds as ONE atomic Policy, not once per changed leaf field
-			// (see applyRateLimit's doc).
-			rateLimitChanged = true
+			switch {
+			case strings.HasPrefix(op.Path, "/security/rate_limit"):
+				// Deferred to after the loop: every leaf under
+				// security.rate_limit rebuilds as ONE atomic Policy.
+				rateLimitChanged = true
+			case strings.HasPrefix(op.Path, "/webhooks/"):
+				webhooksChanged = true
+			}
 		default:
 			res.Ignored = append(res.Ignored, op.Path)
 		}
@@ -311,7 +332,21 @@ func (r *Reloader) applyOps(ops []configaudit.Op, newCfg *config.Config) (Result
 			res.Ignored = append(res.Ignored, "/security/rate_limit")
 		}
 	}
-	return res, nil
+	return r.reconcileWebhooks(res, newCfg, webhooksChanged), nil
+}
+
+func (r *Reloader) reconcileWebhooks(
+	result Result, newCfg *config.Config, changed bool,
+) Result {
+	if !changed {
+		return result
+	}
+	if applied := r.applyWebhooks(newCfg); applied != "" {
+		result.Applied = append(result.Applied, applied)
+	} else {
+		result.Ignored = append(result.Ignored, "/webhooks")
+	}
+	return result
 }
 
 func tenantQuotaProjectionSourcesChanged(ops []configaudit.Op) bool {
@@ -394,6 +429,18 @@ func (r *Reloader) applyRateLimit(newCfg *config.Config) string {
 	}
 	r.current.Security.RateLimit = newCfg.Security.RateLimit
 	return "security.rate_limit: policy rebuilt"
+}
+
+func (r *Reloader) applyWebhooks(newCfg *config.Config) string {
+	if r.setWebhooks == nil || !newCfg.Webhooks.Enabled {
+		return ""
+	}
+	if err := r.setWebhooks(newCfg.Webhooks); err != nil {
+		return ""
+	}
+	r.current.Webhooks.DeliveryTimeout = newCfg.Webhooks.DeliveryTimeout
+	r.current.Webhooks.Retry = newCfg.Webhooks.Retry
+	return "webhooks: delivery policy generation replaced"
 }
 
 // snapshotMap renders cfg the same way

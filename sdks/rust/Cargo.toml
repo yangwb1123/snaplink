@@ -1,0 +1,18 @@
+[package]
+name = "snaplink-sso"
+version = "0.3.0"
+edition = "2021"
+description = "Snaplink public-client hosted login SDK"
+license = "Apache-2.0"
+readme = "README.md"
+documentation = "https://docs.rs/snaplink-sso"
+
+[dependencies]
+base64 = "0.22"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "1"
+url = "2"

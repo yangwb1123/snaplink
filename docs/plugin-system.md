@@ -18,18 +18,22 @@ the commands and profiles available in the current tree.
 | Alternate `go.mod`/`go.sum`, canonical lock and embedded inventory | Implemented |
 | `standard` and `standard-kafka` compatibility builds | Supported |
 | `prototype`, `minimal`, and `full` edition builds | Buildable |
-| Signed public-SKU release archives with target lock and inventory evidence | Implemented for `prototype`, `minimal`, `full`, and independent `billing` |
+| Signed public-SKU release archives with target lock, inventory evidence and hosted provenance | Implemented for `prototype`, `minimal`, `full`, and independent `billing` |
 | Standalone `billing` service build | Preview; buildable |
 | Package-level dependency isolation for `prototype`/`minimal` | Incomplete |
-| Precompiled generation manager and fixed route-slot primitive | Implemented as an unwired host SDK |
-| Stock-server/business-module hot integration and audit-exporter tap | Not implemented |
-| External plugin supervisor | Not implemented |
+| Precompiled generation manager and fixed route-slot primitive | Implemented; stock ReBAC `/authz/check` uses the fixed slot |
+| Stock-server/business-module hot integration and audit-exporter tap | Implemented for the precompiled ReBAC check route and generic webhook audit exporter; arbitrary business modules remain cold |
+| External plugin supervisor | Implemented as a host SDK: typed token-authenticated Unix/TLS transport, detached Ed25519 provenance admission for local workers, and SPIFFE-aware mTLS for remote workers; stock `sso-server` exposes the audit-batch capability only |
 
-`prototype` and `minimal` are behaviorally distinct but not yet physically
-isolated from one another. Both target `cmd/sso-minimal`, which still reaches
-the broad dependency graph through `interfaces/sso`. Their build profile and
-runtime surface are real boundaries; their package inventory is not yet proof
-that every excluded capability or dependency left the binary.
+`prototype` and `minimal` are behaviorally distinct and physically
+extracted: each edition has its own composition root (`cmd/sso-prototype`
+and `cmd/sso-minimal`) sharing edition-generic composition in
+`internal/composition`, so neither binary links the other edition's root.
+Both still reach the broad SDK dependency graph through `interfaces/sso`
+(the shared product SDK deliberately links the OIDC protocol packages).
+Their build profile and runtime surface are real boundaries; their package
+inventory proves the composition-root isolation and the
+infrastructure/admin/durable exclusions.
 
 ## Profile hierarchy
 
@@ -44,11 +48,28 @@ that every excluded capability or dependency left the binary.
 
 Inheritance is additive: a child selects its parent's modules and adds its own
 edition bundle. It inherits the build target unless it explicitly overrides
-one. `prototype` and `minimal` use `cmd/sso-minimal`; `full` selects
+one. `prototype` uses `cmd/sso-prototype`; `minimal` uses `cmd/sso-minimal`;
+`full` selects
 `cmd/sso-server` so its inventory describes the complete stock composition
 rather than the smaller runtime. Compilation does not turn every production
 option on: runtime configuration, feature gates and backend availability
 remain separate concerns.
+
+The stock server wires one deliberately narrow business-route capability and
+two audit-tap capabilities. When `WithRebacEngine` is configured, the
+precompiled `/authz/check` route uses a fixed method/path slot, match-time
+generation leases, readiness, graceful disable and bounded lifecycle audit;
+tuple management remains cold. When `webhooks.enabled` is set, the
+precompiled generic webhook exporter uses
+generation leases, readiness, graceful drain and bounded transition audit
+events. When `audit.external_worker.enabled` is set, the same lifecycle
+manager supervises one typed out-of-process audit-batch worker. Local workers
+must match the executable digest and a signed provenance manifest bound to
+module, release and build profile; remote workers require client mTLS and may
+pin a SPIFFE URI. Both taps observe the already-redacted, hash-stamped audit
+event. OAuth state, the primary audit sink, credentials and arbitrary business
+routes remain cold, and the stock server never loads third-party code in
+process.
 
 `billing` does not inherit an SSO profile and is never selected by `full`. Its
 embedded `billing-runtime` bundle depends only on locked `core-runtime` at the
@@ -255,7 +276,7 @@ families are supported.
 | Issuers, keys, JWKS and KMS/HSM | Prevalidated WASM policy generations |
 | Grants, OP sessions and discovery shape | Precompiled admin/debug route slots |
 | Cluster/revocation/key buses | External typed authenticator processes |
-| Primary audit/redaction/hash chain | Secondary audit taps |
+| Primary audit/redaction/hash chain | Lifecycle-managed ReBAC check route and secondary audit taps |
 
 The reusable `platform/lifecycle/modules` primitive provides fixed route slots,
 blue/green generation publication, request/dependency/background leases,
@@ -274,24 +295,33 @@ graph locks. A concurrent change to the same module fails fast with
 transition is active it returns `ErrTransitionInProgress`; a later call waits
 for the same completion subject to its context.
 
-This is a host SDK boundary, not a general `sso-server` wiring claim. No stock
-`sso-server` route, primary audit sink, or redaction chain activates through
-it. The independently deployed `snaplink-billing` composition does use this
-lifecycle for its already-compiled secondary Audit Governance relay, with a
-strict revisioned desired-state file, generation leases, drain, readiness, and
-stop callbacks. Other surfaces remain cold until their fixed slot,
-configuration, authorization, transition-audit adapter, and failure policy are
-integrated and tested.
+This remains a host SDK boundary for arbitrary modules. The stock
+`sso-server` wires only the precompiled ReBAC check route through it; no
+primary audit sink or redaction chain activates through the manager. The
+independently deployed `snaplink-billing` composition also uses this lifecycle
+for its already-compiled secondary Audit Governance relay, with a strict
+revisioned desired-state file, generation leases, drain, readiness, and stop
+callbacks. Other business surfaces remain cold until their fixed slot,
+authorization, transition-audit adapter, and failure policy are integrated and
+tested.
 
-Installable third-party hot modules will run out of process over a typed,
-authenticated protocol. Go `.so` plugins are not supported.
+Installable third-party hot modules run out of process over the typed,
+authenticated protocol in `platform/lifecycle/modules`. The current host SDK
+pins the executable SHA-256 digest, verifies a signed provenance manifest for
+stock local admission, performs a version/capability handshake, and exposes
+readiness, heartbeat, quiesce, shutdown and bounded audit-batch methods.
+Remote workers require client certificates, TLS 1.2+, and can be pinned to a
+SPIFFE URI SAN. The stock configuration intentionally exposes only this audit
+capability; arbitrary business-route workers still require a separate fixed
+route slot, authorization policy and contract. Go `.so` plugins are not
+supported.
 
 ## Verification
 
 ```bash
 python cli.py modules check
 python -m pytest checks/test_modules.py -q
-go test ./cmd/sso-minimal
+go test ./cmd/sso-prototype ./cmd/sso-minimal ./internal/composition
 go build ./... && go vet ./...
 go test -run 'TestMaintainability_|TestArchitecture_' .
 ```

@@ -3,6 +3,7 @@ package sso
 import (
 	"github.com/yangwb1123/snaplink/domains/identitylink"
 	"github.com/yangwb1123/snaplink/domains/metering"
+	"github.com/yangwb1123/snaplink/domains/tenant/activation"
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
@@ -20,6 +21,13 @@ func WithPasswordResetStore(store PasswordResetStore, ttl time.Duration) Option 
 			srv.passwordResetTTL = ttl
 		}
 	}
+}
+
+// WithActivationStore opts into the public license/invitation activation
+// routes used by hosted-login SDKs. The store keeps credential digests and
+// short-lived tickets; it never receives an OAuth client secret.
+func WithActivationStore(store activation.Store) Option {
+	return func(srv *Server) { srv.activationStore = store }
 }
 
 // WithPasswordResetResolver wires the operator seam mapping a submitted login

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
@@ -201,84 +200,70 @@ func TestNopLogger_DoesNotPanic(t *testing.T) {
 	l.Debug("x", "k", "v")
 }
 
-// ---------- TracingMiddleware ----------
+// ---------- CorrelationMiddleware (Decision 7) ----------
 
-func TestTracingMiddleware_GeneratesRequestID(t *testing.T) {
-	mw := sso.TracingMiddleware()
-	ctx := newFake(http.MethodGet, "/x")
-	mw(ctx)
-	got := ctx.w.Header().Get("X-Request-Id")
+// TestCorrelationMiddleware_GeneratesRequestID proves the request-id
+// contract without a provider: preserve incoming or generate a fresh
+// 32-hex, stamped on both the response and the request header (audit +
+// access-log RequestID source).
+func TestCorrelationMiddleware_GeneratesRequestID(t *testing.T) {
+	mw := sso.CorrelationMiddleware("test")
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).ServeHTTP(w, r)
+	got := w.Header().Get("X-Request-Id")
 	if got == "" {
 		t.Fatal("X-Request-Id not set on response")
 	}
 	if len(got) != 32 { // 16 bytes -> 32 hex chars
 		t.Errorf("X-Request-Id length = %d, want 32", len(got))
 	}
+	if r.Header.Get("X-Request-Id") != got {
+		t.Errorf("request header id = %q, want response %q", r.Header.Get("X-Request-Id"), got)
+	}
 }
 
-func TestTracingMiddleware_PreservesIncomingRequestID(t *testing.T) {
-	mw := sso.TracingMiddleware()
-	ctx := newFake(http.MethodGet, "/x")
-	ctx.r.Header.Set("X-Request-Id", "client-supplied-id")
-	mw(ctx)
-	if got := ctx.w.Header().Get("X-Request-Id"); got != "client-supplied-id" {
+func TestCorrelationMiddleware_PreservesIncomingRequestID(t *testing.T) {
+	mw := sso.CorrelationMiddleware("test")
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	r.Header.Set("X-Request-Id", "client-supplied-id")
+	mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).ServeHTTP(w, r)
+	if got := w.Header().Get("X-Request-Id"); got != "client-supplied-id" {
 		t.Errorf("X-Request-Id = %q, want preserved", got)
 	}
 }
 
-func TestTracingMiddleware_StartsTraceparentWhenAbsent(t *testing.T) {
-	mw := sso.TracingMiddleware()
-	ctx := newFake(http.MethodGet, "/x")
-	mw(ctx)
-	if got := ctx.w.Header().Get("Traceparent"); got == "" {
-		t.Error("Traceparent not set")
+// TestCorrelationMiddleware_NoProvider_NoTraceHeaders pins the deliberate
+// no-OTel contract (Decision 12): with the SDK no-op provider the span
+// context is invalid, so X-Trace-Id and Traceparent are absent — the legacy
+// middleware used to mint its own traceparent here, which is exactly the
+// removed behavior (Decision 7).
+func TestCorrelationMiddleware_NoProvider_NoTraceHeaders(t *testing.T) {
+	mw := sso.CorrelationMiddleware("test")
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).ServeHTTP(w, r)
+	if got := w.Header().Get("Traceparent"); got != "" {
+		t.Errorf("Traceparent = %q, want absent without a provider", got)
+	}
+	if got := w.Header().Get("X-Trace-Id"); got != "" {
+		t.Errorf("X-Trace-Id = %q, want absent without a provider", got)
 	}
 }
 
-func TestTracingMiddleware_PreservesIncomingTraceparent(t *testing.T) {
-	mw := sso.TracingMiddleware()
-	ctx := newFake(http.MethodGet, "/x")
-	// W3C traceparent format: 00-<trace>-<span>-<flags>
-	incoming := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
-	ctx.r.Header.Set("Traceparent", incoming)
-	mw(ctx)
-	out := ctx.w.Header().Get("Traceparent")
-	// We don't preserve verbatim — middleware starts a child span and
-	// emits a NEW traceparent. The trace-id field (segment 2) must
-	// match the incoming one.
-	gotParts := strings.Split(out, "-")
-	wantParts := strings.Split(incoming, "-")
-	if len(gotParts) != 4 || len(wantParts) != 4 {
-		t.Fatalf("malformed traceparent: in=%q out=%q", incoming, out)
-	}
-	if gotParts[1] != wantParts[1] {
-		t.Errorf("trace-id = %q, want %q", gotParts[1], wantParts[1])
-	}
-	if gotParts[2] == wantParts[2] {
-		t.Errorf("span-id should be different (fresh child), got same as incoming: %q", gotParts[2])
-	}
-}
-
-func TestTracingMiddleware_RequestIDsAreUnique(t *testing.T) {
-	mw := sso.TracingMiddleware()
+func TestCorrelationMiddleware_RequestIDsAreUnique(t *testing.T) {
+	mw := sso.CorrelationMiddleware("test")
 	seen := map[string]bool{}
 	for range 20 {
-		ctx := newFake(http.MethodGet, "/x")
-		mw(ctx)
-		id := ctx.w.Header().Get("X-Request-Id")
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/x", nil)
+		mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).ServeHTTP(w, r)
+		id := w.Header().Get("X-Request-Id")
 		if seen[id] {
 			t.Fatalf("duplicate request id: %q", id)
 		}
 		seen[id] = true
-	}
-}
-
-func TestRequestIDMiddleware_AliasOfTracing(t *testing.T) {
-	mw := sso.RequestIDMiddleware()
-	ctx := newFake(http.MethodGet, "/x")
-	mw(ctx)
-	if got := ctx.w.Header().Get("X-Request-Id"); got == "" {
-		t.Error("RequestIDMiddleware (legacy alias) didn't set X-Request-Id")
 	}
 }
 

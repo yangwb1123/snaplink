@@ -422,12 +422,22 @@ func recordAdmin(ctx context.Context, recorder *audit.Recorder, t audit.EventTyp
 // client-registration review workflow's rejection reason and the rejected
 // client's name, captured here since the record is gone after Delete).
 func recordAdminMeta(ctx context.Context, recorder *audit.Recorder, t audit.EventType, target string, meta map[string]string) {
+	recordAdminOutcomeMeta(ctx, recorder, t, target, audit.OutcomeSuccess, meta)
+}
+
+// recordAdminFailureMeta preserves sanitized mutation failure context in the
+// audit trail without changing the oracle-safe gRPC status returned to callers.
+func recordAdminFailureMeta(ctx context.Context, recorder *audit.Recorder, t audit.EventType, target string, meta map[string]string) {
+	recordAdminOutcomeMeta(ctx, recorder, t, target, audit.OutcomeFailure, meta)
+}
+
+func recordAdminOutcomeMeta(ctx context.Context, recorder *audit.Recorder, t audit.EventType, target string, outcome audit.Outcome, meta map[string]string) {
 	if recorder == nil {
 		return
 	}
 	evt := &audit.Event{
 		Type:      t,
-		Outcome:   audit.OutcomeSuccess,
+		Outcome:   outcome,
 		Timestamp: time.Now().UTC(),
 		Reason:    "target=" + target,
 	}

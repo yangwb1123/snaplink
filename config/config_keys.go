@@ -1,12 +1,48 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 type KeysConfig struct {
 	Signing              SigningConfig              `yaml:"signing"`
 	Rotation             KeyRotationConfig          `yaml:"rotation"`
 	SigningKeyRegistry   SigningKeyRegistryConfig   `yaml:"signing_key_registry"`
 	IntrospectionSigning IntrospectionSigningConfig `yaml:"introspection_signing"`
+	// IDTokenAlgs wires ADDITIONAL per-client id_token signing keys: each
+	// entry lets clients that declare `id_token_signed_response_alg` (OIDC
+	// Core §3.1.3.1 / RFC 7591 §2) be served ID tokens signed with THAT
+	// algorithm, while keys.signing keeps signing everything else. This is
+	// the config-facing form of the SDK's sso.WithIDTokenIssuerAlg option
+	// and the product-level FAPI 2.0 conformance unblock: a plain-OIDC
+	// RS256 login client can coexist with ES256/PS256 FAPI clients on one
+	// issuer. Empty (default) = no extra issuers, byte-identical.
+	IDTokenAlgs []IDTokenAlgConfig `yaml:"id_token_algs,omitempty"`
+}
+
+// IDTokenAlgConfig describes one ADDITIONAL id_token signing key (a
+// dedicated issuer per alg, mirroring SigningConfig's shape minus the
+// roles that only the primary key has: rotation, revocation, FIPS gate —
+// those stay on keys.signing). The alg names the JWS algorithm; the key is
+// an in-process generated key unless key_file/external is set (same
+// semantics as SigningConfig.KeyFile / SigningConfig.External).
+type IDTokenAlgConfig struct {
+	// Alg: "eddsa" | "es256" | "rs256" | "ps256" — the JWS algorithm this
+	// key signs. Required; must differ from the primary keys.signing.alg
+	// (an entry duplicating the primary would shadow it for clients that
+	// declare the same alg — rejected at boot).
+	Alg string `yaml:"alg"`
+
+	// KeyFile persists the in-process signing key to a PEM file so a
+	// restart reuses the same key (kid stable). Empty (default) = an
+	// in-process generated key (regenerated on every boot).
+	KeyFile string `yaml:"key_file,omitempty"`
+
+	// External names a KMS/HSM signer factory registered via the cmd
+	// RegisterExternalSigner hook. Empty (default) = in-process key.
+	External string `yaml:"external,omitempty"`
 }
 
 // IntrospectionSigningConfig opts into RFC 9701 JWT-formatted
@@ -135,6 +171,28 @@ type KeyRotationConfig struct {
 	// = log error + INERT (§2 fail-safe — always widens, never narrows
 	// the verify window). cmd knob: keys.rotation.coordinated_cutover.
 	CoordinatedCutover bool `yaml:"coordinated_cutover"`
+}
+
+// canonicalSigningAlg maps a JWS alg YAML value (lowercase aliases) to the
+// JWS algorithm name the signing issuer emits. "" and the Ed25519 aliases
+// default to EdDSA; unsupported values fall through to a distinctive
+// sentinel so the caller's error message names the mismatch. Mirrors
+// serverbuildsign.BuildSigningIssuer's switch and backs both boot gates
+// (clients[].id_token_signed_response_alg and
+// keys.signing.id_token_algs[].alg).
+func canonicalSigningAlg(alg string) string {
+	switch strings.ToLower(strings.TrimSpace(alg)) {
+	case "", "eddsa", "ed25519":
+		return "EdDSA"
+	case "es256", "ecdsa":
+		return "ES256"
+	case "rs256", "rsa":
+		return "RS256"
+	case "ps256":
+		return "PS256"
+	default:
+		return strings.ToUpper(alg)
+	}
 }
 
 // ClusterConfig wires cross-replica coordination via cluster.Bus. The
@@ -279,3 +337,37 @@ func (c PostgresConfig) Configured() bool { return c.DSN != "" }
 // boot warning. Operator MAY accept this for memory-only
 // single-replica deploys but MUST set IPSalt before persisting
 // to SQLite.
+
+// validateIDTokenAlgs validates keys.id_token_algs: every entry must name a
+// supported JWS algorithm that DIFFERS from the primary signing alg (an entry
+// duplicating the primary would shadow it for clients declaring that alg —
+// rejected so the default path stays unambiguous), and no alg may appear
+// twice. "none" and unknown values fall through canonicalSigningAlg to a
+// sentinel outside the approved set and are rejected here, matching the
+// DCR-side rule that a client may only register an alg the AS can produce.
+func validateIDTokenAlgs(c *Config) error {
+	if len(c.Keys.IDTokenAlgs) == 0 {
+		return nil
+	}
+	wired := canonicalSigningAlg(c.Keys.Signing.Alg)
+	seen := make(map[string]struct{}, len(c.Keys.IDTokenAlgs))
+	for i, entry := range c.Keys.IDTokenAlgs {
+		if strings.TrimSpace(entry.Alg) == "" {
+			return fmt.Errorf("config: keys.id_token_algs[%d].alg is required", i)
+		}
+		alg := canonicalSigningAlg(entry.Alg)
+		switch alg {
+		case "EdDSA", "ES256", "RS256", "PS256":
+		default:
+			return fmt.Errorf("config: keys.id_token_algs[%d].alg %q unsupported (supported: eddsa, es256, rs256, ps256)", i, entry.Alg)
+		}
+		if alg == wired {
+			return fmt.Errorf("config: keys.id_token_algs[%d].alg %q duplicates the primary keys.signing.alg %q", i, entry.Alg, wired)
+		}
+		if _, dup := seen[alg]; dup {
+			return fmt.Errorf("config: keys.id_token_algs duplicate alg %q", alg)
+		}
+		seen[alg] = struct{}{}
+	}
+	return nil
+}

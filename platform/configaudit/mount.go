@@ -35,4 +35,12 @@ func MountRoutes(r core.Router, d RoutesDeps, gate func() bool) {
 	if d.ConfigAuditStore() != nil {
 		api.GET(core.PathAdminConfigHistory, func(ctx core.HandlerContext) { HandleHistory(d, ctx) })
 	}
+	// The declared peer-config baseline write path mounts only when BOTH a
+	// snapshot source (the baseline's initial state + the response diff) and
+	// a store (the baseline persistence) exist — a build with either missing
+	// keeps today's route set byte-identical.
+	if d.ConfigSnapshotsWired() && d.ConfigAuditStore() != nil {
+		api.POST(core.PathAdminConfigApply, func(ctx core.HandlerContext) { HandleApply(d, ctx) })
+		api.POST(core.PathAdminConfigRollback, func(ctx core.HandlerContext) { HandleRollback(d, ctx) })
+	}
 }

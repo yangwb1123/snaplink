@@ -39,3 +39,20 @@ func PermissionSet(perms []Permission) map[string]struct{} {
 	}
 	return out
 }
+
+// PermissionsFromRoles projects a role definition slice onto its deduplicated
+// permission union. Authorization adapters use it for session-active roles so
+// the active and assigned decision paths share one projection rule.
+func PermissionsFromRoles(roles []Role) []Permission {
+	seen := make(map[string]struct{})
+	for _, role := range roles {
+		for _, code := range role.Permissions {
+			seen[code] = struct{}{}
+		}
+	}
+	out := make([]Permission, 0, len(seen))
+	for code := range seen {
+		out = append(out, Permission{Code: code})
+	}
+	return out
+}

@@ -57,6 +57,8 @@ const (
 	EventAdminRoleAssigned        EventType = "admin_role_assigned"
 	EventAdminRoleUnassigned      EventType = "admin_role_unassigned"
 	EventAdminMenusUpdated        EventType = "admin_menus_updated"
+	EventAdminResourceRegistered  EventType = "admin_resource_registered"
+	EventAdminResourceRemoved     EventType = "admin_resource_removed"
 	EventAdminTenantCreated       EventType = "admin_tenant_created"
 	EventAdminTenantUpdated       EventType = "admin_tenant_updated"
 	EventAdminTenantDeleted       EventType = "admin_tenant_deleted"
@@ -123,6 +125,21 @@ const (
 	EventAdminChangeRejected    EventType = "admin_change_rejected"
 	EventAdminChangeApplied     EventType = "admin_change_applied"
 	EventAdminChangeApplyFailed EventType = "admin_change_apply_failed"
+	// EventAdminConfigApplied / EventAdminConfigRolledBack are emitted by
+	// POST /api/v1/admin/config/apply and .../rollback
+	// (platform/configaudit.HandleApply/HandleRollback — the declared
+	// peer-config baseline write path). Metadata carries the evidence chain:
+	// apply_id (the new baseline version id), peer_digest (the verified peer
+	// config fingerprint), and prev_id when a predecessor exists. Metadata
+	// ONLY — never snapshot content: a config snapshot may carry
+	// secret-shaped leaves, and the audit trail must never echo them.
+	EventAdminConfigApplied    EventType = "admin_config_applied"
+	EventAdminConfigRolledBack EventType = "admin_config_rolled_back"
+	// Canary lifecycle events carry identifiers and health outcome metadata,
+	// never the candidate snapshot.
+	EventConfigCanaryStarted    EventType = "config_canary_started"
+	EventConfigCanaryConfirmed  EventType = "config_canary_confirmed"
+	EventConfigCanaryRolledBack EventType = "config_canary_rolled_back"
 	// EventAdminWriteQuotaExceeded / EventAdminIPDenied are emitted by
 	// AdminMiddleware when the opt-in write-quota or IP/geo allowlist gate
 	// (platform/lifecycle/admingovernance) blocks a request, when an audit Recorder is

@@ -142,6 +142,7 @@ func (s *Server) DestroySession(ctx context.Context, sessionID string) error {
 	if s.sessionMgr == nil {
 		return nil
 	}
+	s.deactivatePermissionSession(ctx, sessionID)
 	return s.sessionMgr.Destroy(ctx, sessionID)
 }
 func (s *Server) TokenIssuers() map[string]core.TokenIssuer { return s.tokenIssuers }

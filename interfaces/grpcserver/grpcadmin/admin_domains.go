@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 
+	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/platform/audit"
@@ -184,4 +185,183 @@ func protoToDomain(p *adminv1.Domain) *tenant.Domain {
 		IsApex:          p.IsApex,
 		Branding:        p.Branding,
 	}
+}
+
+// PermissionAdminService's SoD methods live in this split file because the
+// permission CRUD adapter already owns the resource-catalog RPCs and is near
+// the per-file budget. The receiver and wire contract remain unchanged.
+func (s *PermissionAdminService) SetConflictSets(ctx context.Context, in *adminv1.SetConflictSetsRequest) (*adminv1.SetConflictSetsResponse, error) {
+	p, err := s.sodProvider()
+	if err != nil {
+		return nil, err
+	}
+	if in == nil {
+		return nil, status.Error(codes.InvalidArgument, "request required")
+	}
+	if err := p.SetConflictSets(ctx, in.ClientId, conflictSetsFromProto(in.ConflictSets)); err != nil {
+		recordAdminFailureMeta(ctx, s.recorder, audit.EventAdminRoleUpdated, in.ClientId,
+			map[string]string{"sod_mode": "ssod", "sod_error": err.Error()})
+		return nil, mapSoDError("set conflict sets", err)
+	}
+	recordAdminMeta(ctx, s.recorder, audit.EventAdminRoleUpdated, in.ClientId,
+		map[string]string{"sod_mode": "ssod"})
+	s.invalidateAuthzPolicy(ctx, in.ClientId)
+	return &adminv1.SetConflictSetsResponse{}, nil
+}
+
+func (s *PermissionAdminService) ListConflictSets(ctx context.Context, in *adminv1.ListConflictSetsRequest) (*adminv1.ListConflictSetsResponse, error) {
+	p, err := s.sodProvider()
+	if err != nil {
+		return nil, err
+	}
+	if in == nil {
+		return nil, status.Error(codes.InvalidArgument, "request required")
+	}
+	sets, err := p.ConflictSets(ctx, in.ClientId)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list conflict sets: %v", err)
+	}
+	return &adminv1.ListConflictSetsResponse{ConflictSets: conflictSetsToProto(sets)}, nil
+}
+
+func (s *PermissionAdminService) SetActivationConflictSets(ctx context.Context, in *adminv1.SetActivationConflictSetsRequest) (*adminv1.SetActivationConflictSetsResponse, error) {
+	p, err := s.sessionRoleActivator()
+	if err != nil {
+		return nil, err
+	}
+	if in == nil {
+		return nil, status.Error(codes.InvalidArgument, "request required")
+	}
+	if err := p.SetActivationConflictSets(ctx, in.ClientId, conflictSetsFromProto(in.ConflictSets)); err != nil {
+		recordAdminFailureMeta(ctx, s.recorder, audit.EventAdminRoleUpdated, in.ClientId,
+			map[string]string{"sod_mode": "dsod", "sod_error": err.Error()})
+		return nil, mapSoDError("set activation conflict sets", err)
+	}
+	recordAdminMeta(ctx, s.recorder, audit.EventAdminRoleUpdated, in.ClientId,
+		map[string]string{"sod_mode": "dsod"})
+	s.invalidateAuthzPolicy(ctx, in.ClientId)
+	return &adminv1.SetActivationConflictSetsResponse{}, nil
+}
+
+func (s *PermissionAdminService) ListActivationConflictSets(ctx context.Context, in *adminv1.ListActivationConflictSetsRequest) (*adminv1.ListActivationConflictSetsResponse, error) {
+	p, err := s.sessionRoleActivator()
+	if err != nil {
+		return nil, err
+	}
+	if in == nil {
+		return nil, status.Error(codes.InvalidArgument, "request required")
+	}
+	sets, err := p.ActivationConflictSets(ctx, in.ClientId)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list activation conflict sets: %v", err)
+	}
+	return &adminv1.ListActivationConflictSetsResponse{ConflictSets: conflictSetsToProto(sets)}, nil
+}
+
+func (s *PermissionAdminService) ActivateRoles(ctx context.Context, in *adminv1.ActivateRolesRequest) (*adminv1.ActivateRolesResponse, error) {
+	p, err := s.sessionRoleActivator()
+	if err != nil {
+		return nil, err
+	}
+	if in == nil || in.UserId == "" || in.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and session_id required")
+	}
+	if err := p.ActivateRoles(ctx, in.UserId, in.ClientId, in.SessionId, in.Roles); err != nil {
+		recordAdminFailureMeta(ctx, s.recorder, audit.EventAdminRoleAssigned, in.ClientId+"/"+in.UserId,
+			map[string]string{"sod_mode": "dsod", "target_user_id": in.UserId, "session_id": in.SessionId, "sod_error": err.Error()})
+		return nil, mapSoDError("activate roles", err)
+	}
+	recordAdminMeta(ctx, s.recorder, audit.EventAdminRoleAssigned, in.ClientId+"/"+in.UserId,
+		map[string]string{"sod_mode": "dsod", "target_user_id": in.UserId, "session_id": in.SessionId})
+	return &adminv1.ActivateRolesResponse{}, nil
+}
+
+func (s *PermissionAdminService) ListActiveRoles(ctx context.Context, in *adminv1.ListActiveRolesRequest) (*adminv1.ListActiveRolesResponse, error) {
+	p, err := s.sessionRoleActivator()
+	if err != nil {
+		return nil, err
+	}
+	if in == nil || in.UserId == "" || in.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and session_id required")
+	}
+	roles, err := p.ActiveRoles(ctx, in.UserId, in.ClientId, in.SessionId)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list active roles: %v", err)
+	}
+	out := &adminv1.ListActiveRolesResponse{Roles: make([]*adminv1.Role, 0, len(roles))}
+	for _, role := range roles {
+		out.Roles = append(out.Roles, roleToProto(role))
+	}
+	return out, nil
+}
+
+func (s *PermissionAdminService) DeactivateSession(ctx context.Context, in *adminv1.DeactivateSessionRequest) (*adminv1.DeactivateSessionResponse, error) {
+	p, err := s.sessionRoleActivator()
+	if err != nil {
+		return nil, err
+	}
+	if in == nil || in.UserId == "" || in.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and session_id required")
+	}
+	if err := p.DeactivateSession(ctx, in.UserId, in.ClientId, in.SessionId); err != nil {
+		recordAdminFailureMeta(ctx, s.recorder, audit.EventAdminRoleUnassigned, in.ClientId+"/"+in.UserId,
+			map[string]string{"sod_mode": "dsod", "target_user_id": in.UserId, "session_id": in.SessionId, "sod_error": err.Error()})
+		return nil, status.Errorf(codes.Internal, "deactivate session: %v", err)
+	}
+	recordAdminMeta(ctx, s.recorder, audit.EventAdminRoleUnassigned, in.ClientId+"/"+in.UserId,
+		map[string]string{"sod_mode": "dsod", "target_user_id": in.UserId, "session_id": in.SessionId})
+	return &adminv1.DeactivateSessionResponse{}, nil
+}
+
+func (s *PermissionAdminService) sodProvider() (permissions.SoDProvider, error) {
+	if s.prov == nil {
+		return nil, status.Error(codes.FailedPrecondition, "permission provider not configured")
+	}
+	p, ok := s.prov.(permissions.SoDProvider)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, "separation of duty not configured")
+	}
+	return p, nil
+}
+
+func (s *PermissionAdminService) sessionRoleActivator() (permissions.SessionRoleActivator, error) {
+	if s.prov == nil {
+		return nil, status.Error(codes.FailedPrecondition, "permission provider not configured")
+	}
+	p, ok := s.prov.(permissions.SessionRoleActivator)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, "session role activation not configured")
+	}
+	return p, nil
+}
+
+func mapSoDError(op string, err error) error {
+	switch {
+	case errors.Is(err, permissions.ErrInvalidConflictSet):
+		return status.Error(codes.InvalidArgument, err.Error())
+	case errors.Is(err, permissions.ErrRoleNotAssigned), errors.Is(err, permissions.ErrRoleConflict):
+		return status.Error(codes.FailedPrecondition, err.Error())
+	default:
+		return status.Errorf(codes.Internal, "%s: %v", op, err)
+	}
+}
+
+func conflictSetsFromProto(in []*adminv1.ConflictSet) [][]string {
+	sets := make([][]string, 0, len(in))
+	for _, set := range in {
+		if set == nil {
+			sets = append(sets, nil)
+			continue
+		}
+		sets = append(sets, append([]string(nil), set.RoleCodes...))
+	}
+	return sets
+}
+
+func conflictSetsToProto(in [][]string) []*adminv1.ConflictSet {
+	out := make([]*adminv1.ConflictSet, 0, len(in))
+	for _, set := range in {
+		out = append(out, &adminv1.ConflictSet{RoleCodes: append([]string(nil), set...)})
+	}
+	return out
 }

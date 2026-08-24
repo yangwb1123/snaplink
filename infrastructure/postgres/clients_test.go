@@ -30,6 +30,7 @@ func richClient() *sso.Client {
 		Secret:                           "s3cr3t-plain",
 		Name:                             "Acme",
 		RedirectURIs:                     []string{"https://a/cb", "https://b/cb"},
+		RedirectURIPatterns:              []string{"https://a/test/*/callback"},
 		AllowedScopes:                    []string{"openid", "profile"},
 		AllowedAuthenticators:            []string{"password"},
 		LoginPageURI:                     "https://login.example/authorize",
@@ -103,7 +104,7 @@ func TestClient_AddGetRoundTripAllColumns(t *testing.T) {
 		got.DeviceCodeTTL != in.DeviceCodeTTL || got.DeviceCodePollInterval != in.DeviceCodePollInterval {
 		t.Fatalf("BIGINT duration round-trip mismatch: %+v", got)
 	}
-	if len(got.RedirectURIs) != 2 || len(got.AllowedScopes) != 2 || got.AllowedPKCEMethods[0] != "S256" ||
+	if len(got.RedirectURIs) != 2 || len(got.RedirectURIPatterns) != 1 || got.AllowedPKCEMethods[0] != "S256" ||
 		got.Attributes["k"] != "v" || got.SubjectType != "pairwise" {
 		t.Fatalf("JSON column round-trip mismatch: %+v", got)
 	}

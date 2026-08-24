@@ -22,7 +22,8 @@ the three public edition profiles build with `CGO_ENABLED=0`. CGO integrations
 such as the nested PKCS#11 module are not selected by those profiles. The
 native module is therefore their FIPS mechanism.
 
-`prototype` and `minimal` share the `cmd/sso-minimal` dependency graph;
+`prototype` and `minimal` build from dedicated composition roots
+(`cmd/sso-prototype` / `cmd/sso-minimal`);
 their different active surfaces are not separate cryptographic boundaries.
 `full` selects the complete current `cmd/sso-server` composition. A
 profile policy value of `fips: compatible` is only a build-resolver

@@ -30,6 +30,7 @@ func TestSQLiteClients_AddGetRoundTrip(t *testing.T) {
 		Secret:                "shh",
 		Name:                  "Web App",
 		RedirectURIs:          []string{"https://app/cb", "https://app/cb2"},
+		RedirectURIPatterns:   []string{"https://app/test/*/callback"},
 		AllowedScopes:         []string{"read", "write"},
 		AllowedAuthenticators: []string{"password", "phone"},
 		LoginPageURI:          "https://login.example/authorize",
@@ -56,7 +57,7 @@ func TestSQLiteClients_AddGetRoundTrip(t *testing.T) {
 	if err := st.ValidateSecret(context.Background(), "web", "shh"); err != nil {
 		t.Errorf("ValidateSecret with original plaintext: %v", err)
 	}
-	if len(out.RedirectURIs) != 2 || len(out.AllowedScopes) != 2 || len(out.AllowedAuthenticators) != 2 {
+	if len(out.RedirectURIs) != 2 || len(out.RedirectURIPatterns) != 1 || len(out.AllowedScopes) != 2 || len(out.AllowedAuthenticators) != 2 {
 		t.Errorf("slice round-trip failed: %+v", out)
 	}
 	if !out.RequirePKCE || !out.Active {
@@ -96,10 +97,12 @@ func TestSQLiteClients_SecurityFieldsSurviveRestart(t *testing.T) {
 		AllowedResources:             []string{"https://api.one", "https://api.two"},
 		AllowedRequestURIs:           []string{"https://rp/req1", "https://rp/req2"},
 		PostLogoutRedirectURIs:       []string{"https://rp/logged-out"},
+		RedirectURIPatterns:          []string{"https://rp/test/*/callback"},
 		IDTokenEncryptedResponseAlg:  "RSA-OAEP-256",
 		IDTokenEncryptedResponseEnc:  "A256GCM",
 		UserinfoEncryptedResponseAlg: "ECDH-ES",
 		UserinfoEncryptedResponseEnc: "A128GCM",
+		IDTokenSignedResponseAlg:     "RS256",
 		Federation:                   true,
 	}
 	if err := st.Add(context.Background(), in); err != nil {
@@ -145,9 +148,15 @@ func TestSQLiteClients_SecurityFieldsSurviveRestart(t *testing.T) {
 	if len(out.PostLogoutRedirectURIs) != 1 || out.PostLogoutRedirectURIs[0] != "https://rp/logged-out" {
 		t.Errorf("PostLogoutRedirectURIs round-trip failed: %+v", out.PostLogoutRedirectURIs)
 	}
+	if len(out.RedirectURIPatterns) != 1 || out.RedirectURIPatterns[0] != "https://rp/test/*/callback" {
+		t.Errorf("RedirectURIPatterns round-trip failed: %+v", out.RedirectURIPatterns)
+	}
 	if out.IDTokenEncryptedResponseAlg != "RSA-OAEP-256" || out.IDTokenEncryptedResponseEnc != "A256GCM" ||
 		out.UserinfoEncryptedResponseAlg != "ECDH-ES" || out.UserinfoEncryptedResponseEnc != "A128GCM" {
 		t.Errorf("JWE alg/enc round-trip failed: %+v", out)
+	}
+	if out.IDTokenSignedResponseAlg != "RS256" {
+		t.Errorf("IDTokenSignedResponseAlg round-trip failed: got %q want RS256", out.IDTokenSignedResponseAlg)
 	}
 	if !out.Federation {
 		t.Errorf("Federation round-trip failed: got false want true")
@@ -646,5 +655,20 @@ func TestSQLiteClients_ClientTrustFieldsRoundTrip(t *testing.T) {
 	}
 	if !scored.ClientTrustSetAt.Equal(setAt) {
 		t.Errorf("ClientTrustSetAt = %v, want %v", scored.ClientTrustSetAt, setAt)
+	}
+}
+
+// TestSQLiteClients_ValidateSecretEmptyStoredSecret_Rejected locks the F1
+// guard (memory-store parity): a client with NO stored secret must never
+// authenticate, even against an empty presented value.
+func TestSQLiteClients_ValidateSecretEmptyStoredSecret_Rejected(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := newClientStore(t)
+	if err := store.Add(ctx, &sso.Client{ID: "web", Name: "Restored", Active: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := store.ValidateSecret(ctx, "web", ""); err == nil {
+		t.Fatal("empty stored secret authenticated an empty presented secret")
 	}
 }

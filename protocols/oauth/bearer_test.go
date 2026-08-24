@@ -35,3 +35,29 @@ func TestBearerToken(t *testing.T) {
 		})
 	}
 }
+
+func TestResourceToken(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{name: "bearer", header: "Bearer bearer-token", want: "bearer-token"},
+		{name: "dpop", header: "DPoP dpop-token", want: "dpop-token"},
+		{name: "wrong scheme", header: "Basic credentials", want: ""},
+		{name: "lowercase dpop remains rejected", header: "dpop dpop-token", want: ""},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := &http.Request{Header: http.Header{}}
+			r.Header.Set("Authorization", tc.header)
+			if got := ResourceToken(r); got != tc.want {
+				t.Errorf("ResourceToken() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

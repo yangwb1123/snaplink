@@ -1,14 +1,22 @@
 # snaplink/sso — Python client (generated)
 
 > **Scope:** generated client for the full documented API surface of
-> `docs/openapi.yaml`. It is not published to PyPI, and does not provide
-> hosted-login, self-service, setup, developer-portal, or admin-console UI.
+> `docs/openapi.yaml`, plus a framework-neutral hosted-login facade. The
+> installable package under `sdks/python` is published to PyPI as
+> `snaplink-sso`; this generated directory remains vendorable and does not
+> ship a login page, self-service, setup, developer-portal, or admin-console UI.
 > `sso-server` is a pure API backend; browser applications and consoles are
 > separate frontend projects.
 
 `client.py` is **generated output**, committed the same way generated Go under
 `gen/proto/` is: checked in for consumers to use directly, regenerated from
-`docs/openapi.yaml` by a Go program rather than hand-maintained.
+`docs/openapi.yaml` by a Go program rather than hand-maintained. The same
+generated module is also written to `sdks/python/snaplink_sso/client.py` so
+applications can install and import the repository's `snaplink_sso` package.
+
+Install the package with `pip install snaplink-sso`. Releases run the protected
+`sdk-py-v<version>` workflow after the package tests, wheel/source build, and
+tag/version check pass.
 
 ```
 go run ./cmd/gensdk --lang=py
@@ -18,9 +26,9 @@ Regenerate after any change to `docs/openapi.yaml` or
 `ops/build/sdk-surface.json` (run `python cli.py sdk-surface generate`, which
 re-emits every language). `client.py` has **zero third-party dependencies** — transport
 is stdlib `urllib.request`, wire-shape typing is stdlib `typing.TypedDict`
-— so there is no `pip install` step either; vendor the single file into
-your project (`pyproject.toml`/`requirements.txt` packaging is
-deliberately not set up here — see "What's NOT here" below).
+— so there is no runtime dependency installation step; vendor the single
+file into your project or install the repository package under `sdks/python/`
+(see "What's NOT here" below).
 
 The generator reads `docs/openapi.yaml`; it does not inspect Go route
 registration. A runtime endpoint that has not yet been added to OpenAPI cannot
@@ -91,17 +99,53 @@ been in the stdlib `typing` module since Python 3.8, so this is still
   `get_o_auth_authorization_server_metadata` rather than the more natural
   `get_oauth_authorization_server_metadata`.
 
+## One-call hosted login without a BFF
+
+`Snaplink.login()` uses the existing Console `/login/` page with a public
+client and S256 PKCE. The first call returns a redirect URL; call it again
+with the callback URL and the SDK validates state and issuer, exchanges the
+code, and exposes the generated API client. A framework only needs to return
+the first URL as a 302 and pass the callback request URL back to the SDK.
+
+```python
+from snaplink_sso import snaplink
+
+started = snaplink.login({
+    "base_url": "https://sso.example.com",
+    "client_id": "my-public-app",
+    "redirect_uri": "https://app.example.com/auth/callback",
+    "return_to": "https://app.example.com/dashboard",
+})
+return redirect(started.redirect_url)
+
+# On the registered callback route:
+completed = snaplink.login({
+    "base_url": "https://sso.example.com",
+    "client_id": "my-public-app",
+    "redirect_uri": "https://app.example.com/auth/callback",
+    "callback_url": request.url,
+})
+me = snaplink.api.get_user_info()
+```
+
+For trusted local-network development only, set
+`allow_insecure_http_for_development: True`; production integrations must use
+HTTPS.
+
+The hosted facade deliberately has no client-secret option. Use a durable,
+atomic `StateStore` implementation for multi-worker deployments; the built-in
+`MemoryStateStore` is for development and single-process examples. Access
+tokens remain in memory and are not written to browser storage.
+
 ## What's NOT here
 
-No `pyproject.toml`/`setup.py` packaging, no `requirements.txt` (there is
-nothing to require). This is meant to be vendored as a single file, not
-published to PyPI — turning it into a real package is a separate,
-deliberate decision for whoever wants to publish it, not something this
-generator should quietly decide.
-
-There is also no generated compatibility policy or semantic-versioned Python
-release. Consumers that vendor the file should regenerate and review it when
-upgrading the server.
+The `docs/sdks/python` directory itself has no independent packaging or
+release metadata. It remains the vendorable single-file form; the
+repository's installable package metadata is kept separately under
+`sdks/python/` and is generated from the same content. There is no
+`requirements.txt` because the runtime has no third-party dependencies.
+Consumers that vendor the file should regenerate and review it when upgrading
+the server.
 
 ## Usage
 

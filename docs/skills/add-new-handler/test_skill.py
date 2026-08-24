@@ -6,8 +6,10 @@ from pathlib import Path
 # Load run.py's templates by importing directly
 import sys
 skill_dir = Path(__file__).resolve().parent
-sys.path.insert(0, str(skill_dir))
-import run as skill_run
+sys.path.insert(0, str(skill_dir.parent))
+from shared.loader import load_skill_run
+
+skill_run = load_skill_run(skill_dir, "skill_add_new_handler_run")
 
 
 class TestHandlerTemplate(unittest.TestCase):

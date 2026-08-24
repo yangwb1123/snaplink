@@ -1,8 +1,10 @@
 # Profile physical isolation and edition evidence (P0-5)
 
 The public edition hierarchy is `prototype → minimal → full`. The two
-smaller editions share one binary (`cmd/sso-minimal`, selected by
-`--edition`); `full` is the complete stock composition (`cmd/sso-server`).
+smaller editions have dedicated composition roots (`cmd/sso-prototype` and
+`cmd/sso-minimal`, sharing edition-generic composition in
+`internal/composition`); `full` is the complete stock composition
+(`cmd/sso-server`).
 This document records what physical isolation means, how it is proven, and
 what the full profile proves against durable state, security controls,
 observability and topology.
@@ -13,15 +15,20 @@ observability and topology.
 
 | Binary | Snaplink packages | Symbols | Size |
 |---|---:|---:|---:|
-| `sso-minimal` (prototype + minimal) | 95 | ~35.1k | ~34.2 MB |
-| `sso-server` (full) | 180 | ~73.5k | ~68.1 MB |
-| `snaplink-billing` (billing) | 109 | ~38.0k | ~34.7 MB |
+| `sso-prototype` (prototype) | 98 | ~35.1k | ~34.3 MB |
+| `sso-minimal` (minimal) | 98 | ~35.1k | ~34.3 MB |
+| `sso-server` (full) | 193 | ~74.5k | ~69.0 MB |
+| `snaplink-billing` (billing) | 111 | ~38.3k | ~35.0 MB |
 
-The small binary links the protocol SDK (`interfaces/sso`), the identity
+The small binaries link the protocol SDK (`interfaces/sso`), the identity
 and OAuth memory stores (`infrastructure/defaultimpl`), password
 authentication (`domains/authenticators`), the Ed25519 JWT issuer
 (`defaultimpl.NewEd25519JWTIssuer`) and the OIDC protocol
-(`protocols/oidc`). It does NOT link:
+(`protocols/oidc`). Each edition links only its own composition root — the
+prototype binary contains `cmd/sso-prototype` and never `cmd/sso-minimal`, and
+vice versa — so the minimal-only OIDC surface code (metadata, routes, scopes,
+ID-token/tracing wiring) is compiled only into the minimal binary. Neither
+links:
 
 - durable stores: `infrastructure/{redis,postgres,sqlite,sms,emailsmtp}`,
   `identitylinkpostgres`, the `*/sqlite` and `*/memory` store variants that
@@ -37,10 +44,14 @@ authentication (`domains/authenticators`), the Ed25519 JWT issuer
 The protocol SDK itself is deliberately shared: `interfaces/sso` is the
 product's SDK surface, and the editions are compositions of the same SDK
 with fewer options wired. Physical isolation therefore targets the
-infrastructure/admin/durable graph, not the SDK. The boundary is declared
+composition roots and the infrastructure/admin/durable graph, not the SDK —
+`protocols/oidc` remains linked into both small editions through the shared
+SDK (and `internal/handler`/`infrastructure/defaultimpl`), which is why the
+prototype binary's package set still includes it. The boundary is declared
 in `ops/build/profile-isolation.json` and enforced by
 `python cli.py profiles evidence` — an accidental import that drags
-postgres or the admin gateway into the small binary fails the check.
+postgres, the admin gateway, or the other edition's composition root into a
+small binary fails the check.
 
 The independent `billing` profile has a narrower, different assertion. It
 must link the tenant-commerce and usage-ledger domains, their PostgreSQL
@@ -109,9 +120,9 @@ The `full` profile's claims are proven as follows:
 - SAML, LDAP/Kerberos/RADIUS, KMS/HSM and the other nested modules are
   separate Go modules by construction; the standard host API for
   operator-registered factories is `interfaces/ssoext` (typed registrars on
-  `platform/registrar`) and the module catalog (`ops/build/modules.json`).
-  Migrating the remaining nested modules onto that host API proceeds once
-  the boundary is stable.
+  `platform/registry/typed`) and the module catalog (`ops/build/modules.json`).
+  SAML (consumed via `saml.handler`) plus the LDAP/Kerberos/RADIUS
+  authenticator families are migrated onto it; the KMS family remains.
 - No in-process capability is classified as hot: activation is
   `restart`-only, generation leases and static route slots are required
   before any hot classification, and installable third-party code must run

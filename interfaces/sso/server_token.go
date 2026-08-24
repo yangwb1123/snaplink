@@ -31,7 +31,20 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		return
 	}
 
-	client, basicAuthUsed, handled := s.authenticateTokenClient(ctx, &req)
+	dpopJKT, mtlsX5T, handled := s.captureSenderConstraint(ctx)
+	if handled {
+		return
+	}
+
+	// FAPI client-auth METHOD gate first: an enforce-mode method violation
+	// (e.g. client_secret_basic) is 400 invalid_request even when the
+	// credential layer would reject the secret (oracle-safe: needs only
+	// the request, never echoes the client).
+	if s.enforceFAPITokenRules(ctx, req, s.tokenRequestUsesBasicAuth(ctx), dpopJKT, mtlsX5T) {
+		return
+	}
+
+	client, _, handled := s.authenticateTokenClient(ctx, &req)
 	if handled {
 		return
 	}
@@ -40,15 +53,6 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	// residencyGateTokenGrant): checked once before the grant switch so it
 	// applies uniformly; byte-identical when residency is unwired.
 	if s.residencyGateTokenGrant(ctx, client) {
-		return
-	}
-
-	dpopJKT, mtlsX5T, handled := s.captureSenderConstraint(ctx)
-	if handled {
-		return
-	}
-
-	if s.enforceFAPITokenRules(ctx, req, basicAuthUsed, dpopJKT, mtlsX5T) {
 		return
 	}
 

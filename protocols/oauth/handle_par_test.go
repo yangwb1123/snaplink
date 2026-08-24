@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -21,6 +22,7 @@ type parDeps struct {
 	verifyCA      func(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
 	rarLimits     RARLimits
 	maxScopeCount int
+	catalog       permissions.ResourceProvider
 }
 
 func (d *parDeps) ClientStoreAccessor() core.ClientStore    { return d.clients }
@@ -31,9 +33,10 @@ func (d *parDeps) ResolveIssuer(core.HandlerContext) string { return "https://is
 func (d *parDeps) VerifyJWTClientAssertion(ctx context.Context, a, f, i string) (string, error) {
 	return d.verifyCA(ctx, a, f, i)
 }
-func (d *parDeps) SrvLogger() spi.Logger { return spi.NopLogger{} }
-func (d *parDeps) RARLimits() RARLimits  { return d.rarLimits }
-func (d *parDeps) MaxScopeCount() int    { return d.maxScopeCount }
+func (d *parDeps) SrvLogger() spi.Logger                         { return spi.NopLogger{} }
+func (d *parDeps) RARLimits() RARLimits                          { return d.rarLimits }
+func (d *parDeps) MaxScopeCount() int                            { return d.maxScopeCount }
+func (d *parDeps) ResourceCatalog() permissions.ResourceProvider { return d.catalog }
 
 // RequireFormContentType returns false — the legacy dual-mode posture —
 // so every existing JSON-post unit test in this file stays on the
@@ -132,6 +135,41 @@ func TestHandlePAR(t *testing.T) {
 		}
 	})
 
+	// F1 regression: a fresh-node-restored confidential client has an
+	// EMPTY stored secret (snapshot artifacts never carry secrets). An
+	// empty presented secret against that state must be rejected — RFC
+	// 9126 §2 requires confidential clients to authenticate before push,
+	// and accepting ("","") would let anyone who knows a client_id push
+	// authorization requests as that client.
+	t.Run("restored confidential client with empty secret 401", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "")
+		d := newPARDeps(cs, newMemPARStore())
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+			"client_id=rp&client_secret=")
+		HandlePAR(d, ctx)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401 (empty-secret confidential client must not push)", rec.Code)
+		}
+	})
+
+	// F1 negative: a PUBLIC client (token_endpoint_auth_method="none")
+	// pushes PAR without a secret by design — the auth-method-aware guard
+	// must skip secret validation exactly like /token does.
+	t.Run("public client empty secret 201", func(t *testing.T) {
+		cs := newMemClientStore()
+		c := activeClient("spa")
+		c.TokenEndpointAuthMethod = "none"
+		cs.put(c, "")
+		d := newPARDeps(cs, newMemPARStore())
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+			"client_id=spa&redirect_uri=https://rp.test/cb")
+		HandlePAR(d, ctx)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201 (public client push must keep working)", rec.Code)
+		}
+	})
+
 	t.Run("disallowed redirect_uri 400", func(t *testing.T) {
 		cs := newMemClientStore()
 		cs.put(activeClient("rp"), "s")
@@ -193,6 +231,61 @@ func TestHandlePAR(t *testing.T) {
 			t.Fatalf("error = %v, want %s", got, ErrInvalidAuthorizationDetails)
 		}
 	})
+
+	t.Run("catalog-backed authorization_details valid", func(t *testing.T) {
+		cs := newMemClientStore()
+		c := activeClient("rp")
+		c.AllowedAuthorizationDetailsTypes = []string{"http_api"}
+		cs.put(c, "s")
+		catalog := permissions.NewMemoryProvider()
+		if err := catalog.RegisterResource(context.Background(), &permissions.Resource{
+			ID: "users", ClientID: "rp", Type: permissions.ResourceTypeHTTPAPI, Name: "users",
+			Attributes: map[string]string{"method": "GET", "path": "/api/users/:id"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		d := newPARDeps(cs, newMemPARStore())
+		d.catalog = catalog
+		body := `{"client_id":"rp","client_secret":"s","authorization_details":[{"type":"http_api","method":"GET","path":"/api/users/42"}]}`
+		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, body)
+		HandlePAR(d, ctx)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201", rec.Code)
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "catalog-backed authorization_details unknown", path: "/api/other/42"},
+		{name: "catalog-backed authorization_details mismatch", path: "/api/users/42/extra"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := newMemClientStore()
+			c := activeClient("rp")
+			c.AllowedAuthorizationDetailsTypes = []string{"http_api"}
+			cs.put(c, "s")
+			catalog := permissions.NewMemoryProvider()
+			if err := catalog.RegisterResource(context.Background(), &permissions.Resource{
+				ID: "users", ClientID: "rp", Type: permissions.ResourceTypeHTTPAPI, Name: "users",
+				Attributes: map[string]string{"method": "GET", "path": "/api/users/:id"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			d := newPARDeps(cs, newMemPARStore())
+			d.catalog = catalog
+			body := `{"client_id":"rp","client_secret":"s","authorization_details":[{"type":"http_api","method":"GET","path":"` + tc.path + `"}]}`
+			ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, body)
+			HandlePAR(d, ctx)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", rec.Code)
+			}
+			if got := decodeBody(t, rec)["error"]; got != ErrInvalidAuthorizationDetails {
+				t.Fatalf("error = %v, want %s", got, ErrInvalidAuthorizationDetails)
+			}
+		})
+	}
 
 	t.Run("scope count exceeded", func(t *testing.T) {
 		cs := newMemClientStore()

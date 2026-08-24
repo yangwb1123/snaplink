@@ -211,6 +211,17 @@ func TestMetrics_DirectCountersAreScrapable(t *testing.T) {
 	mustContain(t, scrape, `sso_anomaly_inspect_errors_total{detector="impossible_travel"} 1`)
 }
 
+func TestMetrics_CORSBlockedUsesFixedLabels(t *testing.T) {
+	t.Parallel()
+	m := metrics.New()
+	m.ObserveCORSBlocked(false)
+	m.ObserveCORSBlocked(true)
+
+	scrape := scrapeMetrics(t, m)
+	mustContain(t, scrape, `sso_cors_blocked_total{preflight="false",reason="disallowed_origin"} 1`)
+	mustContain(t, scrape, `sso_cors_blocked_total{preflight="true",reason="disallowed_origin"} 1`)
+}
+
 func scrapeMetrics(t *testing.T, m *metrics.Metrics) string {
 	t.Helper()
 	rec := httptest.NewRecorder()

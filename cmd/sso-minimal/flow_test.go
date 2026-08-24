@@ -16,6 +16,11 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/internal/composition"
+	"github.com/yangwb1123/snaplink/platform/tracing"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const testVerifier = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDEFGHIJK"
@@ -26,10 +31,10 @@ func TestAuthorizationCodePKCEFlow(t *testing.T) {
 	if discovery["issuer"] != cfg.Issuer {
 		t.Fatalf("discovery issuer = %v, want %s", discovery["issuer"], cfg.Issuer)
 	}
-	assertStringList(t, discovery[keyGrantTypes], []string{"authorization_code"})
-	assertStringList(t, discovery[keyResponseTypes], []string{"code"})
+	assertStringList(t, discovery[composition.KeyGrantTypes], []string{"authorization_code"})
+	assertStringList(t, discovery[composition.KeyResponseTypes], []string{"code"})
 	if discovery["device_authorization_endpoint"] != nil {
-		t.Fatalf("prototype discovery advertises device flow: %v", discovery)
+		t.Fatalf("minimal discovery advertises device flow: %v", discovery)
 	}
 	jwks := getJSON(t, server.URL+"/.well-known/jwks.json", "")
 	if keys, ok := jwks["keys"].([]any); !ok || len(keys) == 0 {
@@ -47,7 +52,7 @@ func TestAuthorizationCodePKCEFlow(t *testing.T) {
 	}
 }
 
-func TestPrototypeHidesUnselectedRoutes(t *testing.T) {
+func TestMinimalHidesUnselectedRoutes(t *testing.T) {
 	server, _ := testServer(t)
 	for _, path := range []string{"/device/code", "/metrics", "/register"} {
 		resp, err := http.Get(server.URL + path)
@@ -61,7 +66,7 @@ func TestPrototypeHidesUnselectedRoutes(t *testing.T) {
 	}
 }
 
-func TestPrototypeRejectsClientCredentialsGrant(t *testing.T) {
+func TestMinimalRejectsClientCredentialsGrant(t *testing.T) {
 	server, cfg := testServer(t)
 	raw, err := json.Marshal(map[string]any{
 		"grant_type":    "client_credentials",
@@ -88,8 +93,8 @@ func TestPrototypeRejectsClientCredentialsGrant(t *testing.T) {
 		body[sso.KeyError] != sso.ErrUnsupportedGrantType {
 		t.Fatalf("client_credentials = %d %v", resp.StatusCode, body)
 	}
-	if resp.Header.Get(headerCacheControl) != valueNoStore {
-		t.Fatalf("cache control = %q, want no-store", resp.Header.Get(headerCacheControl))
+	if resp.Header.Get(composition.HeaderCacheControl) != composition.ValueNoStore {
+		t.Fatalf("cache control = %q, want no-store", resp.Header.Get(composition.HeaderCacheControl))
 	}
 }
 
@@ -102,6 +107,18 @@ func TestPKCEIsRequired(t *testing.T) {
 }
 
 func TestWrongAndUnknownCredentialsAreIndistinguishable(t *testing.T) {
+	// A REAL provider: the error-body trace_id comes from the live OTel span
+	// (Decision 7/8) — without a provider it is honestly absent (Decision 12),
+	// and this test guards the oracle WITH correlation active. The global
+	// provider is restored in cleanup; this test runs sequentially.
+	exp := tracetest.NewInMemoryExporter()
+	shutdown, err := tracing.Init(context.Background(), tracing.WithExporter(exp))
+	if err != nil {
+		t.Fatalf("tracing.Init: %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+	t.Cleanup(func() { otel.SetTracerProvider(trace.NewNoopTracerProvider()) })
+
 	server, cfg := testServer(t)
 	known := loginPayload(cfg, pkceChallenge(testVerifier), "S256")
 	known["credential"] = map[string]string{"username": cfg.User.Username, "password": "wrong"}
@@ -128,7 +145,7 @@ func TestWrongAndUnknownCredentialsAreIndistinguishable(t *testing.T) {
 }
 
 func TestOPSessionSignsIntoSecondRPWithoutPassword(t *testing.T) {
-	cfg := defaultsFromEnv(func(string) string { return "" })
+	cfg := composition.DefaultsFromEnv(func(string) string { return "" }, edition)
 	cfg.Issuer = "http://issuer.example"
 	rpB := cfg.Second
 	server, client, sessions := prototypeServerWithSessions(t, cfg)
@@ -147,9 +164,9 @@ func TestOPSessionSignsIntoSecondRPWithoutPassword(t *testing.T) {
 }
 
 func TestOPSessionSupportsPromptNoneAcrossRPs(t *testing.T) {
-	cfg := defaultsFromEnv(func(string) string { return "" })
+	cfg := composition.DefaultsFromEnv(func(string) string { return "" }, edition)
 	cfg.Issuer = "http://issuer.example"
-	rpB := clientSeed{
+	rpB := composition.ClientSeed{
 		ID: "rp-b", Secret: "rp-b-secret",
 		RedirectURI: "http://127.0.0.1:3001/callback",
 		Scopes:      []string{"openid"},
@@ -167,9 +184,9 @@ func TestOPSessionSupportsPromptNoneAcrossRPs(t *testing.T) {
 }
 
 func TestOPSessionHonorsPromptLogin(t *testing.T) {
-	cfg := defaultsFromEnv(func(string) string { return "" })
+	cfg := composition.DefaultsFromEnv(func(string) string { return "" }, edition)
 	cfg.Issuer = "http://issuer.example"
-	rpB := clientSeed{
+	rpB := composition.ClientSeed{
 		ID: "rp-b", Secret: "rp-b-secret",
 		RedirectURI: "http://127.0.0.1:3001/callback",
 		Scopes:      []string{"openid"},
@@ -193,9 +210,9 @@ func TestOPSessionHonorsPromptLogin(t *testing.T) {
 // (after which prompt=none resume must fail). No edition-local session store
 // exists anymore — every assertion reads the canonical SessionManager.
 func TestOPSessionSIDPropagatesThroughCodeExchange(t *testing.T) {
-	cfg := defaultsFromEnv(func(string) string { return "" })
+	cfg := composition.DefaultsFromEnv(func(string) string { return "" }, edition)
 	cfg.Issuer = "http://issuer.example"
-	rpB := clientSeed{
+	rpB := composition.ClientSeed{
 		ID: "rp-b", Secret: "rp-b-secret",
 		RedirectURI: "http://127.0.0.1:3001/callback",
 		Scopes:      []string{"openid"},
@@ -244,9 +261,9 @@ func TestOPSessionSIDPropagatesThroughCodeExchange(t *testing.T) {
 	}
 }
 
-func testServer(t *testing.T) (*httptest.Server, runtimeConfig) {
+func testServer(t *testing.T) (*httptest.Server, composition.RuntimeConfig) {
 	t.Helper()
-	cfg := defaultsFromEnv(func(string) string { return "" })
+	cfg := composition.DefaultsFromEnv(func(string) string { return "" }, edition)
 	cfg.Issuer = "https://issuer.example"
 	app, err := buildHandler(cfg)
 	if err != nil {
@@ -259,11 +276,11 @@ func testServer(t *testing.T) (*httptest.Server, runtimeConfig) {
 
 func twoRPServer(
 	t *testing.T,
-	cfg runtimeConfig,
-	rpB clientSeed,
+	cfg composition.RuntimeConfig,
+	rpB composition.ClientSeed,
 ) (*httptest.Server, *http.Client) {
 	t.Helper()
-	app, err := buildHandlerWithClients(cfg, []clientSeed{rpB})
+	app, err := buildHandlerWithClients(cfg, []composition.ClientSeed{rpB})
 	if err != nil {
 		t.Fatalf("build handler: %v", err)
 	}
@@ -272,7 +289,7 @@ func twoRPServer(
 
 func prototypeServer(
 	t *testing.T,
-	cfg runtimeConfig,
+	cfg composition.RuntimeConfig,
 ) (*httptest.Server, *http.Client) {
 	t.Helper()
 	server, client, _ := prototypeServerWithSessions(t, cfg)
@@ -281,16 +298,40 @@ func prototypeServer(
 
 func prototypeServerWithSessions(
 	t *testing.T,
-	cfg runtimeConfig,
-) (*httptest.Server, *http.Client, *opSessionGate) {
+	cfg composition.RuntimeConfig,
+) (*httptest.Server, *http.Client, *composition.OpSessionGate) {
 	t.Helper()
-	sessions := newOPSessionGate()
-	app, err := buildHandlerWithSessions(cfg, []clientSeed{cfg.Second}, sessions)
+	sessions := composition.NewOPSessionGate()
+	app, err := buildHandlerWithSessions(cfg, []composition.ClientSeed{cfg.Second}, sessions)
 	if err != nil {
 		t.Fatalf("build handler: %v", err)
 	}
 	server, client := serverWithCookieJar(t, app)
 	return server, client, sessions
+}
+
+func buildHandlerWithClients(
+	cfg composition.RuntimeConfig,
+	extraClients []composition.ClientSeed,
+) (http.Handler, error) {
+	return buildHandlerWithSessions(cfg, extraClients, composition.NewOPSessionGate())
+}
+
+func buildHandlerWithSessions(
+	cfg composition.RuntimeConfig,
+	extraClients []composition.ClientSeed,
+	sessions *composition.OpSessionGate,
+) (http.Handler, error) {
+	return composition.BuildHandler(cfg, composition.BuildOptions{
+		ExtraClients: extraClients,
+		SessionGate:  sessions,
+		ExtraOptions: minimalExtraOptions,
+		Surface: composition.SurfaceHooks{
+			IsMetadata: minimalMetadataPath,
+			Allowed:    minimalRouteAllowed,
+			Narrow:     minimalNarrowMetadata,
+		},
+	})
 }
 
 func serverWithCookieJar(
@@ -307,7 +348,7 @@ func serverWithCookieJar(
 	return server, &http.Client{Jar: jar}
 }
 
-func loginForCode(t *testing.T, base string, cfg runtimeConfig, verifier string) string {
+func loginForCode(t *testing.T, base string, cfg composition.RuntimeConfig, verifier string) string {
 	t.Helper()
 	status, body := postJSON(t, base+"/auth/login",
 		loginPayload(cfg, pkceChallenge(verifier), "S256"))
@@ -324,7 +365,7 @@ func loginForCode(t *testing.T, base string, cfg runtimeConfig, verifier string)
 func exchangeCode(
 	t *testing.T,
 	base string,
-	cfg runtimeConfig,
+	cfg composition.RuntimeConfig,
 	code, verifier string,
 ) map[string]any {
 	t.Helper()
@@ -346,8 +387,8 @@ func loginForCodeWithClient(
 	t *testing.T,
 	httpClient *http.Client,
 	base string,
-	cfg runtimeConfig,
-	client clientSeed,
+	cfg composition.RuntimeConfig,
+	client composition.ClientSeed,
 	withPassword bool,
 ) string {
 	t.Helper()
@@ -371,7 +412,7 @@ func exchangeForClient(
 	t *testing.T,
 	httpClient *http.Client,
 	base string,
-	client clientSeed,
+	client composition.ClientSeed,
 	code string,
 ) map[string]any {
 	t.Helper()
@@ -389,7 +430,7 @@ func exchangeForClient(
 	return body
 }
 
-func loginPayloadForClient(cfg runtimeConfig, client clientSeed) map[string]any {
+func loginPayloadForClient(cfg composition.RuntimeConfig, client composition.ClientSeed) map[string]any {
 	payload := loginPayload(cfg, pkceChallenge(testVerifier), "S256")
 	payload["client_id"] = client.ID
 	payload["redirect_uri"] = client.RedirectURI
@@ -397,7 +438,7 @@ func loginPayloadForClient(cfg runtimeConfig, client clientSeed) map[string]any 
 	return payload
 }
 
-func loginPayload(cfg runtimeConfig, challenge, method string) map[string]any {
+func loginPayload(cfg composition.RuntimeConfig, challenge, method string) map[string]any {
 	return map[string]any{
 		"provider":              "password",
 		"client_id":             cfg.Client.ID,
@@ -502,13 +543,13 @@ func assertStringList(t *testing.T, value any, want []string) {
 	}
 }
 
-func setOPSessionAuthTime(t *testing.T, gate *opSessionGate, authTime time.Time) {
+func setOPSessionAuthTime(t *testing.T, gate *composition.OpSessionGate, authTime time.Time) {
 	t.Helper()
-	mgr := gate.manager()
+	mgr := gate.Manager()
 	if mgr == nil {
 		t.Fatal("no session manager wired")
 	}
-	sessions, err := mgr.ListByUser(context.Background(), defaultUserID)
+	sessions, err := mgr.ListByUser(context.Background(), composition.DefaultUserID)
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}

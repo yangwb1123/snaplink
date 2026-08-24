@@ -5,6 +5,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -28,6 +29,26 @@ const TracerName = "github.com/yangwb1123/snaplink"
 // Callers MUST `defer span.End()`.
 func StartSpan(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
 	return otel.Tracer(TracerName).Start(ctx, name, opts...)
+}
+
+// ParentSpanID returns the parent span ID of the LIVE span in ctx, or ""
+// when ctx carries no valid span or the span is a trace root (no parent).
+// audit.EventFromRequest uses it to stamp the REAL parent (Decision 8 of
+// docs/design/middleware-observability-unified.md) instead of the legacy
+// X-Parent-Span-Id header reconstruction — the span tree is the only
+// source of truth. Requires a recording SDK span (the otelhttp request
+// span); a non-recording / noop span has no parent information to expose.
+func ParentSpanID(ctx context.Context) string {
+	span := trace.SpanFromContext(ctx)
+	if !span.SpanContext().IsValid() {
+		return ""
+	}
+	if ro, ok := span.(sdktrace.ReadOnlySpan); ok {
+		if p := ro.Parent(); p.IsValid() {
+			return p.SpanID().String()
+		}
+	}
+	return ""
 }
 
 // DetachedContext returns a context carrying ONLY ctx's span context (no

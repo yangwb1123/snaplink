@@ -100,9 +100,9 @@ func (m *MemoryProvider) RemoveRole(_ context.Context, clientID, roleCode string
 			m.assignmentsByUser[userID] = byClient
 		}
 	}
-	// ...and any DSoD session activations (memory_sod.go): a removed
-	// role code must not linger as "active" if the code is later reused.
-	m.stripActiveRole(clientID, roleCode)
+	// ...and any DSoD session activations: a membership mutation requires a
+	// fresh activation, even for sessions that held another role too.
+	m.clearClientActiveRoles(clientID)
 	return nil
 }
 
@@ -143,6 +143,7 @@ func (m *MemoryProvider) AssignRoles(_ context.Context, userID, clientID string,
 		m.assignmentsByUser[userID] = make(map[string][]string)
 	}
 	m.assignmentsByUser[userID][clientID] = append([]string{}, roles...)
+	m.clearActiveRoles(userID, clientID)
 	return nil
 }
 
@@ -153,10 +154,12 @@ func (m *MemoryProvider) UnassignRoles(_ context.Context, userID, clientID strin
 	defer m.mu.Unlock()
 	byClient := m.assignmentsByUser[userID]
 	if byClient == nil {
+		m.clearActiveRoles(userID, clientID)
 		return nil
 	}
 	cur := byClient[clientID]
 	if len(cur) == 0 {
+		m.clearActiveRoles(userID, clientID)
 		return nil
 	}
 	remove := make(map[string]struct{}, len(roles))
@@ -167,6 +170,7 @@ func (m *MemoryProvider) UnassignRoles(_ context.Context, userID, clientID strin
 		_, drop := remove[r]
 		return drop
 	})
+	m.clearActiveRoles(userID, clientID)
 	return nil
 }
 
@@ -195,6 +199,7 @@ func (m *MemoryProvider) AddRoleToUser(_ context.Context, userID, clientID, role
 		return c
 	}
 	m.assignmentsByUser[userID][clientID] = next
+	m.clearActiveRoles(userID, clientID)
 	return nil
 }
 
@@ -211,9 +216,11 @@ func (m *MemoryProvider) RemoveRoleFromUser(_ context.Context, userID, clientID,
 	}
 	cur := byClient[clientID]
 	if len(cur) == 0 {
+		m.clearActiveRoles(userID, clientID)
 		return nil
 	}
 	byClient[clientID] = slices.DeleteFunc(cur, func(r string) bool { return r == roleCode })
+	m.clearActiveRoles(userID, clientID)
 	return nil
 }
 

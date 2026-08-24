@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/domains/permissions/permissionstest"
@@ -125,5 +126,69 @@ func TestPermissionProvider_RemoveRoleStripsAllUsers(t *testing.T) {
 	got, _ := p.ListAssignments(ctx, "web")
 	if len(got) != 1 || got[0].UserID != "alice" {
 		t.Errorf("assignments after strip = %v, want only alice", got)
+	}
+}
+
+func TestPermissionProvider_ActiveProjectionExpiresWithIndex(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mini, rdb := newTestClient(t)
+	p := NewPermissionProviderWithActiveSessionTTL(rdb, time.Second)
+	if err := p.AddRole(ctx, "web", permissions.Role{Code: "reader", Permissions: []string{"item:read"}}); err != nil {
+		t.Fatalf("AddRole: %v", err)
+	}
+	if err := p.AssignRoles(ctx, "alice", "web", []string{"reader"}); err != nil {
+		t.Fatalf("AssignRoles: %v", err)
+	}
+	if err := p.ActivateRoles(ctx, "alice", "web", "sid-1", []string{"reader"}); err != nil {
+		t.Fatalf("ActivateRoles: %v", err)
+	}
+	if exists := rdb.Exists(ctx, permActiveKey("web", "alice", "sid-1")).Val(); exists != 1 {
+		t.Fatalf("active projection exists = %d, want 1", exists)
+	}
+	mini.FastForward(2 * time.Second)
+	roles, err := p.ActiveRoles(ctx, "alice", "web", "sid-1")
+	if err != nil {
+		t.Fatalf("ActiveRoles after TTL: %v", err)
+	}
+	if len(roles) != 0 {
+		t.Fatalf("expired active roles = %v, want empty", roles)
+	}
+	if exists := rdb.Exists(ctx, permActiveSessionsKey("web", "alice")).Val(); exists != 0 {
+		t.Fatalf("expired active-session index exists = %d, want 0", exists)
+	}
+}
+
+func TestPermissionProvider_AssignmentMutationAtomicallyClearsProjection(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, rdb := newTestClient(t)
+	p := NewPermissionProvider(rdb)
+	for _, role := range []permissions.Role{
+		{Code: "reader", Permissions: []string{"item:read"}},
+		{Code: "writer", Permissions: []string{"item:write"}},
+	} {
+		if err := p.AddRole(ctx, "web", role); err != nil {
+			t.Fatalf("AddRole %s: %v", role.Code, err)
+		}
+	}
+	if err := p.AssignRoles(ctx, "alice", "web", []string{"reader"}); err != nil {
+		t.Fatalf("AssignRoles initial: %v", err)
+	}
+	if err := p.ActivateRoles(ctx, "alice", "web", "sid-1", []string{"reader"}); err != nil {
+		t.Fatalf("ActivateRoles: %v", err)
+	}
+	if err := p.AssignRoles(ctx, "alice", "web", []string{"writer"}); err != nil {
+		t.Fatalf("AssignRoles replacement: %v", err)
+	}
+	roles, err := p.ActiveRoles(ctx, "alice", "web", "sid-1")
+	if err != nil {
+		t.Fatalf("ActiveRoles after replacement: %v", err)
+	}
+	if len(roles) != 0 {
+		t.Fatalf("active roles after replacement = %v, want empty", roles)
+	}
+	if exists := rdb.Exists(ctx, permActiveKey("web", "alice", "sid-1")).Val(); exists != 0 {
+		t.Fatalf("active projection after replacement exists = %d, want 0", exists)
 	}
 }

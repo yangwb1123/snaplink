@@ -1,0 +1,216 @@
+# B8 implementation batch: HTTPS conformance evidence + ssoext authenticator
+# registrars + prototype/minimal physical extraction.
+#
+# Direction set (baseline verified 2026-08-15 at HEAD 7400ba0c):
+#   1. Conformance HTTPS-topology run + stale-docs sweep — ROADMAP P0 #2
+#      executable remainder. B7-1 already pinned the suite image
+#      (release-v5.2.1), made the run headless and archived 59 SUCCESS + 1
+#      expected failure at results/af3bc485/. The HTTPS scaffold exists
+#      (nginx suite-proxy on 8443, certs/, drive_test.py BASE), but the
+#      ISSUER is still http://sso-issuer:8180 and two docs still carry
+#      pre-B7 claims ("unpinned image", "interactive", "no committed pass
+#      report").
+#   2. ssoext authenticator-family registrars — docs/deferred-backlog.md
+#      "Nested protocol/infrastructure modules" remaining work: only SAML
+#      has a typed registrar (interfaces/ssoext/saml_registry.go, 144
+#      lines); LDAP/Kerberos/RADIUS have none. SAML is the committed
+#      pattern.
+#   3. prototype/minimal physical extraction — README/DIRECTORY_MAP/
+#      deferred-backlog open boundary: "package-level isolation remains an
+#      extraction target"; `python cli.py profiles evidence` already proves
+#      small vs full isolation (97 vs 193 packages) but prototype and
+#      minimal still share ONE cmd/sso-minimal package graph.
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b8.yaml
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative. Files are referenced by PATH — read them with
+#     your tools, do not expect them inlined.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report (table of commands
+#     with real results; never claim a test passed that you did not run).
+#   - Engineering budgets: no file over 500 lines, no function over 50 lines
+#     / cyclo 15, no new maintainability exemptions, no skipDirs /
+#     layerExemptions additions, no layer violations (architecture gate;
+#     nested modules with their own go.mod are outside the root gate).
+#   - Update docs/config-reference.md + CHANGELOG.md in the same commit when
+#     a public contract changes.
+#   - Commit with a conventional imperative message + AI co-author trailer.
+#     The post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库。任务：conformance HTTPS 拓扑运行 + 过时文档清扫
+    （ROADMAP P0 #2 的剩余可执行部分）。
+
+    背景（已实证，勿重复诊断）：
+    - B7-1 已交付：套件镜像 pinned release-v5.2.1、run-headless.sh 可
+      headless 运行、results/af3bc485/ 归档（59 SUCCESS + 1 预期失败
+      VerifyClientManagementCredentials：http-only 拓扑下
+      "URL for client management point does not use https scheme"）。
+    - HTTPS 脚手架已存在：docker-compose.yml 的 suite-proxy（nginx，
+      host 8443→443，certs/server.crt+key 自签证书，X-Forwarded-Proto
+      https）；drive_test.py BASE=https://localhost:8443。
+    - 缺口：被测 ISSUER 仍是 http://sso-issuer:8180（套件拒绝非 https
+      的 issuer）；两处文档仍携带 B7-1 之前的过时声明。
+
+    契约（先读）：
+    - test/oidc-conformance/README.md（头部 "No conformance claim" 块已
+      过时："not part of make ci, requires browser interaction, and has
+      no committed pass report" —— headless 运行 + 归档 + 提交报告均已成
+      立；"uses an unpinned conformance image" 也不成立）
+    - docs/deferred-backlog.md "Official protocol certification" 段
+      （"unpinned conformance image"、"interactive"、"not part of default
+      CI" 均过时）
+    - docs/sso/oidc-conformance.md（B7-1 已更新的真值基线）
+
+    执行要求：
+    1. HTTPS issuer 拓扑：在 sso-server 前加 TLS 终结（复用 certs/ 与
+       nginx 模式，新增 issuer-proxy 服务或等效；自签证书、本地拓扑），
+       ISSUER_URL 指向 https；保持 pinned tag、healthcheck、模块
+       allowlist 不变。
+    2. 运行 HTTPS 拓扑 headless（如 run-headless.sh 需要 --issuer-https
+       或等效参数则扩展脚本，保持 HTTP 路径字节不变）；如实报告统计。
+       预期：VerifyClientManagementCredentials 从 FAIL 翻转为 PASS
+       （https issuer 满足 https-URI 要求）；若未翻转，如实记录并分析。
+    3. 归档 results/<commit>-https/（plan/log/info/worktree；目录
+       gitignore 本地留存）；与 af3bc485 HTTP 基线对比。
+    4. 文档真值化（同一提交）：README.md 头部重写为真实状态（headless
+       可运行、CI 外、有提交归档、无认证声明——"Implemented ≠ certified"
+       边界保留）；deferred-backlog "Official protocol certification" 段
+       更新（pinned image、headless harness、归档结果、剩余边界=外部可
+       达 HTTPS 发行者官方运行 + OIDF listing）；docs/sso/oidc-
+       conformance.md 增补 HTTPS 拓扑运行记录。
+    5. 硬边界：不修改生产代码；不改模块 allowlist；不把 harness 挂入
+       make ci（保持 CI 外，除非 README 已承诺——README 现声明为 CI 外，
+       维持不变）。
+    6. 验证命令（必须实际运行并报告输出）：
+       cd test/oidc-conformance && ./run-headless.sh --timeout 900
+       go build ./... && go vet ./...
+       git status --porcelain
+    7. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b8-conformance-https.md
+  timeout: 2400
+  validate: |
+    python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：为 LDAP/Kerberos/RADIUS 认证器族补齐
+    interfaces/ssoext 类型化注册器（deferred-backlog "Nested protocol/
+    infrastructure modules" 的剩余工作；SAML 是已承诺的模板）。
+
+    契约（先读，后实现，契约优先于本提示）：
+    - docs/deferred-backlog.md "Nested protocol/infrastructure modules"
+      段（Partial 边界：migrating SAML/LDAP/Kerberos/RADIUS/KMS families
+      onto it is the remaining work）
+    - interfaces/ssoext/saml_registry.go（144 行——SAMLServerDeps 仅含
+      stdlib/intra-repo 类型、RegisterSAMLHandlers/LookupSAMLHandlerFactory/
+      RegisteredSAMLHandlers、进程本地、非热插件注册表的注释纪律）
+    - cmd/sso-server/build_http.go:383-392（saml.handler 名称查表 +
+      fail-closed boot 错误，列出已注册名）
+    - cmd/sso-server/saml_handler_registry_test.go（合同测试形状）
+    - infrastructure/saml/saml.go:12,39（嵌套模块经自身 go.mod +
+      replace 引用 ssoext 类型的先例）
+    - 待迁移族：infrastructure/ldap/authenticator.go、
+      infrastructure/kerberos/handler.go、infrastructure/radius/
+      authenticator.go（各自独立 go.mod 的嵌套模块；stock 配置无
+      ldap/kerberos/radius 段——它们是 fork 二进制集成，保持此边界）
+
+    实现要求：
+    1. interfaces/ssoext/ 新增认证器族注册器（如 authenticator_registry.go
+       或按族拆文件；受 10 文件/目录预算约束）：每族一个 Deps 包类型
+       （仅 stdlib + 根模块类型，不含 LDAP/Kerberos/RADIUS 第三方依赖，
+       闭包在 fork 侧）+ Register/Lookup/List 函数，语义与 SAML 注册器
+       逐字对齐（进程本地、重复注册 panic、未注册 lookup 失败、非热
+       插件注册表注释）。
+    2. 三个嵌套模块各暴露一个工厂适配（按 SAML 模式：模块内嵌入
+       ssoext Deps 类型或提供构造函数），模块自身 go.mod 更新；不改
+       stock cmd 的默认接线（serverbuildauthn 不直接 import 这三个模块
+       ——维持现状）。
+    3. 合同测试：interfaces/ssoext 下每族注册器测试（注册→查表→重复
+       panic→未注册错误），形状对齐 saml_handler_registry_test.go；
+       嵌套模块测试保持全绿。
+    4. 文档同步：DIRECTORY_MAP.md 的 ssoext 行更新；deferred-backlog
+       对应段更新（LDAP/Kerberos/RADIUS 已迁移，KMS 族如未迁移则保留
+       为 remaining）；CHANGELOG.md Added。
+    5. 硬边界：零维护性豁免、零 skipDirs/layerExemptions 新增；根模块
+       分层不变（ssoext 属 interfaces 层）；新增文件 ≤500 行、函数 ≤50
+       行/cyclo ≤15。
+    6. 验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./interfaces/ssoext/... -count=1
+       go test ./infrastructure/ldap/... ./infrastructure/kerberos/... ./infrastructure/radius/... -count=1
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+       （嵌套模块测试在其各自目录运行，模块路径以实际 go.mod 为准）
+    7. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b8-ssoext-authenticator-registrars.md
+  timeout: 1800
+  validate: |
+    go build ./... && go vet ./... && go test ./interfaces/ssoext/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：prototype/minimal 物理包提取（README/
+    DIRECTORY_MAP/deferred-backlog 声明的开放边界："package-level
+    isolation remains an extraction target"），先写有界设计、再实现。
+
+    契约（先读，后实现）：
+    - README.md "Edition profiles" 段（prototype 排 OIDC 面；minimal
+      继承并加 OIDC+tracing；"A disabled route is not evidence that its
+      code was compiled out; package-level isolation remains an extraction
+      target"）
+    - docs/architecture/DIRECTORY_MAP.md "cmd/sso-server/servermodules ...
+      prototype/minimal target the dedicated cmd/sso-minimal composition
+      root ... share interfaces/sso (the product SDK surface) but are
+      physically isolated from the durable/admin/observability graph — the
+      boundary is declared in ops/build/profile-isolation.json and proven
+      by python cli.py profiles evidence"
+    - docs/deferred-backlog.md "Static build modules" 段（profile 表 +
+      "shares the broad cmd/sso-minimal dependency graph" / "not yet
+      physically isolated" 开放边界）
+    - ops/build/profile-isolation.json（现有 billing/small/full；small =
+      sso-minimal，97 包 vs full 193 包——small↔full 隔离已实证）
+    - cmd/sso-minimal/（app.go/commands.go/config.go/edition.go/logger.go/
+      main.go/op_session.go/server.go/surface.go/grant_filter.go 等 14 个
+      .go 文件、2158 行；prototype 与 minimal 当前共享此包，仅运行时
+      surface 不同）
+    - python cli.py configure --profile prototype|minimal 的 profile 定义
+      （ops/build/profiles.json 或等效，以实际文件为准）
+
+    第一步——设计文档（必须先写）：
+    docs/design/prototype-minimal-physical-isolation.md，必须裁决：
+    1. 提取形状：新建 cmd/sso-prototype 独立包（复制/裁剪最小 surface）
+       保留 cmd/sso-minimal 为 minimal，还是三根（prototype/minimal/
+       full 各一）——以"最小变更 + 可验证隔离增量"为判据，给出证据。
+    2. 共享代码处置：op_session.go（325 行）等两版共享文件——复制 vs
+       下沉到 interfaces/sso 或 shared 的判定规则；禁止为提取而制造
+       重复的死代码（prototype 不需要的 OIDC 面必须编译剔除）。
+    3. profile 接线：ops/build 中 prototype/minimal profile 的目标
+       command 调整；python cli.py configure 构建两版验证。
+    4. 隔离证据：python cli.py profiles evidence 的 small 行如何变为
+       prototype/minimal 两行（或等价证明），包集合差异断言
+       （prototype 不得链接 protocols/oidc 等）。
+    5. 硬边界：不改变任何运行时行为（两版功能逐字节不变）、不触碰
+       full/standard 组合、不加维护性豁免、保持 cmd/ 目录预算。
+
+    第二步——实现（按设计；验收断言在设计中必须可测试）：
+    1. 新 cmd 包 + profile 调整 + 构建产物验证（python cli.py configure
+       --profile prototype / --profile minimal --build 均成功）。
+    2. 隔离断言：prototype 二进制包图排除 OIDC 面（go list 依赖检查或
+       profiles evidence 扩展，以设计裁决为准）；minimal 含 OIDC。
+    3. 测试：两版 smoke（可复用 cmd/sso-minimal 现有 flow_test 形状，
+       禁止 skip）。
+    4. 文档同步：README/DIRECTORY_MAP/deferred-backlog 的开放边界句
+       更新为已提取 + 证据引用；CHANGELOG.md Added。
+    5. 验证命令（必须实际运行并报告输出）：
+       python3 cli.py configure --profile prototype --build
+       python3 cli.py configure --profile minimal --build
+       python3 cli.py profiles evidence
+       go build ./... && go vet ./...
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+    6. conventional commit（imperative + AI co-author trailer；构建产物
+       不入库——dist/ 与 bin/ 保持忽略）。
+  output: docs/campaigns/reports/b8-prototype-minimal-isolation.md
+  timeout: 2400
+  validate: |
+    python3 cli.py profiles evidence && go build ./... && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}

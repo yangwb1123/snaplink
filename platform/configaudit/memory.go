@@ -16,16 +16,21 @@ import (
 const DefaultMemoryCapacity = 5_000
 
 // MemoryStore is a process-local, non-durable Store: a restart loses
-// history. Suitable for development and single-replica deployments; pair
-// with configaudit/sqlite for durable, cross-restart, multi-replica
-// history.
+// history and applied baselines. Suitable for development and
+// single-replica deployments; pair with configaudit/sqlite for durable,
+// cross-restart, multi-replica history + applied baselines.
 type MemoryStore struct {
-	mu       sync.RWMutex
-	capacity int
-	entries  []Entry
+	mu        sync.RWMutex
+	capacity  int
+	entries   []Entry
+	applied   []AppliedVersion // append-only version chain, oldest first
+	canary    CanaryState
+	hasCanary bool
 }
 
 var _ Store = (*MemoryStore)(nil)
+var _ CanaryStore = (*MemoryStore)(nil)
+var _ ConditionalRollbackStore = (*MemoryStore)(nil)
 
 // NewMemoryStore returns a ready MemoryStore. capacity <= 0 uses
 // DefaultMemoryCapacity.
@@ -88,6 +93,174 @@ func (m *MemoryStore) Len() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.entries)
+}
+
+// Apply records v as the new applied-config baseline and appends the
+// matching config_history entry under one lock: a failure mutates nothing.
+// The history entry's patch is the redacted Diff of the redacted baselines
+// (the only forms ever stored), so no plaintext secret can reach history.
+func (m *MemoryStore) Apply(_ context.Context, v AppliedVersion) (AppliedVersion, error) {
+	if v.ID == "" {
+		v.ID = newEntryID()
+	}
+	if v.AppliedAt.IsZero() {
+		v.AppliedAt = time.Now().UTC()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.hasCanary && m.canary.Status == CanaryObserving {
+		return v, ErrCanaryInProgress
+	}
+	var prev AppliedVersion
+	if n := len(m.applied); n > 0 {
+		prev = m.applied[n-1]
+	}
+	v.PrevID = prev.ID
+	m.appendAppliedLocked(v, prev)
+	return v, nil
+}
+
+// Applied returns the latest applied-config baseline, or ErrNoAppliedVersion
+// before the first Apply.
+func (m *MemoryStore) Applied(_ context.Context) (AppliedVersion, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if n := len(m.applied); n > 0 {
+		return m.applied[n-1], nil
+	}
+	return AppliedVersion{}, ErrNoAppliedVersion
+}
+
+// Rollback re-declares the previous baseline as the new latest (a new
+// version whose Snapshot is the previous version's), appending the
+// config_history entry under one lock. ErrNoAppliedVersion when there is no
+// baseline or no predecessor.
+func (m *MemoryStore) Rollback(_ context.Context, actor, reason string) (AppliedVersion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.rollbackLocked("", actor, reason)
+}
+
+// RollbackIfCurrent performs an atomic compare-and-swap rollback. It is used
+// by the operator path so a stale approval cannot undo a newer baseline.
+func (m *MemoryStore) RollbackIfCurrent(_ context.Context, expectedID, actor, reason string) (AppliedVersion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.rollbackLocked(expectedID, actor, reason)
+}
+
+func (m *MemoryStore) rollbackLocked(expectedID, actor, reason string) (AppliedVersion, error) {
+	if m.hasCanary && m.canary.Status == CanaryObserving {
+		return AppliedVersion{}, ErrCanaryInProgress
+	}
+	n := len(m.applied)
+	if n < 2 {
+		return AppliedVersion{}, ErrNoAppliedVersion
+	}
+	cur, prev := m.applied[n-1], m.applied[n-2]
+	if expectedID != "" && cur.ID != expectedID {
+		return AppliedVersion{}, ErrRollbackConflict
+	}
+	v := AppliedVersion{
+		ID:        newEntryID(),
+		AppliedAt: time.Now().UTC(),
+		Actor:     actor,
+		Digest:    prev.Digest,
+		Reason:    reason,
+		PrevID:    cur.ID,
+		Snapshot:  prev.Snapshot,
+	}
+	m.appendAppliedLocked(v, cur)
+	return v, nil
+}
+
+// BeginCanary atomically records a candidate baseline and its observing state.
+func (m *MemoryStore) BeginCanary(_ context.Context, v AppliedVersion, state CanaryState) (AppliedVersion, CanaryState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.hasCanary && m.canary.Status == CanaryObserving {
+		return AppliedVersion{}, CanaryState{}, ErrCanaryInProgress
+	}
+	if len(m.applied) == 0 {
+		return AppliedVersion{}, CanaryState{}, ErrCanaryNoBaseline
+	}
+	if v.ID == "" {
+		v.ID = newEntryID()
+	}
+	if v.AppliedAt.IsZero() {
+		v.AppliedAt = time.Now().UTC()
+	}
+	prev := m.applied[len(m.applied)-1]
+	v.PrevID = prev.ID
+	state = normalizeCanaryState(state, v, prev)
+	m.appendAppliedLocked(v, prev)
+	m.canary, m.hasCanary = state, true
+	return v, state, nil
+}
+
+// Canary returns the current lifecycle state.
+func (m *MemoryStore) Canary(_ context.Context) (CanaryState, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if !m.hasCanary {
+		return CanaryState{}, ErrNoCanary
+	}
+	return m.canary, nil
+}
+
+// ConfirmCanary marks an observing candidate healthy after its full window.
+func (m *MemoryStore) ConfirmCanary(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.hasCanary || m.canary.ID != id || m.canary.Status != CanaryObserving {
+		return ErrCanaryConflict
+	}
+	m.canary.Status = CanaryConfirmed
+	return nil
+}
+
+// RollbackCanary restores the predecessor only when the candidate is still
+// the latest baseline, then marks the state terminal under the same lock.
+func (m *MemoryStore) RollbackCanary(_ context.Context, id, actor, reason string) (AppliedVersion, CanaryState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.hasCanary || m.canary.ID != id || m.canary.Status != CanaryObserving {
+		return AppliedVersion{}, CanaryState{}, ErrCanaryConflict
+	}
+	n := len(m.applied)
+	if n < 2 || m.applied[n-1].ID != m.canary.VersionID {
+		return AppliedVersion{}, m.canary, ErrCanaryConflict
+	}
+	cur, prev := m.applied[n-1], m.applied[n-2]
+	v := AppliedVersion{
+		ID: newEntryID(), AppliedAt: time.Now().UTC(), Actor: actor,
+		Digest: prev.Digest, Reason: reason, PrevID: cur.ID, Snapshot: prev.Snapshot,
+	}
+	m.appendAppliedLocked(v, cur)
+	m.canary.Status = CanaryRolledBack
+	m.canary.Detail = reason
+	return v, m.canary, nil
+}
+
+func (m *MemoryStore) appendAppliedLocked(v, prev AppliedVersion) {
+	entry := Entry{
+		Actor: v.Actor, Resource: resourceConfigApply, ResourceID: v.ID,
+		Patch: RedactOps(Diff(prev.Snapshot, v.Snapshot)), Reason: v.Reason,
+		RecordedAt: v.AppliedAt, ID: newEntryID(),
+	}
+	m.applied = append(m.applied, v)
+	m.entries = append(m.entries, entry)
+	if over := len(m.entries) - m.capacity; over > 0 {
+		m.entries = m.entries[over:]
+	}
+}
+
+// appliedVersions returns a copy of the applied-baseline chain (oldest
+// first). Test helper.
+func (m *MemoryStore) appliedVersions() []AppliedVersion {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]AppliedVersion(nil), m.applied...)
 }
 
 func newEntryID() string {

@@ -65,6 +65,32 @@ func TestBlockingTransitionObserverCannotBlockReplacement(t *testing.T) {
 	}
 }
 
+func TestWaitObserverWaitsForAcceptedCallbacks(t *testing.T) {
+	observer := newBlockingObserver()
+	manager, err := New([]Definition{{ID: "module-a", Factory: newFakeFactory()}}, Options{
+		TransitionObserver: observer,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	activateForTest(t, manager, "module-a", nil)
+	<-observer.entered
+	done := make(chan error, 1)
+	go func() { done <- manager.WaitObserver(context.Background()) }()
+	select {
+	case err := <-done:
+		t.Fatalf("WaitObserver returned while callback was blocked: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(observer.release)
+	if err := <-done; err != nil {
+		t.Fatalf("WaitObserver() error = %v", err)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
 func TestObserverFailureIsFailOpenAndObservable(t *testing.T) {
 	observerErr := errors.New("observer unavailable")
 	var bounded atomic.Bool

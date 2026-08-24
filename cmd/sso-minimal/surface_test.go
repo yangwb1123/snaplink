@@ -4,10 +4,12 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/yangwb1123/snaplink/internal/composition"
 )
 
-func TestDiscoveryMatchesConfiguredPrototypeClients(t *testing.T) {
-	cfg := defaultsFromEnv(func(string) string { return "" })
+func TestDiscoveryMatchesConfiguredMinimalClients(t *testing.T) {
+	cfg := composition.DefaultsFromEnv(func(string) string { return "" }, edition)
 	cfg.Issuer = "https://issuer.example"
 	cfg.Second.Scopes = []string{"openid", "groups"}
 	app, err := buildHandler(cfg)
@@ -18,25 +20,28 @@ func TestDiscoveryMatchesConfiguredPrototypeClients(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	document := getJSON(t, server.URL+"/.well-known/openid-configuration", "")
-	assertStringList(t, document[keyScopes], []string{
+	assertStringList(t, document[composition.KeyScopes], []string{
 		"openid",
 		"profile",
 		"email",
 		"groups",
 	})
-	assertStringList(t, document[keyTokenAuthMethods], []string{
+	assertStringList(t, document[composition.KeyTokenAuthMethods], []string{
 		"client_secret_basic",
 		"client_secret_post",
 	})
-	for _, key := range hiddenMetadataEndpoints {
+	for _, key := range composition.HiddenMetadataEndpoints {
 		if _, exists := document[key]; exists {
-			t.Fatalf("prototype discovery advertises %s", key)
+			t.Fatalf("minimal discovery advertises %s", key)
 		}
+	}
+	if document["userinfo_endpoint"] == nil {
+		t.Fatalf("minimal discovery hides the OIDC surface: %v", document)
 	}
 }
 
 func TestOPSessionHonorsMaxAge(t *testing.T) {
-	cfg := defaultsFromEnv(func(string) string { return "" })
+	cfg := composition.DefaultsFromEnv(func(string) string { return "" }, edition)
 	cfg.Issuer = "http://issuer.example"
 	server, client, sessions := prototypeServerWithSessions(t, cfg)
 	loginForCodeWithClient(t, client, server.URL, cfg, cfg.Client, true)

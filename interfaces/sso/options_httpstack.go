@@ -17,7 +17,6 @@ import (
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/rebac"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/wasmauthz"
-	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -220,17 +219,6 @@ func WithCompression() Option {
 	return func(s *Server) { s.compressionEnabled = true }
 }
 
-// WithRequestLogging enables debug-level request/response logging.
-// When logBodies is true, request and response bodies are included in
-// the log output (use with caution — bodies may contain secrets).
-// Default is disabled (zero overhead).
-func WithRequestLogging(logBodies bool) Option {
-	return func(s *Server) {
-		s.debugRequestLogging = true
-		s.debugRequestLogBodies = logBodies
-	}
-}
-
 // WithIdempotentStore wires an idempotency cache for the /token endpoint.
 // When set, the server checks for an Idempotency-Key header on token
 // requests and, after authenticating the client and sender constraint, caches
@@ -332,30 +320,12 @@ func WithFeatureGates(g FeatureGates) Option {
 // local variable to take its address.
 func Bool(b bool) *bool { return &b }
 
-// WithWebhookEngine wires a [webhook.Engine] — the generic event/webhook
-// egress engine — as an additional audit Sink (the same AddSink/MultiSink
-// seam WithCAEPTransmitter and WithSSEBroker use) and mounts the admin
-// subscription + dead-letter-queue management routes (GET/POST
-// /api/v1/admin/webhooks/subscriptions, DELETE .../{id}, GET
-// .../deadletters, POST .../deadletters/{id}/replay).
-//
-// nil (the default) leaves both the sink tap and the routes unmounted —
-// byte-identical to a build without the feature. A wired engine with ZERO
-// registered subscriptions is ALSO byte-identical traffic-wise: matching a
-// recorded event against an empty subscription set is a cheap no-op with no
-// outbound POST.
-func WithWebhookEngine(e *webhook.Engine) Option {
-	return func(s *Server) { s.webhookEngine = e }
-}
-
 // WithRebacEngine wires a [rebac.Engine] — the Zanzibar-style relationship-
-// tuple Check engine (platform/lifecycle/rebac) — and mounts ONE
-// operational-debugging admin route: GET /api/v1/admin/rebac/check?object=
-// &relation=&subject=. Unlike WithWebhookEngine/WithCAEPTransmitter, this
-// does NOT tap the audit-sink pipeline or any built-in gate — rebac is an
-// independent authorization primitive an operator consults from their own
-// integration code (see the package doc), so wiring it changes NOTHING
-// about /auth/login or any other request path.
+// tuple Check engine (platform/lifecycle/rebac) — and mounts the product
+// GET /authz/check route plus the operational-debugging admin route:
+// GET /api/v1/admin/rebac/check?object=&relation=&subject=. The product
+// check uses a precompiled generation slot on the standard router; tuple
+// management remains cold and this does not alter /auth/login or OAuth/OIDC.
 //
 // nil (default) leaves the route unmounted.
 func WithRebacEngine(e *rebac.Engine) Option {
@@ -401,17 +371,6 @@ func WithWASMAuthzEngine(e *wasmauthz.Engine) Option {
 func WithSCIMProvisioner(sink audit.Sink) Option {
 	return func(s *Server) { s.scimProvisionSink = sink }
 }
-
-// WebhookEngine returns the wired generic event/webhook egress engine (nil
-// when unset), satisfying webhook.HandlerDeps for the admin subscription +
-// dead-letter-queue management routes. Relocated from accessors.go (beside
-// its WithWebhookEngine option here) to keep that file within the per-file
-// line budget.
-func (s *Server) WebhookEngine() *webhook.Engine { return s.webhookEngine }
-
-// Compile-time proof that *Server satisfies the webhook admin handlers'
-// dependency surface (Auditor() lives in accessors.go; WebhookEngine() just above).
-var _ webhook.HandlerDeps = (*Server)(nil)
 
 // RebacEngine returns the wired rebac.Engine (nil when unset), satisfying
 // rebac.HandlerDeps for the admin debug route.

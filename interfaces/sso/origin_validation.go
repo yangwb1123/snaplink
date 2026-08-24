@@ -359,8 +359,8 @@ func handlerContextForRequest(w http.ResponseWriter, r *http.Request) HandlerCon
 // like /auth/login where we want to validate the Origin header even before
 // the CORS middleware runs.
 func (s *Server) isOriginAllowed(origin string) bool {
-	// No CORS policy = no origin restrictions (backwards compatible)
-	if s.corsPolicy == nil {
+	// Empty CORS policy is the middleware identity path and allows all origins.
+	if s.corsPolicy == nil || (len(s.corsPolicy.AllowedOrigins) == 0 && len(s.corsPolicy.PathOverrides) == 0) {
 		return true
 	}
 

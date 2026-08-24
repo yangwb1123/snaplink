@@ -466,3 +466,10 @@ func (s *Server) handleHomeRealm(ctx HandlerContext) {
 		keyAuthzRequestPassthrough: true,
 	})
 }
+
+// tokenRequestUsesBasicAuth reports an HTTP Basic header for the FAPI
+// method gate (runs before credential validation).
+func (s *Server) tokenRequestUsesBasicAuth(ctx HandlerContext) bool {
+	_, _, ok := ctx.Request().BasicAuth()
+	return ok
+}

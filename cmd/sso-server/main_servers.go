@@ -181,7 +181,13 @@ func newGRPCServer(a *app, tr grpcTransport, logger spi.Logger) (*grpc.Server, e
 	}
 	s := grpc.NewServer(opts...)
 	holder.srv.Store(s)
-	authzv1.RegisterAuthorizerServer(s, grpcserver.NewAuthzService(a.provider))
+	authzv1.RegisterAuthorizerServer(s, grpcserver.NewAuthzServiceWithSessionBoundary(
+		a.provider, a.recorder, a.metrics, logger,
+		grpcserver.AuthzSessionBoundary{
+			SessionManager: a.server.SessionMgr(),
+			ResolveSubject: a.server.ResolveLocalSubject,
+		},
+	))
 	discoveryv1.RegisterDiscoveryServer(s, grpcserver.NewDiscoveryService(a.registry))
 	if a.adminMW != nil {
 		registerAdminGRPCServices(s, a)

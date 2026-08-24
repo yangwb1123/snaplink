@@ -140,6 +140,37 @@ func TestHandleBackchannelAuth(t *testing.T) {
 		}
 	})
 
+	// F1 regression (CIBA peer of the PAR test): a fresh-node-restored
+	// confidential client with an empty stored secret must not drive the
+	// CIBA flow with an empty presented secret.
+	t.Run("restored confidential client with empty secret 401", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "")
+		d := newCIBADeps(cs, newMemCIBAStore())
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+			"client_id=rp&client_secret=&login_hint=known@user")
+		HandleBackchannelAuth(d, ctx)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401 (empty-secret confidential client must not drive CIBA)", rec.Code)
+		}
+	})
+
+	// F1 negative: a PUBLIC client (token_endpoint_auth_method="none")
+	// drives CIBA without a secret by design.
+	t.Run("public client empty secret ok", func(t *testing.T) {
+		cs := newMemClientStore()
+		c := activeClient("spa")
+		c.TokenEndpointAuthMethod = "none"
+		cs.put(c, "")
+		d := newCIBADeps(cs, newMemCIBAStore())
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+			"client_id=spa&login_hint=known@user")
+		HandleBackchannelAuth(d, ctx)
+		if rec.Code == http.StatusUnauthorized {
+			t.Fatal("public client rejected for its empty secret")
+		}
+	})
+
 	t.Run("disallowed resource invalid_target", func(t *testing.T) {
 		cs := newMemClientStore()
 		c := activeClient("rp")

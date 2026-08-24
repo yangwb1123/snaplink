@@ -29,6 +29,42 @@
 // client's allowed_authenticators so clients may select it via provider=<name>
 // at /auth/login.
 //
+// The standard host-API path (interfaces/ssoext on platform/registry/typed, the
+// same typed seam SAML uses) is a NAME-ADDRESSED factory the fork's own boot
+// composition consumes: the fork registers the factory under a name its own
+// config selects (stock config deliberately has NO radius section — RADIUS
+// auth is a fork-binary integration), and the factory receives
+// ssoext.RADIUSServerDeps from the registry and hands them straight to Build
+// via the embedded RADIUSServerDeps field. Copy-pasteable:
+//
+//	package main
+//
+//	import (
+//		"context"
+//
+//		"github.com/yangwb1123/snaplink/interfaces/ssoext"
+//		radiusauth "github.com/yangwb1123/snaplink/radius"
+//	)
+//
+//	func init() {
+//		// Register the factory under the name the fork's own config selects
+//		// (e.g. radius.server="corp-nps"); the fork's boot code looks it up,
+//		// invokes it, and registers the returned authenticators on the server.
+//		ssoext.RegisterRADIUSAuthenticators("corp-nps", func(ctx context.Context, d ssoext.RADIUSServerDeps) (*ssoext.RADIUSAuthenticatorSet, error) {
+//			res, err := radiusauth.Build(radiusauth.Deps{
+//				RADIUSServerDeps: d, // no field-for-field copy — the embedding IS the adaptation
+//			}, radiusauth.Config{
+//				Name:         "corp-nps",                         // provider=corp-nps
+//				Servers:      []string{"nps1.corp.example.com:1812"},
+//				SharedSecret: os.Getenv("RADIUS_SHARED_SECRET"), // REQUIRED; never hardcode
+//			})
+//			if err != nil {
+//				return nil, err
+//			}
+//			return &ssoext.RADIUSAuthenticatorSet{Authenticators: res.Authenticators}, nil
+//		})
+//	}
+//
 // # Operator-fork wiring (copy-pasteable)
 //
 //	package main

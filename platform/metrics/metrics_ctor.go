@@ -39,6 +39,7 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 	// and every metric name/help/label/bucket is defined exactly once.
 	registerHTTPMetrics(factory, m)
 	registerGRPCMetrics(factory, m)
+	registerAuthzMetrics(factory, m)
 	registerLoginMetrics(factory, m)
 	registerSignupFunnelMetrics(factory, m)
 	registerMFACredentialMetrics(factory, m)
@@ -57,6 +58,7 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 	registerRateLimitMetrics(factory, m)
 	registerSigningKeyHygieneMetrics(factory, m)
 	registerConnectionHealthMetrics(factory, m)
+	registerCORSBlockedMetrics(factory, m)
 
 	return m
 }

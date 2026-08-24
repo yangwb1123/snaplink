@@ -1,6 +1,7 @@
 package serverbuildstore
 
 import (
+	"context"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -15,8 +16,10 @@ import (
 	"github.com/yangwb1123/snaplink/shared/spi"
 
 	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/tenant/activation"
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	tenantactivation "github.com/yangwb1123/snaplink/infrastructure/postgres/tenantactivation"
 
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
 	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
@@ -239,6 +242,48 @@ func BuildPasswordCredentialStore(cfg config.SelfServiceStoreConfig, pg *sql.DB,
 	default:
 		return nil, fmt.Errorf("unknown self_service.password.backend %q (supported: memory, sqlite, postgres)", cfg.Backend)
 	}
+}
+
+// BuildActivationStore selects the stock product-activation store. Empty
+// backend keeps the public activation routes unmounted; both built-in
+// backends hash seeded credentials and retain only short-lived tickets.
+func BuildActivationStore(cfg config.ActivationConfig, pg *sql.DB, dialect postgresbackend.Dialect) (activation.Store, error) {
+	var store activation.Store
+	switch backend := strings.ToLower(strings.TrimSpace(cfg.Backend)); backend {
+	case "":
+		return nil, nil
+	case "memory":
+		store = activation.NewMemoryStore(activation.WithTicketTTL(cfg.TicketTTL))
+	case "postgres":
+		if pg == nil {
+			return nil, errPostgresNotConfigured("activation")
+		}
+		postgresStore, err := tenantactivation.NewWithDB(pg, dialect, tenantactivation.WithTicketTTL(cfg.TicketTTL))
+		if err != nil {
+			return nil, err
+		}
+		store = postgresStore
+	default:
+		return nil, fmt.Errorf("unknown activation.backend %q (supported: memory, postgres)", cfg.Backend)
+	}
+	if len(cfg.Codes) == 0 {
+		return store, nil
+	}
+	provisioner, ok := store.(activation.CodeProvisioner)
+	if !ok {
+		return nil, errors.New("activation store does not support code provisioning")
+	}
+	for _, seed := range cfg.Codes {
+		if err := provisioner.AddCode(context.Background(), activation.Code{
+			ID: seed.ID, ProductID: seed.ProductID, TenantID: seed.TenantID,
+			Key: seed.LicenseKey, InvitationCode: seed.InvitationCode,
+			Entitlement: seed.Entitlement, ExpiresAt: seed.ExpiresAt,
+			MaxClaims: seed.MaxClaims,
+		}); err != nil {
+			return nil, fmt.Errorf("activation code %q: %w", seed.ID, err)
+		}
+	}
+	return store, nil
 }
 
 func BuildUserProvider(cfg config.IdentityConfig, pg *sql.DB, dialect postgresbackend.Dialect) (sso.UserProvider, error) {

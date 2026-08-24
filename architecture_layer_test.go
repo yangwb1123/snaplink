@@ -70,6 +70,10 @@ func layerName(rel string) string {
 		return "infrastructure"
 	case "cmd", "examples", "testkit", "config", "deploy", "test":
 		return "composition"
+	case "sdks":
+		// Consumer-facing SDKs are delivery adapters with no server-layer
+		// dependencies; keep them at the interfaces boundary.
+		return "interfaces"
 	case "gen", "proto":
 		// generated protobuf + REST gateway — inbound/delivery edge.
 		return "interfaces"
@@ -99,6 +103,13 @@ func layerName(rel string) string {
 		// root package: the public Server type + server_*.go HTTP handlers.
 		return "interfaces"
 	}
+	if strings.HasPrefix(rel, "internal/composition") {
+		// shared composition helpers for the small-edition cmd roots
+		// (cmd/sso-prototype, cmd/sso-minimal) — wires concrete
+		// implementations, so it is the composition layer, and only
+		// cmd/ roots import it downward.
+		return "composition"
+	}
 	if strings.HasPrefix(rel, "internal/auth") {
 		return "domains"
 	}
@@ -125,6 +136,15 @@ var layerExemptions = map[string]bool{
 	"protocols/oauth -> interfaces/middleware":            true, // trusted-proxy / real-client-IP helper
 	"protocols/scim -> interfaces/admin":                  true, // SCIM endpoints require the admin scope gate
 	"protocols/selfservice -> interfaces/middleware":      true, // real-client-IP helper
+}
+
+const maxLayerExemptions = 9
+
+func TestArchitecture_LayerExemptionsDoNotGrow(t *testing.T) {
+	t.Parallel()
+	if n := len(layerExemptions); n > maxLayerExemptions {
+		t.Errorf("layerExemptions grew to %d (cap %d) — fix the dependency direction instead of grandfathering a new edge", n, maxLayerExemptions)
+	}
 }
 
 func TestArchitecture_LayerBoundaries(t *testing.T) {

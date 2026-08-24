@@ -103,6 +103,18 @@ server:
 
 logging:
   level: info
+  # Always-on structured access log: one INFO "access" record per request
+  # (method/path/status/duration_ms/client_ip/request_id/trace_id). On by
+  # default; set enabled: false to remove the middleware entirely. Body
+  # capture is a separate deliberate debugging posture — zero values never
+  # capture bodies, and captured bodies are redacted.
+  # access_log:
+  #   enabled: true
+  #   body:
+  #     paths: []             # exact-path allowlist; empty = no path eligible
+  #     allow_all_paths: false  # deprecated escape hatch (old logBodies=true)
+  #     sample_rate: 0        # 0 = body capture never happens
+  #     max_body_bytes: 4096  # per-captured-field cap; 0 = default 4096
 
 # Identity-domain persistence (User + Client + Session stores). memory
 # keeps the simple bootstrap story but loses DCR-registered clients +
@@ -371,6 +383,15 @@ permissions:
     - { user_id: user-bob,   client_id: web-app,    roles: [viewer] }
     - { user_id: user-alice, client_id: mobile-app, roles: [user] }
     - { user_id: user-alice, client_id: "",         roles: [items-reader] }
+
+# Zanzibar-style relationship tuples and object-level checks. The stock
+# /authz/check route is generation-managed and contributes rebac-check to
+# /readyz. Use SQLite when more than one replica serves the same data.
+rebac:
+  enabled: false
+  backend: "memory"       # memory | sqlite
+  sqlite:
+    dsn: ""               # e.g. file:/var/lib/sso/rebac.db?_journal=WAL
 
 # SCIM 2.0 provisioning (RFC 7643/7644). The /Users surface mounts
 # automatically when admin auth + a UserProvider are present (gated under
@@ -790,6 +811,7 @@ security:
     exposed_headers: []      # e.g. [X-Request-ID, Retry-After]
     allow_credentials: false
     max_age: 1h
+    path_overrides: {}       # URL path prefix -> policy; longest prefix wins
 
 # Prometheus instrumentation. Enables HTTP request count + latency
 # histograms, login / token / risk-decision counters, and exposes the

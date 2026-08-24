@@ -26,6 +26,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	"github.com/yangwb1123/snaplink/platform/configaudit"
 	configauditsqlite "github.com/yangwb1123/snaplink/platform/configaudit/sqlite"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/degradation"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/rotation"
 	"github.com/yangwb1123/snaplink/platform/metrics"
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -313,6 +314,49 @@ func BuildDegradationManager(cfg config.DegradationConfig) (*sso.DegradationMana
 		}
 	}
 	return sso.NewDegradationManager(mode), nil
+}
+
+// BuildDegradationAutoDriver assembles the automatic read_only driver behind
+// degradation.auto_read_only_on_store_loss: it polls the wired storage-health
+// sources (the SAME Ping closures the admin /storage-health report uses) and
+// drives SetMode(read_only) after the configured grace, restoring the boot
+// posture on recovery. Returns nil when unarmed or nothing is watchable.
+func BuildDegradationAutoDriver(cfg config.DegradationConfig, mgr *sso.DegradationManager, sources []sso.StorageHealthSource, logger spi.Logger) *degradation.Driver {
+	if !cfg.Enabled || !cfg.AutoReadOnlyOnStoreLoss || mgr == nil {
+		return nil
+	}
+	probes := autoReadOnlyProbes(sources)
+	if len(probes) == 0 {
+		logger.Info("degradation: auto_read_only_on_store_loss set but no watchable storage source; driver not armed")
+		return nil
+	}
+	return degradation.NewDriver(mgr, mgr.Mode(), probes, cfg.AutoReadOnly.Interval, cfg.AutoReadOnly.Grace, logger)
+}
+
+// autoReadOnlyProbes adapts the wired storage-health sources into the driver's
+// probe list, excluding audit sinks (audit errors are fail-open by contract).
+func autoReadOnlyProbes(sources []sso.StorageHealthSource) []degradation.Probe {
+	probes := make([]degradation.Probe, 0, len(sources))
+	for _, src := range sources {
+		if src.Ping == nil || strings.HasPrefix(src.Name, "audit-") {
+			continue
+		}
+		ping := src.Ping
+		probes = append(probes, degradation.Probe{
+			Name: src.Name,
+			Check: func(ctx context.Context) degradation.Health {
+				err := ping(ctx)
+				if err == nil {
+					return degradation.HealthHealthy
+				}
+				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+					return degradation.HealthUnknown
+				}
+				return degradation.HealthUnhealthy
+			},
+		})
+	}
+	return probes
 }
 
 // BuildThreatAction assembles the Active ITDR composite executor

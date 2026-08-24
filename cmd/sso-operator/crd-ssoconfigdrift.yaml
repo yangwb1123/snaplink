@@ -37,9 +37,14 @@ spec:
         openAPIV3Schema:
           type: object
           description: >-
-            SSOConfigDrift declares a read-only comparison of two SSO
-            clusters' running config. Reconciling it NEVER writes to either
-            cluster — see the operator's doc.go for the full scope.
+            SSOConfigDrift declares a comparison of two SSO clusters'
+            running config, reported in Status — plus, when spec.apply is
+            enabled AND the sso.snaplink.io/apply-approve annotation is
+            present AND drift is detected, a single declared-baseline write
+            to cluster B's /api/v1/admin/config/apply; or, when spec.rollback
+            is explicitly enabled and approved, one compare-and-swap rollback
+            of cluster B's declared baseline. Reconciling a non-opted-in CR
+            never writes to either cluster.
             SECURITY: bearerSecretRef resolves to a Secret in THIS
             namespace with no further access check — RBAC granting write
             access to this resource MUST be no broader than RBAC granting
@@ -51,6 +56,11 @@ spec:
               required:
                 - clusterA
                 - clusterB
+              x-kubernetes-validations:
+                - rule: '!has(self.apply) || !self.apply.enabled || (has(self.apply.reason) && self.apply.reason != "")'
+                  message: 'spec.apply.reason is required when spec.apply.enabled is true'
+                - rule: '!has(self.rollback) || !self.rollback.enabled || (has(self.rollback.reason) && self.rollback.reason != "" && has(self.rollback.expected_version_id) && self.rollback.expected_version_id != "")'
+                  message: 'spec.rollback.reason and spec.rollback.expected_version_id are required when spec.rollback.enabled is true'
               properties:
                 clusterA:
                   type: object
@@ -114,6 +124,59 @@ spec:
                   description: >-
                     Go duration string (e.g. "5m", "30s"). Empty or
                     unparseable falls back to a 5m default.
+                apply:
+                  type: object
+                  description: >-
+                    Opt-in for the declared-baseline write path: when
+                    enabled AND the approval annotation
+                    (sso.snaplink.io/apply-approve: "true") is present AND
+                    drift is detected, the controller POSTs cluster A's
+                    (server-redacted) running snapshot to cluster B's
+                    /api/v1/admin/config/apply?approve=true. The zero value
+                    (disabled) keeps this CR report-only. See
+                    docs/design/operator-config-apply.md.
+                  properties:
+                    enabled:
+                      type: boolean
+                      description: >-
+                        Master switch for apply mode. False (the default)
+                        keeps the CR byte-identical to the report-only
+                        behavior — nothing in the binary writes to either
+                        cluster.
+                    reason:
+                      type: string
+                      description: >-
+                        Mandatory operator justification forwarded verbatim
+                        to the server's apply endpoint. Required when
+                        enabled is true — enforced by the admission rule
+                        above and re-checked by the controller before any
+                        HTTP call.
+                rollback:
+                  type: object
+                  description: >-
+                    Explicit compare-and-swap rollback: when enabled, the
+                    rollback approval annotation
+                    (sso.snaplink.io/rollback-approve: "true") is present,
+                    and reason plus expected_version_id are set, the
+                    controller POSTs cluster B's
+                    /api/v1/admin/config/rollback?approve=true. The server
+                    refuses a stale expected version. See
+                    docs/design/operator-config-rollback.md.
+                  properties:
+                    enabled:
+                      type: boolean
+                      description: >-
+                        Master switch for explicit operator rollback. False
+                        (the default) issues no operator rollback.
+                    reason:
+                      type: string
+                      description: >-
+                        Mandatory operator justification for the rollback.
+                    expected_version_id:
+                      type: string
+                      description: >-
+                        The applied-baseline version that must still be
+                        latest on cluster B; checked atomically by the server.
             status:
               type: object
               properties:
@@ -129,3 +192,56 @@ spec:
                 observedGeneration:
                   type: integer
                   format: int64
+                apply:
+                  type: object
+                  description: >-
+                    Outcome of the most recent apply attempt. Empty until an
+                    apply is attempted (opt-in + approval + drift); it
+                    coexists with the drift fields — an apply failure never
+                    suppresses the drift report (fail-open).
+                  properties:
+                    state:
+                      type: string
+                      enum: [applied, conflict, rejected, failed]
+                      description: >-
+                        applied: server recorded the baseline; conflict:
+                        409 split-brain refusal; rejected: 400 or a
+                        controller-side refusal (blank reason); failed:
+                        transport/5xx. Empty = never attempted.
+                    lastAttemptAt:
+                      type: string
+                      format: date-time
+                    versionID:
+                      type: string
+                      description: >-
+                        The new applied-baseline version from the server on
+                        success — the restored baseline version returned by
+                        the explicit operator rollback path.
+                    digest:
+                      type: string
+                      description: >-
+                        sha256 hex of the submitted snapshot (a hash, never
+                        content).
+                    message:
+                      type: string
+                      description: >-
+                        Token-free summary: the server's own error text or a
+                        success line naming the recorded version.
+                rollback:
+                  type: object
+                  description: >-
+                    Outcome of the most recent explicit rollback attempt.
+                    Empty until rollback is enabled and approved.
+                  properties:
+                    state:
+                      type: string
+                      enum: [rolled_back, conflict, rejected, failed]
+                    lastAttemptAt:
+                      type: string
+                      format: date-time
+                    versionID:
+                      type: string
+                    expectedVersionID:
+                      type: string
+                    message:
+                      type: string

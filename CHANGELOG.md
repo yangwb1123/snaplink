@@ -8,6 +8,236 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Lifecycle-managed ReBAC business check route: the stock `/authz/check`
+  capability now uses a fixed route slot with match-time generation leases,
+  readiness, graceful disable/activate, bounded `rebac_lifecycle_transition`
+  audit events and shutdown draining.
+- Typed external-module supervisor SDK under
+  `platform/lifecycle/modules`: digest-pinned direct executable launch,
+  Unix/TLS version and capability handshake, token authentication, optional
+  detached Ed25519 artifact verification, SPIFFE-aware mTLS, readiness,
+  heartbeat, quiesce/shutdown lifecycle and bounded audit-batch delivery.
+- Stock `sso-server` audit-worker admission: `audit.external_worker` now
+  manages one lifecycle-supervised audit-batch worker, checks signed local
+  release provenance or remote mTLS/SPIFFE identity, contributes readiness and
+  graceful shutdown, and emits bounded lifecycle audit events.
+- Lifecycle-managed stock-server webhook exporter: `webhooks.enabled` now
+  wires a precompiled audit tap with generation leases, readiness, graceful
+  drain, shared subscription/dead-letter stores, safe SIGHUP delivery-policy
+  replacement, and bounded `webhook_lifecycle_transition` audit events.
+- Release workflow provenance attestations: after GoReleaser publishes the
+  archive checksum set, GitHub Artifact Attestations emits signed SLSA build
+  provenance for every archive subject listed in `dist/checksums.txt`.
+- Optional configuration-baseline canary apply (`?canary=true&window=60s`):
+  injected storage-health probes confirm a bounded observation window or
+  atomically roll back to the predecessor; Memory/SQLite retain lifecycle
+  state, restart recovery is fail-safe, and lifecycle audit events carry only
+  redacted-safe identifiers. See `docs/design/config-canary-apply.md`.
+- Opt-in per-client redirect-URI patterns (`redirect_uri_patterns`) for static
+  configuration and the Snaplink DCR extension. Patterns are HTTPS-only,
+  concrete-host, single interior path-segment wildcards validated by one shared
+  matcher; exact `redirect_uris` behavior remains unchanged. SQLite migration v8
+  and PostgreSQL schema v6 persist the field, and DCR POST/GET/PUT round-trip it.
+- Per-client ID-token signing algorithm (`id_token_signed_response_alg`,
+  OIDC Core §3.1.3.1 / RFC 7591 §2; design
+  `docs/design/per-client-id-token-alg.md`): `core.Client.IDTokenSignedResponseAlg`
+  names the JWS algorithm the AS signs a given RP's ID Tokens with, selected
+  via the new SDK option `sso.WithIDTokenIssuerAlg(alg, issuer)` (whitelisted to
+  `security.AsymmetricJWSAlgs` — EdDSA / ES256-512 / RS256 / PS256; `none` and
+  anything unwired panic at construction). Resolution in
+  `idTokenIssuerForClient` prefers the per-client alg, then falls back to the
+  unchanged per-tenant/shared issuer path (byte-identical default when no
+  client sets the field). DCR accepts and stores the field and rejects an
+  unwired alg with 400 `invalid_client_metadata` (validated against the same
+  set discovery advertises); static config gains `clients[].id_token_signed_response_alg`
+  (boot-validated against `keys.signing.alg`); discovery's
+  `id_token_signing_alg_values_supported` is the union of the default issuer's
+  algs and the wired per-alg map. Fail-closed at issuance: an unwired alg
+  omits id_token rather than sign with another key. Persisted in sqlite
+  (migration v7) + postgres (schema v5). Product-level FAPI 2.0 conformance
+  unblock per `docs/campaigns/reports/b11-fapi-conformance.md` / the archived
+  `test/oidc-conformance/results/39ecdf7a-fapi/BLOCKER.md`: an RS256-only
+  login client can coexist with ES256/PS256 FAPI clients on one issuer.
+- Config-facing per-client id_token signing keys
+  (`keys.id_token_algs`, design
+  `docs/design/per-client-id-token-alg.md` Decision 1 + 2): the
+  `sso-server` binary can now wire ADDITIONAL dedicated id_token signing
+  issuers (the config form of `sso.WithIDTokenIssuerAlg`) — each entry
+  (`alg` required eddsa/es256/rs256/ps256, optional `key_file`/`external`)
+  serves clients that declare `id_token_signed_response_alg` with THAT
+  algorithm while `keys.signing.alg` keeps signing everything else. Boot
+  gate rejects an alg equal to the primary or a duplicate entry; the
+  issuer's public key lands in the aggregated `/.well-known/jwks.json` and
+  discovery advertises the union. Empty (default) = byte-identical
+  behavior. This is what operationalizes the B12-1 FAPI unblock on the
+  sso-server binary: `test/oidc-conformance/config-fapi.yaml` wires
+  `id_token_algs: [{alg: rs256}]` so the suite's RS256 login client
+  coexists with the ES256 FAPI clients.
+- Always-on structured access log (`interfaces/middleware.AccessLogger`, design
+  `docs/design/middleware-observability-unified.md` Decision 1 + 2): one INFO
+  `"access"` record per request with a fixed low-cardinality field set
+  (`method`, `path` — never `RawQuery`, `status` — default 200, `duration_ms`,
+  `client_ip` — canonical `peertrust.ClientIP` with `audit.ClientIP` delegating
+  to the one shared implementation, `request_id`, `trace_id`). `BodyLogPolicy`
+  controls OPTIONAL request/response body capture behind an exact-path
+  allowlist, a per-deployment `sample_rate`, a per-field byte cap, and a
+  redaction vocabulary (exact-match + substring heuristic, replacement literal
+  exactly `[redacted]`); the zero value never captures bodies, so credentials
+  stay structurally impossible to log. The middleware sits inside trusted
+  proxies (validated `client_ip`) and outside rate limiting (429 rejections
+  leave access evidence); probes (`/livez`, `/readyz`, `/metrics`) bypass via
+  the probe mux. SDK default is off (`sso.WithAccessLogging`); `sso-server`
+  enables it by default via the new `logging.access_log.*` config block
+  (tri-state `enabled`, body keys map 1:1 onto the policy, loud boot
+  validation, not hot-reloadable). `sso.WithRequestLogging(bool)` is replaced
+  by the policy signature — the old name is kept as a deprecated alias and
+  `BodyLogPolicy{AllowAllPaths: true}` reproduces `logBodies=true`; the DEBUG
+  `middleware.RequestLogger` and its `debugRequestLogging` fields are deleted.
+- OIDC-conformance harness FAPI variant (`test/oidc-conformance/`):
+  `config-fapi.yaml` (FAPI 2.0 Security Profile, inspection mode, PAR
+  enabled, ES256 signing) plus `--fapi` in `run-headless.sh`
+  (plan `fapi2-security-profile-final-test-plan`, variant plain_fapi /
+  private_key_jwt / DPoP / unsigned-PAR / plain-response, module
+  `fapi2-security-profile-final-happy-flow`) and PAR-aware logins in
+  `drive_test.py`. The default basic topology is unchanged
+  (`CONFORMANCE_CONFIG` defaults to `config.yaml`; verified via
+  `docker compose --env-file config.env config`). The first FAPI run is
+  archived under `results/39ecdf7a-fapi/` and is **blocked at the suite's
+  own login**: the pinned OIDF suite validates its login ID token with an
+  RS256-only decoder (Spring `OidcIdTokenDecoderFactory` default) while
+  the FAPI 2.0 SP requires PS256/ES256/EdDSA — no FAPI module has run yet;
+  see `docs/sso/oidc-conformance.md` §2 and the archived `BLOCKER.md`.
+- `sso-operator` apply mode for `SSOConfigDrift` (nested module
+  `cmd/sso-operator`): a CR that opts in via `spec.apply.enabled` AND
+  carries the one-shot approval annotation
+  (`sso.snaplink.io/apply-approve: "true"`) AND has a non-empty diff gets
+  exactly one `POST .../config/apply?approve=true` per reconcile-approval
+  pair — cluster A's already-server-redacted running snapshot, its
+  canonical sha256 digest (byte-identical to `configaudit.Digest`, pinned
+  by a known-answer test), and the mandatory `spec.apply.reason`. The
+  outcome lands in `status.apply` (state applied/conflict/rejected/failed,
+  lastAttemptAt, versionID, digest, message) and coexists with the drift
+  fields: an apply failure is fail-open (recorded, never suppresses the
+  drift report) and keeps the approval pending for the 30s retry;
+  success consumes the annotation (at most one apply per approval — no
+  auto-remediation). Report-only CRs are byte-identical to before, and the
+  CRD gains the `apply` schema block + a CEL reason-when-enabled rule.
+  Explicit CAS rollback is documented separately below. Design:
+  `docs/design/operator-config-apply.md`.
+- Explicit `sso-operator` rollback mode for `SSOConfigDrift`: an enabled
+  rollback spec, non-empty reason, expected current version, and one-shot
+  `sso.snaplink.io/rollback-approve` annotation are required. The controller
+  sends the guarded rollback request, records `status.rollback`, consumes the
+  approval only on success, and retains it for short-retry failures. Apply
+  and rollback approvals are mutually exclusive; stale versions return
+  `config_apply_conflict` without changing the baseline. Design:
+  `docs/design/operator-config-rollback.md`.
+- Config apply mode (`POST /api/v1/admin/config/apply` + `.../rollback`, admin:write):
+  the declared peer-config baseline write path promoting the deferred-backlog
+  "Declarative multi-cluster configuration governance" Partial boundary.
+  An operator applies a peer cluster's config snapshot as this cluster's new
+  applied baseline, verified against its sha256 digest (split-brain guard —
+  mismatch is 409 `config_apply_conflict`), gated by mandatory `?approve=true`
+  (400 `config_apply_approval_required` otherwise) and a mandatory `reason`.
+  The write is transactional (`configaudit.Store.Apply`/`Rollback` — baseline
+  + `config_history` entry in one write, sqlite via a new `config_applied`
+  table, memory in-process), stores ONLY redacted snapshots, retains every
+  version for rollback, and emits `admin_config_applied`/
+  `admin_config_rolled_back` audit events (metadata only: apply_id,
+  peer_digest, prev_id — never snapshot content), both classified in the
+  SOC2 report's CC6.3 bucket. After apply, `GET .../config/applied` serves
+  the new baseline and `.../config/diff` diffs against it; the running view
+  and every diff-only endpoint are byte-identical until the first apply, and
+  the routes are unmounted (404) unless both `WithConfigSnapshots` and
+  `WithConfigAuditStore` are wired. Design:
+  `docs/design/config-apply-mode.md`.
+- User lifecycle transitions now emit OpenID CAEP/RISC Security Event Tokens
+  through the existing SSF transmitter: `admin_user_lifecycle_changed` maps to
+  `risc/account-disabled` + `caep/session-revoked` for non-active target states
+  and `risc/account-enabled` on reactivation, pushed async + best-effort to the
+  affected tenant's opted-in clients (receiver endpoints only from registered
+  client metadata; tenant events query only that tenant) — the standardized
+  event channel for resource servers that validate JWTs fully offline. Wiring
+  is `caep.WithTenantUserStore` on the transmitter (nil ⇒ lifecycle events
+  resolve to no receivers; the stock binary does not wire tenant membership),
+  the CAEP receive side is untouched, and delivery failures stay fail-open
+  (`caep_broadcast_failed`). Design: `docs/design/lifecycle-caep-events.md`.
+- `sso-ctl` audit tooling durable-store read paths and live-API export source:
+  `audit-verify --dsn <sqlite|postgres>` and `audit-export --dsn <postgres>` read
+  the audit store offline through a shared read-only accessor
+  (`cmd/auditstore`), which classifies a DSN by scheme
+  (`postgres://`/`postgresql://` vs a sqlite path or `file:` URI), pages
+  newest-first and reverses into chain order, and never migrates: sqlite opens
+  via `auditsqlite.OpenReadOnly` (fail-closed `checkSchemaCurrent`), postgres
+  via a new non-migrating constructor `postgres.OpenAuditReadOnly` (fail-closed
+  `schema_migrations_audit` version check; operators enforce server-side
+  read-only with a read-only role — there is no `?mode=ro` equivalent).
+  `audit-export --from-url <base> --bearer <token>` exports over the live
+  `/api/v1/audit/events` API through a `QueryPager` adapter (bearer-gated, no
+  redirects, non-2xx diagnostics name the offset), shipping the previously
+  documented planned follow-up; `--timeout-sec` applies to that mode.
+  Verification cores are unchanged (`audit.VerifyChain` / `VerifyChainSegment`
+  / `VerifyChainAgainstCheckpoint`, `BuildExportBundle`); a store whose schema
+  version does not match the binary is reported (exit 1), never migrated.
+  End-to-end acceptance covers a stock postgres-backed server (bundle
+  `HeadHash` == store chain head, `--verify` 0, byte-tamper 1) and the URL leg
+  (advertised `/api/v1/audit/events` never 404s; no/weak bearer → 401;
+  `--from-url` without `--bearer` → exit 2).
+- Prototype/minimal physical package extraction: the two small editions now
+  build from dedicated composition roots (`cmd/sso-prototype` and
+  `cmd/sso-minimal`) that share edition-generic composition code in
+  `internal/composition`, instead of both compiling the same `cmd/sso-minimal`
+  package. The minimal-only OIDC surface (discovery, ID Token, UserInfo,
+  logout, tracing wiring) is compiled only into the minimal binary — the
+  prototype root contains no OIDC surface code. The prototype profile selects
+  `./cmd/sso-prototype`; `ops/build/profile-isolation.json` splits the former
+  `small` row into per-edition `prototype`/`minimal` rows, and
+  `python cli.py profiles evidence` now proves each binary links only its own
+  cmd root (prototype never links `cmd/sso-minimal` and vice versa) while
+  keeping the shared `interfaces/sso` SDK boundary documented.
+- ssoext host-API registrars for the LDAP/Kerberos/RADIUS authenticator
+  families: `interfaces/ssoext` now exposes `LDAPAuthenticatorRegistry` /
+  `KerberosHandlerRegistry` / `RADIUSAuthenticatorRegistry` (plus the
+  `Register*`/`Lookup*`/`Registered*` functions) on the standard
+  `platform/registry/typed` machinery, with a per-family `*ServerDeps` bundle of
+  stdlib + intra-repo types only — no go-ldap/gokrb5/layeh dependency enters
+  the core module's go.mod. The nested modules each embed their `ssoext`
+  Deps bundle (`ldapauth.Deps` / `kerberosauth.Deps` / `radiusauth.Deps`) and
+  expose a `Build` factory adaptation, so a forked binary registers a
+  name-addressed factory at boot and its own composition looks it up —
+  process-local, panic-on-duplicate, fail-closed on an unregistered name,
+  matching the SAML registry contract. Stock `cmd` wiring is unchanged
+  (no ldap/kerberos/radius config sections; those surfaces remain
+  fork-binary integrations).
+- ssoext host-API registrar for the KMS external-signer family: `interfaces/ssoext`
+  now exposes `ExternalSignerRegistry` / `RegisterExternalSigner` /
+  `LookupExternalSigner` / `RegisteredExternalSigners` plus the
+  `ExternalSignerDeps` bundle (stdlib + intra-repo types only — no vendor KMS
+  SDK enters the core module's go.mod) on the standard `platform/registry/typed`
+  machinery, completing the nested-module migration declared in
+  `docs/deferred-backlog.md`. The four nested modules
+  (`infrastructure/kms/{awskms,gcpkms,azurekeyvault,pkcs11}`) each add a
+  `Build` adapter embedding `ssoext.ExternalSignerDeps`, mirroring the
+  ldap/radius adapters, so a forked binary registers a name-addressed factory
+  whose closure holds the vendor SDK client. `keys.signing.external` now
+  resolves through the canonical `ssoext` registry;
+  `serverbuildsign`'s `ExternalSignerFactory` / `ExternalSignerRegistry` /
+  `RegisterExternalSigner` are kept as delegating aliases so existing fork
+  binaries compile and behave identically (lookup error text, panic
+  discipline, and the health/metrics/readiness wrapping are unchanged).
+- Automatic degraded-mode transitions: with
+  `degradation.auto_read_only_on_store_loss: true`, `sso-server` now runs an
+  in-process driver that polls its wired storage-health sources (the same Ping
+  probes behind the admin `/storage-health` report; audit sinks excluded
+  because audit is fail-open by contract) and drops to `read_only` after a
+  store has been continuously unhealthy for
+  `degradation.auto_read_only.grace` (hysteresis — transient probe jitter
+  never flaps the mode), restoring the configured `degradation.initial_mode`
+  when health returns. Transitions flow through the same audit + metric path
+  as the admin `POST /api/v1/admin/dr/mode` toggle. New keys:
+  `degradation.auto_read_only.interval` (poll cadence, default 30s) and
+  `degradation.auto_read_only.grace` (default 60s); `<=0` on either takes the
+  package default.
 - SMTP implicit TLS: the built-in email sender now establishes the TLS
   connection before the first SMTP verb on port `465` (auto-selected) or with
   `smtp.tls_mode: implicit`; STARTTLS (`587`) and plaintext (`25`) behavior is
@@ -46,6 +276,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Developer guide, release process, security policy documentation
 
 ### Changed
+- FAPI 2.0 conformance harness progress (`test/oidc-conformance`): the
+  `--fapi` run now registers the suite login client via DCR with
+  `id_token_signed_response_alg: RS256` (served by the dedicated
+  `keys.id_token_algs` RS256 key in `config-fapi.yaml`), unblocking the
+  suite's own admin login (Spring's hard-coded-RS256
+  `OidcIdTokenDecoderFactory`), and the FAPI plan-variant no longer repeats
+  the plan-intrinsic `fapi_request_method`/`fapi_response_mode` keys (the
+  suite rejects plans that set them twice). The
+  `fapi2-security-profile-final-happy-flow` module now executes — its first
+  run ends at the suite's static-client step (12 SUCCESS + 1 FAILURE); see
+  `docs/campaigns/reports/b12-fapi-conformance.md` and the archived
+  `results/<commit>-fapi/BLOCKER.md`.
+- Unified OTel correlation (design `docs/design/middleware-observability-unified.md`
+  Decision 7 + 8): `middleware.Correlation` is now the ONE middleware tying a
+  request to a trace and a request ID — it wraps the otelhttp span and stamps
+  `X-Trace-Id`/`X-Request-Id`/`Traceparent` response headers, the request
+  context `trace_id` (`core.WithTraceID`), and a preserved-or-generated 32-hex
+  `X-Request-Id`. The legacy `Tracing`/`RequestID` middleware and its
+  traceparent parse/format/rewrite, `WithTracingMiddleware`/
+  `WithRequestIDMiddleware`, the `requestIDMW` field, and the router-level
+  `Use(TracingMiddleware())` install are deleted; `WithTracing(operation)` is
+  the single switch (span tree + audit correlation + trace headers + error-body
+  `trace_id`). Audit events are span-first: `audit.EventFromRequest` reads the
+  live span's `TraceID`/`SpanID`/`ParentSpanID` (from the span's actual
+  parent, via the new `platform/tracing.ParentSpanID` seam) and falls back to
+  the incoming `Traceparent` header only for callers outside the middleware
+  chain; the legacy `X-Parent-Span-Id` header is removed. The access log and
+  audit events now share the span's trace id by identity — one correlation
+  source. Deliberate behavior change (documented in the design's "What could
+  break" item 1): with no OTLP endpoint configured the no-op provider yields
+  invalid span contexts, so `X-Trace-Id`/`Traceparent` and audit/access-log
+  `trace_id` are empty (the honest no-tracing state); `X-Request-Id` and audit
+  `RequestID` keep working. `sso-server` logs a boot-time note when tracing is
+  wired without an endpoint. The login-anomaly dispatch uses the same
+  span-first trace id (`requestTraceID`).
 - Removed the embedded frontend bundles from the SDK and `sso-server`.
   Hosted login, admin, self-service, developer, and setup UIs are now separate
   frontend projects served through a reverse proxy; this repository is an

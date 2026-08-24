@@ -26,6 +26,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/sse"
 	"github.com/yangwb1123/snaplink/protocols/caep"
 	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/i18n"
 	"github.com/yangwb1123/snaplink/shared/security"
@@ -38,23 +39,37 @@ type wiringState struct {
 	tokenIssuers          map[string]TokenIssuer // strategy name -> issuer
 	defaultTokenStrategy  string
 	tenantTokenStrategies map[string]string // tenant id -> strategy (issuer) name
-	userProvider          UserProvider
-	clientStore           ClientStore
-	sessionMgr            SessionManager
-	maxSessionsPerUser    int // 0 = unlimited (backward compatible)
-	router                Router
-	logger                spi.Logger
-	auditor               *audit.Recorder
-	caepTransmitter       *caep.Transmitter
-	caepStreamStore       caep.StreamStore
-	auditAPI              bool
-	sseBroker             *sse.Broker
-	sseHeartbeat          time.Duration
-	requestIDMW           bool
-	panicRecovery         bool
-	compressionEnabled    bool
-	debugRequestLogging   bool // when set, logs requests/responses at DEBUG level
-	debugRequestLogBodies bool // when also set, includes bodies in that log output
+	// idTokenIssuerAlgs routes clients that declare an
+	// id_token_signed_response_alg to the issuer wired for that alg
+	// (WithIDTokenIssuerAlg). Consulted only when a client sets the field;
+	// empty map = default id_token issuer resolution unchanged. The wired
+	// issuers MUST also be registered via WithTokenIssuer so their public
+	// keys land in the aggregated JWKS and id_token_hint validation works.
+	idTokenIssuerAlgs  map[string]oidc.IDTokenIssuer
+	userProvider       UserProvider
+	clientStore        ClientStore
+	sessionMgr         SessionManager
+	maxSessionsPerUser int // 0 = unlimited (backward compatible)
+	router             Router
+	logger             spi.Logger
+	auditor            *audit.Recorder
+	caepTransmitter    *caep.Transmitter
+	caepStreamStore    caep.StreamStore
+	auditAPI           bool
+	sseBroker          *sse.Broker
+	sseHeartbeat       time.Duration
+	// requestIDMW (legacy WithTracingMiddleware toggle) deleted with the
+	// legacy Tracing/RequestID middleware surface (Decision 7 removal
+	// list): correlation now lives in the single outer-chain
+	// middleware.Correlation wrapper, gated by WithTracing only.
+	panicRecovery      bool
+	compressionEnabled bool
+	// accessLogPolicy installs the always-on INFO access log (Decision 1 of
+	// docs/design/middleware-observability-unified.md); nil = not installed —
+	// the SDK default, byte-identical when the option is absent. It replaced
+	// the DEBUG-gated RequestLogger fields (WithRequestLogging now takes the
+	// body policy; the DEBUG path was deleted per the design's Decision 2/3).
+	accessLogPolicy *middleware.BodyLogPolicy
 	// credentialFormOnly gates the strict credential wire (B4-4,
 	// WithCredentialFormOnly): when true, /token, /token/introspect,
 	// /token/revoke and /par accept ONLY application/x-www-form-urlencoded
@@ -83,6 +98,7 @@ type wiringState struct {
 	// a build without this feature.
 	apiV2AlphaPreview          bool
 	permissions                permissions.Provider
+	rarCatalogCheck            bool
 	embedPermissions           bool
 	netStore                   netpolicy.Store
 	netClassifier              *netpolicy.Classifier
@@ -112,15 +128,14 @@ type wiringState struct {
 	// webhookEngine is the opt-in generic event/webhook egress engine
 	// (WithWebhookEngine). Nil = no admin subscription/dead-letter routes,
 	// no audit-sink tap — byte-identical to a build without the feature.
-	webhookEngine *webhook.Engine
+	webhookEngine webhook.Runtime
 
 	// rebacEngine is the opt-in Zanzibar-style relationship-tuple Check
-	// engine (WithRebacEngine, platform/lifecycle/rebac). Nil = no admin
-	// debug route mounted — byte-identical to a build without the
-	// feature. Unlike the other authorization layers wired on Server,
-	// this engine is NOT consulted by any built-in gate (see the package
-	// doc); the only Server-side use is the operational-debugging
-	// endpoint below.
+	// engine (WithRebacEngine, platform/lifecycle/rebac). Nil = no FGA
+	// product or admin-debug routes mounted — byte-identical to a build
+	// without the feature. The product /authz/check route is backed by a
+	// fixed lifecycle generation on the standard router; tuple management
+	// remains cold and the admin route remains operational debugging.
 	rebacEngine *rebac.Engine
 
 	// rebacStore is the tuple store for the FGA product API. When wired,
@@ -240,7 +255,8 @@ type wiringState struct {
 	// configAuditStore persists runtime-configuration change history
 	// (platform/configaudit). Nil = the change-capture hook + the
 	// GET .../config/history admin endpoint are both off.
-	configAuditStore configaudit.Store
+	configAuditStore       configaudit.Store
+	configCanaryController *configaudit.CanaryController
 	// configAppliedSnapshot is the redacted effective-config snapshot
 	// captured ONCE at startup (WithConfigSnapshots). configRunningSnapshotFn
 	// recomputes the CURRENT effective snapshot on demand for
@@ -271,6 +287,27 @@ type wiringState struct {
 	approvalStore       admingovernance.ApprovalStore
 	changeRegistry      *admingovernance.Registry
 	approvalActionTypes admingovernance.RequiredActionTypes
+}
+
+// BodyLogPolicy re-exports the access-log body-capture policy for
+// WithAccessLogging / WithRequestLogging callers. Lives here beside the
+// accessLogPolicy field it feeds (aliases.go is at the line budget).
+type BodyLogPolicy = middleware.BodyLogPolicy
+
+// WithAccessLogging installs the always-on INFO access log: one fixed-field
+// record per request (method, path, status, duration_ms, client_ip,
+// request_id, trace_id). policy controls only OPTIONAL body capture; its
+// zero value never captures bodies (the default — credentials stay
+// structurally impossible to log). sso-server enables this by default via
+// logging.access_log (see config-reference.md).
+func WithAccessLogging(policy middleware.BodyLogPolicy) Option {
+	return func(s *Server) { s.accessLogPolicy = &policy }
+}
+
+// Deprecated: use WithAccessLogging; logBodies=true maps to
+// BodyLogPolicy{AllowAllPaths: true}.
+func WithRequestLogging(policy middleware.BodyLogPolicy) Option {
+	return WithAccessLogging(policy)
 }
 
 // newBackgroundHandlerContext adapts a plain context.Context into a

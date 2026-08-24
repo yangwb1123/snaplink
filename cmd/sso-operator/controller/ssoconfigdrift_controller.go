@@ -1,15 +1,20 @@
-// Package controller implements the SSOConfigDrift reconciler: a read-only
-// loop that fetches cluster A's running SSO config, POSTs it to cluster B's
+// Package controller implements the SSOConfigDrift reconciler: a loop that
+// fetches cluster A's running SSO config, POSTs it to cluster B's
 // cluster-diff endpoint, and records the resulting RFC 6902 patch summary in
-// the CR's Status. See ../../doc.go for the full non-goals list (no apply,
-// no canary, no remediation).
+// the CR's Status — plus explicitly approved declared-baseline apply or
+// rollback writes. See ../../doc.go for the full scope: no canary, no
+// automatic remediation, and no GitOps source-of-truth resolution.
 package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -25,13 +30,33 @@ import (
 )
 
 // shortRequeueInterval governs the retry cadence after a failed attempt
-// (secret lookup, HTTP call, non-2xx, malformed body). Short relative to
-// the default poll interval so a transient blip (a rolling restart on
-// either cluster, a momentarily-expired token) self-heals quickly, without
-// hammering either admin API — this mirrors platform/configaudit's own
-// report-only fail-open loop, which never treats a comparison failure as
-// fatal to the reconcile itself.
+// (secret lookup, HTTP call, non-2xx, malformed body, failed apply). Short
+// relative to the default poll interval so a transient blip (a rolling
+// restart on either cluster, a momentarily-expired token) self-heals
+// quickly, without hammering either admin API — this mirrors
+// platform/configaudit's own report-only fail-open loop, which never treats
+// a comparison failure as fatal to the reconcile itself.
 const shortRequeueInterval = 30 * time.Second
+
+// approvalAnnotationKey is the one-shot apply approval annotation: present
+// with value "true" on an opted-in CR, it authorizes the NEXT apply
+// (consumed — deleted — by the controller after a successful apply, so no
+// standing approval can ever cause repeated applies). Deliberately an
+// annotation, not a spec field: annotations do not bump Generation (no
+// self-triggered reconcile) and never enter GitOps diffs of desired state —
+// approval is transient, per-action state. See
+// docs/design/operator-config-apply.md Decision 1.
+const approvalAnnotationKey = "sso.snaplink.io/apply-approve"
+
+// Status.Apply.State values (empty = never attempted). conflict/rejected
+// are server or contract refusals, failed covers transport and 5xx errors;
+// all three keep the approval pending for retry (design doc Decision 2).
+const (
+	applyStateApplied  = "applied"
+	applyStateConflict = "conflict"
+	applyStateRejected = "rejected"
+	applyStateFailed   = "failed"
+)
 
 // runningConfigPath and clusterDiffPath are appended to each cluster's
 // BaseURL. Kept as constants (not literals scattered through the file) per
@@ -47,9 +72,10 @@ const (
 // pointed at an unreachable or malicious BaseURL hang the single-worker
 // reconcile loop indefinitely — stalling every other SSOConfigDrift object
 // in the cluster, not just the misconfigured one. Deliberately generous
-// (both HTTP calls together should finish in low single-digit seconds
-// against a healthy target) rather than tuned tight, since this is a
-// report-only feature where a slow success still beats a false failure.
+// (the whole check + apply sequence should finish in low single-digit
+// seconds against a healthy target) rather than tuned tight, since this is
+// an observability feature where a slow success still beats a false
+// failure.
 const defaultHTTPTimeout = 15 * time.Second
 
 // defaultHTTPClient is the production default — see defaultHTTPTimeout.
@@ -74,11 +100,13 @@ func (r *Reconciler) httpClient() *http.Client {
 	return defaultHTTPClient
 }
 
-// Reconcile implements the read-fetch-post-report cycle described in the
-// package doc. It NEVER returns a non-nil error for an HTTP/parse failure —
-// this is a report-only feature (AGENTS.md fail-open doctrine); the only
-// errors returned are ones the controller-runtime retry/backoff machinery
-// should own (e.g. a transient failure to read or patch the CR itself).
+// Reconcile implements the fetch-post-report cycle described in the package
+// doc, plus explicitly approved apply or expected-version-guarded rollback
+// writes to cluster B (see maybeWrites). It NEVER returns a non-nil error for
+// an HTTP/parse failure — this is a report-only feature at heart (AGENTS.md
+// fail-open doctrine); the only errors returned are ones the
+// controller-runtime retry/backoff machinery should own (e.g. a transient
+// failure to read, update, or patch the CR itself).
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var cr drift.SSOConfigDrift
 	if err := r.Get(ctx, req.NamespacedName, &cr); err != nil {
@@ -88,13 +116,33 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	result := r.runCheck(ctx, &cr)
+	result, running := r.runCheck(ctx, &cr)
 	r.applyResult(&cr, result)
 
+	applyOut, rollbackOut, err := r.maybeWrites(ctx, &cr, running, result)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Persist status BEFORE consuming the approval: the annotation removal
+	// below is a main-resource JSON merge patch without a resourceVersion
+	// (unconditional), so it cannot conflict with this write regardless of
+	// which order the two hit the apiserver.
 	if err := r.Status().Update(ctx, &cr); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: requeueInterval(&cr, result.failed)}, nil
+	if applyOut != nil && applyOut.applied() {
+		if err := r.consumeApproval(ctx, &cr); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	if rollbackOut != nil && rollbackOut.rolledBack() {
+		if err := r.consumeRollbackApproval(ctx, &cr); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	failed := result.failed || (applyOut != nil && applyOut.failed) || (rollbackOut != nil && rollbackOut.failed)
+	return ctrl.Result{RequeueAfter: requeueInterval(&cr, failed)}, nil
 }
 
 // checkResult is the outcome of one fetch+diff attempt, kept separate from
@@ -105,6 +153,25 @@ type checkResult struct {
 	driftDetected bool
 	patchOpCount  int
 	message       string
+}
+
+// applyOutcome is the result of one apply attempt: the classified state for
+// Status.Apply, the evidence (server version id + submitted digest), a
+// token-free message, and whether the reconcile should requeue short
+// (failed=true for every non-applied outcome — the approval stays pending
+// and the next reconcile retries; design doc Decision 2).
+type applyOutcome struct {
+	state     string
+	versionID string
+	digest    string
+	message   string
+	failed    bool
+}
+
+// applied reports whether the apply succeeded — the only outcome that
+// consumes the approval.
+func (o *applyOutcome) applied() bool {
+	return o.state == applyStateApplied
 }
 
 // validateBaseURL requires an absolute https:// URL. Rejecting http (and
@@ -124,47 +191,178 @@ func validateBaseURL(raw string) error {
 	return nil
 }
 
-// runCheck performs the two HTTP calls this reconciler exists for. Every
-// failure path returns failed=true with a message safe to persist — never
-// the bearer token, never the raw Authorization header.
-func (r *Reconciler) runCheck(ctx context.Context, cr *drift.SSOConfigDrift) checkResult {
+// checkFailed returns the failed checkResult pair every runCheck failure
+// path shares — keeps the failure return sites one line each.
+func checkFailed(message string) (checkResult, map[string]interface{}) {
+	return checkResult{failed: true, message: message}, nil
+}
+
+// runCheck performs the two HTTP calls this reconciler exists for, and
+// returns the validated running snapshot (nil on any failure) so an opted-in
+// apply phase can re-submit it. Every failure path returns failed=true with
+// a message safe to persist — never the bearer token, never the raw
+// Authorization header.
+func (r *Reconciler) runCheck(ctx context.Context, cr *drift.SSOConfigDrift) (checkResult, map[string]interface{}) {
 	if err := validateBaseURL(cr.Spec.ClusterA.BaseURL); err != nil {
-		return checkResult{failed: true, message: fmt.Sprintf("cluster A: %s", err)}
+		return checkFailed(fmt.Sprintf("cluster A: %s", err))
 	}
 	if err := validateBaseURL(cr.Spec.ClusterB.BaseURL); err != nil {
-		return checkResult{failed: true, message: fmt.Sprintf("cluster B: %s", err)}
+		return checkFailed(fmt.Sprintf("cluster B: %s", err))
 	}
 
 	tokenA, err := r.resolveBearer(ctx, cr.Namespace, cr.Spec.ClusterA.BearerSecretRef)
 	if err != nil {
-		return checkResult{failed: true, message: fmt.Sprintf("cluster A secret lookup failed: %s", err)}
+		return checkFailed(fmt.Sprintf("cluster A secret lookup failed: %s", err))
 	}
 	tokenB, err := r.resolveBearer(ctx, cr.Namespace, cr.Spec.ClusterB.BearerSecretRef)
 	if err != nil {
-		return checkResult{failed: true, message: fmt.Sprintf("cluster B secret lookup failed: %s", err)}
+		return checkFailed(fmt.Sprintf("cluster B secret lookup failed: %s", err))
 	}
 
 	running, err := fetchRunningConfig(ctx, r.httpClient(), cr.Spec.ClusterA.BaseURL, tokenA)
 	if err != nil {
-		return checkResult{failed: true, message: fmt.Sprintf("fetch cluster A running config failed: %s", err)}
+		return checkFailed(fmt.Sprintf("fetch cluster A running config failed: %s", err))
 	}
 	if err := validateRunningSnapshot(running); err != nil {
-		return checkResult{failed: true, message: fmt.Sprintf("cluster A running config failed structural validation: %s", err)}
+		return checkFailed(fmt.Sprintf("cluster A running config failed structural validation: %s", err))
 	}
 
 	patch, err := postClusterDiff(ctx, r.httpClient(), cr.Spec.ClusterB.BaseURL, tokenB, running)
 	if err != nil {
-		return checkResult{failed: true, message: fmt.Sprintf("cluster B diff request failed: %s", err)}
+		return checkFailed(fmt.Sprintf("cluster B diff request failed: %s", err))
 	}
 	if err := validatePatch(patch, running); err != nil {
-		return checkResult{failed: true, message: fmt.Sprintf("cluster B diff response failed structural validation: %s", err)}
+		return checkFailed(fmt.Sprintf("cluster B diff response failed structural validation: %s", err))
 	}
 
 	return checkResult{
 		driftDetected: len(patch) > 0,
 		patchOpCount:  len(patch),
 		message:       summarize(len(patch)),
+	}, running
+}
+
+// maybeApply runs the apply phase: nil unless the CR is opted in, the
+// one-shot approval annotation is present, and the just-completed check
+// found drift — then it issues ONE apply to cluster B and records the
+// outcome in Status.Apply (in memory). Persisting the status and consuming
+// the approval are the caller's job, so this function stays write-free and
+// an apply failure never suppresses the drift report (the check result was
+// already written by the caller); it only affects the requeue interval via
+// out.failed.
+func (r *Reconciler) maybeApply(ctx context.Context, cr *drift.SSOConfigDrift, running map[string]interface{}, result checkResult) (*applyOutcome, error) {
+	if !shouldApply(cr, result) {
+		return nil, nil
 	}
+	out := r.runApply(ctx, cr, running)
+	applyApplyResult(cr, out)
+	return out, nil
+}
+
+// shouldApply is the apply-phase gate: opt-in, one-shot approval present,
+// and a SUCCESSFUL check that found drift. The approval check runs even
+// while a check-failure loop is active, so an approval added mid-retry is
+// picked up by the next short requeue rather than silently ignored.
+func shouldApply(cr *drift.SSOConfigDrift, result checkResult) bool {
+	if !cr.Spec.Apply.Enabled || result.failed || !result.driftDetected {
+		return false
+	}
+	return cr.Annotations[approvalAnnotationKey] == "true"
+}
+
+// runApply issues the single write this controller can make: POST cluster
+// B's /api/v1/admin/config/apply?approve=true with cluster A's (already
+// server-redacted) running snapshot, its canonical digest, and the CR's
+// declared reason. The snapshot is never persisted anywhere by this
+// controller — it lives only in memory for this call; Status stores only
+// the digest hash and the server's version id.
+func (r *Reconciler) runApply(ctx context.Context, cr *drift.SSOConfigDrift, running map[string]interface{}) *applyOutcome {
+	if strings.TrimSpace(cr.Spec.Apply.Reason) == "" {
+		return &applyOutcome{
+			state:   applyStateRejected,
+			failed:  true,
+			message: "apply rejected: spec.apply.reason is required when spec.apply.enabled is true",
+		}
+	}
+	digest, err := snapshotDigest(running)
+	if err != nil {
+		return &applyOutcome{state: applyStateFailed, failed: true, message: fmt.Sprintf("apply failed: compute snapshot digest: %s", err)}
+	}
+	tokenB, err := r.resolveBearer(ctx, cr.Namespace, cr.Spec.ClusterB.BearerSecretRef)
+	if err != nil {
+		return &applyOutcome{state: applyStateFailed, failed: true, message: fmt.Sprintf("cluster B secret lookup failed: %s", err)}
+	}
+	resp, status, err := postConfigApply(ctx, r.httpClient(), cr.Spec.ClusterB.BaseURL, tokenB, digest, cr.Spec.Apply.Reason, running)
+	if err != nil {
+		out := &applyOutcome{failed: true, digest: digest, message: fmt.Sprintf("cluster B apply request failed: %s", err)}
+		switch status {
+		case http.StatusConflict:
+			out.state = applyStateConflict
+		case http.StatusBadRequest:
+			out.state = applyStateRejected
+		default:
+			out.state = applyStateFailed
+		}
+		return out
+	}
+	if resp.Version == "" {
+		return &applyOutcome{state: applyStateFailed, failed: true, digest: digest, message: "cluster B apply response failed structural validation: missing version"}
+	}
+	return &applyOutcome{
+		state:     applyStateApplied,
+		versionID: resp.Version,
+		digest:    digest,
+		message:   fmt.Sprintf("applied: baseline version %s recorded on cluster B", resp.Version),
+	}
+}
+
+// applyApplyResult copies an applyOutcome into Status.Apply. Called only
+// when an apply was attempted; otherwise ApplyStatus stays empty (omitted
+// from the CR, so report-only CRs never grow an apply field).
+func applyApplyResult(cr *drift.SSOConfigDrift, out *applyOutcome) {
+	cr.Status.Apply = drift.ApplyStatus{
+		State:         out.state,
+		LastAttemptAt: metav1.Now(),
+		VersionID:     out.versionID,
+		Digest:        out.digest,
+		Message:       out.message,
+	}
+}
+
+// consumeApproval deletes the one-shot approval annotation after a
+// successful apply. A metadata-only JSON merge patch on a DeepCopy — never
+// a spec mutation, no Generation bump, no reconcile loop — whose diff (the
+// annotation removal only, resourceVersion unchanged) is unconditional, so
+// it cannot conflict with the Status().Update that just ran. The original
+// cr is left untouched: a main-resource write must not clobber the status
+// that Status().Update already persisted (status-subresource semantics).
+func (r *Reconciler) consumeApproval(ctx context.Context, cr *drift.SSOConfigDrift) error {
+	if cr.Annotations == nil {
+		return nil
+	}
+	if _, ok := cr.Annotations[approvalAnnotationKey]; !ok {
+		return nil
+	}
+	patched := cr.DeepCopy()
+	delete(patched.Annotations, approvalAnnotationKey)
+	return r.Patch(ctx, patched, client.MergeFrom(cr))
+}
+
+// snapshotDigest computes the canonical sha256 hex digest of a config
+// snapshot — MUST stay byte-identical to platform/configaudit.Digest
+// (sorted-key encoding/json marshal, then sha256, then hex): the server
+// recomputes the same digest over the submitted snapshot and compares
+// byte-wise (split-brain guard, config-apply-mode.md Decision 4). Byte
+// identity is pinned by a known-answer test — this module cannot import
+// platform/configaudit without dragging otelhttp transitives into its
+// go.sum (design doc Decision 6).
+func snapshotDigest(snapshot map[string]interface{}) (string, error) {
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // summarize builds the human-readable Status.Message for a successful
@@ -225,8 +423,11 @@ func requeueInterval(cr *drift.SSOConfigDrift, failed bool) time.Duration {
 // objects only — Secret changes deliberately do NOT trigger a reconcile
 // (a rotated token takes effect on the next poll tick, not instantly; wiring
 // a Secret watch would mean indexing every SSOConfigDrift's two
-// SecretKeySelectors, a complexity this read-only reporting feature does
-// not warrant).
+// SecretKeySelectors, a complexity this reporting feature does not
+// warrant). Annotation-only changes (the apply or rollback approval) deliberately do
+// NOT trigger a reconcile either: that is the apply-mode throttle — an
+// approval takes effect on the next scheduled poll, at most once per
+// approval (see docs/design/operator-config-apply.md Decision 2).
 //
 // GenerationChangedPredicate is REQUIRED, not an optimization: every
 // Reconcile ends with r.Status().Update, and controller-runtime's default

@@ -12,6 +12,8 @@ permissions:
   contents: write     # creates the GitHub Release and uploads archives
   id-token: write     # OIDC token for keyless cosign signing
   packages: write     # pushes release images to GHCR
+  attestations: write # publishes signed SLSA provenance for release archives
+  artifact-metadata: write # creates artifact metadata for attestations
 
 jobs:
   release:
@@ -58,3 +60,12 @@ jobs:
         env:
           # GITHUB_TOKEN creates the release, uploads assets, and pushes images.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # GoReleaser writes the SHA-256 subject list after all archives are
+      # built. Attest every release subject from that list with GitHub's
+      # Sigstore-backed SLSA provenance action; this is intentionally after
+      # GoReleaser so the attestation binds the exact published bytes.
+      - name: Attest release archives with SLSA provenance
+        uses: actions/attest@v4
+        with:
+          subject-checksums: dist/checksums.txt

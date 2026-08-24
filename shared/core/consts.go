@@ -464,12 +464,15 @@ const (
 	// redacted (secret/password/dsn/token/key-shaped fields become "***").
 	// Mounted only when a config-snapshot source is wired
 	// (sso.WithConfigSnapshots); the history endpoint additionally requires
-	// sso.WithConfigAuditStore.
+	// sso.WithConfigAuditStore. The apply/rollback pair below is the
+	// declared peer-config baseline write path (admin:write, ?approve=true).
 	PathAdminConfigRunning     = "/admin/config/running"
 	PathAdminConfigApplied     = "/admin/config/applied"
 	PathAdminConfigDiff        = "/admin/config/diff"
 	PathAdminConfigHistory     = "/admin/config/history"
 	PathAdminConfigClusterDiff = "/admin/config/cluster-diff" // POST, admin:read override; see platform/configaudit.HandleClusterDiff
+	PathAdminConfigApply       = "/admin/config/apply"        // POST admin:write; see platform/configaudit.HandleApply
+	PathAdminConfigRollback    = "/admin/config/rollback"     // POST admin:write; see platform/configaudit.HandleRollback
 
 	// Compliance-reporting admin surface (mounted by interfaces/admin's
 	// MountAdminSurface when its backing sources are wired). Relocated from

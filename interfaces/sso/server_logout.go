@@ -26,6 +26,11 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 		return
 	}
 	bcSubject, bcClientID, bcSID := s.captureBackchannelTarget(ctx, bearer)
+	logoutSessionID := req.SessionID
+	if logoutSessionID == "" {
+		logoutSessionID = bcSID
+	}
+	s.deactivatePermissionSession(ctx.Request().Context(), logoutSessionID)
 	revoked := s.revokeLogoutCredentials(ctx, req.SessionID, bearer)
 	s.maybeFanOutBackchannel(ctx, bcSubject, bcClientID, bcSID)
 	s.TriggerSessionHubLogout(ctx.Request().Context(), bcSubject, bcSID)
@@ -374,6 +379,9 @@ func (s *Server) createSession(ctx HandlerContext, userID, clientID, tenantID st
 		}
 	}
 	sess, err := s.createSessionRecord(ctx, rctx, userID, clientID, tenantID, scopes, authTime, devID)
+	if err == nil && sess != nil {
+		s.activatePermissionSession(rctx, userID, clientID, sess.ID)
+	}
 	if errors.Is(err, core.ErrQuotaExceeded) {
 		s.denySessionQuota(ctx, tenantID, userID)
 	}

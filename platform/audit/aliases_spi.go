@@ -47,6 +47,11 @@ const (
 	EventAdminChangeApproved                 = auditspi.EventAdminChangeApproved
 	EventAdminChangeProposed                 = auditspi.EventAdminChangeProposed
 	EventAdminChangeRejected                 = auditspi.EventAdminChangeRejected
+	EventAdminConfigApplied                  = auditspi.EventAdminConfigApplied
+	EventAdminConfigRolledBack               = auditspi.EventAdminConfigRolledBack
+	EventConfigCanaryStarted                 = auditspi.EventConfigCanaryStarted
+	EventConfigCanaryConfirmed               = auditspi.EventConfigCanaryConfirmed
+	EventConfigCanaryRolledBack              = auditspi.EventConfigCanaryRolledBack
 	EventAdminIPDenied                       = auditspi.EventAdminIPDenied
 	EventAdminWriteQuotaExceeded             = auditspi.EventAdminWriteQuotaExceeded
 	EventAdminDeviceSecretsRevoked           = auditspi.EventAdminDeviceSecretsRevoked
@@ -65,6 +70,8 @@ const (
 	EventAdminRoleRemoved                    = auditspi.EventAdminRoleRemoved
 	EventAdminRoleUnassigned                 = auditspi.EventAdminRoleUnassigned
 	EventAdminRoleUpdated                    = auditspi.EventAdminRoleUpdated
+	EventAdminResourceRegistered             = auditspi.EventAdminResourceRegistered
+	EventAdminResourceRemoved                = auditspi.EventAdminResourceRemoved
 	EventAdminSubjectErased                  = auditspi.EventAdminSubjectErased
 	EventAdminSubjectExported                = auditspi.EventAdminSubjectExported
 	EventAdminSigningKeyRotated              = auditspi.EventAdminSigningKeyRotated
@@ -102,6 +109,7 @@ const (
 	EventCIBAAuthRequest                     = auditspi.EventCIBAAuthRequest
 	EventCIBADenied                          = auditspi.EventCIBADenied
 	EventCIBAPingFailed                      = auditspi.EventCIBAPingFailed
+	EventCORSOriginBlocked                   = auditspi.EventCORSOriginBlocked
 	EventCallbackFailure                     = auditspi.EventCallbackFailure
 	EventClientAccess                        = auditspi.EventClientAccess
 	EventClientDeleted                       = auditspi.EventClientDeleted
@@ -162,6 +170,7 @@ const (
 	EventPasswordResetRequested              = auditspi.EventPasswordResetRequested
 	EventPasswordWeak                        = auditspi.EventPasswordWeak
 	EventPermissionQuery                     = auditspi.EventPermissionQuery
+	EventPermissionCheck                     = auditspi.EventPermissionCheck
 	EventRefreshRotationVelocityExceeded     = auditspi.EventRefreshRotationVelocityExceeded
 	EventRefreshTokenIssued                  = auditspi.EventRefreshTokenIssued
 	EventRefreshTokenReuse                   = auditspi.EventRefreshTokenReuse
@@ -196,6 +205,9 @@ const (
 	EventTokenRevoked                        = auditspi.EventTokenRevoked
 	EventWebAuthnAttestationDenied           = auditspi.EventWebAuthnAttestationDenied
 	EventWebAuthnRegistered                  = auditspi.EventWebAuthnRegistered
+	EventExternalWorkerLifecycleTransition   = auditspi.EventExternalWorkerLifecycleTransition
+	EventWebhookLifecycleTransition          = auditspi.EventWebhookLifecycleTransition
+	EventReBACLifecycleTransition            = auditspi.EventReBACLifecycleTransition
 	MaxQueryLimit                            = auditspi.MaxQueryLimit
 	OutcomeFailure                           = auditspi.OutcomeFailure
 	OutcomeSuccess                           = auditspi.OutcomeSuccess

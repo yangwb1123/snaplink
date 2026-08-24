@@ -1,19 +1,25 @@
-// Package auditverify reads audit events (from a JSON file or the live
-// /api/v1/audit/events API) and runs them through audit.VerifyChain
-// to confirm the tamper-evident hash chain is intact.
+// Package auditverify reads audit events (from a JSON file, the live
+// /api/v1/audit/events API, or a durable sqlite/postgres audit store via
+// --dsn) and runs them through audit.VerifyChain to confirm the
+// tamper-evident hash chain is intact.
 //
 // Usage:
 //
 //	sso-ctl audit-verify --from-file events.json
 //	sso-ctl audit-verify --from-url https://sso.example.com --bearer $ADMIN_TOKEN
+//	sso-ctl audit-verify --dsn <sqlite-dsn|postgres-dsn>
 //	sso-ctl audit-verify --from-file events.json --checkpoint cp.json [--notary-key notary.pub.hex]
 //	sso-ctl audit-verify --from-file window.json --anchor-hash <boundary-prev-hash>
 //
-// Either source is mutually exclusive. URL mode pages through
+// All sources are mutually exclusive. URL mode pages through
 // /api/v1/audit/events newest-first and reverses the buffer before
-// verifying — the chain runs oldest-first per audit.VerifyChain
+// verifying; DSN mode pages the durable store through the shared
+// auditstore reader — the chain runs oldest-first per audit.VerifyChain
 // semantics. The query API caps each page at
-// audit.MaxQueryLimit (1000); --page-size lets operators tune.
+// audit.MaxQueryLimit (1000); --page-size lets operators tune. --dsn
+// opens the store read-only (never migrates; a schema-version mismatch
+// is reported, exit 1) and --timeout-sec is not applicable to DSN mode
+// (no HTTP client is built).
 //
 // --checkpoint anchors verification to a signed notary attestation of
 // the chain head: instead of proving only internal consistency, the
@@ -65,6 +71,7 @@ func usage() {
 Usage:
   `+progName+` --from-file events.json
   `+progName+` --from-url https://sso.example.com --bearer $ADMIN_TOKEN
+  `+progName+` --dsn <sqlite-dsn|postgres-dsn>
 
 Flags:
 `)
@@ -78,6 +85,7 @@ Flags:
 type verifyOptions struct {
 	fromFile      string
 	fromURL       string
+	dsn           string
 	bearer        string
 	limit         int
 	pageSize      int
@@ -95,9 +103,10 @@ func parseFlags(args []string) verifyOptions {
 	fs := flag.NewFlagSet("sso-ctl audit-verify", flag.ExitOnError)
 	usageFlags = fs
 	fs.Usage = usage
-	fromFile := fs.String("from-file", "", "path to JSON array of audit events (mutually exclusive with --from-url)")
-	fromURL := fs.String("from-url", "", "base URL of the SSO server (mutually exclusive with --from-file)")
-	bearer := fs.String("bearer", "", "admin bearer token for the /api/v1/audit/events API (required with --from-url)")
+	fromFile := fs.String("from-file", "", "path to JSON array of audit events (mutually exclusive with --from-url and --dsn)")
+	fromURL := fs.String("from-url", "", "base URL of the SSO server (mutually exclusive with --from-file and --dsn)")
+	dsn := fs.String("dsn", "", "audit store DSN to read from (sqlite file DSN or postgres://|postgresql:// connection string; opened read-only, never migrated; mutually exclusive with --from-file and --from-url)")
+	bearer := fs.String("bearer", "", "admin bearer token for the /api/v1/audit/events API (required with --from-url; not applicable with --dsn)")
 	limit := fs.Int("limit", 10_000, "max events to load (0 = unlimited; prefer 0 for anchored runs)")
 	pageSize := fs.Int("page-size", 500, "URL-mode pagination batch size (caps at audit.MaxQueryLimit=1000)")
 	timeoutSec := fs.Int("timeout-sec", 30, "URL-mode HTTP timeout in seconds")
@@ -117,6 +126,7 @@ func parseFlags(args []string) verifyOptions {
 	return verifyOptions{
 		fromFile:      *fromFile,
 		fromURL:       *fromURL,
+		dsn:           *dsn,
 		bearer:        *bearer,
 		limit:         *limit,
 		pageSize:      *pageSize,
@@ -135,6 +145,9 @@ func parseFlags(args []string) verifyOptions {
 func loadEvents(o verifyOptions) ([]*audit.Event, bool, error) {
 	if o.fromFile != "" {
 		return readFromFile(o.fromFile, o.limit)
+	}
+	if o.dsn != "" {
+		return readFromStore(o.dsn, o.limit, o.pageSize)
 	}
 	if o.bearer == "" {
 		usageErr("--bearer is required with --from-url")
@@ -196,11 +209,33 @@ func checkMisuse(o verifyOptions) int {
 		usage()
 		return 2
 	}
-	if o.fromFile == "" && o.fromURL == "" {
-		usageErr("one of --from-file or --from-url is required")
+	if code := checkDSNMisuse(o); code != 0 {
+		return code
+	}
+	if o.fromFile == "" && o.fromURL == "" && o.dsn == "" {
+		usageErr("one of --from-file, --from-url, or --dsn is required")
 	}
 	if o.fromFile != "" && o.fromURL != "" {
 		usageErr("--from-file and --from-url are mutually exclusive")
+	}
+	return 0
+}
+
+// checkDSNMisuse validates the --dsn source rules: a DSN is exclusive
+// with the other sources and never combines with --bearer (DSN mode reads
+// the store directly, no HTTP client). Returns 2 + the banner for misuse;
+// 0 otherwise. Split out of checkMisuse to hold the function under the
+// complexity budget.
+func checkDSNMisuse(o verifyOptions) int {
+	if o.dsn != "" && (o.fromFile != "" || o.fromURL != "") {
+		fmt.Fprintf(os.Stderr, progName+": --dsn is mutually exclusive with --from-file and --from-url\n")
+		usage()
+		return 2
+	}
+	if o.dsn != "" && o.bearer != "" {
+		fmt.Fprintf(os.Stderr, progName+": --bearer is not applicable with --dsn (DSN mode reads the store directly)\n")
+		usage()
+		return 2
 	}
 	return 0
 }
@@ -243,7 +278,8 @@ func Run(args []string) int {
 
 	events, truncated, err := loadEvents(o)
 	if err != nil {
-		errorf("load events: %v", err)
+		fmt.Fprintf(os.Stderr, progName+": load events: %v\n", err)
+		return 1
 	}
 	if cp != nil {
 		return verifyAnchored(events, cp, o.notaryKey, o.limit, truncated)

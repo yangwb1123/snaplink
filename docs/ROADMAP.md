@@ -1,6 +1,6 @@
 # Roadmap
 
-> Current planning baseline, verified against the repository on 2026-07-28.
+> Current planning baseline, verified against the repository on 2026-08-20.
 > Older roadmap revisions remain available in Git history; they are not kept
 > inline because many of their gaps have since been implemented.
 
@@ -35,7 +35,7 @@ Delivered:
 - The compatibility policy (additive, semver-tracked, operationId
   verbatim naming) is committed in the registry itself.
 
-### 2. Produce auditable OIDC/FAPI conformance evidence — PARTIAL (headless run + archive landed; HTTPS topology run + OIDF listing remain)
+### 2. Produce auditable OIDC/FAPI conformance evidence — PARTIAL (headless + local HTTP/HTTPS topologies landed; FAPI local follow-up reached the query-suffix boundary; external official run + OIDF listing + archive upload strategy remain)
 
 The harness in `test/oidc-conformance/` is repaired and **headless-runnable
 as checked in**: the official suite image is pinned to a release tag
@@ -46,14 +46,43 @@ those response types). `./run-headless.sh` drives the whole run — build,
 DCR-register the suite's OIDC login client, signup admin user, create the
 Basic-certification discovery plan, run a module through headless Chrome
 (auto-fulfilling the JSON logins), and archive plan/log/info under
-`results/<commit>/`.
+`results/<commit>[-https]/`.
 
-Smoke evidence (HTTP-only local topology): `oidcc-server` completes with
-59 SUCCESS steps; the single failure is the expected
-`VerifyClientManagementCredentials` https-URI requirement.
+Smoke evidence (local topologies, suite `release-v5.2.1`, `oidcc-server`
+module of the Basic discovery+dynamic plan):
 
-Remaining: an official run against an externally reachable HTTPS issuer
-with archived artifacts, and an OpenID Foundation listing before any
+- HTTP issuer baseline trio (`results/34ea1d3d/`, `results/af3bc485/`,
+  `results/7400ba0c/`): **59 SUCCESS + 1 FAILURE** each; the sole failure
+  is the expected `VerifyClientManagementCredentials` https-URI
+  requirement.
+- HTTPS issuer behind the self-signed local proxy
+  (`results/7400ba0c-https/`): **60 SUCCESS + 0 FAILURE** — the https-only
+  client-management check now passes (`registration_client_uri` is
+  `https://sso-issuer:8181/...`).
+
+FAPI 2.0 SP follow-up evidence is also archived. The first executable run at
+`07832dda` reached the happy-flow module and produced **12 SUCCESS + 1
+FAILURE** at the suite's static-client callback lookup. The redirect-pattern
+follow-up at `1b2867c6` (HTTPS local topology) accepted the static clients,
+discovery/JWKS checks, the first per-test callback, PAR, token exchange,
+DPoP-protected UserInfo, callback `state`/`iss`, and TLS cipher checks; it
+recorded **156 SUCCESS + 1 FAILURE + 3 WARNING** before the suite's second
+client appended a query suffix to its callback. The current opt-in unlock is
+`redirect_uri_patterns`: HTTPS only, fixed host, and exactly one interior path
+segment wildcard (`https://host/test/*/callback`); query-bearing candidates
+remain deliberately rejected by the v1 grammar. See
+[redirect-uri-patterns](design/redirect-uri-patterns.md) and the detailed
+[conformance evidence](sso/oidc-conformance.md).
+
+The certification-readiness evidence kit (evidence table, reproduction
+manual, module coverage matrix, remaining blockers) is packaged in
+[oidc-conformance.md](sso/oidc-conformance.md).
+
+Remaining: decide and review any future query-bearing callback-pattern
+extension separately; then run the suite against an externally reachable
+HTTPS issuer (requires deployment; the local HTTPS topology is self-signed
+and non-reachable), submit through an OpenID Foundation account, and define an
+archive upload strategy for the release that claims the run — before any
 certification language is used.
 
 ### 4. Remove obsolete frontend configuration semantics — DONE
@@ -76,7 +105,7 @@ Delivered:
   first-run setup, CSP/cookie/proxy requirements) is published in
   [frontend-contract.md](frontend-contract.md).
 
-### 5. Isolate the SSO edition hierarchy — PARTIAL (core isolation landed; nested-module migration + release signing remain)
+### 5. Isolate the SSO edition hierarchy — PARTIAL (core isolation, nested-module host API, and bounded stock hot lifecycle landed; arbitrary third-party business routes remain deferred)
 
 The resolver, inherited profiles, module lock, compatibility builds and
 profile-specific entry points are implemented. The public hierarchy is
@@ -95,15 +124,16 @@ Delivered:
   the SessionManager, stamps SID into the code, and the exchange-minted
   id_token emits the sid claim. The minimal edition's parallel
   `opSessionStore` is gone — its cookie IS the canonical session ID
-  (see `cmd/sso-minimal/op_session.go` and the SID propagation test).
-- **Standard typed registrars outside cmd/**: `platform/registrar` is the
+  (see `internal/composition/op_session.go` and the SID propagation test).
+- **Standard typed registrars outside cmd/**: `platform/registry/typed` is the
   single generic typed registry; the SAML route registrar moved to the new
   `interfaces/ssoext` host API; `serverbuildsign`'s external-signer
   registry now builds on the same machinery.
 - **Physical isolation + evidence**: `python cli.py profiles evidence`
   builds every profile binary, asserts the declared
   `ops/build/profile-isolation.json` boundaries (the small editions must
-  not link the durable/admin/observability graph; the full edition must
+  not link the durable/admin/observability graph or each other's
+  composition root; the full edition must
   link it) and archives per-binary package lists, `go version -m` SBOMs,
   symbol counts and size deltas under `dist/profiles/`. Wired into
   `make ci`. Full-profile evidence (durable state, security controls,
@@ -113,21 +143,24 @@ Delivered:
   independent optional machine-to-machine cold module (conflicts with the
   stock server; not a profile foundation). Nested modules remain separate
   Go modules; the standard host API (`interfaces/ssoext` +
-  `platform/registrar`) is the migration target.
+  `platform/registry/typed`) is now the canonical integration boundary for the
+  nested protocol and infrastructure adapters.
+- **Nested-module migration**: the B9 physical split and module-boundary
+  migration is complete; each nested module owns its `go.mod` and no
+  `go.work` is used.
 
 Remaining:
 
-- Migrate LDAP/Kerberos/RADIUS/KMS nested modules to the standard host API
-  now that the boundary is stable (SAML — the registrar-bound module — is
-  already on it via `saml.Deps` embedding `ssoext.SAMLServerDeps`; the
-  others are config-wired infrastructure modules with no cmd registrar
-  dependency).
-- Add generation leases, static route slots and drain before classifying
-  any in-process capability as hot; installable third-party code stays out
-  of process.
-- Publish profile locks, binary SBOMs, signatures and provenance for
-  release artifacts (evidence bundles exist; release signing is the
-  release pipeline's job — see docs/RELEASE.md).
+- The reusable generation manager, lease accounting, fixed route slots,
+  readiness/drain lifecycle and an independent billing audit-relay proof now
+  exist. Stock `sso-server` wires the precompiled ReBAC `/authz/check` route
+  through a generation lease with readiness, graceful disable and bounded
+  transition audit, and wires the generic webhook exporter as a narrowly
+  scoped dynamic audit tap. Provenance admission and stock-server worker
+  configuration are complete for the narrow `audit.external_worker`
+  capability. Local workers require signed module/release/profile provenance
+  and remote workers require mTLS with optional SPIFFE checks; arbitrary
+  third-party business routes remain deliberately out of process/cold.
 
 ## P1 — production completeness
 
@@ -143,7 +176,7 @@ Delivered:
   `python cli.py sdk-surface check`); no route or edition metadata is
   duplicated in the generators.
 - Admin, self-service, SCIM, SSF and Federation operations intended for
-  public consumption are all covered (312 operations).
+  public consumption are all covered (316 operations).
 - The compatibility policy (additive, semver-tracked, operationId
   verbatim naming) is committed in the registry.
 

@@ -3,6 +3,7 @@ package caep
 import (
 	"encoding/json"
 
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
 	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
@@ -27,6 +28,14 @@ const (
 	// suspension that purged every client's tokens) notifies each of that
 	// tenant's RPs — and ONLY that tenant's RPs.
 	scopeTenant
+
+	// scopeUser — fan out to the clients of the user's OWN tenant(s): the
+	// event names an affected end-user (mappedEvent.userID), whose
+	// memberships are resolved via the optional TenantUserStore and each
+	// tenant's clients queried via TenantScopedClientStore — tenant events
+	// query only that tenant. Used for user-lifecycle transitions, where
+	// no single RP owns the affected credentials.
+	scopeUser
 )
 
 // mappedEvent is the result of mapping one internal audit event onto the
@@ -34,13 +43,14 @@ const (
 type mappedEvent struct {
 	scope scopeKind
 
-	// affectedClientID / tenantID are resolved from the audit event per
-	// scope. Exactly one is meaningful (the other is empty) depending on
-	// scope. The broadcaster uses these to look up receivers FRESH from
-	// the ClientStore — it never trusts a receiver address from anywhere
-	// but registered client metadata.
+	// affectedClientID / tenantID / userID are resolved from the audit
+	// event per scope. Exactly one is meaningful (the others are empty)
+	// depending on scope. The broadcaster uses these to look up receivers
+	// FRESH from the ClientStore — it never trusts a receiver address from
+	// anywhere but registered client metadata.
 	affectedClientID string
 	tenantID         string
+	userID           string
 
 	// subject is the affected end-user (carried into the SET `sub_id`).
 	subject string
@@ -74,6 +84,11 @@ var emptyEventPayload = json.RawMessage("{}")
 //     ADMIN's client, not the token's owning RP, so pushing to it would be
 //     a wrong-receiver leak. Absent that key the event does not broadcast;
 //     the reliable multi-RP-per-subject fan-out is v2).
+//   - admin_user_lifecycle_changed → account-disabled + session-revoked
+//     (non-active target state) or account-enabled (target ACTIVE),
+//     scopeUser: subject is the transition's target_user; receivers are
+//     the clients of the user's OWN tenant(s) — tenant events query only
+//     that tenant (decision: tenant dimension, see docs/design/lifecycle-caep-events.md).
 func mapAuditEvent(e *audit.Event) (mappedEvent, bool) {
 	if e == nil {
 		return mappedEvent{}, false
@@ -85,6 +100,8 @@ func mapAuditEvent(e *audit.Event) (mappedEvent, bool) {
 		return mapTenantTokensRevoked(e)
 	case audit.EventAdminTokenRevoked:
 		return mapAdminTokenRevoked(e)
+	case audit.EventAdminUserLifecycleChanged:
+		return mapLifecycleChanged(e)
 	default:
 		return mappedEvent{}, false
 	}
@@ -143,6 +160,37 @@ func mapAdminTokenRevoked(e *audit.Event) (mappedEvent, bool) {
 			EventURICAEPTokenRevoked: emptyEventPayload,
 		},
 	}, true
+}
+
+// mapLifecycleChanged maps a committed user-lifecycle transition to the
+// SSF signal offline-validating RPs need: a non-active target state
+// (INVITED/SUSPENDED/INACTIVE/ARCHIVED/PURGED) disables the account and
+// revokes sessions; re-entering ACTIVE re-enables it. The subject is the
+// transition's target user (the MetaTargetUser metadata every
+// RecordTransition stamps — the event's own ActorID is the admin/system
+// actor, never the affected end-user); the receivers are the clients of
+// the user's own tenant(s), resolved fresh at delivery time (scopeUser).
+// An event without a target user, or targeting an unrecognized state,
+// does NOT broadcast — the same conservative silence as an unscoped
+// admin_token_revoked.
+func mapLifecycleChanged(e *audit.Event) (mappedEvent, bool) {
+	userID := metaValue(e, userlifecycle.MetaTargetUser)
+	to := userlifecycle.State(metaValue(e, userlifecycle.MetaToState))
+	if userID == "" || !to.Valid() {
+		return mappedEvent{}, false
+	}
+	var events map[string]json.RawMessage
+	if userlifecycle.AllowsAuthentication(to) {
+		events = map[string]json.RawMessage{
+			EventURIRISCAccountEnabled: emptyEventPayload,
+		}
+	} else {
+		events = map[string]json.RawMessage{
+			EventURIRISCAccountDisabled: emptyEventPayload,
+			EventURICAEPSessionRevoked:  emptyEventPayload,
+		}
+	}
+	return mappedEvent{scope: scopeUser, userID: userID, subject: userID, events: events}, true
 }
 
 // metaValue reads a metadata key safely from a possibly-nil map.

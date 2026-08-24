@@ -1,0 +1,112 @@
+# Keep every public SDK on a real verification path. Registry-specific release
+# workflows add protected publishing after these same package gates.
+
+name: sdk-ci
+
+on:
+  push:
+    paths:
+      - "sdks/**"
+      - "docs/sdks/typescript/**"
+      - "docs/openapi.yaml"
+      - "cmd/gensdk/**"
+      - "ops/build/sdk-surface.json"
+      - "ops/build/capabilities.json"
+      - ".github/workflows/sdk-ci.yml"
+  pull_request:
+    paths:
+      - "sdks/**"
+      - "docs/sdks/typescript/**"
+      - "docs/openapi.yaml"
+      - "cmd/gensdk/**"
+      - "ops/build/sdk-surface.json"
+      - "ops/build/capabilities.json"
+      - ".github/workflows/sdk-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./sdks/go
+      - run: go vet ./sdks/go
+
+  python:
+    name: Python SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install packaging verifier
+        run: python -m pip install --upgrade build
+      - name: Run SDK tests
+        run: python -m unittest discover -s tests -v
+      - name: Build wheel and source distribution
+        run: python -m build --wheel --sdist --outdir "${RUNNER_TEMP}/snaplink-python-dist"
+
+  rust:
+    name: Rust SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run SDK tests
+        run: cargo test --locked --all-targets
+      - name: Validate crate packaging
+        run: cargo package --locked --allow-dirty
+
+  php:
+    name: PHP SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/php
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          tools: composer
+      - name: Validate Composer package
+        run: composer validate --strict --no-check-publish
+      - name: Run SDK tests
+        run: php tests/hosted_login_test.php
+
+  typescript:
+    name: TypeScript SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs/sdks/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs/sdks/typescript/package-lock.json
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: bun test *.test.mjs
+      - run: npm pack --dry-run

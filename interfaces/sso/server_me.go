@@ -6,6 +6,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/domains/identitylink"
 	"github.com/yangwb1123/snaplink/domains/tenant"
+	activationhttp "github.com/yangwb1123/snaplink/interfaces/activation"
 	"github.com/yangwb1123/snaplink/protocols/selfservice"
 
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -23,6 +24,13 @@ func (s *Server) IdentityLinkStore() identitylink.Store { return s.identityLinkS
 // identitylink.Resolve with — see the domains/identitylink package doc for
 // why the stock /auth/login handler does not invoke it itself.
 func (s *Server) IdentityMergePolicy() identitylink.MergePolicy { return s.identityMergePolicy }
+
+func (s *Server) mountActivationRoutes() {
+	if s.activationStore == nil {
+		return
+	}
+	_ = activationhttp.Mount(s.router, s.activationStore, s)
+}
 
 func (s *Server) meSubjectOrChallenge(ctx HandlerContext) (userID string, ok bool) {
 	claims, ok := s.meClaimsOrChallenge(ctx)

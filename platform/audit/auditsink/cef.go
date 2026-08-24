@@ -29,6 +29,7 @@ var cefEventNames = map[auditspi.EventType]string{
 	auditspi.EventCallbackFailure: "OAuth Callback Failure",
 	auditspi.EventClientAccess:    "Client Access",
 	auditspi.EventPermissionQuery: "Permission Query",
+	auditspi.EventPermissionCheck: "Permission Check",
 	// DCR
 	auditspi.EventClientRegistered: "Client Registered",
 	auditspi.EventClientUpdated:    "Client Updated",
@@ -36,6 +37,8 @@ var cefEventNames = map[auditspi.EventType]string{
 	// network policy
 	auditspi.EventNetPolicyApply:  "Network Policy Applied",
 	auditspi.EventNetPolicyDelete: "Network Policy Deleted",
+	// CORS
+	auditspi.EventCORSOriginBlocked: "CORS Origin Blocked",
 	// back-channel logout + partial revoke
 	auditspi.EventLogoutNotified:       "Back-Channel Logout Notified",
 	auditspi.EventPartialRevokeFailure: "Partial Token Revoke Failure",
@@ -126,6 +129,8 @@ var cefEventNames = map[auditspi.EventType]string{
 	auditspi.EventAdminRoleAssigned:               "Admin: Role Assigned",
 	auditspi.EventAdminRoleUnassigned:             "Admin: Role Unassigned",
 	auditspi.EventAdminMenusUpdated:               "Admin: Menus Updated",
+	auditspi.EventAdminResourceRegistered:         "Admin: Resource Registered",
+	auditspi.EventAdminResourceRemoved:            "Admin: Resource Removed",
 	auditspi.EventAdminTenantCreated:              "Admin: Tenant Created",
 	auditspi.EventAdminTenantUpdated:              "Admin: Tenant Updated",
 	auditspi.EventAdminTenantDeleted:              "Admin: Tenant Deleted",

@@ -98,6 +98,7 @@ var (
 	BindParamsFormOnly           = oauthwire.BindParamsFormOnly
 	ErrFormOnly                  = oauthwire.ErrFormOnly
 	BearerToken                  = oauthwire.BearerToken
+	ResourceToken                = oauthwire.ResourceToken
 	BasicClientCreds             = oauthwire.BasicClientCreds
 	IsSecureRedirectURI          = oauthwire.IsSecureRedirectURI
 	IsValidPKCEMethod            = oauthwire.IsValidPKCEMethod
@@ -125,3 +126,5 @@ var (
 	RequestedACRFromClaims       = oauthvalidate.RequestedACRFromClaims
 	IsValidResponseMode          = oauthvalidate.IsValidResponseMode
 )
+
+var ValidateAuthorizationDetailsCatalog = oauthvalidate.ValidateAuthorizationDetailsCatalog

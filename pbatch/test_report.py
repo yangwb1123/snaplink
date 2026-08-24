@@ -64,7 +64,7 @@ def test_report_main(argv: Optional[list] = None) -> int:
         prog="pi-batch.py test-report",
         description="测试分类报告（Unit/Contract/Property/Scenario/Chaos）")
     parser.add_argument("--json", action="store_true")
-    args = parser.parse_args(argv)
+    args = parser.parse_args([] if argv is None else argv)
     report = classify_tests()
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -78,3 +78,9 @@ def test_report_main(argv: Optional[list] = None) -> int:
             print(f"  {category:<10} {report['categories'][category]}")
         print("过滤运行: pytest tests/ -m scenario -q")
     raise SystemExit(0)
+
+
+# The command module is intentionally named test_report.py, but its public
+# dispatcher is not a pytest test. Keep CLI exit semantics without collecting
+# it as a test when the repository-wide suite scans this module.
+test_report_main.__test__ = False

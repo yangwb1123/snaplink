@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"strings"
 
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/yangwb1123/snaplink/config"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/cryptosigner"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/metrics"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
@@ -116,4 +119,46 @@ func buildRSASigningIssuer(alg string, srv config.ServerConfig, extSigner crypto
 		return nil, "", nil, serr
 	}
 	return iss, signingAlg, extSigner, nil
+}
+
+// BuildIDTokenAlgOptions wires the additional per-client id_token signing
+// keys (config keys.id_token_algs) as sso.Option: for each wired alg it
+// constructs a DEDICATED signing issuer and registers it BOTH via
+// sso.WithTokenIssuer (the per-client-alg design requires this — the
+// issuer's public key lands in the aggregated /.well-known/jwks.json and
+// validateAnyToken can verify id_token hints it signs at silent renewal /
+// end_session) and via sso.WithIDTokenIssuerAlg (clients declaring
+// id_token_signed_response_alg resolve to it). This is the config-facing
+// form of the SDK option and the product-level FAPI 2.0 conformance unblock:
+// a plain-OIDC RS256 login client can coexist with ES256/PS256 FAPI clients
+// on one issuer.
+//
+// The strategy name mirrors the design's test convention (jwt-<alg>); the
+// primary "jwt" strategy is untouched, so default issuance stays
+// byte-identical when no client declares the field. FIPS + external-signer
+// semantics are inherited from the primary keys.signing block (the boot gate
+// in config.validateIDTokenAlgs already rejected a duplicate of the primary
+// alg). Appends to opts; returns opts unchanged when no id_token_algs are
+// configured.
+func BuildIDTokenAlgOptions(opts []sso.Option, cfg *config.Config, rdb goredis.Cmdable, m *metrics.Metrics, logger spi.Logger) ([]sso.Option, error) {
+	for _, algCfg := range cfg.Keys.IDTokenAlgs {
+		iss, algName, extSigner, err := BuildSigningIssuer(config.SigningConfig{
+			Alg:             algCfg.Alg,
+			KeyFile:         algCfg.KeyFile,
+			External:        algCfg.External,
+			FIPSMode:        cfg.Keys.Signing.FIPSMode,
+			FIPSAllowedAlgs: cfg.Keys.Signing.FIPSAllowedAlgs,
+		}, cfg.Server, rdb, m, logger)
+		if err != nil {
+			return nil, fmt.Errorf("keys.id_token_algs %q: %w", algCfg.Alg, err)
+		}
+		strategy := "jwt-" + strings.ToLower(algName)
+		opts = append(opts,
+			sso.WithTokenIssuer(strategy, iss),
+			sso.WithIDTokenIssuerAlg(algName, iss),
+		)
+		logger.Info("additional id_token signing issuer configured", "alg", algName, "strategy", strategy)
+		opts = AppendReadyCheck(opts, strategy+"-external-signer", extSigner)
+	}
+	return opts, nil
 }

@@ -22,6 +22,8 @@ GoReleaser currently defines:
 - SHA-256 checksums
 - one SPDX-JSON SBOM per archive
 - keyless Cosign signatures for archives and container images
+- GitHub Artifact Attestations containing signed SLSA build provenance for the
+  archive subjects listed in `dist/checksums.txt`
 
 The normal `python cli.py build` engineering gate builds only `sso-server` and
 `sso-ctl`; `make release-snapshot` is the check for the complete GoReleaser
@@ -60,8 +62,10 @@ The resulting first version lines are
 `snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, and
 `snaplink-v1.1.1.full`; billing reports `snaplink-billing v1.1.1`. Every
 version command also reports the UTC build time, full Git hash,
-dirty-source marker, and Go toolchain. `prototype` and `minimal` still share
-`cmd/sso-minimal` and a larger linked dependency graph. SKU release evidence
+dirty-source marker, and Go toolchain. `prototype` and `minimal` build from
+dedicated composition roots (`cmd/sso-prototype` / `cmd/sso-minimal`, sharing
+`internal/composition`) but still link a larger shared SDK dependency graph
+through `interfaces/sso`. SKU release evidence
 proves the target-specific runtime profile and canonical module-lock binding;
 it explicitly does not claim complete package-level physical dependency
 isolation for any SKU. A
@@ -69,8 +73,11 @@ module lock records cold capability selection, not runtime backend choice,
 feature-gate state, hot lifecycle support, or an SBOM. Follow
 [plugin-system.md](plugin-system.md).
 
-The release pipeline does not currently produce a SLSA provenance statement.
-Do not describe signatures/SBOMs as provenance.
+The SLSA provenance attestation is separate from the checksum, SBOM and
+Cosign signature. It is created by `.github/workflows/release.yml` after
+GoReleaser has produced `dist/checksums.txt`, so the attestation subjects are
+the exact release archive bytes. Local `make release-snapshot` runs do not have
+GitHub's attestation service and therefore cannot produce this hosted proof.
 
 ## 1. Prepare
 
@@ -155,6 +162,8 @@ hooks or an applicable repository signature policy to make a release pass.
 
 - Confirm every expected OS/architecture archive exists.
 - Verify `checksums.txt`, SBOMs and Cosign signatures.
+- Verify archive provenance with GitHub CLI, for example:
+  `gh attestation verify ./snaplink-<version>-linux-amd64.tar.gz -R <owner>/<repo>`.
 - For each public SKU archive, compare the binary's `modules --json` output
   with `evidence/profile-inventory.json` on a native target and confirm its
   lock digest matches `evidence/modules.lock.json` and

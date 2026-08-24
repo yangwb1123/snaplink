@@ -29,4 +29,17 @@ func TestSQLiteProvider_Conformance(t *testing.T) {
 			return p
 		},
 	}.Run(t)
+	permissionstest.ResourceConformanceSuite{
+		Factory: func(t *testing.T) permissions.ResourceProvider {
+			t.Helper()
+			dir := t.TempDir()
+			dsn := "file:" + filepath.Join(dir, "resources.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
+			p, err := permsqlite.New(dsn)
+			if err != nil {
+				t.Fatalf("permsqlite.New: %v", err)
+			}
+			t.Cleanup(func() { _ = p.Close() })
+			return p
+		},
+	}.Run(t)
 }

@@ -77,7 +77,7 @@ func main() {
 func buildServerOptions(cfg *config.Config) ([]sso.Option, error) {
 	opts := append(cfg.ServerOptions(),
 		sso.WithRouter(sso.NewStdRouter()),
-		sso.WithTracingMiddleware(),
+		sso.WithTracing("basic"),
 		// EdDSA JWT: real 3-segment header.payload.sig token that an upstream
 		// gateway (lua-resty-jwt etc.) can verify locally via /.well-known/jwks.json.
 		sso.WithTokenIssuer(sso.TokenStrategyJWT, defaultimpl.NewEd25519JWTIssuer(

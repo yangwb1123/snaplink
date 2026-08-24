@@ -13,7 +13,9 @@
 package passphrase
 
 import (
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +32,12 @@ const (
 	// kdfVersion stamps the KDF wire format. Bumped if the KDF or AEAD
 	// choice changes; readers refuse unknown versions.
 	kdfVersion = 1
+
+	// kdfVersionDerived stamps a PURPOSE-DERIVED envelope (see
+	// [Sealer.DeriveSealer]): same params shape, but the AEAD key is
+	// HKDF(purpose) over the argon2id output rather than the raw
+	// derivation. Distinct version so the base Open never mis-derives.
+	kdfVersionDerived = 2
 )
 
 // KDFParams are the argon2id tunables. The defaults below are a sane
@@ -171,5 +179,120 @@ func wipe(b []byte) {
 	}
 }
 
+// DeriveSealer implements the optional [snapshot.PurposeSealer]
+// capability. The derived sealer's key is HKDF-SHA256(info=purpose) over
+// the argon2id KDF OUTPUT — not the raw passphrase — for two reasons:
+// the KDF hardening applies before any purpose derivation, and two nodes
+// with different passphrases still derive different keys (they can never
+// open each other's envelopes). The derived envelope carries its OWN
+// salt in Params, so two nodes with the SAME passphrase derive the same
+// key and cross-node restore works.
+func (s *Sealer) DeriveSealer(purpose string) (snapshot.Sealer, error) {
+	if len(s.Passphrase) == 0 {
+		return nil, errors.New("snapshot/passphrase: passphrase required")
+	}
+	return &derivedSealer{base: s, purpose: purpose}, nil
+}
+
+// derivedSealer is the purpose-separated peer of [Sealer]: the same
+// argon2id derivation, then HKDF(info=purpose) over the KDF output.
+// Envelope params are version 2 (see kdfVersionDerived) with the derived
+// sealer's own salt + nonce.
+type derivedSealer struct {
+	base    *Sealer
+	purpose string
+}
+
+func (d *derivedSealer) Algorithm() string { return snapshot.EncryptionPassphrase }
+
+func (d *derivedSealer) Seal(plain []byte) ([]byte, []byte, error) {
+	if len(d.base.Passphrase) == 0 {
+		return nil, nil, errors.New("snapshot/passphrase: passphrase required")
+	}
+	kdf := d.base.effectiveKDF()
+	salt := make([]byte, saltLen)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, nil, fmt.Errorf("snapshot/passphrase: salt: %w", err)
+	}
+	key, err := d.deriveKey(kdf, salt)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer wipe(key)
+
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("snapshot/passphrase: aead init: %w", err)
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, nil, fmt.Errorf("snapshot/passphrase: nonce: %w", err)
+	}
+	cipher := aead.Seal(nil, nonce, plain, nil)
+	params, err := json.Marshal(envelopeParams{
+		Version: kdfVersionDerived,
+		KDF:     kdf,
+		Salt:    salt,
+		Nonce:   nonce,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("snapshot/passphrase: marshal params: %w", err)
+	}
+	return cipher, params, nil
+}
+
+func (d *derivedSealer) Open(cipher []byte, paramsRaw []byte) ([]byte, error) {
+	if len(d.base.Passphrase) == 0 {
+		return nil, errors.New("snapshot/passphrase: passphrase required")
+	}
+	if len(paramsRaw) == 0 {
+		return nil, errors.New("snapshot/passphrase: missing encryption params")
+	}
+	var p envelopeParams
+	if err := json.Unmarshal(paramsRaw, &p); err != nil {
+		return nil, fmt.Errorf("snapshot/passphrase: unmarshal params: %w", err)
+	}
+	if p.Version != kdfVersionDerived {
+		return nil, fmt.Errorf("snapshot/passphrase: unsupported derived KDF version %d", p.Version)
+	}
+	if len(p.Salt) != saltLen {
+		return nil, fmt.Errorf("snapshot/passphrase: bad salt length %d", len(p.Salt))
+	}
+	if p.KDF.Time == 0 || p.KDF.Memory == 0 || p.KDF.Threads == 0 {
+		return nil, errors.New("snapshot/passphrase: zero KDF param")
+	}
+	key, err := d.deriveKey(p.KDF, p.Salt)
+	if err != nil {
+		return nil, err
+	}
+	defer wipe(key)
+
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot/passphrase: aead init: %w", err)
+	}
+	if len(p.Nonce) != aead.NonceSize() {
+		return nil, fmt.Errorf("snapshot/passphrase: bad nonce length %d", len(p.Nonce))
+	}
+	plain, err := aead.Open(nil, p.Nonce, cipher, nil)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot/passphrase: open: %w", err)
+	}
+	return plain, nil
+}
+
+// deriveKey runs the argon2id KDF and then HKDF-SHA256 with info=purpose
+// over the KDF output.
+func (d *derivedSealer) deriveKey(kdf KDFParams, salt []byte) ([]byte, error) {
+	master := argon2.IDKey(d.base.Passphrase, salt, kdf.Time, kdf.Memory, kdf.Threads, chacha20poly1305.KeySize)
+	defer wipe(master)
+	key, err := hkdf.Key(sha256.New, master, nil, d.purpose, chacha20poly1305.KeySize)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot/passphrase: derive purpose key: %w", err)
+	}
+	return key, nil
+}
+
 // Compile-time interface check.
 var _ snapshot.Sealer = (*Sealer)(nil)
+var _ snapshot.PurposeSealer = (*Sealer)(nil)

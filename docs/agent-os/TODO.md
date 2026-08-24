@@ -3,15 +3,22 @@
 This is not the product backlog. Product scope lives in
 `docs/feature-matrix.md`, `docs/deferred-backlog.md`, and `docs/ROADMAP.md`.
 
-Open tooling work:
+The previously tracked tooling gaps are closed:
 
-1. Reconcile the Python and committed Go immediate-subdirectory thresholds.
-2. Make coverage propagate test failures, match full package paths, and reject
-   unexpected `SKIP` results.
-3. Make every reported `accept` criterion blocking or label it diagnostic.
-4. Add a count latch or equivalent review enforcement for `layerExemptions`.
-5. Make the AI staged runner persist output and explicitly aggregate selected
-   upstream findings before supporting multi-stage execution.
+1. Python and committed Go directory fan-out use the same 15-subdirectory
+   ceiling and the same out-of-scope tree handling; the Go exemption count is
+   still ratcheted.
+2. Coverage propagates `go test` failures, resolves configured aliases to full
+   import paths, runs each package target directly, and treats missing output
+   as a failure rather than `SKIP`.
+3. `accept` makes build/security/contract/coverage criteria blocking and labels
+   repository root policy debt and pre-existing architecture debt as
+   `DIAGNOSTIC`.
+4. `layerExemptions` has a frozen count latch and stale-entry enforcement.
+5. Both staged runners persist validated artifacts before exposing them to
+   downstream stages; `from_outputs` accepts an ordered list, and aggregate
+   joins include only those selected upstream stages. Regression tests cover
+   resume and selected DAG joins.
 
-Do not add exemptions, weaken a committed gate, or treat a false-green report
-as release evidence while resolving these items.
+Keep these gates fail-closed. Do not add exemptions or weaken a committed
+threshold when future work touches the same tooling.

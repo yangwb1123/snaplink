@@ -28,6 +28,31 @@ func TestInit_NoEndpoint_NoOp(t *testing.T) {
 	}
 }
 
+// TestActive_ReflectsProviderRegistration locks the boot-warning seam
+// (cmd/sso-server initTracing): Active is false after a no-op Init (no
+// endpoint) and true after Init installs a real exporter-backed provider.
+func TestActive_ReflectsProviderRegistration(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	noopShutdown, err := tracing.Init(context.Background())
+	if err != nil {
+		t.Fatalf("Init (no-op): %v", err)
+	}
+	_ = noopShutdown(context.Background())
+	if tracing.Active() {
+		t.Fatal("Active() = true after a no-op Init; want false (no provider registered)")
+	}
+
+	exp := tracetest.NewInMemoryExporter()
+	shutdown, err := tracing.Init(context.Background(), tracing.WithExporter(exp))
+	if err != nil {
+		t.Fatalf("Init (exporter): %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+	if !tracing.Active() {
+		t.Fatal("Active() = false after Init with an exporter; want true")
+	}
+}
+
 func TestInit_WithExporter_RegistersProvider(t *testing.T) {
 	exp := tracetest.NewInMemoryExporter()
 	shutdown, err := tracing.Init(context.Background(),

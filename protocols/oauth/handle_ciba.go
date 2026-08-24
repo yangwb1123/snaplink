@@ -162,7 +162,18 @@ func authenticateCIBAClient(d CIBADeps, ctx core.HandlerContext, req *cibaReques
 		ctx.JSON(http.StatusForbidden, core.ErrorBody(core.ErrTenantMismatch))
 		return nil, false
 	}
-	if req.ClientAssertion == "" {
+	// Same client-auth contract as authenticatePARClient: skip secret
+	// validation when a JWT assertion proved identity (RFC 7521 §4.2) or
+	// the client is public (token_endpoint_auth_method="none"); every
+	// other client MUST authenticate, and an empty presented secret is
+	// rejected even against an empty stored secret (the fresh-node-restore
+	// state — otherwise knowing a client_id would suffice to drive the
+	// CIBA flow as that client).
+	if req.ClientAssertion == "" && client.TokenEndpointAuthMethod != "none" {
+		if req.ClientSecret == "" {
+			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
+			return nil, false
+		}
 		if err := clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret); err != nil {
 			// RFC 6749 §5.2: client-auth failure is invalid_client (same code
 			// as unknown-client above — oracle-safe, no client_id enumeration).

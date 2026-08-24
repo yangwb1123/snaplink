@@ -153,15 +153,17 @@ func TestAdminGatewayE2E_GatewayFamiliesReachRealGateway(t *testing.T) {
 	srv, bearer := buildAdminGatewayE2EServer(t)
 
 	getCases := []string{
-		"/api/v1/admin/clients",                   // clients
-		"/api/v1/admin/domains",                   // domains
-		"/api/v1/admin/keys",                      // keys
-		"/api/v1/admin/permissions/web-app/roles", // permissions
-		"/api/v1/admin/releases",                  // releases
-		"/api/v1/admin/snapshots",                 // snapshots
-		"/api/v1/admin/tenants",                   // tenants
-		"/api/v1/admin/tokens/sessions",           // tokens/sessions
-		"/api/v1/admin/users",                     // users (gateway's federated/external-identity shape)
+		"/api/v1/admin/clients",                            // clients
+		"/api/v1/admin/domains",                            // domains
+		"/api/v1/admin/keys",                               // keys
+		"/api/v1/admin/permissions/web-app/roles",          // permissions
+		"/api/v1/admin/permissions/web-app/sod/conflicts",  // SSoD
+		"/api/v1/admin/permissions/web-app/dsod/conflicts", // DSoD
+		"/api/v1/admin/releases",                           // releases
+		"/api/v1/admin/snapshots",                          // snapshots
+		"/api/v1/admin/tenants",                            // tenants
+		"/api/v1/admin/tokens/sessions",                    // tokens/sessions
+		"/api/v1/admin/users",                              // users (gateway's federated/external-identity shape)
 	}
 	for _, p := range getCases {
 		// A clean 200 (verified empirically — every case in this list
@@ -182,6 +184,15 @@ func TestAdminGatewayE2E_GatewayFamiliesReachRealGateway(t *testing.T) {
 		code, body := adminAuthedRequest(t, srv, http.MethodPost, p, bearer, "{}", "application/json")
 		if code == http.StatusNotFound {
 			t.Errorf("POST %s: status=404 (gateway route not reached); body=%s", p, body)
+		}
+	}
+	for _, p := range []string{
+		"/api/v1/admin/permissions/web-app/sod/conflicts",
+		"/api/v1/admin/permissions/web-app/dsod/conflicts",
+	} {
+		code, body := adminAuthedRequest(t, srv, http.MethodPut, p, bearer, `{"conflict_sets":[]}`, "application/json")
+		if code == http.StatusNotFound {
+			t.Errorf("PUT %s: status=404 (gateway route not reached); body=%s", p, body)
 		}
 	}
 }

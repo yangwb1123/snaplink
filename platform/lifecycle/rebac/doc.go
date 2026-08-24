@@ -21,15 +21,13 @@
 //
 // None of the three consult each other. rebac has zero dependency on
 // domains/permissions or domains/conditionalaccess, and neither of those
-// packages depends on rebac. An operator who needs resource-instance-level
-// authorization consults [Engine.Check] from their OWN integration code (a
-// custom HTTP handler, a gRPC interceptor, a business-logic layer) the same
-// way they'd consult a Provider or the conditional-access Store — this
-// package does not wire itself into /auth/login or any built-in gate. The one
-// exception is a single, explicitly opt-in, read-only admin endpoint (GET
-// /api/v1/admin/rebac/check, mounted only when [sso.WithRebacEngine] is
-// wired) for operational debugging — "why does/doesn't alice have viewer on
-// document:42" — never a live authorization decision path.
+// packages depends on rebac. Hosts can consult [Engine.Check] from their own
+// integration code (a custom HTTP handler, a gRPC interceptor, or a business
+// logic layer). The SDK also exposes the opt-in FGA product routes: tuple
+// management stays a normal cold route, while /authz/check is a fixed,
+// lifecycle-managed business route when the standard router is in use. The
+// separately gated GET /api/v1/admin/rebac/check remains operational debug
+// only and is never a live authorization decision path.
 //
 // # Tuple model
 //

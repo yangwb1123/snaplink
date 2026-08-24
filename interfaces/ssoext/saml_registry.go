@@ -1,10 +1,17 @@
 // Package ssoext is the operator-extension host API for the stock server:
 // the typed, name-addressed registrars a forked binary uses to plug in
-// surfaces whose heavy dependencies (SAML/XML/DSig, vendor KMS SDKs) must
-// stay out of the core module's go.mod. The registrars themselves live
-// here — OUTSIDE cmd — so a fork imports the types instead of
-// re-declaring them, and the generic machinery is the single standard
-// implementation in platform/registrar.
+// surfaces whose heavy dependencies (SAML/XML/DSig, the LDAP/Kerberos/RADIUS
+// stacks, vendor KMS SDKs) must stay out of the core module's go.mod. The
+// registrars themselves live here — OUTSIDE cmd — so a fork imports the types
+// instead of re-declaring them, and the generic machinery is the single
+// standard implementation in platform/registry/typed. The cmd-owned SAML registry
+// is consumed by mountSAMLHandler (saml.handler); the external-signer
+// registry (ExternalSignerRegistry, the canonical registrar behind
+// keys.signing.external) is consumed by serverbuildsign, which delegates to
+// it so the KMS family stays one name space; the authenticator-family
+// registries (LDAP/Kerberos/RADIUS) are consumed by the operator's own boot
+// composition, because stock config deliberately has no ldap/kerberos/radius
+// sections — those surfaces are fork-binary integrations only.
 //
 // Registration is process-local and name-addressed by configuration
 // (saml.handler selects a factory by name at boot). It is the in-process
@@ -20,7 +27,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
-	"github.com/yangwb1123/snaplink/platform/registrar"
+	"github.com/yangwb1123/snaplink/platform/registry/typed"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
@@ -117,7 +124,7 @@ type SAMLHandlerFactory func(ctx context.Context, deps SAMLServerDeps) (*SAMLHan
 // forked binary, not this module — the operator calls RegisterSAMLHandlers
 // from their main before running the server, then selects the factory by
 // name via saml.handler. The generic machinery is the standard
-// platform/registrar implementation (same shape as
+// platform/registry/typed implementation (same shape as
 // serverbuildsign.RegisterExternalSigner). Exported so tests can clean up
 // between runs via Unregister.
 var SAMLHandlerRegistry = registrar.New[SAMLHandlerFactory]()

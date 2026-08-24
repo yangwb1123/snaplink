@@ -56,8 +56,8 @@ func pingDBSource(name string, store pingDBStore) sso.StorageHealthSource {
 
 // twoRealStores spins up two real SQLite stores (clients + permissions) on
 // distinct in-memory DBs and returns their storage-health sources plus a
-// cleanup. Each store's migrate namespace ("clients" / "permissions") sits at
-// the baseline version 1.
+// cleanup. Each store's migrate namespace ("clients" / "permissions") is
+// checked against its current declared migration version.
 func twoRealStores(t *testing.T) []sso.StorageHealthSource {
 	t.Helper()
 	clients, err := sqlitestores.NewClientStore(memDSN("clients"))
@@ -117,8 +117,8 @@ func storeByName(t *testing.T, body map[string]any) map[string]map[string]any {
 }
 
 // TestStorageHealth_ReportsReachableWithSchema wires two real SQLite stores
-// and asserts the report shows both reachable with their baseline (v1)
-// migrate namespaces.
+// and asserts the report shows both reachable with their current migration
+// namespaces.
 func TestStorageHealth_ReportsReachableWithSchema(t *testing.T) {
 	srv := sso.NewServer(sso.WithStorageHealth(twoRealStores(t)...))
 	code, body := storageHealthGET(t, srv)
@@ -138,14 +138,16 @@ func TestStorageHealth_ReportsReachableWithSchema(t *testing.T) {
 		t.Errorf("clients reachable = %v, want true", clients["reachable"])
 	}
 	sv, _ := clients["schema_versions"].(map[string]any)
-	// clients sits at v6: v2 added the security-load-bearing fields (JWKS /
+	// clients sits at v7: v2 added the security-load-bearing fields (JWKS /
 	// AllowedResources / AllowedRequestURIs / RegistrationAccessToken / JWE
 	// alg-enc / Federation / PostLogoutRedirectURIs); v3 added
 	// secret_rotated_at backing scheduled client-secret rotation; v4 added
 	// client_trust_score / client_trust_set_at backing OAuth client trust
-	// scoring; v5 added previous-secret overlap; v6 added secret expiry.
-	if v, _ := sv["clients"].(float64); int(v) != 6 {
-		t.Errorf("clients schema_versions[clients] = %v, want 6", sv)
+	// scoring; v5 added previous-secret overlap; v6 added secret expiry; v7
+	// added id_token_signed_response_alg (per-client id_token signing alg); v8
+	// added the opt-in redirect_uri_patterns allowlist extension.
+	if v, _ := sv["clients"].(float64); int(v) != 8 {
+		t.Errorf("clients schema_versions[clients] = %v, want 8", sv)
 	}
 	if _, ok := clients["ping_latency_ms"]; !ok {
 		t.Errorf("clients missing ping_latency_ms: %v", clients)
@@ -159,8 +161,9 @@ func TestStorageHealth_ReportsReachableWithSchema(t *testing.T) {
 		t.Errorf("permissions reachable = %v, want true", perms["reachable"])
 	}
 	psv, _ := perms["schema_versions"].(map[string]any)
-	if v, _ := psv["permissions"].(float64); int(v) != 1 {
-		t.Errorf("permissions schema_versions[permissions] = %v, want 1", psv)
+	wantPermissionsVersion := permsqlite.PermissionsMaxVersion()
+	if v, _ := psv["permissions"].(float64); int(v) != wantPermissionsVersion {
+		t.Errorf("permissions schema_versions[permissions] = %v, want %d", psv, wantPermissionsVersion)
 	}
 }
 

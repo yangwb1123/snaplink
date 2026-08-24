@@ -178,6 +178,9 @@ func adminGatewayResourcePaths() []string {
 		"/api/v1/admin/permissions/{client_id}/menus",
 		"/api/v1/admin/permissions/{client_id}/roles",
 		"/api/v1/admin/permissions/{client_id}/roles/{role_code}",
+		"/api/v1/admin/permissions/{client_id}/sod/conflicts",
+		"/api/v1/admin/permissions/{client_id}/dsod/conflicts",
+		"/api/v1/admin/permissions/{client_id}/sessions/{session_id}/roles",
 		// releases — proto/admin/v1/releases.proto. "{id}" also catches the
 		// grpc-gateway custom-verb shapes "{id}:pin"/"{id}:rollback" — see
 		// adminGatewayExactPaths' doc; do NOT add those separately (panics).

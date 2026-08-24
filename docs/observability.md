@@ -30,6 +30,7 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_token_revocations_propagated_total` | Counter | direction (published\|adopted) |
 | `sso_fapi_violations_total` | Counter | rule, mode |
 | `sso_ciba_ping_total` | Counter | outcome |
+| `sso_cors_blocked_total` | Counter | reason (`disallowed_origin`), preflight (`true`|`false`) |
 | `sso_caep_sets_total` | Counter | outcome (success\|failed\|dropped\|retried) |
 | `sso_refresh_rotation_velocity_exceeded_total` | Counter | — |
 | `sso_client_store_cache_total` | Counter | outcome (hit\|miss) |
@@ -49,6 +50,7 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_netpolicy_classifier_{up,reconnects_total}` | Gauge/Counter | — |
 | `sso_ssf_sets_received_total` | Counter | outcome |
 | `sso_conditional_access_decisions_total` | Counter | decision |
+| `sso_authz_checks_total` | Counter | decision (`allow`\|`deny`) |
 | `sso_token_policy_{evaluations,denials,renew_required}_total` | Counter | bounded policy outcome dimensions |
 | `sso_token_usage_{events,dropped}_total` / `sso_token_usage_tracked_buckets` | Counter/Gauge | bounded outcome / — |
 | `sso_token_anomaly_findings_total` | Counter | severity/type bounded by detector vocabulary |
@@ -90,6 +92,8 @@ Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; ver
   the same signal and the log message is the fixed `client secret
   expiring` with bounded `client_id`/`window`/`days_remaining` keys.
 - `tenant_quota_store_failure` — the authenticated tenant token-rate check failed open because its backing store returned an operational error. `Reason` is the fixed `increment_failed` enum; `resource=token_rate` is added only through `SetMeta`; tenant/client identifiers remain internal to audit and never appear in the `rate_limited` wire response.
+- `permission_check` — one event for every authorization decision. Metadata carries the permission, decision, resource type, matched resource ID and session ID when present, plus a bounded decision reason; subject and client identify the decision context. Denials also emit a structured deny log, while the wire response remains the ordinary authorization result.
+- `cors_origin_blocked` — one event for each non-empty Origin rejected by the selected CORS policy. Metadata carries the origin, method, path and preflight flag; request correlation, trusted client IP and user-agent use the normal HTTP enrichment path. Origin and path are deliberately absent from Prometheus labels.
 - Session quota lifecycle logs use the fixed messages `tenant session quota reservation failed open`, `tenant session quota reconciliation failed`, and `tenant session quota release failed`, with bounded `tenant_id`/`session_id` plus the dependency error. A definitive cap is not logged as an infrastructure failure and remains the stable `403 quota_exceeded` response.
 
 ### Retention Schedulers
@@ -105,6 +109,21 @@ Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; ver
 | YAML | Effect |
 |---|---|
 | `metrics.tenant_label_allowlist` | `WithTenantMetricsAllowlist` — bounded per-tenant login/issue metrics + `"other"` bucket; empty = off |
+
+When `audit.external_worker.enabled` is set, `/readyz` includes
+`external-audit-worker`. The check covers both lifecycle-manager health and an
+authenticated worker readiness RPC. Worker delivery is fail-open for request
+handling; failures are logged with only the bounded module ID and operation.
+Lifecycle transitions emit `external_worker_lifecycle_transition` with module,
+generation, related generation and fixed transition type only. Executable
+paths, credentials, provenance contents and audit payloads are excluded.
+
+When `WithRebacEngine` is wired, `/readyz` includes `rebac-check`. The check
+requires a healthy active generation; `Disable` withdraws `/authz/check` as a
+native 404 only after matched requests drain, and `Activate` publishes a fresh
+generation without changing the route shape. Transitions emit
+`rebac_lifecycle_transition` with only module ID, generation, related
+generation and fixed transition type; tuple contents are excluded.
 
 ## Standalone Billing Background Work
 
@@ -241,16 +260,37 @@ Middleware stack (probes registered OUTSIDE):
 
 ```
 /metrics, /livez, /readyz                         ← outside ratelimit
-tracing → ratelimit → bodyLimit → metrics → CORS → router
+correlation → metrics → trustedProxies → access-log → ratelimit → bodyLimit → CORS → router
 ```
 
-`Tracing` stamps the W3C trace ID onto the request context
-(`core.WithTraceID`, read back via `core.TraceIDFromContext`) as well
-as the `X-Trace-Id` response header. Error responses written through
-`interfaces/sso`'s `errorBody`/`authzErrorBody`/`authzErrorBodyDesc`
-helpers also surface it as `trace_id` in the JSON body (see
+`middleware.Correlation` (installed by `WithTracing`, design
+`docs/design/middleware-observability-unified.md` Decision 7) is the ONE
+correlation point: it wraps the otelhttp span and stamps the W3C trace ID
+onto the request context (`core.WithTraceID`, read back via
+`core.TraceIDFromContext`), the `X-Trace-Id` response header, and the
+`Traceparent` response header (set explicitly from the live span — otelhttp
+v0.68.0 does not inject response headers). Error responses written through
+`interfaces/sso`'s `errorBody`/`authzErrorBody`/`authzErrorBodyDesc` helpers
+surface the same value as `trace_id` in the JSON body (see
 `docs/error-codes.md`) so a client can correlate a failed request to
 audit/trace records without inspecting response headers.
+
+The OTel span is the only propagation source: with a real provider
+(`tracing.Init` + OTLP endpoint) audit events and access-log records carry
+the span's trace id; with the SDK's no-op provider the span context is
+invalid, so `X-Trace-Id`/`Traceparent`/audit `trace_id` are empty — the
+honest "no tracing" state (a deliberate change from the legacy middleware,
+which minted its own traceparent). `X-Request-Id` keeps working in every
+shape: preserved from the incoming header or generated as 32-hex, stamped
+on the response and the request header (the audit `RequestID` + access-log
+`request_id` source). `sso-server` logs a boot-time Info note when tracing is
+wired but no OTLP endpoint is configured.
+
+Audit correlation is span-first (Decision 8): `audit.EventFromRequest` reads
+the live span (`TraceID`/`SpanID`/`ParentSpanID` from the span's actual
+parent), falling back to the incoming `Traceparent` header only for callers
+outside the middleware chain (embedded SDK users who propagate manually).
+The legacy `X-Parent-Span-Id` header surface is removed.
 
 ### Async-path spans
 
@@ -270,3 +310,55 @@ returned are instrumented with this seam:
 
 A rootless span here (no parent) is expected, not a bug: it means the
 triggering request already returned before the background work ran.
+
+## Access log
+
+`interfaces/middleware.AccessLogger` (design
+`docs/design/middleware-observability-unified.md`, Decision 1) emits exactly
+one INFO `"access"` record per request with a fixed, low-cardinality field
+set:
+
+| Field | Source | Notes |
+|---|---|---|
+| `method` | `r.Method` | |
+| `path` | `r.URL.Path` | never `RawQuery` — query strings can carry `code`/`token` |
+| `status` | captured status code | default 200 when the handler never calls `WriteHeader` |
+| `duration_ms` | wall-clock since middleware entry | includes rate-limit wait, matches operator intuition for "slow request" |
+| `client_ip` | `peertrust.ClientIP(r)` | validated real IP under trusted proxies; legacy first-hop fallback otherwise (one implementation shared with audit `ClientIP`) |
+| `request_id` | `X-Request-Id` request header | populated by the correlation middleware (`WithTracing` → `middleware.Correlation`); empty when it is not installed |
+| `trace_id` | `core.TraceIDFromContext` | the OTel span's trace id (single correlation source, Decision 7/8); empty when no provider is active |
+
+Chain slot (inside trusted proxies, outside rate limiting):
+
+```
+/metrics, /livez, /readyz                         ← outside ratelimit
+correlation → metrics → trustedProxies → access-log → ratelimit → bodyLimit → CORS → router
+```
+
+- Outside rate limiting so a 429 rejection is logged with its status — a
+  flood that gets rate-limited still leaves access evidence (mirrors how the
+  metrics recorder counts 4xx statuses).
+- Inside trusted proxies so `client_ip` is the validated real IP, not a
+  forgeable raw XFF value (the same invariant rate limiting relies on).
+- Probes `/livez` `/readyz` `/metrics` are served by `buildProbeMux` outside
+  the whole chain, so they never produce access records — zero code.
+
+Body capture is OPTIONAL and strictly policy-gated (`BodyLogPolicy`): the
+zero value never reads or logs a body (credentials are structurally
+impossible to log). Capture requires an exact-path allowlist (or the
+deprecated `AllowAllPaths` escape hatch), an explicit `sample_rate > 0`, and
+is bounded by `max_body_bytes` and a redaction engine — credential-shaped
+keys (exact vocabulary + substring heuristic on
+`secret`/`password`/`token`/`assertion`/`code`, case-insensitive) are
+replaced with exactly `[redacted]` in form-urlencoded and JSON bodies at any
+nesting depth; other content types pass through capped raw bytes. Operators
+who need DEBUG verbosity still have `logging.level: debug`; the access log is
+no longer behind that switch. `sso-server` enables the access log by default
+(`logging.access_log.enabled`, tri-state); SDK embedders opt in via
+`sso.WithAccessLogging` — `sso.WithRequestLogging(bool)` is deprecated and
+now takes the policy (`BodyLogPolicy{AllowAllPaths: true}` reproduces the old
+`logBodies=true` posture).
+
+`client_ip` extraction moved to `shared/security/peertrust.ClientIP`
+(peertrust owns the proxy-boundary trust decision); `audit.ClientIP`
+delegates to it — byte-identical behavior, one implementation.

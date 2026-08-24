@@ -1,0 +1,128 @@
+# B11-R2 rerun: finalize the preserved FAPI harness + access-logger work.
+#
+# Round 1 outcomes (2026-08-15):
+#   - B11-1 (operator config apply): DONE — 39ecdf7a, report validated at
+#     docs/campaigns/reports/b11-operator-config-apply.md. Skipped via
+#     --reuse.
+#   - B11-2 (FAPI conformance): agent TIMED OUT (2428s) after building the
+#     harness FAPI variant; worktree preserved:
+#       test/oidc-conformance/config-fapi.yaml (new),
+#       docker-compose.yml / drive_test.py / run-headless.sh (modified).
+#     No archive was produced yet.
+#   - B11-3 (access logger): agent TIMED OUT (1800s) after a substantial
+#     implementation; worktree preserved and COMPILE-CLEAN (go build/vet
+#     PASS, interfaces/middleware tests PASS):
+#       interfaces/middleware/request_log.go (+358: AccessLogger +
+#       BodyLogPolicy in the existing file — no new file, ceiling held),
+#       config/config_server.go (+71: new key), config/config_load.go,
+#       interfaces/sso/{options_httpstack,server_routes,sso_wiring,
+#       aliases}.go, shared/security/peertrust/request.go,
+#       internal/handler/security_headers.go, platform/audit/
+#       handler_helpers.go, cmd/sso-server/config.yaml,
+#       docs/design/middleware-observability-unified.md,
+#       tests: config/config_accesslog_test.go,
+#       interfaces/middleware/request_log_test.go,
+#       interfaces/sso/request_logging_test.go, test/access_log_test.go.
+#
+# Run from the snaplink repo root:
+#   python ~/ai-batch-runner/pi-batch.py docs/campaigns/tasks-b11-r2.yaml --reuse
+#
+# Rules for every task:
+#   - Read the referenced contract(s) FIRST; the acceptance assertions in
+#     them are authoritative. Files are referenced by PATH — read them with
+#     your tools, do not expect them inlined.
+#   - After implementing, ACTUALLY run the listed verification commands and
+#     report their real output in the completion report. Never claim a test
+#     passed that you did not run.
+#   - Commit with a conventional imperative message + AI co-author trailer.
+#     The post-commit hook syncs the branch upstream automatically.
+tasks:
+- prompt: |
+    你在 snaplink 仓库。任务：收尾上一轮超时但实现已保留的 FAPI
+    conformance harness 变体（agent 在 2400s 超时；harness 修改已保留，
+    勿重新实现——你的工作是核验、运行、归档、文档同步、提交）。
+
+    现状（已核验）：
+    - test/oidc-conformance/config-fapi.yaml（新，被测服务器 FAPI 配置
+      变体）；docker-compose.yml / drive_test.py / run-headless.sh 已
+      修改（FAPI 变体支持）。
+    - 无 results/<commit>-fapi/ 归档（运行未完成）。
+    - 任务契约（原始）：FAPI 2.0 code profile（oauth.compliance.profile
+      = fapi_2，Inspection 起步）；默认 basic 拓扑逐字节不变；模块
+      allowlist 语义不变；镜像 pinned；harness 保持 CI 外。
+
+    执行要求：
+    1. 通读保留的 harness 修改（勿重写）：config-fapi.yaml 的 FAPI
+       接线（mode 选择与理由）、compose/脚本的变体开关——确认默认
+       拓扑字节不变（docker compose config 对比或等效证明）；发现
+       缺口 → 小步修复并报告根因。
+    2. 运行 FAPI 模块 headless（模块名以套件实际为准，如
+       oidcc-fapi2*）：./run-headless.sh --module <fapi> --timeout 1200
+       （或等效变体命令）；如实报告每阶段输出与统计。若 FAPI 模块
+       失败：精确记录失败步骤与原因（客户端认证方法、配置要求等），
+       不得虚构通过；把阻塞点写入报告与证据包。
+    3. 归档：results/<commit>-fapi/（plan/log/info/config/commit/
+       worktree，gitignore 本地留存）；与 basic 计划结果对比。
+    4. 文档同步（同提交）：README.md allowlist fapi 行更新为实测结果；
+       docs/sso/oidc-conformance.md 证据表增补 FAPI 记录；
+       CHANGELOG.md（harness 变更可见时）。
+    5. 验证命令（必须实际运行并报告输出）：
+       cd test/oidc-conformance && <FAPI 运行命令>
+       docker compose --env-file config.env config --quiet（或等效，
+       证明默认拓扑未变）
+       cd /home/u1/workspace/demo/snaplink && go build ./... && go vet ./...
+       git status --porcelain
+    6. conventional commit（imperative + AI co-author trailer）。
+  output: docs/campaigns/reports/b11-fapi-conformance.md
+  timeout: 2400
+  validate: |
+    go build ./... && go vet ./... && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}
+
+- prompt: |
+    你在 snaplink 仓库。任务：收尾上一轮超时但实现已保留的 always-on
+    访问日志工作（agent 在 1800s 超时；实现已保留且编译通过，勿重新
+    实现——你的工作是核验、跑全门禁、修复缺口、提交）。
+
+    现状（已核验）：
+    - git status 未提交/已修改：interfaces/middleware/request_log.go
+      （+358：AccessLogger + BodyLogPolicy 并入既有文件，10 文件上限
+      未破）、config/config_server.go（+71 新键）与 config_load.go、
+      interfaces/sso/{options_httpstack,server_routes,sso_wiring,
+      aliases}.go、shared/security/peertrust/request.go（client_ip 来源）、
+      internal/handler/security_headers.go、platform/audit/
+      handler_helpers.go、cmd/sso-server/config.yaml、docs/design/
+      middleware-observability-unified.md（Decision 1+2 实现范围标注）；
+      测试：config/config_accesslog_test.go、interfaces/middleware/
+      request_log_test.go、interfaces/sso/request_logging_test.go、
+      test/access_log_test.go。
+    - go build ./... && go vet ./... 已 PASS；interfaces/middleware
+      测试已 PASS。
+    - 契约（原始）：设计 docs/design/middleware-observability-unified.md
+      Decision 1（AccessLogger：method/path/status/duration_ms/
+      client_ip/request_id/trace_id；path 永不含 RawQuery）+ Decision 2
+      （BodyLogPolicy；零值=永不捕获 body）；默认行为变化必须逐字节
+      可测；探针路径处理按设计裁决；配置新键 → config-reference 同步。
+
+    执行要求：
+    1. 通读保留实现（勿重写）：核对字段集/query 剥离/body 策略/默认
+       200/凭据不可能性/探针豁免/与 DEBUG WithRequestLogging 的兼容
+       裁决；发现缺口 → 小步修复并报告根因。
+    2. 全部验证命令（必须实际运行并报告输出）：
+       go build ./... && go vet ./...
+       go test ./interfaces/middleware/... -count=1
+       go test ./interfaces/sso/... -count=1 -run 'Log|Request'
+       go test ./config/... -count=1
+       go test ./test/ -run 'AccessLog|Log' -count=1
+       go test -count=1 -run 'TestMaintainability_|TestArchitecture_|TestDirectory' .
+       python3 cli.py check（config 校验 + 其他诊断）
+       gofmt -l 相关文件
+    3. 文档同步（同提交，若上一轮未完成）：docs/config-reference.md
+       （新配置键）、CHANGELOG.md Added、设计文档状态与实现范围一致。
+    4. conventional commit（imperative + AI co-author trailer）。
+    5. 硬边界：零豁免；新文件 ≤500 行（本任务应无新文件——request_log.go
+       若超 500 行则按预算拆分并说明）；interfaces/middleware 保持 ≤10
+       非测试 .go 文件。
+  output: docs/campaigns/reports/b11-access-logger.md
+  timeout: 1800
+  validate: |
+    go build ./... && go vet ./... && go test ./interfaces/middleware/... ./config/... -count=1 && python3 /home/u1/ai-batch-runner/scripts/check-no-refusal.py {output}

@@ -15,9 +15,10 @@ CDP_PORT = 9237
 BASE = "https://localhost:8443"
 
 class CDP:
-    def __init__(self, ws_url):
+    def __init__(self, ws_url, test_id):
         self.ws = websocket.create_connection(ws_url, timeout=120)
         self.msg_id = 0
+        self.test_id = test_id
 
     def send(self, method, params=None):
         self.msg_id += 1
@@ -37,12 +38,33 @@ class CDP:
         rid = params["requestId"]
         if url.startswith(ISSUER + "/auth/login"):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
-            code = self._login(q)
+            code, state = self._login(q)
             if code:
-                redir = q["redirect_uri"][0]
-                state = q.get("state", [""])[0]
-                sep = "&" if "?" in redir else "?"
-                target = f"{redir}{sep}code={code}&state={state}"
+                # A PAR authorization URL may still carry redirect_uri as a
+                # diagnostic/browser parameter. request_uri is the reliable
+                # discriminator: the pushed request owns redirect_uri/state,
+                # and the API login response is authoritative for state.
+                is_par = "request_uri" in q
+                if "redirect_uri" in q:
+                    redir = q["redirect_uri"][0]
+                else:
+                    redir = f"{BASE}/test/{self.test_id}/callback"
+                if not is_par:
+                    # Plain authorization request: redirect_uri/state ride the
+                    # URL (OIDC Core default / basic oidcc-server flow).
+                    state = q.get("state", [""])[0]
+
+                callback = urllib.parse.urlsplit(redir)
+                callback_query = urllib.parse.parse_qsl(callback.query, keep_blank_values=True)
+                callback_query.append(("code", code))
+                if state:
+                    callback_query.append(("state", state))
+                if is_par:
+                    # RFC 9207 issuer identification is required by the FAPI2
+                    # SP FINAL profile and must survive every PAR redirect.
+                    callback_query.append(("iss", ISSUER))
+                target = urllib.parse.urlunsplit(callback._replace(
+                    query=urllib.parse.urlencode(callback_query)))
                 print(f"[login] fulfilled -> {target[:90]}", flush=True)
                 self._raw("Fetch.fulfillRequest", {"requestId": rid, "responseCode": 302,
                     "responseHeaders": [{"name": "Location", "value": target}]})
@@ -62,24 +84,36 @@ class CDP:
                 self._paused(msg["params"])
 
     def _login(self, q):
+        # For a FAPI 2.0 PAR authorization URL the pushed request is
+        # consumed by posting request_uri straight to /auth/login; the
+        # response echoes state (merged from the PAR) alongside the code.
         body = {
             "provider": "password",
             "client_id": q["client_id"][0],
-            "redirect_uri": q["redirect_uri"][0],
-            "response_type": q.get("response_type", ["code"])[0],
-            "scope": q.get("scope", ["openid"])[0].split(),
             "credential": {"username": USER, "password": PASSWORD},
         }
-        for k in ("state", "nonce", "code_challenge", "code_challenge_method"):
-            if k in q:
-                body[k] = q[k][0]
-        req = urllib.request.Request("http://127.0.0.1:8180/auth/login",
+        if "request_uri" in q:
+            body["request_uri"] = q["request_uri"][0]
+        else:
+            body["redirect_uri"] = q["redirect_uri"][0]
+            body["response_type"] = q.get("response_type", ["code"])[0]
+            body["scope"] = q.get("scope", ["openid"])[0].split()
+            for k in ("state", "nonce", "code_challenge", "code_challenge_method"):
+                if k in q:
+                    body[k] = q[k][0]
+        # The issuer's TLS is terminated by the local nginx proxy; the
+        # browser side uses an unverified SSL context (self-signed cert).
+        parts = urllib.parse.urlparse(ISSUER)
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        login_base = f"{parts.scheme}://127.0.0.1:{port}"
+        req = urllib.request.Request(login_base + "/auth/login",
                                      data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json",
-                                              "Host": "sso-issuer:8180"})
-        with urllib.request.urlopen(req, timeout=30) as r:
+                                              "Host": f"{parts.hostname}:{port}"})
+        ctx = _CTX if parts.scheme == "https" else None
+        with urllib.request.urlopen(req, timeout=30, context=ctx) as r:
             data = json.loads(r.read())
-        return data.get("code", "")
+        return data.get("code", ""), data.get("state", "")
 
     def navigate(self, url):
         self.send("Page.navigate", {"url": url})
@@ -95,9 +129,12 @@ def api(cj, path):
         return json.loads(r.read())
 
 def main():
+    global ISSUER
     test_id = sys.argv[1]
     cookie = sys.argv[2] if len(sys.argv) > 2 else ""
     timeout = int(sys.argv[3]) if len(sys.argv) > 3 else 300
+    if len(sys.argv) > 4:
+        ISSUER = sys.argv[4]
     chrome = subprocess.Popen([
         "google-chrome", "--headless=new", "--disable-gpu", "--no-sandbox",
         "--ignore-certificate-errors", "--remote-allow-origins=*",
@@ -118,7 +155,7 @@ def main():
             except Exception:
                 pass
             time.sleep(0.5)
-        cdp = CDP(ws_url)
+        cdp = CDP(ws_url, test_id)
         cdp.send("Page.enable")
         cdp.send("Fetch.enable", {"patterns": [{"urlPattern": "*sso-issuer*"}]})
         print(f"[driver] test {test_id}", flush=True)

@@ -2,10 +2,13 @@ package oauthvalidate
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 
+	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -40,7 +43,12 @@ const ErrInvalidAuthorizationDetails = "invalid_authorization_details"
 // satisfy: a non-empty `type` field. The remaining fields are
 // type-specific and pass through unparsed.
 type authorizationDetail struct {
-	Type string `json:"type"`
+	Type    string `json:"type"`
+	Method  string `json:"method"`
+	Path    string `json:"path"`
+	Service string `json:"service"`
+	Op      string `json:"op"`
+	Field   string `json:"field"`
 }
 
 // RARLimits bounds an authorization_details payload's SHAPE before it is
@@ -170,4 +178,61 @@ func ValidateAuthorizationDetails(raw json.RawMessage, allowed []string, limits 
 		}
 	}
 	return details, nil
+}
+
+// ValidateAuthorizationDetailsCatalog verifies the first-party resource
+// types whose authorization_details fields identify a catalog resource. The
+// caller maps every error to invalid_authorization_details; a catalog miss or
+// store failure therefore fails closed before a PAR request is issued.
+func ValidateAuthorizationDetailsCatalog(raw json.RawMessage, rp permissions.ResourceProvider, tenantID, clientID string) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if rp == nil {
+		return errors.New("authorization_details: resource catalog unavailable")
+	}
+	details, err := ValidateAuthorizationDetails(raw, nil, RARLimits{})
+	if err != nil {
+		return err
+	}
+	for _, detail := range details {
+		lookup, ok := detail.catalogLookup(tenantID, clientID)
+		if !ok {
+			continue
+		}
+		decision, err := rp.ResolveResource(context.Background(), lookup)
+		if err != nil {
+			return fmt.Errorf("authorization_details: resource catalog lookup failed: %w", err)
+		}
+		if decision == nil || !decision.Found {
+			return fmt.Errorf("authorization_details: %s resource is not registered", detail.Type)
+		}
+	}
+	return nil
+}
+
+func (d authorizationDetail) catalogLookup(tenantID, clientID string) (permissions.ResourceLookup, bool) {
+	attrs, resourceType := d.catalogAttributes()
+	if resourceType == "" {
+		return permissions.ResourceLookup{}, false
+	}
+	return permissions.ResourceLookup{
+		TenantID: tenantID,
+		ClientID: clientID,
+		Type:     permissions.ResourceType(resourceType),
+		Match:    attrs,
+	}, true
+}
+
+func (d authorizationDetail) catalogAttributes() (map[string]string, string) {
+	switch d.Type {
+	case string(permissions.ResourceTypeHTTPAPI):
+		return map[string]string{"method": d.Method, "path": d.Path}, d.Type
+	case string(permissions.ResourceTypeGRPCAPI):
+		return map[string]string{"service": d.Service, "method": d.Method}, d.Type
+	case string(permissions.ResourceTypeGraphQLAPI):
+		return map[string]string{"op": d.Op, "field": d.Field}, d.Type
+	default:
+		return nil, ""
+	}
 }

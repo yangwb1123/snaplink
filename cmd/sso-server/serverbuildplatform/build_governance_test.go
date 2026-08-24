@@ -2,9 +2,11 @@ package serverbuildplatform
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +23,72 @@ import (
 )
 
 func govLogger() spi.Logger { return spi.NopLogger{} }
+
+// TestBuildDegradationAutoDriver_ProbeSelection pins the composition-root
+// watchlist policy: audit sinks are excluded (audit is fail-open by contract,
+// so an audit-store loss must never flip read_only), Ping-less sources are
+// skipped, and every other Ping closure is adapted with the tri-state verdict
+// mapping (nil healthy, context deadline indeterminate/fail-open, other error
+// unhealthy).
+func TestBuildDegradationAutoDriver_ProbeSelection(t *testing.T) {
+	t.Parallel()
+	cfg := config.DegradationConfig{
+		Enabled: true, AutoReadOnlyOnStoreLoss: true,
+		AutoReadOnly: config.AutoReadOnlyConfig{Interval: 10 * time.Millisecond, Grace: 20 * time.Millisecond},
+	}
+	mgr, err := BuildDegradationManager(cfg)
+	if err != nil {
+		t.Fatalf("BuildDegradationManager: %v", err)
+	}
+	var auditPinged, identityPinged, hungPinged atomic.Bool
+	sources := []sso.StorageHealthSource{
+		{Name: "audit-postgres", Ping: func(context.Context) error { auditPinged.Store(true); return errors.New("audit down") }},
+		{Name: "sqlite-identity-clients", Ping: func(context.Context) error { identityPinged.Store(true); return nil }},
+		{Name: "sqlite-tenant", Ping: nil}, // no reachability signal (memory backend)
+		{Name: "hung-store", Ping: func(ctx context.Context) error { hungPinged.Store(true); <-ctx.Done(); return ctx.Err() }},
+	}
+	drv := BuildDegradationAutoDriver(cfg, mgr, sources, govLogger())
+	if drv == nil {
+		t.Fatal("driver not armed")
+	}
+	if drv.StoreCount() != 2 {
+		t.Fatalf("StoreCount() = %d, want 2 (audit + Ping-less excluded)", drv.StoreCount())
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := drv.Run(ctx)
+	defer func() { cancel(); <-done }()
+	time.Sleep(60 * time.Millisecond)
+	if auditPinged.Load() {
+		t.Error("audit sink probe was wired into the auto driver — audit is fail-open by contract")
+	}
+	if !identityPinged.Load() {
+		t.Error("identity store probe was not wired")
+	}
+	if !hungPinged.Load() {
+		t.Error("hung store probe was not wired")
+	}
+	// The hung probe is cut by the per-probe deadline (Unknown, fail-open) and
+	// the identity store is healthy: no unhealthy verdict ever accumulates, so
+	// the manager must stay at its boot posture.
+	if got := mgr.Mode(); got != sso.DegradationModeNormal {
+		t.Fatalf("mode = %q, want normal (timeout is fail-open)", got)
+	}
+}
+
+func TestBuildDegradationAutoDriver_NotArmedWhenFlagUnset(t *testing.T) {
+	t.Parallel()
+	cfg := config.DegradationConfig{Enabled: true}
+	mgr, err := BuildDegradationManager(cfg)
+	if err != nil {
+		t.Fatalf("BuildDegradationManager: %v", err)
+	}
+	drv := BuildDegradationAutoDriver(cfg, mgr, []sso.StorageHealthSource{
+		{Name: "sqlite-identity-clients", Ping: func(context.Context) error { return nil }},
+	}, govLogger())
+	if drv != nil {
+		t.Fatal("driver armed without auto_read_only_on_store_loss")
+	}
+}
 
 func TestBuildCredentialRotation_DisabledReturnsNil(t *testing.T) {
 	t.Parallel()

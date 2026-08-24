@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -28,6 +29,9 @@ security:
   cors:
     enabled: true
     allowed_origins: ["https://app.example.com"]
+    path_overrides:
+      "/.well-known/jwks.json":
+        allowed_origins: ["*"]
     allowed_headers: ["Authorization", "X-Custom"]
     exposed_headers: ["X-Request-ID"]
     allow_credentials: true
@@ -67,6 +71,9 @@ func TestSecurityConfig_Parses(t *testing.T) {
 	if cfg.Security.CORS.MaxAge != time.Hour {
 		t.Errorf("max_age = %v", cfg.Security.CORS.MaxAge)
 	}
+	if got := cfg.Security.CORS.PathOverrides["/.well-known/jwks.json"].AllowedOrigins; !reflect.DeepEqual(got, []string{"*"}) {
+		t.Errorf("jwks path override allowed_origins = %v", got)
+	}
 }
 
 func TestSecurityConfig_ServerOptionsWiresThree(t *testing.T) {
@@ -80,12 +87,11 @@ func TestSecurityConfig_ServerOptionsWiresThree(t *testing.T) {
 		t.Fatalf("LoadFromSources: %v", err)
 	}
 	opts := cfg.ServerOptions()
-	// Baseline is just WithIssuer (the three legacy TTL/base-url
-	// options were dropped — they were deprecated no-ops). With
-	// SecurityConfig populated we add WithBodyLimit + WithRateLimit
-	// + WithCORS, so the total should be exactly 4.
-	if len(opts) != 4 {
-		t.Errorf("ServerOptions returned %d opts, want 4 (issuer + 3 security)", len(opts))
+	// Baseline is WithIssuer + the always-on access log (default-on via
+	// logging.access_log). With SecurityConfig populated we add WithBodyLimit
+	// + WithRateLimit + WithCORS, so the total should be exactly 5.
+	if len(opts) != 5 {
+		t.Errorf("ServerOptions returned %d opts, want 5 (issuer + access log + 3 security)", len(opts))
 	}
 }
 
@@ -102,8 +108,69 @@ func TestSecurityConfig_EmptyBlockAppliesBodyLimitDefault(t *testing.T) {
 			cfg.Security.BodyLimit.MaxBytes, DefaultBodyLimitBytes)
 	}
 	opts := cfg.ServerOptions()
-	if len(opts) != 2 {
-		t.Errorf("got %d opts; expected exactly 2 (WithIssuer + WithBodyLimit default)", len(opts))
+	// WithIssuer + the always-on access log + WithBodyLimit(default).
+	if len(opts) != 3 {
+		t.Errorf("got %d opts; expected exactly 3 (WithIssuer + access log + WithBodyLimit default)", len(opts))
+	}
+}
+
+func TestSecurityConfig_PathOverrideOnlyWiresCORS(t *testing.T) {
+	t.Parallel()
+	p := writeTemp(t, "cors-override-only.yaml", `server:
+  issuer: t
+  listen: :8080
+security:
+  cors:
+    enabled: true
+    path_overrides:
+      "/.well-known/jwks.json":
+        allowed_origins: ["*"]
+`)
+	cfg, err := LoadFromSources(context.Background(), NewFileSource(p))
+	if err != nil {
+		t.Fatalf("LoadFromSources: %v", err)
+	}
+	if got := len(cfg.ServerOptions()); got != 4 {
+		t.Fatalf("ServerOptions returned %d opts, want issuer + body limit + access log + CORS", got)
+	}
+	policy := cfg.Security.CORS.ToPolicy()
+	override, ok := policy.PathOverrides["/.well-known/jwks.json"]
+	if !ok {
+		t.Fatal("path override missing from translated policy")
+	}
+	if !reflect.DeepEqual(override.AllowedOrigins, []string{"*"}) {
+		t.Errorf("translated override allowed_origins = %v", override.AllowedOrigins)
+	}
+}
+
+func TestSecurityConfig_PathOverridesRejectInvalidEntries(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"missing-leading-slash": `      auth:
+        allowed_origins: ["*"]
+`,
+		"nested": `      /api:
+        path_overrides:
+          /nested:
+            allowed_origins: ["*"]
+`,
+		"auth-login-overlap": `      /auth:
+        allowed_origins: ["*"]
+`,
+	}
+	for name, overrides := range cases {
+		name, overrides := name, overrides
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			p := writeTemp(t, "invalid-cors.yaml", "server:\n  issuer: t\n  listen: :8080\nsecurity:\n  cors:\n    enabled: true\n    path_overrides:\n"+overrides)
+			_, err := LoadFromSources(context.Background(), NewFileSource(p))
+			if err == nil {
+				t.Fatal("LoadFromSources succeeded for invalid path override")
+			}
+			if !strings.Contains(err.Error(), "path_overrides") {
+				t.Fatalf("error = %q, want path_overrides context", err)
+			}
+		})
 	}
 }
 
@@ -117,7 +184,31 @@ func TestSecurityConfig_NegativeBodyLimitIsUnlimited(t *testing.T) {
 		t.Errorf("negative body_limit normalized to %d, want 0 (unlimited)", cfg.Security.BodyLimit.MaxBytes)
 	}
 	opts := cfg.ServerOptions()
-	if len(opts) != 1 {
-		t.Errorf("got %d opts; expected exactly 1 (just WithIssuer, body limit unwired)", len(opts))
+	// WithIssuer + the always-on access log (body limit unwired).
+	if len(opts) != 2 {
+		t.Errorf("got %d opts; expected exactly 2 (WithIssuer + access log, body limit unwired)", len(opts))
+	}
+}
+
+func TestSecurityConfig_RARCatalogCheck(t *testing.T) {
+	t.Parallel()
+	p := writeTemp(t, "rar-catalog.yaml", `server:
+  issuer: t
+  listen: :8080
+security:
+  body_limit:
+    max_bytes: -1
+  rar_catalog_check:
+    enabled: true
+`)
+	cfg, err := LoadFromSources(context.Background(), NewFileSource(p))
+	if err != nil {
+		t.Fatalf("LoadFromSources: %v", err)
+	}
+	if !cfg.Security.RARCatalogCheck.Enabled {
+		t.Fatal("rar_catalog_check.enabled should be true")
+	}
+	if got := len(cfg.ServerOptions()); got != 3 {
+		t.Fatalf("ServerOptions returned %d opts, want issuer + access log + RAR catalog check", got)
 	}
 }
