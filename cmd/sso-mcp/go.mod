@@ -5,9 +5,9 @@ go 1.26.1
 replace github.com/yangwb1123/snaplink => ../../
 
 require (
-	github.com/modelcontextprotocol/go-sdk v1.6.1
+	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/yangwb1123/snaplink v0.0.0-00010101000000-000000000000
-	google.golang.org/grpc v1.82.1
+	google.golang.org/grpc v1.83.1
 )
 
 require (
