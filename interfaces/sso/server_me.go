@@ -423,6 +423,12 @@ func (s *Server) mountSelfServicePrivacyRoutes(gr Router) {
 		gr.POST(PathMyEmailChange, s.handleMyEmailChange)
 		gr.POST(PathMyEmailVerify, s.handleMyEmailVerify)
 	}
+	// User preferences (theme / language): reads and merges allowlisted
+	// attributes; needs only the UserProvider (available in every build).
+	if s.userProvider != nil {
+		gr.GET(PathMyPreferences, s.handleMyPreferencesGet)
+		gr.PUT(PathMyPreferences, s.handleMyPreferencesPut)
+	}
 }
 
 // mountBrandingEndpoint registers the public per-host branding lookup the

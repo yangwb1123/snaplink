@@ -223,6 +223,24 @@ func (s *Server) handleMyEmailVerify(ctx HandlerContext) {
 	selfservice.HandleMyEmailVerify(s, ctx, userID)
 }
 
+// handleMyPreferencesGet delegates to selfservice.HandleMyPreferencesGet.
+func (s *Server) handleMyPreferencesGet(ctx HandlerContext) {
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	selfservice.HandleMyPreferencesGet(s, ctx, userID)
+}
+
+// handleMyPreferencesPut delegates to selfservice.HandleMyPreferencesPut.
+func (s *Server) handleMyPreferencesPut(ctx HandlerContext) {
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	selfservice.HandleMyPreferencesPut(s, ctx, userID)
+}
+
 // EmailChangeSender returns the email change sender.
 func (s *Server) EmailChangeSender() spi.EmailChangeSender {
 	return s.emailChangeSender

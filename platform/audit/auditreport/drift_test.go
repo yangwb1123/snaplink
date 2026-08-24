@@ -33,6 +33,7 @@ var wantUncategorizedEventTypes = []audit.EventType{
 	audit.EventPasswordResetRequested, audit.EventPasswordResetCompleted, audit.EventPasswordResetFailed,
 	audit.EventConsentGranted, audit.EventConsentRevoked, audit.EventConsentDenied,
 	audit.EventSelfRegistered, audit.EventEmailChangeRequested, audit.EventEmailChanged,
+	audit.EventUserPrefsUpdated,
 	audit.EventOrgLeft, audit.EventOrgMemberAutoProvisioned, audit.EventInvitationSent,
 	audit.EventInvitationAccepted, audit.EventInvitationRevoked,
 	audit.EventPasswordWeak, audit.EventPasswordCompromised, audit.EventSPIFFEJWTSVIDAccepted,

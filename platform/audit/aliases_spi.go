@@ -128,6 +128,7 @@ const (
 	EventDeviceTrusted                       = auditspi.EventDeviceTrusted
 	EventDeviceTrustRevoked                  = auditspi.EventDeviceTrustRevoked
 	EventEmailChangeRequested                = auditspi.EventEmailChangeRequested
+	EventUserPrefsUpdated                    = auditspi.EventUserPrefsUpdated
 	EventEmailChanged                        = auditspi.EventEmailChanged
 	EventFAPIComplianceViolation             = auditspi.EventFAPIComplianceViolation
 	EventFeatureGatesDisabled                = auditspi.EventFeatureGatesDisabled

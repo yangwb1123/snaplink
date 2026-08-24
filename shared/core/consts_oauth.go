@@ -2,6 +2,10 @@ package core
 
 import "time"
 
+// PathMyPreferences is kept with the split wire constants to keep the main
+// endpoint-constant file below its hard line budget.
+const PathMyPreferences = "/me/preferences"
+
 // OIDC Core §3.1.2.1 prompt values. Space-separated combinations are
 // allowed by the spec EXCEPT for "none" which MUST appear alone.
 const (
