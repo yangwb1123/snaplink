@@ -288,6 +288,25 @@ class SDKVersionGateTests(unittest.TestCase):
         self.assertIn('status=FAIL reason=', output)
         self.assertTrue(output.endswith("verdict: FAIL\n"))
 
+    def test_non_diff_actions_reject_all_baseline_options(self) -> None:
+        for action in ("check", "generate", "list", "versions"):
+            for option in (
+                "--baseline-ref",
+                "--baseline-file",
+                "--baseline-openapi-file",
+            ):
+                with self.subTest(action=action, option=option):
+                    stdout = io.StringIO()
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                        result = sdk_surface.run([action, option, "ignored"])
+                    self.assertEqual(result, 1)
+                    self.assertEqual(stdout.getvalue(), "")
+                    self.assertIn(
+                        "baseline options are only valid with the diff action",
+                        stderr.getvalue(),
+                    )
+
     def test_sdk_surface_check_reuses_version_gate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

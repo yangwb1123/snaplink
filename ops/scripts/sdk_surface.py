@@ -459,10 +459,10 @@ def run(args: list[str]) -> int:
         )
         if parsed.action == "diff":
             return _run_diff(parsed)
-        if parsed.action == "versions":
-            return run_versions()
         if baseline_selected:
             raise SDKSurfaceError("baseline options are only valid with the diff action")
+        if parsed.action == "versions":
+            return run_versions()
         if parsed.action == "check":
             registry = validate_registry()
             total = sum(len(g["operations"]) for g in registry["groups"])
