@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-yaml"
 )
 
 func TestValidateConfiguredClientsLoginPageURI(t *testing.T) {
@@ -31,6 +33,23 @@ func TestValidateConfiguredClientsLoginPageURI(t *testing.T) {
 				t.Fatalf("validateConfiguredClients() error = %v", err)
 			}
 		})
+	}
+}
+
+func TestClientConfigYAMLDecodesPublicAuthMethod(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(`clients:
+  - id: spa
+    token_endpoint_auth_method: none
+    require_pkce: true
+`), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	if len(cfg.Clients) != 1 || cfg.Clients[0].TokenEndpointAuthMethod != "none" || !cfg.Clients[0].RequirePKCE {
+		t.Fatalf("decoded client = %+v, want public auth method with PKCE", cfg.Clients)
+	}
+	if err := validateConfiguredClients(&cfg); err != nil {
+		t.Fatalf("validateConfiguredClients() error = %v", err)
 	}
 }
 

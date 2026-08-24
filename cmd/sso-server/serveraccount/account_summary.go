@@ -103,8 +103,16 @@ func (d *accountSummaryDeps) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, err := d.users.GetByID(r.Context(), canonicalUID)
-	if err != nil && !errors.Is(err, core.ErrNoSuchUser) {
+	if err != nil {
+		if errors.Is(err, core.ErrNoSuchUser) {
+			d.writeError(ctx, http.StatusBadRequest, accountSummaryErrInvalidRequest)
+			return
+		}
 		d.writeError(ctx, http.StatusServiceUnavailable, accountSummaryErrUnavailable)
+		return
+	}
+	if user == nil {
+		d.writeError(ctx, http.StatusBadRequest, accountSummaryErrInvalidRequest)
 		return
 	}
 	response := compileAccountSummary(user, accountID, datasets, time.Now().UTC())
@@ -115,9 +123,10 @@ func (d *accountSummaryDeps) handle(w http.ResponseWriter, r *http.Request) {
 	accountSummaryReadAudit(d.recorder, r, claims, canonicalUID, datasets)
 }
 
-// compileAccountSummary builds the account-source payload from the user row;
-// a nil user (unknown subject) yields a per-dataset not_found so callers can
-// never distinguish a missing subject from a missing dataset.
+// compileAccountSummary builds the account-source payload from an already
+// resolved user row. The nil branch remains a defensive, detail-free
+// projection for package-local callers; the HTTP handler collapses unknown
+// users with invalid dataset requests before reaching this helper.
 func compileAccountSummary(user *core.User, accountID string, datasets []string, now time.Time) snaplinkAccountSummary {
 	response := snaplinkAccountSummary{
 		SourceRegion: accountSourceRegion(), Version: now.UnixMilli(), GeneratedAt: now, Complete: true,
@@ -178,7 +187,7 @@ func (d *accountSummaryDeps) authenticate(ctx core.HandlerContext) (*core.TokenC
 		return nil, http.StatusUnauthorized, accountSummaryErrInvalidToken
 	}
 	claims, err := d.server.ValidateToken(ctx.Request().Context(), token)
-	if err != nil || !core.IsAccessTokenClaims(claims) {
+	if err != nil || claims == nil || claims.TokenUse != core.TokenUseAccessToken {
 		return nil, http.StatusUnauthorized, accountSummaryErrInvalidToken
 	}
 	if err := d.server.VerifyDPoPBearer(ctx, claims); err != nil {
