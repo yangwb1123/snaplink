@@ -9,9 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Executable SDK-surface compatibility checking: `python cli.py sdk-surface diff`
-  compares an explicit local registry baseline, reports added/removed/relocated
-  operationIds deterministically, and rejects breaking removals, renames and
-  group moves without an override flag.
+  compares an explicit local baseline and reports added/removed/relocated
+  operationIds deterministically. A `--baseline-ref` reads the registry and
+  `docs/openapi.yaml` from the same local ref without fetching; a
+  `--baseline-file` remains registry-only unless explicitly paired with
+  `--baseline-openapi-file`. The bounded `components.schemas` diff rejects
+  schema/property removals, new required properties, `$ref`/type/format changes,
+  `additionalProperties` tightening, enum removals, and nested/items breaking
+  changes; optional properties, required removals, and enum additions are
+  additive. Description/title/examples/default changes are ignored, while
+  composition and unsupported keyword changes are conservatively breaking.
+  Bad baselines fail closed, there is no override flag or automatic version
+  update, and this is not a complete vendor-level OpenAPI diff. Versioned
+  package publication remains an external boundary.
 - Public self-service preferences contract: `GET`/`PUT /me/preferences` now
   has an OpenAPI schema and generated TypeScript/Python SDK methods while
   retaining its allowlisted, default-deny attribute projection; the server

@@ -7,9 +7,10 @@ the operationId set the TS/Python generators emit. The generators themselves
 reconciled with docs/openapi.yaml (every operation must exist) and
 ops/build/capabilities.json (every referenced capability must exist).
 
-The ``diff`` action compares registry group/operation data only. It never
-compares generated source text and requires an explicit baseline supplied as a
-local git ref or JSON file.
+The ``diff`` action compares registry group/operation data and, when the
+baseline OpenAPI document is available, a bounded structural diff of
+components.schemas. It never compares generated source text and requires an
+explicit local baseline.
 """
 
 from __future__ import annotations
@@ -20,10 +21,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-try:
-    import yaml  # PyYAML
-except ImportError:
-    yaml = None
+from sdk_baseline import SDKBaselineError, load_ref_bundle, load_registry_ref
+from sdk_report import format_diff
+from sdk_report import unavailable_schema_diff as _unavailable_schema_diff
+from sdk_schema import (
+    SCHEMA_DIFF_POLICY,
+    SDKSchemaError,
+    compare_openapi_schemas,
+    load_openapi_file,
+    load_openapi_text,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 SURFACE_PATH = ROOT / "ops" / "build" / "sdk-surface.json"
@@ -198,15 +205,22 @@ def validate_python_package(languages: list[dict]) -> None:
         )
 
 
-def load_openapi_operation_ids() -> set[str]:
-    if yaml is None:
-        raise SDKSurfaceError("PyYAML is required to read docs/openapi.yaml")
+def _load_openapi_file(path: Path, source: str | None = None) -> dict:
     try:
-        doc = yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError) as exc:
-        raise SDKSurfaceError(f"{OPENAPI_PATH}: invalid YAML: {exc}") from exc
-    if not isinstance(doc, dict):
-        raise SDKSurfaceError(f"{OPENAPI_PATH}: root must be an object")
+        return load_openapi_file(path, source)
+    except SDKSchemaError as exc:
+        raise SDKSurfaceError(str(exc)) from exc
+
+
+def _load_openapi_text(text: str, source: str) -> dict:
+    try:
+        return load_openapi_text(text, source)
+    except SDKSchemaError as exc:
+        raise SDKSurfaceError(str(exc)) from exc
+
+
+def load_openapi_operation_ids() -> set[str]:
+    doc = _load_openapi_file(OPENAPI_PATH)
     ids: set[str] = set()
     paths = doc.get("paths", {})
     if not isinstance(paths, dict):
@@ -319,72 +333,20 @@ def compare_surfaces(current: object, baseline: object) -> dict:
     }
 
 
-def _quote(value: str) -> str:
-    return json.dumps(value, ensure_ascii=True)
-
-
-def format_diff(diff: dict, baseline_label: str) -> str:
-    lines = [
-        "sdk-surface diff",
-        f"baseline: {baseline_label}",
-        "current: ops/build/sdk-surface.json",
-        f"added: {len(diff['added'])} (additive)",
-    ]
-    lines.extend(
-        f"  + operationId={_quote(item['operationId'])} group={_quote(item['group'])}"
-        for item in diff["added"]
-    )
-    lines.append(
-        f"removed: {len(diff['removed'])} (breaking; rename is reported as added + removed)"
-    )
-    lines.extend(
-        f"  - operationId={_quote(item['operationId'])} group={_quote(item['group'])}"
-        for item in diff["removed"]
-    )
-    lines.append(f"relocated: {len(diff['relocated'])} (breaking by policy)")
-    lines.extend(
-        "  ~ operationId="
-        f"{_quote(item['operationId'])} from_group={_quote(item['from_group'])} "
-        f"to_group={_quote(item['to_group'])}"
-        for item in diff["relocated"]
-    )
-    lines.append(f"compatibility: {diff['status']}")
-    lines.append("version: unchanged (no automatic version update)")
-    return "\n".join(lines)
-
-
-def _run_git(args: list[str], root: Path) -> subprocess.CompletedProcess[str]:
-    try:
-        return subprocess.run(
-            ["git", *args],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except (OSError, ValueError) as exc:
-        raise SDKSurfaceError("cannot run git for SDK-surface baseline") from exc
-
-
 def load_baseline_ref(ref: str, root: Path = ROOT) -> dict:
-    """Read the registry at a local git ref without fetching or using a shell."""
-    if not ref or not ref.strip():
-        raise SDKSurfaceError("baseline git ref must not be empty")
-    resolved = _run_git(
-        ["rev-parse", "--verify", "--quiet", "--end-of-options", f"{ref}^{{commit}}"],
-        root,
-    )
-    if resolved.returncode != 0 or not resolved.stdout.strip():
-        raise SDKSurfaceError(f"baseline git ref {ref!r} is invalid")
-    object_name = resolved.stdout.strip()
-    path_spec = f"{object_name}:{SURFACE_RELATIVE_PATH.as_posix()}"
-    shown = _run_git(["show", "--no-ext-diff", "--format=", path_spec], root)
-    source = f"baseline git ref {ref!r}"
-    if shown.returncode != 0:
-        raise SDKSurfaceError(
-            f"{source} does not contain {SURFACE_RELATIVE_PATH.as_posix()}"
-        )
-    return validate_surface_data(_parse_json(shown.stdout, source), source)
+    """Read only the registry at a local git ref without fetching or a shell."""
+    try:
+        return load_registry_ref(ref, root, validate_surface_data)
+    except SDKBaselineError as exc:
+        raise SDKSurfaceError(str(exc)) from exc
+
+
+def _load_baseline_ref_bundle(ref: str, root: Path = ROOT) -> tuple[dict, dict]:
+    """Read registry and OpenAPI from the same resolved local commit."""
+    try:
+        return load_ref_bundle(ref, root, validate_surface_data, _load_openapi_text)
+    except SDKBaselineError as exc:
+        raise SDKSurfaceError(str(exc)) from exc
 
 
 def load_baseline_file(path: Path) -> dict:
@@ -393,7 +355,7 @@ def load_baseline_file(path: Path) -> dict:
     return validate_surface_data(_read_json(path, source), source)
 
 
-def _baseline_selection(parsed: argparse.Namespace) -> tuple[dict, str]:
+def _baseline_selection(parsed: argparse.Namespace) -> tuple[dict, str, dict | None]:
     selected = [
         ("ref", parsed.baseline_ref),
         ("file", parsed.baseline_file),
@@ -406,16 +368,39 @@ def _baseline_selection(parsed: argparse.Namespace) -> tuple[dict, str]:
         )
     kind, value = selected[0]
     if kind == "ref":
-        return load_baseline_ref(value), f"ref={value}"
-    return load_baseline_file(Path(value)), f"file={value}"
+        if parsed.baseline_openapi_file is not None:
+            raise SDKSurfaceError(
+                "--baseline-openapi-file is only valid with --baseline-file; "
+                "--baseline-ref reads docs/openapi.yaml from the same ref"
+            )
+        registry, openapi = _load_baseline_ref_bundle(value)
+        return registry, f"ref={value}", openapi
+    registry = load_baseline_file(Path(value))
+    if parsed.baseline_openapi_file is None:
+        return registry, f"file={value}", None
+    openapi_path = Path(parsed.baseline_openapi_file)
+    openapi = _load_openapi_file(openapi_path, f"baseline OpenAPI file {openapi_path}")
+    return registry, f"file={value}", openapi
 
 
 def _run_diff(parsed: argparse.Namespace) -> int:
     current = load_surface_file(SURFACE_PATH)
-    baseline, label = _baseline_selection(parsed)
+    baseline, label, baseline_openapi = _baseline_selection(parsed)
     diff = compare_surfaces(current, baseline)
+    if baseline_openapi is None:
+        schema_diff = _unavailable_schema_diff()
+    else:
+        current_openapi = _load_openapi_file(OPENAPI_PATH, "current OpenAPI")
+        try:
+            schema_diff = compare_openapi_schemas(current_openapi, baseline_openapi)
+        except SDKSchemaError as exc:
+            raise SDKSurfaceError(str(exc)) from exc
+    diff = {**diff, "schema": schema_diff}
+    breaking = diff["breaking"] or bool(schema_diff["breaking"])
+    diff["breaking"] = breaking
+    diff["status"] = "breaking" if breaking else "compatible"
     print(format_diff(diff, label))
-    return 1 if diff["breaking"] else 0
+    return 1 if breaking else 0
 
 
 def run(args: list[str]) -> int:
@@ -423,10 +408,13 @@ def run(args: list[str]) -> int:
         prog="sdk-surface",
         description=__doc__,
         epilog=(
-            "diff is fail-closed: a baseline is mandatory and must be a valid "
-            "registry. Removed or renamed operationIds are breaking; additions "
-            "are additive; moving an operationId between groups is breaking by "
-            "policy. There is no breaking-change bypass."
+            "diff is fail-closed: a baseline is mandatory and must be valid. "
+            "--baseline-ref reads both registry and docs/openapi.yaml from that "
+            "local ref without fetching. --baseline-file is registry-only unless "
+            "paired explicitly with --baseline-openapi-file. Removed or renamed "
+            "operationIds, group moves, and breaking schema changes fail; there "
+            "is no breaking-change bypass. Schema comparison is a bounded "
+            f"components.schemas subset ({SCHEMA_DIFF_POLICY})."
         ),
     )
     parser.add_argument(
@@ -435,7 +423,8 @@ def run(args: list[str]) -> int:
         help="check: validate registry vs OpenAPI/capabilities; "
         "generate: run cmd/gensdk for every language; "
         "list: print group coverage; "
-        "diff: compare registry operation/group data with an explicit baseline",
+        "diff: compare operation/group data and available components.schemas "
+        "with an explicit baseline",
     )
     parser.add_argument(
         "--baseline-ref",
@@ -443,7 +432,11 @@ def run(args: list[str]) -> int:
     )
     parser.add_argument(
         "--baseline-file",
-        help="diff baseline JSON registry file",
+        help="diff baseline JSON registry file (registry-only unless paired below)",
+    )
+    parser.add_argument(
+        "--baseline-openapi-file",
+        help="explicit OpenAPI YAML baseline; valid only with --baseline-file",
     )
     parsed, unknown = parser.parse_known_args(args)
     if unknown:
@@ -452,7 +445,11 @@ def run(args: list[str]) -> int:
     try:
         baseline_selected = any(
             value is not None
-            for value in (parsed.baseline_ref, parsed.baseline_file)
+            for value in (
+                parsed.baseline_ref,
+                parsed.baseline_file,
+                parsed.baseline_openapi_file,
+            )
         )
         if parsed.action == "diff":
             return _run_diff(parsed)

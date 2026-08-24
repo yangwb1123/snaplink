@@ -181,14 +181,23 @@ Delivered:
   verbatim naming) is committed in the registry.
 - `python cli.py sdk-surface diff --baseline-ref <ref>` (or
   `--baseline-file <path>`) compares the real registry group/operation data
-  with an explicit local baseline. It emits stable added/removed/relocated
-  operationId entries and fails closed for missing or invalid baselines,
-  duplicate operationIds, removals/renames, and group relocations. Additions
-  are additive; no version is changed automatically. The SDK CI runs the
-  check against the pull request base with a full local checkout.
+  with an explicit local baseline. A ref reads the registry and
+  `docs/openapi.yaml` from the same local commit without fetching; a registry
+  file remains explicitly registry-only unless paired with
+  `--baseline-openapi-file`. The report stably separates operation surface and
+  schema breaking/additive changes. The bounded `components.schemas` diff
+  catches schema/property removal, required additions, `$ref`/type/format
+  changes, `additionalProperties` tightening, enum removals, and nested/items
+  breaking changes; optional properties, required removals, and enum additions
+  are additive. Documentation metadata is ignored, while composition and
+  unsupported keyword changes are conservatively breaking. Bad refs, JSON/YAML,
+  missing files, and malformed schema structures fail closed. No version is
+  changed automatically, and the SDK CI runs the check against the pull
+  request base with a full local checkout.
 
 Remaining (non-blocking): versioned package publication once the contract is
-declared stable by the maintainers.
+declared stable by the maintainers. The schema check is intentionally a
+bounded structural subset, not a complete vendor-level OpenAPI diff.
 
 ### 8. Define the external frontend release contract — DONE
 

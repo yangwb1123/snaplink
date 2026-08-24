@@ -28,7 +28,10 @@ Catalog of the Python engineering helpers. Committed Go gates are specified in
 | `self_test.py` | Deliberately bad harness probes | `self-test` |
 | `ops/scripts/module_catalog.py` | Strict module/profile validation and capability planning | `modules check`, `modules list`, `modules plan`, `modules graph`, `modules why` |
 | `ops/scripts/capability_registry.py` | Validates product availability against runtime gates/module capabilities and detects generated feature-matrix drift | `capabilities check`, `capabilities generate`, `capabilities list` |
-| `ops/scripts/sdk_surface.py` | Validates the generated-SDK operation registry against OpenAPI + capabilities, compares explicit registry baselines, and re-emits every language | `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `sdk-surface generate`, `sdk-surface list` |
+| `ops/scripts/sdk_surface.py` | Orchestrates generated-SDK registry validation, explicit-baseline operation/schema diffing, and regeneration | `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `sdk-surface generate`, `sdk-surface list` |
+| `ops/scripts/sdk_schema.py` | Bounded `components.schemas` structural compatibility comparison using PyYAML; conservative for composition/unsupported keyword changes | Called by `sdk-surface diff` |
+| `ops/scripts/sdk_baseline.py` | Reads registry + OpenAPI from one local git ref without fetch/shell, or reports a closed baseline error | Called by `sdk-surface diff` |
+| `ops/scripts/sdk_report.py` | Stable operation-surface and schema breaking/additive report formatting | Called by `sdk-surface diff` |
 | `ops/scripts/profile_evidence.py` | Builds profile binaries and asserts the declared package-isolation boundaries (durable/admin graph must stay out of the small editions), archiving per-binary package/module/symbol/size evidence | `profiles evidence [--skip-build]` |
 | `ops/scripts/configure_modules.py` | Atomic alternate modfile/overlay/lock materialization and profile builds | `configure --profile <id> [--version vX.Y.Z] [--build]` |
 
@@ -68,12 +71,20 @@ Run `python cli.py check-test` for check-module tests and
   `make test-e2e`.
 - `capability_registry.py` describes product-level capability domains, not
   every protocol row or every profile's resolved dependency closure.
-- `sdk-surface diff` compares only the committed registry's group/operation
-  data. It requires exactly one explicit local baseline (`--baseline-ref` or
-  `--baseline-file`); it never fetches, reads generated SDK
-  source, changes versions, or exposes a breaking-change bypass. Removed or
-  renamed operationIds and group relocations are breaking; additions are
-  additive. The opt-in `make sdk-surface-diff` target requires
+- `sdk-surface diff` compares the committed registry's group/operation data and,
+  when available, a bounded structural subset of OpenAPI `components.schemas`.
+  It requires exactly one explicit local baseline (`--baseline-ref` or
+  `--baseline-file`); a ref reads both files from that same local commit without
+  fetching, while `--baseline-file` is registry-only unless explicitly paired
+  with `--baseline-openapi-file`. It never reads generated SDK source, changes
+  versions, or exposes a breaking-change bypass. Removed/renamed operationIds,
+  group relocations, schema/property removals, required additions, `$ref`/type/
+  format changes, `additionalProperties` tightening, enum removals, and nested
+  or array breaking changes fail; optional properties, required removals, and
+  enum additions are additive. Description/title/examples/default metadata is
+  ignored. `oneOf`/`anyOf`/`allOf` and other unsupported schema keyword changes
+  use a conservative breaking policy; this is not a complete vendor-level OAS
+  diff. The opt-in `make sdk-surface-diff` target requires
   `SDK_SURFACE_BASELINE_REF`; it is intentionally not a `make ci` prerequisite, so
   a shallow or parentless local checkout cannot create a false baseline result.
 - `invariants.py` confirms selected markers exist somewhere; it does not prove

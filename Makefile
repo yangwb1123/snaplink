@@ -13,7 +13,7 @@ VALIDATION_POSTGRES_DSN := postgres://validation@postgres.invalid/snaplink?sslmo
 
 CLI = python cli.py
 
-.PHONY: help test ai-dev-test race bench vet fmt build configure build-profile build-prototype build-minimal build-full build-production build-small modules-list modules-plan modules-check modules-smoke capabilities-check capabilities-generate sdk-surface-diff docker docker-stripe-adapter ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve route-contract proto-openapi-parity adapters-check release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff helm-render docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
+.PHONY: help test ai-dev-test race bench vet fmt build configure build-profile build-prototype build-minimal build-full build-production build-small modules-list modules-plan modules-check modules-smoke capabilities-check capabilities-generate sdk-surface-check sdk-surface-diff docker docker-stripe-adapter ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve route-contract proto-openapi-parity adapters-check release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff helm-render docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -125,7 +125,7 @@ capabilities-check: ## Validate capability metadata and generated feature matrix
 sdk-surface-check: ## Validate the generated-SDK surface registry against OpenAPI + capabilities.
 	$(CLI) sdk-surface check
 
-sdk-surface-diff: ## Compare SDK-surface registry with SDK_SURFACE_BASELINE_REF (required; local git ref).
+sdk-surface-diff: ## Compare operation and components.schemas surface with SDK_SURFACE_BASELINE_REF (required; local git ref).
 	@test -n "$(SDK_SURFACE_BASELINE_REF)" || { echo "SDK_SURFACE_BASELINE_REF is required (for example: make sdk-surface-diff SDK_SURFACE_BASELINE_REF=HEAD^)" >&2; exit 1; }
 	$(CLI) sdk-surface diff --baseline-ref "$(SDK_SURFACE_BASELINE_REF)"
 
