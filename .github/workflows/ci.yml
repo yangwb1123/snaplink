@@ -62,7 +62,7 @@ jobs:
           --health-timeout=5s
           --health-retries=5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v5
         with:
@@ -157,7 +157,7 @@ jobs:
           - cmd/sso-mcp
           - cmd/sso-operator
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # kms/pkcs11 binds the C library github.com/miekg/pkcs11 via cgo, so
       # it needs CGO_ENABLED=1 + a C toolchain + libltdl headers even to
@@ -219,7 +219,7 @@ jobs:
           - cmd/sso-mcp
           - cmd/sso-operator
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # govulncheck analyzes (does not build C) but kms/pkcs11 imports a
       # cgo package; give it the headers so the load doesn't choke.
@@ -275,7 +275,7 @@ jobs:
       security-events: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v5
         with:
@@ -319,7 +319,7 @@ jobs:
           - cmd/sso-mcp
           - cmd/sso-operator
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v5
         with:
@@ -336,7 +336,7 @@ jobs:
     name: buf lint + breaking
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # buf breaking compares against the merge-base; we need full
           # history on PRs so the comparison has something to diff against.
@@ -365,7 +365,7 @@ jobs:
     name: openapi schema validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v5
         with:
@@ -379,7 +379,7 @@ jobs:
     name: docker build (smoke)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # buildx (with the docker driver, not docker-container) enables the
       # build-push-action's cache + future multi-arch story without a
@@ -441,7 +441,7 @@ jobs:
     name: Kustomize render
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: install kustomize
         run: |
@@ -552,7 +552,7 @@ jobs:
     name: Terraform validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: install terraform
         uses: hashicorp/setup-terraform@v3
@@ -575,7 +575,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v5
         with:
