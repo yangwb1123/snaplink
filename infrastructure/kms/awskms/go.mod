@@ -9,13 +9,13 @@ go 1.26.1
 // at the repo root, not a published version.
 require github.com/yangwb1123/snaplink v0.0.0
 
-require github.com/aws/aws-sdk-go-v2/service/kms v1.45.4
+require github.com/aws/aws-sdk-go-v2/service/kms v1.55.7
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.39.1 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.8 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.8 // indirect
-	github.com/aws/smithy-go v1.23.0 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.43.7 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.38 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.38 // indirect
+	github.com/aws/smithy-go v1.27.8 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
