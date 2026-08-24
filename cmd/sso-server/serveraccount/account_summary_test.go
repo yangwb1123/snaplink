@@ -119,7 +119,11 @@ func TestParseAccountSummaryRequestRejectsForgedAndOversizedInput(t *testing.T) 
 		{name: "oversized account", query: "account_id=" + strings.Repeat("x", maxAccountSummaryAccountID+1)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			r := accountSummaryRequest("opaque", test.query, test.header)
+			subject := test.header
+			if subject == "" {
+				subject = "user-1"
+			}
+			r := accountSummaryRequest("opaque", test.query, subject)
 			if test.multi {
 				r.Header.Add(accountSummaryCanonicalUIDHeader, "user-2")
 			}
@@ -134,6 +138,12 @@ func TestParseAccountSummaryRequestRejectsForgedAndOversizedInput(t *testing.T) 
 	if got := valid("account_id=" + strings.Repeat("x", maxAccountSummaryQuery)); got.Code != http.StatusBadRequest {
 		t.Fatalf("oversized query status = %d, want 400", got.Code)
 	}
+	oversizedToken := httptest.NewRecorder()
+	deps.handle(oversizedToken, accountSummaryRequest(strings.Repeat("x", maxAccountSummaryToken+1), "account_id=account-1", "user-1"))
+	if oversizedToken.Code != http.StatusUnauthorized {
+		t.Fatalf("oversized token status = %d, want 401", oversizedToken.Code)
+	}
+	assertAccountSummaryNoStore(t, oversizedToken)
 
 	r := accountSummaryRequest("opaque", "account_id=account-1", "user-1")
 	r = r.WithContext(peertrust.WithRequestInfo(r.Context(), peertrust.RequestInfo{ForwardedHeadersTrusted: false}))
@@ -177,6 +187,7 @@ func TestAccountSummaryAcceptsOnlyServiceTokenShape(t *testing.T) {
 		{name: "missing scope", mutate: func(c *core.TokenClaims) { c.Scopes = nil }, wantStatus: http.StatusForbidden},
 		{name: "subject client mismatch", mutate: func(c *core.TokenClaims) { c.ClientID = "other-client" }, wantStatus: http.StatusForbidden},
 		{name: "id token", mutate: func(c *core.TokenClaims) { c.TokenUse = core.TokenUseIDToken }, wantStatus: http.StatusUnauthorized},
+		{name: "untyped token", mutate: func(c *core.TokenClaims) { c.TokenUse = "" }, wantStatus: http.StatusUnauthorized},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -193,7 +204,7 @@ func TestAccountSummaryAcceptsOnlyServiceTokenShape(t *testing.T) {
 	}
 }
 
-func TestAccountSummaryUnknownUserIsDetailFreeAndAuditFailureDoesNotChangeRead(t *testing.T) {
+func TestAccountSummaryUnknownUserAndDatasetUseSameFailure(t *testing.T) {
 	claims := accountSummaryTestClaims()
 	deps, users := accountSummaryTestDeps(claims)
 	if err := users.CreateOrUpdate(context.Background(), &core.User{ID: "user-1", Email: "user@example.com"}); err != nil {
@@ -209,9 +220,6 @@ func TestAccountSummaryUnknownUserIsDetailFreeAndAuditFailureDoesNotChangeRead(t
 
 	unknown := httptest.NewRecorder()
 	deps.handle(unknown, accountSummaryRequest("opaque", "account_id=account-1", "missing-user"))
-	if unknown.Code != http.StatusOK || strings.Contains(unknown.Body.String(), "missing-user") {
-		t.Fatalf("unknown user response = %d %s", unknown.Code, unknown.Body.String())
-	}
 	assertAccountSummaryNoStore(t, unknown)
 
 	badDataset := httptest.NewRecorder()
@@ -220,6 +228,9 @@ func TestAccountSummaryUnknownUserIsDetailFreeAndAuditFailureDoesNotChangeRead(t
 		t.Fatalf("unknown dataset response = %d %s", badDataset.Code, badDataset.Body.String())
 	}
 	assertAccountSummaryNoStore(t, badDataset)
+	if unknown.Code != badDataset.Code || unknown.Body.String() != badDataset.Body.String() {
+		t.Fatalf("unknown user/dataset responses differ: user=%d %q dataset=%d %q", unknown.Code, unknown.Body.String(), badDataset.Code, badDataset.Body.String())
+	}
 }
 
 func TestMountAccountSummaryAfterServerHandler(t *testing.T) {
