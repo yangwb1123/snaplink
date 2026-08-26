@@ -41,6 +41,8 @@ completion_report:
       result: passed
     - command: "go build ./... && go vet ./..."
       result: passed
+    - command: "go run ./cmd/gensdk --lang=all"
+      result: passed
     - command: "go test -run 'TestMaintainability_|TestArchitecture_|TestDirectory' ."
       result: passed
     - command: "make ci"
