@@ -255,12 +255,8 @@ func (a *Middleware) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 		actorCtx, err := a.authorizeGRPC(ctx, info.FullMethod)
 		if err != nil {
 			if a.recorder != nil {
-				a.recorder.Record(ctx, &audit.Event{
-					Type:      audit.EventAdminGRPCCalled,
-					Outcome:   audit.OutcomeFailure,
-					Reason:    info.FullMethod + ": denied",
-					Timestamp: time.Now(),
-				})
+				a.recorder.Record(ctx, audit.EventFromGRPCContext(
+					ctx, audit.EventAdminGRPCCalled, audit.OutcomeFailure, info.FullMethod+": denied"))
 			}
 			return nil, err
 		}
@@ -297,6 +293,10 @@ func (a *Middleware) StreamServerInterceptor() grpc.StreamServerInterceptor {
 		}
 		ctx, err := a.authorizeGRPC(ss.Context(), info.FullMethod)
 		if err != nil {
+			if a.recorder != nil {
+				a.recorder.Record(ss.Context(), audit.EventFromGRPCContext(
+					ss.Context(), audit.EventAdminGRPCCalled, audit.OutcomeFailure, info.FullMethod+": denied"))
+			}
 			return err
 		}
 		return handler(srv, &actorServerStream{ServerStream: ss, ctx: ctx})

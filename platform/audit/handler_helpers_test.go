@@ -15,6 +15,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 )
 
 func TestSetMeta_LazyAllocAndSkipEmpty(t *testing.T) {
@@ -218,6 +220,24 @@ func TestEventFromRequest_MalformedTraceparentIgnored(t *testing.T) {
 	e := audit.EventFromRequest(ctx)
 	if e.TraceID != "" || e.SpanID != "" {
 		t.Fatalf("malformed traceparent should leave ids empty: trace=%q span=%q", e.TraceID, e.SpanID)
+	}
+}
+
+func TestEventFromGRPCContext_NilTransportDataAndMalformedTraceparent(t *testing.T) {
+	t.Parallel()
+	withoutTransport := audit.EventFromGRPCContext(context.Background(), audit.EventAdminGRPCCalled, audit.OutcomeFailure, "denied")
+	if withoutTransport.ActorIP != "" || withoutTransport.RequestID != "" || withoutTransport.TraceID != "" || withoutTransport.SpanID != "" {
+		t.Fatalf("nil peer/metadata should be safe and empty: %+v", withoutTransport)
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+		core.HeaderRequestID, "req-grpc-1",
+		core.HeaderTraceparent, "not-a-valid-traceparent",
+	))
+	ctx = peer.NewContext(ctx, nil)
+	e := audit.EventFromGRPCContext(ctx, audit.EventAdminGRPCCalled, audit.OutcomeFailure, "denied")
+	if e.ActorIP != "" || e.RequestID != "req-grpc-1" || e.TraceID != "" || e.SpanID != "" {
+		t.Fatalf("malformed correlation = %+v", e)
 	}
 }
 
