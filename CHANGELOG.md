@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- SDK artifact drift gate: `python cli.py sdk-drift check` regenerates the
+  TypeScript and Python clients in a temporary directory, rejects uncommitted
+  non-`dist/` files under `docs/sdks/`, and byte-sweeps the optional ignored
+  OpenResty static copies when present. `make ci` runs the gate; an absent
+  external static tree is reported as an allowed skip.
 - SDK release-readiness version gate: `python cli.py sdk-surface versions`
   reads only the four fixed TypeScript, Python, Rust and PHP manifests,
   validates SemVer 2.0.0, checks the TypeScript package-lock root, and reports

@@ -34,6 +34,9 @@ Delivered:
   and `sdk-surface generate` re-emits every language from the registry.
 - The compatibility policy (additive, semver-tracked, operationId
   verbatim naming) is committed in the registry itself.
+- SDK artifact truth is now gated separately: `sdk-drift check` regenerates
+  the canonical TypeScript/Python clients in a temporary tree and sweeps the
+  optional ignored deploy-tree copies for byte drift; `make ci` runs it.
 
 ### 2. Produce auditable OIDC/FAPI conformance evidence — PARTIAL (headless + local HTTP/HTTPS topologies landed; FAPI local follow-up reached the query-suffix boundary; external official run + OIDF listing + archive upload strategy remain)
 

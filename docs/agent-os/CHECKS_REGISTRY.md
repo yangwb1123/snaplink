@@ -26,6 +26,7 @@ Catalog of the Python engineering helpers. Committed Go gates are specified in
 | `root_business_code.py` | Root business-file policy | via `accept`, `check-root` |
 | `root_files.py` | Root file-count diagnostic | via `accept` |
 | `self_test.py` | Deliberately bad harness probes | `self-test` |
+| `sdk_drift.py` | Regenerates canonical TypeScript/Python SDKs in a temporary tree and sweeps optional deploy copies for byte drift | `sdk-drift check`, `make sdk-drift-check` |
 | `ops/scripts/module_catalog.py` | Strict module/profile validation and capability planning | `modules check`, `modules list`, `modules plan`, `modules graph`, `modules why` |
 | `ops/scripts/capability_registry.py` | Validates product availability against runtime gates/module capabilities and detects generated feature-matrix drift | `capabilities check`, `capabilities generate`, `capabilities list` |
 | `ops/scripts/sdk_surface.py` | Orchestrates generated-SDK registry validation, explicit-baseline operation/schema diffing, and regeneration | `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `sdk-surface generate`, `sdk-surface list` |
@@ -47,7 +48,7 @@ Run `python cli.py check-test` for check-module tests and
 |---|---|
 | Fast loop | `check`, `check-filesize` |
 | Composite reports | `harness`, `accept`, `evaluate` |
-| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `check-proto-openapi-parity`, `adapters`, `capabilities check`, `sdk-surface versions`, `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
+| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `check-proto-openapi-parity`, `adapters`, `capabilities check`, `sdk-surface versions`, `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `sdk-drift check`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
 | Scaffolding | `generate` |
 | Diagnostics | `diagnose`, `trend`, `health-report`, `self-test` |
 | Test execution | `test`, `race`, `bench`, `check-test`, `skill-test` |
