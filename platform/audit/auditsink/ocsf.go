@@ -189,6 +189,10 @@ var ocsfEventActivities = map[auditspi.EventType]ocsfActivity{
 	auditspi.EventAdminSubjectExported:            {ocsfClassAccountChange, ocsfCategoryIAM, 99, "Admin Subject Exported"},
 	auditspi.EventAdminSubjectErased:              {ocsfClassAccountChange, ocsfCategoryIAM, 6, "Delete"},
 	auditspi.EventAdminGRPCCalled:                 {ocsfClassAPIActivity, ocsfCategoryAppActivity, 99, "gRPC Call"},
+	auditspi.EventAdminWriteQuotaExceeded:         {ocsfClassAPIActivity, ocsfCategoryAppActivity, 99, "Write Quota Exceeded"},
+	auditspi.EventAdminIPDenied:                   {ocsfClassAPIActivity, ocsfCategoryAppActivity, 99, "IP Denied"},
+	auditspi.EventAdminRateLimited:                {ocsfClassAPIActivity, ocsfCategoryAppActivity, 99, "Rate Limited"},
+	auditspi.EventAdminDestructiveConfirmRequired: {ocsfClassAPIActivity, ocsfCategoryAppActivity, 99, "Destructive Confirmation Required"},
 	// system / platform (event_types_system.go) — SDK-local class, see
 	// ocsfClassPlatformEvent doc.
 	auditspi.EventBootstrapStepApplied:           {ocsfClassPlatformEvent, ocsfCategoryUnmapped, 1, "Bootstrap Step Applied"},

@@ -54,6 +54,8 @@ const (
 	EventConfigCanaryRolledBack              = auditspi.EventConfigCanaryRolledBack
 	EventAdminIPDenied                       = auditspi.EventAdminIPDenied
 	EventAdminWriteQuotaExceeded             = auditspi.EventAdminWriteQuotaExceeded
+	EventAdminRateLimited                    = auditspi.EventAdminRateLimited
+	EventAdminDestructiveConfirmRequired     = auditspi.EventAdminDestructiveConfirmRequired
 	EventAdminDeviceSecretsRevoked           = auditspi.EventAdminDeviceSecretsRevoked
 	EventAdminDomainCreated                  = auditspi.EventAdminDomainCreated
 	EventAdminDomainDeleted                  = auditspi.EventAdminDomainDeleted

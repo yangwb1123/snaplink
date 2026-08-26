@@ -285,15 +285,15 @@ func (b *appBuilder) finalize() (*app, error) {
 	return b.assemble(rt), nil
 }
 
-// wireAdminMW builds the admin middleware (rate limit + token store + idle
+// wireAdminMW builds admin middleware (rate limit + token store + idle
 // timeout) when admin is enabled; nil otherwise (admin disabled — matches
-// the original inline assembly byte-identically). Split out of finalize to
-// keep it under the function-length budget.
+// the original inline assembly byte-identically).
 func (b *appBuilder) wireAdminMW(srv *sso.Server) *sso.AdminMiddleware {
 	if !b.cfg.Admin.Enabled {
 		return nil
 	}
 	mw := sso.NewAdminMiddleware(srv, b.provider)
+	mw.SetAuditRecorder(srv.Auditor())
 	// The wasmauthz admin debug route is a read-only decision probe (POST,
 	// for its JSON body, but no state mutation) — override the default
 	// GET=read/mutation=write HTTP rule for just this one path so it needs

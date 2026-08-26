@@ -427,6 +427,28 @@ func TestBuildApp_FullFeatureSet(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("admin REST without bearer = %d; want 401", resp.StatusCode)
 	}
+
+	// The stock composition root must pass its Server auditor into the HTTP
+	// middleware, not only into handlers and gRPC interceptors.
+	a.adminMW.SetRateLimit(1, 1)
+	for i := 0; i < 2; i++ {
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/admin/clients", nil)
+		w := httptest.NewRecorder()
+		a.adminMW.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(w, r)
+	}
+	var events []*audit.Event
+	for i := 0; i < 50; i++ {
+		events, err = a.recorder.Sink().Query(context.Background(), audit.Query{Type: audit.EventAdminRateLimited})
+		if len(events) == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err != nil || len(events) != 1 {
+		t.Fatalf("stock admin middleware rate-limit audit events = %d, err=%v; want exactly 1", len(events), err)
+	}
 }
 
 // TestBuildApp_SignupRequiresPasswordStore — self-service signup without a

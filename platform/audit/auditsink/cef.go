@@ -141,6 +141,10 @@ var cefEventNames = map[auditspi.EventType]string{
 	auditspi.EventAdminSubjectExported:            "Admin: Subject Exported",
 	auditspi.EventAdminSubjectErased:              "Admin: Subject Erased",
 	auditspi.EventAdminGRPCCalled:                 "Admin: gRPC Call",
+	auditspi.EventAdminWriteQuotaExceeded:         "Admin: Write Quota Exceeded",
+	auditspi.EventAdminIPDenied:                   "Admin: IP Denied",
+	auditspi.EventAdminRateLimited:                "Admin: Rate Limited",
+	auditspi.EventAdminDestructiveConfirmRequired: "Admin: Destructive Confirmation Required",
 	// system / platform (event_types_system.go)
 	auditspi.EventBootstrapStepApplied:           "Bootstrap Step Applied",
 	auditspi.EventBootstrapStepSkipped:           "Bootstrap Step Skipped",

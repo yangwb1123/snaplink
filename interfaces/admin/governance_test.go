@@ -7,7 +7,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/yangwb1123/snaplink/domains/authenticators/device"
 	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
@@ -319,5 +322,201 @@ func TestMethodScopeForPath_SegmentBoundary(t *testing.T) {
 		if ok != tc.wantOK || scope != tc.wantScope {
 			t.Errorf("methodScopeForPath(%q) = (%q, %v); want (%q, %v)", tc.path, scope, ok, tc.wantScope, tc.wantOK)
 		}
+	}
+}
+
+type governanceDenialCase struct {
+	name       string
+	eventType  audit.EventType
+	reason     string
+	method     string
+	path       string
+	calls      int
+	withTenant bool
+	setup      func(*Middleware)
+}
+
+func runGovernanceRequest(mw *Middleware, method, path string) (int, http.Header, string) {
+	r := httptest.NewRequest(method, path, nil)
+	r.RemoteAddr = "198.51.100.7:4321"
+	r.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+	mw.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(w, r)
+	return w.Code, w.Header().Clone(), w.Body.String()
+}
+
+func TestHTTPGovernanceDenials_AuditExactlyOnceAndPreserveResponse(t *testing.T) {
+	ipCfg, err := admingovernance.ParseIPAllowlistConfig([]string{"10.0.0.0/8"}, nil)
+	if err != nil {
+		t.Fatalf("ParseIPAllowlistConfig: %v", err)
+	}
+	cases := []governanceDenialCase{
+		{name: "ip", eventType: audit.EventAdminIPDenied, reason: errAdminIPDenied,
+			method: http.MethodGet, path: "/api/v1/admin/connections?token=not-recorded",
+			setup: func(mw *Middleware) { mw.SetIPAllowlist(ipCfg, nil) }},
+		{name: "rate", eventType: audit.EventAdminRateLimited, reason: errAdminRateLimitExceeded,
+			method: http.MethodGet, path: "/api/v1/admin/connections", calls: 2,
+			setup: func(mw *Middleware) { mw.SetRateLimit(1, 1) }},
+		{name: "destructive", eventType: audit.EventAdminDestructiveConfirmRequired, reason: errDestructiveConfirmRequired,
+			method: http.MethodDelete, path: "/api/v1/admin/tenants/acme?token=not-recorded",
+			setup: func(mw *Middleware) {
+				mw.SetDestructiveActions(admingovernance.NewDestructiveSet([]admingovernance.DestructiveRule{
+					{Method: http.MethodDelete, PathPrefix: "/api/v1/admin/tenants/"},
+				}))
+			}},
+		{name: "quota", eventType: audit.EventAdminWriteQuotaExceeded, reason: errAdminWriteQuotaExceeded,
+			method: http.MethodPost, path: "/api/v1/admin/connections?token=not-recorded", calls: 2,
+			withTenant: true,
+			setup: func(mw *Middleware) {
+				mw.SetWriteQuota(admingovernance.NewMemoryWriteQuotaStore(), 1, time.Hour, "tenant")
+			}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			newMW := func() *Middleware {
+				mw := newTestMiddleware("admin-1")
+				if tc.withTenant {
+					mw.validator = fakeValidator{claims: &core.TokenClaims{Subject: "admin-1", Extra: map[string]string{core.KeyTenantID: "tenant-a"}}}
+				}
+				tc.setup(mw)
+				return mw
+			}
+			calls := tc.calls
+			if calls == 0 {
+				calls = 1
+			}
+			base := newMW()
+			var baseStatus int
+			var baseHeaders http.Header
+			var baseBody string
+			for i := 0; i < calls; i++ {
+				baseStatus, baseHeaders, baseBody = runGovernanceRequest(base, tc.method, tc.path)
+			}
+			sink := audit.NewMemorySink(8)
+			wired := newMW()
+			wired.SetAuditRecorder(audit.New(sink))
+			var gotStatus int
+			var gotHeaders http.Header
+			var gotBody string
+			for i := 0; i < calls; i++ {
+				gotStatus, gotHeaders, gotBody = runGovernanceRequest(wired, tc.method, tc.path)
+			}
+			if gotStatus != baseStatus || gotBody != baseBody || !reflect.DeepEqual(gotHeaders, baseHeaders) {
+				t.Fatalf("wired response differs: got (%d, %q, %#v), base (%d, %q, %#v)", gotStatus, gotBody, gotHeaders, baseStatus, baseBody, baseHeaders)
+			}
+			events, err := sink.Query(context.Background(), audit.Query{Type: tc.eventType})
+			if err != nil {
+				t.Fatalf("query denial event: %v", err)
+			}
+			if len(events) != 1 {
+				t.Fatalf("denial events = %d; want exactly 1", len(events))
+			}
+			e := events[0]
+			if e.Outcome != audit.OutcomeFailure || e.ActorIP != "198.51.100.7" {
+				t.Fatalf("event outcome/ip = %q/%q; want failure/198.51.100.7", e.Outcome, e.ActorIP)
+			}
+			wantMeta := map[string]string{"method": tc.method, "path": stringsBeforeQuery(tc.path), "reason": tc.reason}
+			if !reflect.DeepEqual(e.Metadata, wantMeta) {
+				t.Fatalf("metadata = %#v; want %#v", e.Metadata, wantMeta)
+			}
+			if tc.withTenant {
+				if e.ActorID != "admin-1" || e.TenantID != "tenant-a" {
+					t.Fatalf("quota actor evidence = (%q, %q); want (admin-1, tenant-a)", e.ActorID, e.TenantID)
+				}
+			} else if e.ActorID != "" || e.TenantID != "" {
+				t.Fatalf("unexpected actor evidence = (%q, %q)", e.ActorID, e.TenantID)
+			}
+			if e.Reason != "" || e.TokenID != "" {
+				t.Fatalf("sensitive/unscoped event fields populated: reason=%q token_id=%q", e.Reason, e.TokenID)
+			}
+		})
+	}
+}
+
+func stringsBeforeQuery(path string) string {
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		return path[:i]
+	}
+	return path
+}
+
+type failingDenialSink struct{}
+
+func (failingDenialSink) Record(context.Context, *audit.Event) error {
+	return errors.New("audit sink unavailable")
+}
+func (failingDenialSink) Query(context.Context, audit.Query) ([]*audit.Event, error) { return nil, nil }
+func (failingDenialSink) Get(context.Context, string) (*audit.Event, error)          { return nil, nil }
+
+func TestHTTPGovernanceDenials_HEADResponseIsUnchanged(t *testing.T) {
+	ipCfg, err := admingovernance.ParseIPAllowlistConfig([]string{"10.0.0.0/8"}, nil)
+	if err != nil {
+		t.Fatalf("ParseIPAllowlistConfig: %v", err)
+	}
+	cases := []struct {
+		name  string
+		setup func(*Middleware)
+		path  string
+	}{
+		{"ip", func(m *Middleware) { m.SetIPAllowlist(ipCfg, nil) }, "/api/v1/admin/x"},
+		{"rate", func(m *Middleware) { m.SetRateLimit(1, 1) }, "/api/v1/admin/x"},
+		{"confirm", func(m *Middleware) {
+			m.SetDestructiveActions(admingovernance.NewDestructiveSet([]admingovernance.DestructiveRule{{Method: http.MethodHead, PathPrefix: "/api/v1/admin/x"}}))
+		}, "/api/v1/admin/x"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := newTestMiddleware("admin-1")
+			tc.setup(base)
+			baseStatus, baseHeaders, baseBody := runGovernanceRequest(base, http.MethodHead, tc.path)
+			sink := audit.NewMemorySink(4)
+			wired := newTestMiddleware("admin-1")
+			tc.setup(wired)
+			wired.SetAuditRecorder(audit.New(sink))
+			gotStatus, gotHeaders, gotBody := runGovernanceRequest(wired, http.MethodHead, tc.path)
+			if gotStatus != baseStatus || gotBody != baseBody || !reflect.DeepEqual(gotHeaders, baseHeaders) {
+				t.Fatalf("wired HEAD response differs: got (%d, %q, %#v), base (%d, %q, %#v)", gotStatus, gotBody, gotHeaders, baseStatus, baseBody, baseHeaders)
+			}
+		})
+	}
+}
+
+func TestHTTPGovernanceDenials_NilAndFailingRecorderAreFailOpen(t *testing.T) {
+	ipCfg, err := admingovernance.ParseIPAllowlistConfig([]string{"10.0.0.0/8"}, nil)
+	if err != nil {
+		t.Fatalf("ParseIPAllowlistConfig: %v", err)
+	}
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		calls  int
+		setup  func(*Middleware)
+		status int
+	}{
+		{"ip", http.MethodGet, "/api/v1/admin/x", 1, func(m *Middleware) { m.SetIPAllowlist(ipCfg, nil) }, http.StatusForbidden},
+		{"rate", http.MethodGet, "/api/v1/admin/x", 2, func(m *Middleware) { m.SetRateLimit(1, 1) }, http.StatusTooManyRequests},
+		{"confirm", http.MethodDelete, "/api/v1/admin/tenants/acme", 1, func(m *Middleware) {
+			m.SetDestructiveActions(admingovernance.NewDestructiveSet([]admingovernance.DestructiveRule{{Method: http.MethodDelete, PathPrefix: "/api/v1/admin/tenants/"}}))
+		}, http.StatusConflict},
+		{"quota", http.MethodPost, "/api/v1/admin/x", 2, func(m *Middleware) { m.SetWriteQuota(admingovernance.NewMemoryWriteQuotaStore(), 1, time.Hour, "") }, http.StatusTooManyRequests},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, rec := range []*audit.Recorder{nil, audit.New(failingDenialSink{})} {
+				mw := newTestMiddleware("admin-1")
+				tc.setup(mw)
+				mw.SetAuditRecorder(rec)
+				var status int
+				for i := 0; i < tc.calls; i++ {
+					status, _, _ = runGovernanceRequest(mw, tc.method, tc.path)
+				}
+				if status != tc.status {
+					t.Fatalf("status with recorder %v = %d; want %d", rec != nil, status, tc.status)
+				}
+			}
+		})
 	}
 }

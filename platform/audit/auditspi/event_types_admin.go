@@ -145,6 +145,8 @@ const (
 	// (platform/lifecycle/admingovernance) blocks a request, when an audit Recorder is
 	// wired via SetAuditRecorder. Governance/observability only — neither
 	// gate depends on the audit event landing.
-	EventAdminWriteQuotaExceeded EventType = "admin_write_quota_exceeded"
-	EventAdminIPDenied           EventType = "admin_ip_denied"
+	EventAdminWriteQuotaExceeded         EventType = "admin_write_quota_exceeded"
+	EventAdminIPDenied                   EventType = "admin_ip_denied"
+	EventAdminRateLimited                EventType = "admin_rate_limited"
+	EventAdminDestructiveConfirmRequired EventType = "admin_destructive_confirm_required"
 )

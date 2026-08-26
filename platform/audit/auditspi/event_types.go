@@ -317,7 +317,8 @@ var KnownEventTypes = map[EventType]struct{}{
 	// config apply/rollback (declared peer-config baseline write path)
 	EventAdminConfigApplied: {}, EventAdminConfigRolledBack: {},
 	EventConfigCanaryStarted: {}, EventConfigCanaryConfirmed: {}, EventConfigCanaryRolledBack: {},
-	EventAdminWriteQuotaExceeded: {}, EventAdminIPDenied: {},
+	EventAdminWriteQuotaExceeded: {}, EventAdminIPDenied: {}, EventAdminRateLimited: {},
+	EventAdminDestructiveConfirmRequired: {},
 	// system / platform (event_types_system.go)
 	EventBootstrapStepApplied: {}, EventBootstrapStepSkipped: {}, EventBootstrapStepFailed: {},
 	EventBootstrapLockAcquired: {}, EventBootstrapLockReleased: {}, EventBootstrapLockLost: {},

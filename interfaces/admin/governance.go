@@ -230,19 +230,25 @@ func recordChangeEvent(d Deps, rctx context.Context, actorIP string, evtType aud
 
 // ---------- Transport-level governance checks (AdminMiddleware) ----------
 
-// Wire error codes for the transport-level checks below. Defined here
-// (rather than shared/core) because these run at the pre-routing
-// http.Handler layer alongside the EXISTING admin_auth_not_configured /
-// missing_token / forbidden / rate_limit_exceeded literals in middleware.go
-// — that layer has no core.HandlerContext to hang a core.ErrorBody off, so
-// it has always used small local literals; these three follow suit rather
-// than introducing a second, inconsistent convention.
+// Wire error codes for the pre-routing transport checks. They remain local
+// because this layer has no core.HandlerContext for core.ErrorBody.
 const (
 	errAdminWriteQuotaExceeded    = "admin_write_quota_exceeded"
 	errAdminIPDenied              = "admin_ip_denied"
 	errDestructiveConfirmRequired = "destructive_confirmation_required"
 	errAdminRateLimitExceeded     = "rate_limit_exceeded"
 )
+
+func recordAdminDenial(rec *audit.Recorder, r *http.Request, typ audit.EventType, reason, actorID, tenantID string) {
+	e := &audit.Event{Type: typ, Outcome: audit.OutcomeFailure, ActorID: actorID, TenantID: tenantID}
+	if ip := geo.DefaultIPExtractor(r); ip != nil {
+		e.ActorIP = ip.String()
+	}
+	audit.SetMeta(e, "method", r.Method)
+	audit.SetMeta(e, "path", r.URL.Path)
+	audit.SetMeta(e, "reason", reason)
+	rec.Record(r.Context(), e)
+}
 
 // HeaderConfirm is the explicit confirmation parameter a caller must send
 // (X-Confirm: true) to proceed with a mutation classified destructive by
@@ -303,7 +309,7 @@ func (a *Middleware) SetRateLimitPolicyStore(store *ratelimit.PolicyStore) {
 // checkRateLimit enforces the optional admin-wide rate limit set via
 // SetRateLimit/SetRateLimitPolicyStore. nil store (neither ever called) is
 // unlimited — byte-identical to a build without the feature.
-func checkRateLimit(w http.ResponseWriter, store *ratelimit.PolicyStore) bool {
+func checkRateLimit(w http.ResponseWriter, r *http.Request, store *ratelimit.PolicyStore, rec *audit.Recorder) bool {
 	if store == nil {
 		return true
 	}
@@ -326,6 +332,7 @@ func checkRateLimit(w http.ResponseWriter, store *ratelimit.PolicyStore) bool {
 	}
 	w.Header().Set("Retry-After", strconv.Itoa(secs))
 	http.Error(w, `{"error":"`+errAdminRateLimitExceeded+`"}`, http.StatusTooManyRequests)
+	recordAdminDenial(rec, r, audit.EventAdminRateLimited, errAdminRateLimitExceeded, "", "")
 	return false
 }
 
@@ -361,7 +368,7 @@ func (a *Middleware) SetDestructiveActions(set admingovernance.DestructiveSet) {
 // have followed). Composes with the EXISTING geo enrichment SPI
 // (geo.DefaultIPExtractor, geo.Provider) rather than reimplementing IP/geo
 // resolution.
-func checkIPPolicy(w http.ResponseWriter, r *http.Request, p *adminIPPolicy) bool {
+func checkIPPolicy(w http.ResponseWriter, r *http.Request, p *adminIPPolicy, rec *audit.Recorder) bool {
 	if p == nil {
 		return true
 	}
@@ -374,11 +381,12 @@ func checkIPPolicy(w http.ResponseWriter, r *http.Request, p *adminIPPolicy) boo
 		return true
 	}
 	http.Error(w, `{"error":"`+errAdminIPDenied+`"}`, http.StatusForbidden)
+	recordAdminDenial(rec, r, audit.EventAdminIPDenied, errAdminIPDenied, "", "")
 	return false
 }
 
 // checkDestructiveConfirm enforces the configured destructive-action set.
-func checkDestructiveConfirm(w http.ResponseWriter, r *http.Request, set admingovernance.DestructiveSet) bool {
+func checkDestructiveConfirm(w http.ResponseWriter, r *http.Request, set admingovernance.DestructiveSet, rec *audit.Recorder) bool {
 	if len(set) == 0 {
 		return true
 	}
@@ -389,6 +397,7 @@ func checkDestructiveConfirm(w http.ResponseWriter, r *http.Request, set admingo
 		return true
 	}
 	http.Error(w, `{"error":"`+errDestructiveConfirmRequired+`"}`, http.StatusConflict)
+	recordAdminDenial(rec, r, audit.EventAdminDestructiveConfirmRequired, errDestructiveConfirmRequired, "", "")
 	return false
 }
 
@@ -405,7 +414,7 @@ func isAdminWriteMethod(m string) bool {
 
 // checkWriteQuota enforces the configured per-tenant/admin write-op budget.
 // actorID/tenantHint come from the already-validated bearer claims.
-func checkWriteQuota(w http.ResponseWriter, r *http.Request, q *adminQuotaConfig, actorID, tenantHint string) bool {
+func checkWriteQuota(w http.ResponseWriter, r *http.Request, q *adminQuotaConfig, actorID, tenantHint string, rec *audit.Recorder) bool {
 	if q == nil || q.store == nil || !isAdminWriteMethod(r.Method) {
 		return true
 	}
@@ -416,6 +425,7 @@ func checkWriteQuota(w http.ResponseWriter, r *http.Request, q *adminQuotaConfig
 			w.Header().Set("Retry-After", strconv.Itoa(int(time.Until(res.ResetAt).Seconds())))
 		}
 		http.Error(w, `{"error":"`+errAdminWriteQuotaExceeded+`"}`, http.StatusTooManyRequests)
+		recordAdminDenial(rec, r, audit.EventAdminWriteQuotaExceeded, errAdminWriteQuotaExceeded, actorID, tenantHint)
 		return false
 	}
 	return true

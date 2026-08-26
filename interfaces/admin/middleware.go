@@ -324,13 +324,13 @@ func (a *Middleware) HTTPMiddleware(next http.Handler) http.Handler {
 		// network must never reach rate-limiting or auth machinery (no
 		// oracle — the response is identical regardless of what a valid
 		// token would have done).
-		if !checkIPPolicy(w, r, a.ipPolicy) {
+		if !checkIPPolicy(w, r, a.ipPolicy, a.recorder) {
 			return
 		}
-		if !checkRateLimit(w, a.rateLimitStore) {
+		if !checkRateLimit(w, r, a.rateLimitStore, a.recorder) {
 			return
 		}
-		if !checkDestructiveConfirm(w, r, a.destructive) {
+		if !checkDestructiveConfirm(w, r, a.destructive, a.recorder) {
 			return
 		}
 		claims, clientID, ok := a.authenticateHTTP(w, r)
@@ -342,7 +342,7 @@ func (a *Middleware) HTTPMiddleware(next http.Handler) http.Handler {
 		if a.enforceIdleTimeout(w, r, claims) {
 			return
 		}
-		if !checkWriteQuota(w, r, a.quota, claims.Subject, tenantHintFromClaims(claims)) {
+		if !checkWriteQuota(w, r, a.quota, claims.Subject, tenantHintFromClaims(claims), a.recorder) {
 			return
 		}
 

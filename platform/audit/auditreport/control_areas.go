@@ -151,6 +151,8 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventConfigCanaryRolledBack,
 			audit.EventAdminWriteQuotaExceeded,
 			audit.EventAdminIPDenied,
+			audit.EventAdminRateLimited,
+			audit.EventAdminDestructiveConfirmRequired,
 		},
 	},
 	{
