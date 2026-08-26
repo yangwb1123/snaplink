@@ -3,6 +3,7 @@ package permissions
 import (
 	"context"
 	"maps"
+	"sort"
 	"strings"
 	"time"
 )
@@ -73,6 +74,7 @@ func (m *MemoryProvider) ListResources(_ context.Context, tenantID, clientID str
 			out = append(out, cloneResource(r))
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 
@@ -87,6 +89,12 @@ func (m *MemoryProvider) ListAllResources(_ context.Context, clientID string) ([
 			out = append(out, cloneResource(r))
 		}
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TenantID != out[j].TenantID {
+			return out[i].TenantID < out[j].TenantID
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out, nil
 }
 

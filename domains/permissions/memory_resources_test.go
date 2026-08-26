@@ -118,18 +118,50 @@ func TestListResources_FiltersByScope(t *testing.T) {
 	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
-	_ = p.RegisterResource(ctx, httpRes("r-acme-a", "t-acme", "web", "GET", "/a"))
 	_ = p.RegisterResource(ctx, httpRes("r-acme-b", "t-acme", "web", "GET", "/b"))
+	_ = p.RegisterResource(ctx, httpRes("r-acme-a", "t-acme", "web", "GET", "/a"))
 	_ = p.RegisterResource(ctx, httpRes("r-beta", "t-beta", "web", "GET", "/x"))
 	_ = p.RegisterResource(ctx, httpRes("r-platform", "", "web", "GET", "/y"))
 
 	acmeWeb, _ := p.ListResources(ctx, "t-acme", "web")
-	if len(acmeWeb) != 2 {
-		t.Errorf("acme/web len=%d, want 2", len(acmeWeb))
+	if len(acmeWeb) != 2 || acmeWeb[0].ID != "r-acme-a" || acmeWeb[1].ID != "r-acme-b" {
+		t.Errorf("acme/web = %+v, want IDs [r-acme-a r-acme-b]", acmeWeb)
 	}
 	platform, _ := p.ListResources(ctx, "", "web")
 	if len(platform) != 1 || platform[0].ID != "r-platform" {
 		t.Errorf("no-tenant bucket = %+v", platform)
+	}
+}
+
+func TestListAllResources_StableTenantAndIDOrdering(t *testing.T) {
+	t.Parallel()
+	p := permissions.NewMemoryProvider()
+	ctx := context.Background()
+	entries := []*permissions.Resource{
+		httpRes("z-tenant-b", "tenant-b", "web", "GET", "/z-b"),
+		httpRes("a-tenant-a", "tenant-a", "web", "GET", "/a-a"),
+		httpRes("z-tenant-a", "tenant-a", "web", "GET", "/z-a"),
+		httpRes("a-tenant-b", "tenant-b", "web", "GET", "/a-b"),
+		httpRes("other-client", "tenant-a", "other", "GET", "/other"),
+	}
+	for _, r := range entries {
+		if err := p.RegisterResource(ctx, r); err != nil {
+			t.Fatalf("Register %s: %v", r.ID, err)
+		}
+	}
+
+	got, err := p.ListAllResources(ctx, "web")
+	if err != nil {
+		t.Fatalf("ListAllResources: %v", err)
+	}
+	want := []string{"a-tenant-a", "z-tenant-a", "a-tenant-b", "z-tenant-b"}
+	if len(got) != len(want) {
+		t.Fatalf("ListAllResources len=%d, want %d: %+v", len(got), len(want), got)
+	}
+	for i, r := range got {
+		if r.ID != want[i] {
+			t.Errorf("ListAllResources[%d].ID=%q, want %q", i, r.ID, want[i])
+		}
 	}
 }
 
