@@ -78,6 +78,7 @@ const (
 	EventAdminSubjectExported                = auditspi.EventAdminSubjectExported
 	EventAdminSigningKeyRotated              = auditspi.EventAdminSigningKeyRotated
 	EventAdminGRPCCalled                     = auditspi.EventAdminGRPCCalled
+	EventAdminAuthDenied                     = auditspi.EventAdminAuthDenied
 	EventAdminTempTokenIssued                = auditspi.EventAdminTempTokenIssued
 	EventAdminTenantCreated                  = auditspi.EventAdminTenantCreated
 	EventAdminTenantDeleted                  = auditspi.EventAdminTenantDeleted

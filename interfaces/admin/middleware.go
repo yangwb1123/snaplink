@@ -339,7 +339,7 @@ func (a *Middleware) HTTPMiddleware(next http.Handler) http.Handler {
 		}
 
 		// Admin session idle-timeout enforcement + token-touch.
-		if a.enforceIdleTimeout(w, r, claims) {
+		if a.enforceIdleTimeout(w, r, claims, clientID) {
 			return
 		}
 		if !checkWriteQuota(w, r, a.quota, claims.Subject, tenantHintFromClaims(claims), a.recorder) {
@@ -363,12 +363,14 @@ func (a *Middleware) authenticateHTTP(w http.ResponseWriter, r *http.Request) (c
 	if token == "" {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="admin"`)
 		http.Error(w, `{"error":"missing_token"}`, http.StatusUnauthorized)
+		recordAdminDenial(a.recorder, r, audit.EventAdminAuthDenied, "missing_token", "", "", "")
 		return nil, "", false
 	}
 	claims, err := a.validator.ValidateToken(r.Context(), token)
 	if err != nil || !core.IsAccessTokenClaims(claims) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="admin", error="invalid_token"`)
 		http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+		recordAdminDenial(a.recorder, r, audit.EventAdminAuthDenied, "invalid_token", "", "", "")
 		return nil, "", false
 	}
 	clientID = claims.ClientID
@@ -382,6 +384,7 @@ func (a *Middleware) authenticateHTTP(w http.ResponseWriter, r *http.Request) (c
 	}
 	if !allowed {
 		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		recordAdminDenial(a.recorder, r, audit.EventAdminAuthDenied, "forbidden", claims.Subject, "", clientID)
 		return nil, "", false
 	}
 	return claims, clientID, true
@@ -392,7 +395,7 @@ func (a *Middleware) authenticateHTTP(w http.ResponseWriter, r *http.Request) (c
 // TTL it writes a 401 session_expired response and returns true (the caller
 // must return immediately). On success (or when idle timeout is not configured)
 // it updates LastUsedAt via Touch and returns false so the request proceeds.
-func (a *Middleware) enforceIdleTimeout(w http.ResponseWriter, r *http.Request, claims *core.TokenClaims) bool {
+func (a *Middleware) enforceIdleTimeout(w http.ResponseWriter, r *http.Request, claims *core.TokenClaims, clientID string) bool {
 	if a.sessionTTL <= 0 || a.adminTokenStore == nil || claims.JTI == "" {
 		return false
 	}
@@ -400,6 +403,7 @@ func (a *Middleware) enforceIdleTimeout(w http.ResponseWriter, r *http.Request, 
 	if err == nil && !meta.LastUsedAt.IsZero() && time.Since(meta.LastUsedAt) > a.sessionTTL {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="admin", error="invalid_token", error_description="session expired"`)
 		http.Error(w, `{"error":"session_expired"}`, http.StatusUnauthorized)
+		recordAdminDenial(a.recorder, r, audit.EventAdminAuthDenied, "session_expired", claims.Subject, "", clientID)
 		return true
 	}
 	_ = a.adminTokenStore.Touch(r.Context(), claims.JTI)

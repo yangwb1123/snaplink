@@ -140,13 +140,12 @@ const (
 	EventConfigCanaryStarted    EventType = "config_canary_started"
 	EventConfigCanaryConfirmed  EventType = "config_canary_confirmed"
 	EventConfigCanaryRolledBack EventType = "config_canary_rolled_back"
-	// EventAdminWriteQuotaExceeded / EventAdminIPDenied are emitted by
-	// AdminMiddleware when the opt-in write-quota or IP/geo allowlist gate
-	// (platform/lifecycle/admingovernance) blocks a request, when an audit Recorder is
-	// wired via SetAuditRecorder. Governance/observability only — neither
-	// gate depends on the audit event landing.
+	// HTTP AdminMiddleware denial events are emitted when an audit Recorder is
+	// wired via SetAuditRecorder. Governance/observability only — no gate depends
+	// on the audit event landing.
 	EventAdminWriteQuotaExceeded         EventType = "admin_write_quota_exceeded"
 	EventAdminIPDenied                   EventType = "admin_ip_denied"
 	EventAdminRateLimited                EventType = "admin_rate_limited"
 	EventAdminDestructiveConfirmRequired EventType = "admin_destructive_confirm_required"
+	EventAdminAuthDenied                 EventType = "admin_auth_denied"
 )

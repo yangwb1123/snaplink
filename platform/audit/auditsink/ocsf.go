@@ -189,6 +189,7 @@ var ocsfEventActivities = map[auditspi.EventType]ocsfActivity{
 	auditspi.EventAdminSubjectExported:            {ocsfClassAccountChange, ocsfCategoryIAM, 99, "Admin Subject Exported"},
 	auditspi.EventAdminSubjectErased:              {ocsfClassAccountChange, ocsfCategoryIAM, 6, "Delete"},
 	auditspi.EventAdminGRPCCalled:                 {ocsfClassAPIActivity, ocsfCategoryAppActivity, 99, "gRPC Call"},
+	auditspi.EventAdminAuthDenied:                 {ocsfClassAPIActivity, ocsfCategoryAppActivity, 99, "Authentication Denied"},
 	auditspi.EventAdminWriteQuotaExceeded:         {ocsfClassAPIActivity, ocsfCategoryAppActivity, 99, "Write Quota Exceeded"},
 	auditspi.EventAdminIPDenied:                   {ocsfClassAPIActivity, ocsfCategoryAppActivity, 99, "IP Denied"},
 	auditspi.EventAdminRateLimited:                {ocsfClassAPIActivity, ocsfCategoryAppActivity, 99, "Rate Limited"},

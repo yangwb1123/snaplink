@@ -2,14 +2,19 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorecredential"
 	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/admingovernance"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -61,10 +66,13 @@ func TestIsGatedGRPCMethod_DiscoveryMutations(t *testing.T) {
 // validates to the same fixed claims. Not a mock (no call-count assertions,
 // no behavior verification) — a hand-written stub, the same shape as
 // bgTestDeps in break_glass_test.go.
-type fakeValidator struct{ claims *core.TokenClaims }
+type fakeValidator struct {
+	claims *core.TokenClaims
+	err    error
+}
 
 func (f fakeValidator) ValidateToken(context.Context, string) (*core.TokenClaims, error) {
-	return f.claims, nil
+	return f.claims, f.err
 }
 
 // allowAllAuthorizer grants every admin-scope check — the tests below are
@@ -358,5 +366,135 @@ func TestHTTPMiddleware_RateLimitUnwiredIsUnlimited(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("GET %d = %d, want 200 (unlimited when unwired)", i, resp.StatusCode)
 		}
+	}
+}
+
+type failingAuditSink struct{ *audit.MemorySink }
+
+func (failingAuditSink) Record(context.Context, *audit.Event) error { return errors.New("sink failed") }
+
+type errorAuthorizer struct{}
+
+func (errorAuthorizer) HasAdminScope(context.Context, string, string, string) (bool, error) {
+	return false, errors.New("authorizer failed")
+}
+func adminAuthResponse(mw *Middleware, auth string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/admin/connections", nil)
+	r.RemoteAddr = "198.51.100.7:1234"
+	r.Header.Set("Authorization", auth)
+	w := httptest.NewRecorder()
+	mw.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })).ServeHTTP(w, r)
+	return w
+}
+func adminEvents(t *testing.T, sink *audit.MemorySink, typ audit.EventType) []*audit.Event {
+	got, _ := sink.Query(context.Background(), audit.Query{Type: typ})
+	return got
+}
+func sameAdminResponse(a, b *httptest.ResponseRecorder) bool {
+	return a.Code == b.Code && a.Body.String() == b.Body.String() && reflect.DeepEqual(a.Header(), b.Header())
+}
+func TestHTTPMiddleware_AuthDenialsAudited(t *testing.T) {
+	cases := []struct {
+		name, auth, reason, actor, client string
+		claims                            *core.TokenClaims
+		validationErr                     error
+		authorizer                        Authorizer
+		expired                           bool
+		status                            int
+	}{
+		{name: "missing", reason: "missing_token", status: http.StatusUnauthorized, authorizer: allowAllAuthorizer{}},
+		{name: "invalid", auth: "Bearer bad", reason: "invalid_token", status: http.StatusUnauthorized, validationErr: errors.New("bad"), claims: &core.TokenClaims{Subject: "untrusted", ClientID: "untrusted"}, authorizer: allowAllAuthorizer{}},
+		{name: "forbidden", auth: "Bearer good", reason: "forbidden", actor: "user-1", client: "client-audience", status: http.StatusForbidden, claims: &core.TokenClaims{Subject: "user-1", ClientID: "client-fallback", Audience: []string{"client-audience"}}, authorizer: &clientIDAuthorizer{clientID: "other"}},
+		{name: "expired", auth: "Bearer good", reason: "session_expired", actor: "user-1", client: "client-audience", status: http.StatusUnauthorized, claims: &core.TokenClaims{Subject: "user-1", ClientID: "client-fallback", Audience: []string{"client-audience"}, JTI: "jti-expired"}, authorizer: allowAllAuthorizer{}, expired: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			makeMW := func(rec *audit.Recorder) *Middleware {
+				mw := &Middleware{validator: fakeValidator{claims: tc.claims, err: tc.validationErr}, authorizer: tc.authorizer, methodScopes: defaultMethodScopes()}
+				if tc.expired {
+					store := memorystorecredential.NewMemoryAdminTokenStore()
+					_ = store.Record(context.Background(), core.AdminToken{ID: "jti-expired", LastUsedAt: time.Now().Add(-time.Hour)})
+					mw.SetAdminTokenStore(store)
+					mw.SetAdminSessionTTL(time.Minute)
+				}
+				mw.SetAuditRecorder(rec)
+				return mw
+			}
+			plain := adminAuthResponse(makeMW(nil), tc.auth)
+			sink := audit.NewMemorySink(8)
+			got := adminAuthResponse(makeMW(audit.New(sink)), tc.auth)
+			if !sameAdminResponse(got, plain) || got.Code != tc.status {
+				t.Fatalf("response drift: got %#v/%q, plain %#v/%q", got.Header(), got.Body.String(), plain.Header(), plain.Body.String())
+			}
+			events := adminEvents(t, sink, audit.EventAdminAuthDenied)
+			if len(events) != 1 {
+				t.Fatalf("auth denial events = %d, want exactly 1", len(events))
+			}
+			e := events[0]
+			if e.Type != audit.EventAdminAuthDenied || e.Outcome != audit.OutcomeFailure || e.ActorIP != "198.51.100.7" || e.ActorID != tc.actor || e.ClientID != tc.client || e.Reason != tc.reason {
+				t.Fatalf("event = %+v", e)
+			}
+			if len(e.Metadata) != 3 || e.Metadata["method"] != http.MethodGet || e.Metadata["path"] != "/api/v1/admin/connections" || e.Metadata["reason"] != tc.reason {
+				t.Fatalf("metadata = %#v", e.Metadata)
+			}
+		})
+	}
+}
+func TestHTTPMiddleware_AuthDenialAuditFailOpenAndExcluded(t *testing.T) {
+	base := adminAuthResponse(newTestMiddleware("admin"), "")
+	for _, rec := range []*audit.Recorder{nil, audit.New(&failingAuditSink{})} {
+		mw := newTestMiddleware("admin")
+		mw.SetAuditRecorder(rec)
+		if !sameAdminResponse(adminAuthResponse(mw, ""), base) {
+			t.Fatal("audit recorder changed missing-token response")
+		}
+	}
+	sink := audit.NewMemorySink(8)
+	checks := []struct {
+		mw     *Middleware
+		status int
+	}{{&Middleware{authorizer: allowAllAuthorizer{}, methodScopes: defaultMethodScopes()}, http.StatusServiceUnavailable}, {&Middleware{validator: fakeValidator{claims: &core.TokenClaims{Subject: "user"}}, authorizer: errorAuthorizer{}, methodScopes: defaultMethodScopes()}, http.StatusInternalServerError}}
+	for _, check := range checks {
+		check.mw.SetAuditRecorder(audit.New(sink))
+		if got := adminAuthResponse(check.mw, "Bearer token"); got.Code != check.status {
+			t.Fatalf("status = %d, want %d", got.Code, check.status)
+		}
+	}
+	if got := adminEvents(t, sink, audit.EventAdminAuthDenied); len(got) != 0 {
+		t.Fatalf("excluded branches recorded %d auth denials", len(got))
+	}
+}
+
+func TestAdminAuthDenialAuditTransportParity(t *testing.T) {
+	cases := []struct {
+		name, auth    string
+		claims        *core.TokenClaims
+		validationErr error
+		authorizer    Authorizer
+	}{{name: "no token", authorizer: allowAllAuthorizer{}}, {name: "invalid token", auth: "Bearer bad", claims: &core.TokenClaims{Subject: "bad"}, validationErr: errors.New("bad"), authorizer: allowAllAuthorizer{}}, {name: "no scope", auth: "Bearer good", claims: &core.TokenClaims{Subject: "user", ClientID: "client"}, authorizer: &clientIDAuthorizer{clientID: "other"}}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			makeMW := func(rec *audit.Recorder) *Middleware {
+				mw := &Middleware{validator: fakeValidator{claims: tc.claims, err: tc.validationErr}, authorizer: tc.authorizer, methodScopes: defaultMethodScopes()}
+				mw.SetAuditRecorder(rec)
+				return mw
+			}
+			hs := audit.NewMemorySink(8)
+			if got := adminAuthResponse(makeMW(audit.New(hs)), tc.auth); got.Code < 400 {
+				t.Fatalf("HTTP status = %d", got.Code)
+			}
+			gs := audit.NewMemorySink(8)
+			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", tc.auth))
+			_, err := makeMW(audit.New(gs)).UnaryServerInterceptor()(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/snaplink.admin.v1.UserAdminService/Get"}, func(context.Context, any) (any, error) { return nil, nil })
+			if err == nil {
+				t.Fatal("gRPC denial returned nil error")
+			}
+			if got := adminEvents(t, hs, audit.EventAdminAuthDenied); len(got) != 1 {
+				t.Fatalf("HTTP auth events = %d", len(got))
+			}
+			if got := adminEvents(t, gs, audit.EventAdminGRPCCalled); len(got) != 1 || got[0].Outcome != audit.OutcomeFailure {
+				t.Fatalf("gRPC denial events = %+v", got)
+			}
+		})
 	}
 }

@@ -35,6 +35,7 @@ var allKnownEventTypes = []auditspi.EventType{
 	auditspi.EventAdminDomainUpdated,
 	auditspi.EventAdminEmailChangeTokensRevoked,
 	auditspi.EventAdminGRPCCalled,
+	auditspi.EventAdminAuthDenied,
 	auditspi.EventAdminIPDenied,
 	auditspi.EventAdminRateLimited,
 	auditspi.EventAdminDestructiveConfirmRequired,

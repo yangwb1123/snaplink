@@ -318,7 +318,7 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventAdminConfigApplied: {}, EventAdminConfigRolledBack: {},
 	EventConfigCanaryStarted: {}, EventConfigCanaryConfirmed: {}, EventConfigCanaryRolledBack: {},
 	EventAdminWriteQuotaExceeded: {}, EventAdminIPDenied: {}, EventAdminRateLimited: {},
-	EventAdminDestructiveConfirmRequired: {},
+	EventAdminDestructiveConfirmRequired: {}, EventAdminAuthDenied: {},
 	// system / platform (event_types_system.go)
 	EventBootstrapStepApplied: {}, EventBootstrapStepSkipped: {}, EventBootstrapStepFailed: {},
 	EventBootstrapLockAcquired: {}, EventBootstrapLockReleased: {}, EventBootstrapLockLost: {},

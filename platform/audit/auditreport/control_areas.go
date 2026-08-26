@@ -130,6 +130,7 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventAdminDomainUpdated,
 			audit.EventAdminDomainDeleted,
 			audit.EventAdminGRPCCalled,
+			audit.EventAdminAuthDenied,
 			audit.EventAdminRefreshTokensRevoked,
 			audit.EventAdminUserLifecycleChanged,
 			audit.EventAdminBreakGlassCreated,
