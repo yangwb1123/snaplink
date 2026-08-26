@@ -85,16 +85,26 @@ func (p *Provider) Replace(database []byte) error {
 
 // Lookup implements geo.Provider. Returns geo.ErrNotFound for IPs the
 // database has no record for (the mmdb reader's ErrNotFound).
-func (p *Provider) Lookup(_ context.Context, ip net.IP) (*geo.GeoInfo, error) {
+func (p *Provider) Lookup(ctx context.Context, ip net.IP) (*geo.GeoInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r := p.db.Load()
 	if r == nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		return nil, geo.ErrNotFound
 	}
 	var rec geoRecord
-	if err := r.Lookup(ip, &rec); err != nil {
+	lookupErr := r.Lookup(ip, &rec)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if lookupErr != nil {
 		// The reader returns nil error + an untouched zeroed record for a
 		// miss (no record matches); a non-nil error is a real failure.
-		return nil, fmt.Errorf("geo/maxmind: lookup: %w", err)
+		return nil, fmt.Errorf("geo/maxmind: lookup: %w", lookupErr)
 	}
 	info := &geo.GeoInfo{
 		CountryCode: rec.Country.ISOCode,
@@ -109,6 +119,9 @@ func (p *Provider) Lookup(_ context.Context, ip net.IP) (*geo.GeoInfo, error) {
 		info.City = name
 	}
 	if info.CountryCode == "" && info.City == "" && info.Region == "" {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		return nil, geo.ErrNotFound
 	}
 	return info, nil

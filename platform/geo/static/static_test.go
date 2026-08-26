@@ -86,6 +86,22 @@ func TestLookup_NilIPIsErrInvalidIP(t *testing.T) {
 	}
 }
 
+func TestLookup_CanceledContextReturnsContextCanceled(t *testing.T) {
+	t.Parallel()
+	p := static.New()
+	_ = p.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "US"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := p.Lookup(ctx, net.ParseIP("10.0.0.1"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if errors.Is(err, geo.ErrNotFound) {
+		t.Fatal("cancellation was disguised as ErrNotFound")
+	}
+}
+
 func TestAdd_RejectsBadCIDR(t *testing.T) {
 	t.Parallel()
 	p := static.New()

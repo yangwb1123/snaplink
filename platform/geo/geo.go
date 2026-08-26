@@ -36,6 +36,12 @@ type GeoInfo = core.GeoInfo
 // be safe for concurrent use — Lookup is called on the request hot
 // path and will see fan-out from the SSO server.
 //
+// Implementations MUST honor ctx cancellation: observe ctx.Err() before
+// beginning work and periodically between iterable or expensive operations.
+// Once cancellation is observed, Lookup must return ctx.Err(), never disguise
+// cancellation as ErrNotFound. Geo lookup remains fail-open; middleware owns
+// that availability policy.
+//
 // Returning ErrNotFound is normal and not an error condition; only
 // return other errors when the lookup itself failed (DB closed,
 // network timeout to an external service, etc).

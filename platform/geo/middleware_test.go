@@ -198,6 +198,31 @@ func TestMiddleware_TimeoutFailsOpen(t *testing.T) {
 	}
 }
 
+func TestMiddleware_CanceledRequestFailsOpen(t *testing.T) {
+	t.Parallel()
+	p := static.New()
+	_ = p.Add("203.0.113.0/24", geo.GeoInfo{CountryCode: "US"})
+	var gotErr error
+	mw := geo.Middleware(p, geo.MiddlewareOptions{
+		OnError: func(err error) { gotErr = err },
+	})
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := requestWithRemoteAddr("203.0.113.5:1234").WithContext(requestContext)
+	hctx := newHCtx(r)
+
+	mw(hctx)
+	if !errors.Is(gotErr, context.Canceled) {
+		t.Errorf("OnError got %v, want context.Canceled", gotErr)
+	}
+	if errors.Is(gotErr, geo.ErrNotFound) {
+		t.Error("cancellation was reported as ErrNotFound")
+	}
+	if _, ok := geo.FromHandlerContext(hctx); ok {
+		t.Error("stashed geo info despite request cancellation")
+	}
+}
+
 func TestMiddleware_CustomExtractorIsUsed(t *testing.T) {
 	t.Parallel()
 	p := static.New()
