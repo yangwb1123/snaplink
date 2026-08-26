@@ -128,6 +128,71 @@ func TestNotary_VerificationClosesLastEventBlindSpot(t *testing.T) {
 	}
 }
 
+func TestNotary_RestoresMemoryCheckpointAfterRestart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryCheckpointStore()
+	signer, err := NewEd25519CheckpointSigner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := NewNotary(&fakeTip{hash: "head-1"}, store, signer, time.Hour, nil, nil).CheckpointNow(ctx)
+	if err != nil || first == nil {
+		t.Fatalf("first checkpoint: %v %v", first, err)
+	}
+	second, err := NewNotary(&fakeTip{hash: "head-2"}, store, signer, time.Hour, nil, nil).CheckpointNow(ctx)
+	if err != nil || second == nil {
+		t.Fatalf("second checkpoint: %v %v", second, err)
+	}
+	if second.Checkpoint.Sequence != first.Checkpoint.Sequence+1 {
+		t.Fatalf("second sequence = %d, want %d", second.Checkpoint.Sequence, first.Checkpoint.Sequence+1)
+	}
+	if second.Checkpoint.PrevHash != first.Checkpoint.HeadHash {
+		t.Fatalf("second PrevHash = %q, want %q", second.Checkpoint.PrevHash, first.Checkpoint.HeadHash)
+	}
+}
+
+func TestNotary_InvalidLatestFailsOpenWithoutAdvancing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryCheckpointStore()
+	signer, _ := NewEd25519CheckpointSigner()
+	if err := store.Append(ctx, &SignedCheckpoint{
+		Checkpoint: Checkpoint{Sequence: 99, HeadHash: "untrusted"},
+		Signature:  []byte("invalid"), SignerKey: signer.PublicKey(),
+	}); err != nil {
+		t.Fatalf("seed invalid checkpoint: %v", err)
+	}
+	logger := &notaryTestLogger{}
+	notary := NewNotary(&fakeTip{hash: "head-1"}, store, signer, time.Hour, nil, logger)
+	checkpoint, err := notary.CheckpointNow(ctx)
+	if err != nil || checkpoint == nil {
+		t.Fatalf("CheckpointNow: %v %v", checkpoint, err)
+	}
+	if checkpoint.Checkpoint.Sequence != 1 || checkpoint.Checkpoint.PrevHash != GenesisHash {
+		t.Fatalf("recovery trusted invalid checkpoint: %+v", checkpoint.Checkpoint)
+	}
+	if logger.errors != 1 {
+		t.Fatalf("recovery logger errors = %d, want 1", logger.errors)
+	}
+}
+
+func TestNotary_LatestReadFailureFailsOpen(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := &checkpointReadErrorStore{MemoryCheckpointStore: NewMemoryCheckpointStore()}
+	signer, _ := NewEd25519CheckpointSigner()
+	logger := &notaryTestLogger{}
+	notary := NewNotary(&fakeTip{hash: "head-1"}, store, signer, time.Hour, nil, logger)
+	checkpoint, err := notary.CheckpointNow(ctx)
+	if err != nil || checkpoint == nil {
+		t.Fatalf("CheckpointNow: %v %v", checkpoint, err)
+	}
+	if checkpoint.Checkpoint.Sequence != 1 || logger.errors != 1 {
+		t.Fatalf("read failure recovery = checkpoint %+v, logger errors %d", checkpoint.Checkpoint, logger.errors)
+	}
+}
+
 func TestNotary_TipErrorFailsOpen(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -142,6 +207,20 @@ func TestNotary_TipErrorFailsOpen(t *testing.T) {
 	if latest != nil {
 		t.Fatal("failed checkpoint must not be stored")
 	}
+}
+
+type notaryTestLogger struct{ errors int }
+
+func (l *notaryTestLogger) Info(string, ...any)  {}
+func (l *notaryTestLogger) Debug(string, ...any) {}
+func (l *notaryTestLogger) Error(string, ...any) { l.errors++ }
+
+type checkpointReadErrorStore struct {
+	*MemoryCheckpointStore
+}
+
+func (s *checkpointReadErrorStore) Latest(context.Context) (*SignedCheckpoint, error) {
+	return nil, errors.New("checkpoint read unavailable")
 }
 
 func TestNotary_StartStopsOnCancel(t *testing.T) {

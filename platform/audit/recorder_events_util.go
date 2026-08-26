@@ -4,6 +4,42 @@
 
 package audit
 
+import (
+	"context"
+
+	"github.com/yangwb1123/snaplink/shared/spi"
+)
+
+// restoreNotaryState reads and verifies the durable checkpoint used to seed a
+// new Notary. Recovery is deliberately fail-open: a bad or unavailable store
+// must not prevent the caller from constructing its audit components.
+func restoreNotaryState(n *Notary) *Notary {
+	if n.store == nil {
+		return n
+	}
+	latest, err := n.store.Latest(context.Background())
+	if err != nil {
+		logNotaryRecoveryFailure(n.logger, err)
+		return n
+	}
+	if latest == nil {
+		return n
+	}
+	if err := VerifyCheckpointSignature(latest); err != nil {
+		logNotaryRecoveryFailure(n.logger, err)
+		return n
+	}
+	n.lastSigned = latest.Checkpoint.HeadHash
+	n.lastSeq = latest.Checkpoint.Sequence
+	return n
+}
+
+func logNotaryRecoveryFailure(logger spi.Logger, err error) {
+	if logger != nil {
+		logger.Error("audit chain checkpoint recovery failed", "error", err)
+	}
+}
+
 // maskTarget redacts the bulk of a phone number or email so the event
 // remains auditable without storing the raw identifier.
 func maskTarget(t string) string {

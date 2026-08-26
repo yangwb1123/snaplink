@@ -49,6 +49,7 @@ var migrations = []migrate.Migration{
 	{Version: 1, Name: "baseline_audit_events", SQL: schema},
 	{Version: 2, Name: "add_tenant_id", SQL: migrationV2},
 	{Version: 3, Name: "add_server_version", SQL: migrationV3},
+	{Version: 4, Name: "add_audit_checkpoints", SQL: migrationV4},
 }
 
 // migrationV2 promotes tenant_id to a first-class indexed column so
@@ -69,6 +70,21 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_tenant ON audit_events(tenant_id);
 // read back for display/export, never filtered/grouped on.
 const migrationV3 = `
 ALTER TABLE audit_events ADD COLUMN server_version TEXT NOT NULL DEFAULT '';
+`
+
+// migrationV4 stores signed chain-head attestations independently from the
+// event chain. The primary key makes sequence collisions explicit rather than
+// allowing a replica to overwrite an existing checkpoint.
+const migrationV4 = `
+CREATE TABLE IF NOT EXISTS audit_checkpoints (
+    sequence    INTEGER PRIMARY KEY,
+    ts_unix_ns  INTEGER NOT NULL,
+    head_hash   TEXT    NOT NULL,
+    prev_hash   TEXT    NOT NULL,
+    signature   BLOB    NOT NULL,
+    signer_key  BLOB    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_checkpoints_ts ON audit_checkpoints(ts_unix_ns);
 `
 
 // migrationNamespace is the per-backend key migrate.Run uses for this

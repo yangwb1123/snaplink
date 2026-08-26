@@ -352,7 +352,7 @@ func NewNotary(tip ChainTip, store CheckpointStore, signer CheckpointSigner, int
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
-	return &Notary{tip: tip, store: store, signer: signer, interval: interval, recorder: recorder, logger: logger}
+	return restoreNotaryState(&Notary{tip: tip, store: store, signer: signer, interval: interval, recorder: recorder, logger: logger})
 }
 
 // Run executes the loop until ctx is cancelled; the first checkpoint is

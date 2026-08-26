@@ -71,9 +71,25 @@ const auditSchemaV2 = `
 ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS server_version TEXT NOT NULL DEFAULT '';
 `
 
+// auditSchemaV3 stores signed chain-head attestations independently from the
+// event chain. The primary key makes sequence collisions explicit rather than
+// allowing a replica to overwrite an existing checkpoint.
+const auditSchemaV3 = `
+CREATE TABLE IF NOT EXISTS audit_checkpoints (
+    sequence    BIGINT PRIMARY KEY,
+    ts_unix_ns  BIGINT NOT NULL,
+    head_hash   TEXT   NOT NULL,
+    prev_hash   TEXT   NOT NULL,
+    signature   BYTEA  NOT NULL,
+    signer_key  BYTEA  NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_checkpoints_ts ON audit_checkpoints(ts_unix_ns);
+`
+
 var auditMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: auditSchema},
 	{Version: 2, Name: "add_server_version", SQL: auditSchemaV2},
+	{Version: 3, Name: "add_audit_checkpoints", SQL: auditSchemaV3},
 }
 
 // rebind rewrites the SQLite-style '?' placeholders to Postgres '$1','$2',…
@@ -266,6 +282,112 @@ func (s *AuditSink) LastHash(ctx context.Context) (string, error) {
 	return hash.String, nil
 }
 
+// Append implements audit.CheckpointStore. Sequence is the durable unique
+// key; a conflict is returned instead of replacing an existing attestation.
+func (s *AuditSink) Append(ctx context.Context, c *audit.SignedCheckpoint) error {
+	if s == nil || s.db == nil {
+		return errors.New("postgres: checkpoint store closed")
+	}
+	if c == nil {
+		return errors.New("postgres: nil checkpoint")
+	}
+	const query = `
+        INSERT INTO audit_checkpoints (
+            sequence, ts_unix_ns, head_hash, prev_hash, signature, signer_key
+        ) VALUES (?, ?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, rebind(query),
+		c.Checkpoint.Sequence, c.Checkpoint.Timestamp.UnixNano(),
+		c.Checkpoint.HeadHash, c.Checkpoint.PrevHash, c.Signature, c.SignerKey)
+	if err != nil {
+		return fmt.Errorf("postgres: append checkpoint sequence %d: %w", c.Checkpoint.Sequence, err)
+	}
+	return nil
+}
+
+// Latest returns the checkpoint with the greatest durable sequence, or nil
+// when the checkpoint table is empty.
+func (s *AuditSink) Latest(ctx context.Context) (*audit.SignedCheckpoint, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("postgres: checkpoint store closed")
+	}
+	row := s.db.QueryRowContext(ctx, checkpointSelect+` ORDER BY sequence DESC LIMIT 1`)
+	c, err := scanCheckpoint(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("postgres: latest checkpoint: %w", err)
+	}
+	return c, nil
+}
+
+// List returns checkpoints in ascending sequence order. The since bound is
+// inclusive and a non-positive limit leaves the result unbounded.
+func (s *AuditSink) List(ctx context.Context, since time.Time, limit int) ([]*audit.SignedCheckpoint, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("postgres: checkpoint store closed")
+	}
+	query := checkpointSelect
+	var args []any
+	if !since.IsZero() {
+		query += ` WHERE ts_unix_ns >= ?`
+		args = append(args, since.UnixNano())
+	}
+	query += ` ORDER BY sequence ASC`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, rebind(query), args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list checkpoints: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]*audit.SignedCheckpoint, 0)
+	for rows.Next() {
+		c, err := scanCheckpoint(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres: scan checkpoint: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: checkpoint rows: %w", err)
+	}
+	return out, nil
+}
+
+const checkpointSelect = `SELECT sequence, ts_unix_ns, head_hash, prev_hash, signature, signer_key FROM audit_checkpoints`
+
+type checkpointScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanCheckpoint(row checkpointScanner) (*audit.SignedCheckpoint, error) {
+	var (
+		sequence, timestamp  int64
+		headHash, prevHash   string
+		signature, signerKey []byte
+	)
+	if err := row.Scan(&sequence, &timestamp, &headHash, &prevHash, &signature, &signerKey); err != nil {
+		return nil, err
+	}
+	return &audit.SignedCheckpoint{
+		Checkpoint: audit.Checkpoint{
+			Sequence: sequence, Timestamp: time.Unix(0, timestamp).UTC(),
+			HeadHash: headHash, PrevHash: prevHash,
+		},
+		Signature: cloneCheckpointBytes(signature), SignerKey: cloneCheckpointBytes(signerKey),
+	}, nil
+}
+
+func cloneCheckpointBytes(in []byte) []byte {
+	if in == nil {
+		return nil
+	}
+	return append([]byte{}, in...)
+}
+
 func newAuditEventID() string {
 	var b [12]byte
 	_, _ = rand.Read(b[:])
@@ -273,8 +395,9 @@ func newAuditEventID() string {
 }
 
 var (
-	_ audit.Sink         = (*AuditSink)(nil)
-	_ audit.FacetQuerier = (*AuditSink)(nil)
-	_ audit.BatchSink    = (*AuditSink)(nil)
-	_ audit.ChainTip     = (*AuditSink)(nil)
+	_ audit.Sink            = (*AuditSink)(nil)
+	_ audit.FacetQuerier    = (*AuditSink)(nil)
+	_ audit.BatchSink       = (*AuditSink)(nil)
+	_ audit.ChainTip        = (*AuditSink)(nil)
+	_ audit.CheckpointStore = (*AuditSink)(nil)
 )

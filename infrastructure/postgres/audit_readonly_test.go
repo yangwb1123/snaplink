@@ -143,7 +143,7 @@ func TestOpenAuditReadOnly_SchemaMismatchFailsClosed(t *testing.T) {
 	seedAuditStore(t, cfg, 2)
 
 	// Rewind the recorded version to 0 (delete the row) — the binary
-	// expects v2 for the audit namespace.
+	// expects v3 for the audit namespace.
 	w, err := NewAuditSink(cfg)
 	if err != nil {
 		t.Fatalf("open writable: %v", err)
@@ -159,7 +159,7 @@ func TestOpenAuditReadOnly_SchemaMismatchFailsClosed(t *testing.T) {
 		t.Fatal("OpenAuditReadOnly must fail closed on a version mismatch")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "schema version mismatch") || !strings.Contains(msg, "v0") || !strings.Contains(msg, "v2") {
+	if !strings.Contains(msg, "schema version mismatch") || !strings.Contains(msg, "v0") || !strings.Contains(msg, "v3") {
 		t.Errorf("diagnostic must name found vs expected version: %v", msg)
 	}
 	// The version table must still be empty — the opener never ran DDL.

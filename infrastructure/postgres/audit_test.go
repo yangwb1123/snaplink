@@ -1,7 +1,9 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -23,6 +25,47 @@ func freshAuditSink(t *testing.T) *AuditSink {
 		t.Fatalf("truncate: %v", err)
 	}
 	return s
+}
+
+func TestAudit_CheckpointStoreRoundTrip(t *testing.T) {
+	s := freshAuditSink(t)
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, "TRUNCATE audit_checkpoints"); err != nil {
+		t.Fatalf("truncate audit_checkpoints: %v", err)
+	}
+	signer, err := audit.NewEd25519CheckpointSigner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := signedAuditCheckpoint(t, signer, 4, time.Unix(1700000300, 123).UTC(), "head-4", "head-3")
+	if err := s.Append(ctx, checkpoint); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	got, err := s.Latest(ctx)
+	if err != nil {
+		t.Fatalf("Latest: %v", err)
+	}
+	if !audit.CheckpointEqual(got, checkpoint) || !bytes.Equal(got.Signature, checkpoint.Signature) || !bytes.Equal(got.SignerKey, checkpoint.SignerKey) {
+		t.Fatalf("checkpoint round-trip changed data: got=%+v want=%+v", got, checkpoint)
+	}
+	list, err := s.List(ctx, checkpoint.Checkpoint.Timestamp, 1)
+	if err != nil || len(list) != 1 || list[0].Checkpoint.Sequence != checkpoint.Checkpoint.Sequence {
+		t.Fatalf("List = (%v, %v), want checkpoint sequence %d", list, err, checkpoint.Checkpoint.Sequence)
+	}
+}
+
+func signedAuditCheckpoint(t *testing.T, signer audit.CheckpointSigner, sequence int64, timestamp time.Time, head, previous string) *audit.SignedCheckpoint {
+	t.Helper()
+	checkpoint := audit.Checkpoint{Sequence: sequence, Timestamp: timestamp, HeadHash: head, PrevHash: previous}
+	raw, err := json.Marshal(checkpoint)
+	if err != nil {
+		t.Fatalf("marshal checkpoint: %v", err)
+	}
+	signature, err := signer.Sign(raw)
+	if err != nil {
+		t.Fatalf("sign checkpoint: %v", err)
+	}
+	return &audit.SignedCheckpoint{Checkpoint: checkpoint, Signature: signature, SignerKey: signer.PublicKey()}
 }
 
 func TestAudit_RecordGetQuery(t *testing.T) {
