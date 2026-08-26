@@ -141,10 +141,12 @@ func (b *appBuilder) wireAudit() error {
 	if err != nil {
 		return fmt.Errorf("audit: build primary sink: %w", err)
 	}
-	if err := b.checkAuditSchema(primary); err != nil {
-		return err
+	if cfg.Audit.Notary.Enabled && primaryName == "sqlite" {
+		if closer, ok := primary.(interface{ Close() error }); ok {
+			b.addAuditCloser(func(context.Context) error { return closer.Close() })
+		}
 	}
-	if err := b.startAuditRetention(primary, primaryName); err != nil {
+	if err := b.checkAuditSchema(primary); err != nil {
 		return err
 	}
 	sink, err := b.composeAuditSinks(primary)
@@ -156,17 +158,19 @@ func (b *appBuilder) wireAudit() error {
 		return err
 	}
 	b.recorder = recorder
-	if err := b.wireAuditNotary(primary, primaryName); err != nil {
+	if err := b.wireAuditNotary(primary); err != nil {
 		closeIfCloser(primary)
+		return err
+	}
+	if err := b.startAuditRetention(primary, primaryName); err != nil {
+		b.closeBuildFailure()
 		return err
 	}
 	b.opts = append(b.opts, sso.WithAuditRecorder(recorder))
 	if cfg.Audit.APIEnabled {
 		b.opts = append(b.opts, sso.WithAuditAPI())
 	}
-	// Register a readycheck for the primary sink if it satisfies
-	// the Ping interface — the SQLite sink does; MemorySink
-	// silently no-ops.
+	// Register a readycheck when the primary sink supports Ping; MemorySink no-ops.
 	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "audit-"+primaryName, primary)
 	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "audit-"+primaryName, primary)
 	return nil
@@ -193,15 +197,10 @@ func validateAuditNotaryBuild(c config.AuditConfig) error {
 	return nil
 }
 
-func (b *appBuilder) wireAuditNotary(primary audit.Sink, primaryName string) error {
+func (b *appBuilder) wireAuditNotary(primary audit.Sink) error {
 	n := b.cfg.Audit.Notary
 	if !n.Enabled {
 		return nil
-	}
-	if primaryName == "sqlite" {
-		if closer, ok := primary.(interface{ Close() error }); ok {
-			b.addAuditCloser(func(context.Context) error { return closer.Close() })
-		}
 	}
 	tip, tipOK := primary.(audit.ChainTip)
 	store, storeOK := primary.(audit.CheckpointStore)

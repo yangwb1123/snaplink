@@ -234,6 +234,7 @@ func (b *appBuilder) closeBuildFailure() {
 	if b.netCancel != nil {
 		b.netCancel()
 	}
+	stopScheduler(context.Background(), b.logger, b.auditRetentionCancel, b.auditRetentionDone, "audit retention scheduler did not exit cleanly")
 	if b.externalAuditClose != nil {
 		_ = b.externalAuditClose(context.Background())
 	}

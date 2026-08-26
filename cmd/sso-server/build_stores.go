@@ -56,20 +56,15 @@ func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr erro
 	if err := b.enforceHACoherence(); err != nil {
 		return nil, err
 	}
+	// Install failure cleanup before foundation wiring so a partially built
+	// classifier, notary, or retention loop is drained if foundation fails.
+	defer func() {
+		if retErr != nil {
+			b.closeBuildFailure()
+		}
+	}()
 	if err := b.wireFoundation(); err != nil {
 		return nil, err
-	}
-	// If buildApp fails downstream, stop the classifier's watch loop so its
-	// goroutine + context don't leak; on success the app owns netCancel and
-	// calls it at shutdown. Registered here (after wireFoundation populates
-	// netCancel, before the later phases) so the LIFO cleanup fires for any
-	// later error, exactly as the original defer did.
-	if b.netCancel != nil || b.externalAuditClose != nil {
-		defer func() {
-			if retErr != nil {
-				b.closeBuildFailure()
-			}
-		}()
 	}
 	if err := b.wireDomains(); err != nil {
 		return nil, err
