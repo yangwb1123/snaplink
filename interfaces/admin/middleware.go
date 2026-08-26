@@ -134,10 +134,10 @@ func (a *Middleware) SetAdminSessionTTL(ttl time.Duration) {
 	a.sessionTTL = ttl
 }
 
-// SetAuditRecorder wires an audit recorder that logs every gRPC admin RPC
-// (method, actor, duration, gRPC status code). The interceptor uses it to
-// emit an EventAdminGRPCCalled event for observability and compliance.
-// When recorder is nil, auditing is disabled (default).
+// SetAuditRecorder wires an audit recorder for gRPC admin RPCs and HTTP
+// governance denials. The gRPC interceptor emits EventAdminGRPCCalled with
+// method, actor, duration, and status; HTTP gates emit their typed denial
+// events. When recorder is nil, auditing is disabled (default).
 func (a *Middleware) SetAuditRecorder(r *audit.Recorder) {
 	a.recorder = r
 }
