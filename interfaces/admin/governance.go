@@ -240,7 +240,10 @@ const (
 )
 
 func recordAdminDenial(rec *audit.Recorder, r *http.Request, typ audit.EventType, reason, actorID, tenantID, clientID string) {
-	e := &audit.Event{Type: typ, Outcome: audit.OutcomeFailure, ActorID: actorID, TenantID: tenantID, ClientID: clientID}
+	e := &audit.Event{Type: typ, Outcome: audit.OutcomeFailure, ActorID: actorID, TenantID: tenantID, ClientID: clientID, RequestID: r.Header.Get(core.HeaderRequestID)}
+	if tc, err := audit.NewTracer().ParseTraceparent(r.Header.Get(core.HeaderTraceparent)); err == nil {
+		e.TraceID, e.SpanID = tc.TraceID, tc.SpanID
+	}
 	if typ == audit.EventAdminAuthDenied {
 		e.Reason = reason
 	}

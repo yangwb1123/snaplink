@@ -1,7 +1,9 @@
 package audit
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/domains/tenant"
@@ -10,6 +12,8 @@ import (
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 )
 
 // tracer is the package-level helper for parsing W3C traceparent headers
@@ -45,6 +49,27 @@ func EventFromRequest(ctx core.HandlerContext) *Event {
 	EnrichTenant(ctx, e)
 	EnrichGeo(ctx, e)
 	EnrichRegion(ctx, e)
+	return e
+}
+
+// EventFromGRPCContext builds an audit event from transport-safe gRPC
+// correlation data. It never mints IDs and never treats metadata as a peer IP.
+func EventFromGRPCContext(ctx context.Context, typ EventType, outcome Outcome, reason string) *Event {
+	e := &Event{Type: typ, Outcome: outcome, Reason: reason, Timestamp: time.Now()}
+	if p, ok := peer.FromContext(ctx); ok && p != nil && p.Addr != nil {
+		e.ActorIP = p.Addr.String()
+	}
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if values := md.Get(core.HeaderRequestID); len(values) > 0 {
+			e.RequestID = values[0]
+		}
+		if values := md.Get(core.HeaderTraceparent); len(values) > 0 {
+			if tc, err := NewTracer().ParseTraceparent(values[0]); err == nil {
+				e.TraceID = tc.TraceID
+				e.SpanID = tc.SpanID
+			}
+		}
+	}
 	return e
 }
 

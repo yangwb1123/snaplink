@@ -3,15 +3,19 @@ package ssotest
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -329,4 +333,86 @@ func TestAdminMiddleware_ScopeRoutingByMethodName(t *testing.T) {
 	mw.SetMethodScope("/snaplink.admin.v1.X/Custom", "admin:write")
 	// Simply assert no panic at construction.
 	_ = mw
+}
+
+func TestAdminHTTP_DenialCorrelation(t *testing.T) {
+	const validTraceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+	for _, tc := range []struct {
+		name, requestID, traceparent, wantTrace, wantSpan string
+	}{
+		{"headers", "req-http-1", validTraceparent, "0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331"},
+		{"no-headers", "", "", "", ""},
+		{"malformed-traceparent", "req-http-2", "malformed", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := audit.NewMemorySink(8)
+			mw := sso.NewAdminMiddleware(stubValidator{good: "good", claims: &sso.TokenClaims{Subject: "user-alice"}}, adminProvider(t))
+			mw.SetAuditRecorder(audit.New(sink))
+			r := httptest.NewRequest(http.MethodGet, "/api/v1/admin/clients", nil)
+			r.RemoteAddr = "192.0.2.10:443"
+			if tc.requestID != "" {
+				r.Header.Set(core.HeaderRequestID, tc.requestID)
+			}
+			if tc.traceparent != "" {
+				r.Header.Set(core.HeaderTraceparent, tc.traceparent)
+			}
+			rr := httptest.NewRecorder()
+			mw.HTTPMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Fatal("denial reached the handler")
+			})).ServeHTTP(rr, r)
+			if rr.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", rr.Code)
+			}
+			events, err := sink.Query(context.Background(), audit.Query{Type: audit.EventAdminAuthDenied})
+			if err != nil {
+				t.Fatalf("query audit events: %v", err)
+			}
+			if len(events) != 1 {
+				t.Fatalf("denial events = %d, want 1", len(events))
+			}
+			e := events[0]
+			if e.RequestID != tc.requestID || e.TraceID != tc.wantTrace || e.SpanID != tc.wantSpan {
+				t.Fatalf("correlation = request=%q trace=%q span=%q", e.RequestID, e.TraceID, e.SpanID)
+			}
+		})
+	}
+}
+
+func TestAdminGRPC_StreamDenialIsCorrelatedAndAudited(t *testing.T) {
+	const method = "/snaplink.audit.v1.AuditWriter/StreamEvents"
+	sink := audit.NewMemorySink(8)
+	mw := sso.NewAdminMiddleware(stubValidator{good: "good", claims: &sso.TokenClaims{Subject: "user-alice"}}, adminProvider(t))
+	mw.SetAuditRecorder(audit.New(sink))
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+		"x-request-id", "req-stream-1",
+		"traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+	))
+	ctx = peer.NewContext(ctx, &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("192.0.2.44"), Port: 7443}})
+	reached := false
+	err := mw.StreamServerInterceptor()(nil, fakeServerStream{ctx: ctx},
+		&grpc.StreamServerInfo{FullMethod: method}, func(any, grpc.ServerStream) error {
+			reached = true
+			return nil
+		})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("code = %v, want Unauthenticated", status.Code(err))
+	}
+	if reached {
+		t.Fatal("denied stream reached handler")
+	}
+	events, err := sink.Query(context.Background(), audit.Query{Type: audit.EventAdminGRPCCalled, Outcome: audit.OutcomeFailure})
+	if err != nil {
+		t.Fatalf("query audit events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("stream denial events = %d, want 1", len(events))
+	}
+	e := events[0]
+	if e.ActorIP != "192.0.2.44:7443" || e.RequestID != "req-stream-1" ||
+		e.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" || e.SpanID != "00f067aa0ba902b7" {
+		t.Fatalf("event transport fields = %+v", e)
+	}
+	if e.Reason != method+": denied" {
+		t.Fatalf("reason = %q, want %q", e.Reason, method+": denied")
+	}
 }

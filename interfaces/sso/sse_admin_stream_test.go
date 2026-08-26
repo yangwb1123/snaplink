@@ -97,6 +97,7 @@ func TestSSEEventsStreamEndToEnd(t *testing.T) {
 		sso.WithPermissionProvider(prov),
 	)
 	mw := sso.NewAdminMiddleware(srv, prov)
+	mw.SetAuditRecorder(srv.Auditor())
 	httpSrv := httptest.NewServer(mw.HTTPMiddleware(srv.Handler()))
 	t.Cleanup(httpSrv.Close)
 	t.Cleanup(broker.Close)
@@ -150,9 +151,14 @@ func TestSSEEventsStreamEndToEnd(t *testing.T) {
 
 	// By the time Do() returns, HandleStream has already Subscribed and
 	// flushed headers (Subscribe -> writeStreamHeaders -> flush all happen
-	// before the handler blocks on the live loop) — so this second login,
-	// issued only now, is guaranteed to be observed live rather than raced
-	// against subscription setup.
+	// before the handler blocks on the live loop), so denials and logins issued
+	// only now are guaranteed to be observed live rather than raced.
+	reader := bufio.NewReader(resp.Body)
+	status, _ = rcovDo(t, http.MethodGet, httpSrv.URL+"/api/v1/admin/clients", "", nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated protected request = %d, want 401", status)
+	}
+
 	status, out = rcovPostJSON(t, httpSrv.URL+"/auth/login", "", map[string]any{
 		"provider":   "password",
 		"client_id":  rcovClient,
@@ -162,19 +168,23 @@ func TestSSEEventsStreamEndToEnd(t *testing.T) {
 		t.Fatalf("trigger login = %d body=%v", status, out)
 	}
 
-	reader := bufio.NewReader(resp.Body)
-	found := false
-	for {
+	foundLogin, foundDenied := false, false
+	for !(foundLogin && foundDenied) {
 		line, rerr := reader.ReadString('\n')
 		if strings.Contains(line, "event: login") {
-			found = true
-			break
+			foundLogin = true
+		}
+		if strings.Contains(line, "event: admin_auth_denied") {
+			foundDenied = true
 		}
 		if rerr != nil {
 			break
 		}
 	}
-	if !found {
+	if !foundLogin {
 		t.Fatal("did not observe an `event: login` frame on the stream after the trigger login")
+	}
+	if !foundDenied {
+		t.Fatal("did not observe an `event: admin_auth_denied` frame after the protected denial")
 	}
 }
