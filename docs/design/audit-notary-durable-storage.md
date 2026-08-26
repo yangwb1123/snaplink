@@ -1,11 +1,13 @@
 # Durable audit-notary checkpoints
 
-## Scope and current evidence
+## Scope and baseline evidence
 
-This batch adds durable storage and restart continuity only. `platform/audit/chainer.go`
-contains the `CheckpointStore` interface, `MemoryCheckpointStore`, signed
-checkpoint wire types, and `NewNotary`; `grep` shows no production caller of
-`NewNotary` or `StartNotary`, and no durable `CheckpointStore` implementation.
+This batch adds durable storage and restart continuity only. The statements in
+this section describe the pre-change baseline (HEAD^), not the post-change
+implementation. At that baseline, `platform/audit/chainer.go` contained the
+`CheckpointStore` interface, `MemoryCheckpointStore`, signed checkpoint wire
+types, and `NewNotary`; `grep` showed no production caller of `NewNotary` or
+`StartNotary`, and no durable `CheckpointStore` implementation.
 The requested `docs/design/audit-chain.md` is absent in this checkout, so this
 design relies on the executable code and the direction-one evidence in the
 requested scan document rather than treating that missing document as a
