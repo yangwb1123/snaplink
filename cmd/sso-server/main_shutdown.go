@@ -220,13 +220,16 @@ func shutdownAuditExporters(ctx context.Context, a *app, logger spi.Logger) {
 			logger.Error("audit async drain timed out", "error", err)
 		}
 	}
+	// Close the exporter generations before the shared audit close chain.
+	// The latter owns the Notary and, for SQLite, the primary DB handle; it
+	// must be last so no backing store closes beneath an exporter.
+	shutdownWebhookRuntime(ctx, a, logger)
+	shutdownAuditKafka(ctx, a, logger)
 	if a.externalAuditClose != nil {
 		if err := a.externalAuditClose(ctx); err != nil {
 			logger.Error("audit external worker close failed", "error", err)
 		}
 	}
-	shutdownWebhookRuntime(ctx, a, logger)
-	shutdownAuditKafka(ctx, a, logger)
 }
 
 func shutdownWebhookRuntime(ctx context.Context, a *app, logger spi.Logger) {
@@ -392,5 +395,23 @@ func waitForStop(ctx context.Context, stop <-chan struct{}) {
 	select {
 	case <-stop:
 	case <-ctx.Done():
+	}
+}
+
+// addAuditCloser prepends a cleanup step to the shared audit close chain.
+// The chain is also used by build-failure cleanup, so composing here preserves
+// existing external-worker shutdown while ensuring notary and backing-store
+// handles are not overwritten by a later exporter.
+func (b *appBuilder) addAuditCloser(next func(context.Context) error) {
+	previous := b.externalAuditClose
+	b.externalAuditClose = func(ctx context.Context) error {
+		err := next(ctx)
+		if previous == nil {
+			return err
+		}
+		if previousErr := previous(ctx); err == nil {
+			return previousErr
+		}
+		return err
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -130,6 +131,9 @@ func (b *appBuilder) wireSigningIssuer() error {
 // async wrap), the retention scheduler, and the audit API + readiness wiring.
 func (b *appBuilder) wireAudit() error {
 	cfg, logger := b.cfg, b.logger
+	if err := validateAuditNotaryBuild(cfg.Audit); err != nil {
+		return err
+	}
 	if !cfg.Audit.Enabled {
 		return nil
 	}
@@ -152,6 +156,10 @@ func (b *appBuilder) wireAudit() error {
 		return err
 	}
 	b.recorder = recorder
+	if err := b.wireAuditNotary(primary, primaryName); err != nil {
+		closeIfCloser(primary)
+		return err
+	}
 	b.opts = append(b.opts, sso.WithAuditRecorder(recorder))
 	if cfg.Audit.APIEnabled {
 		b.opts = append(b.opts, sso.WithAuditAPI())
@@ -161,6 +169,63 @@ func (b *appBuilder) wireAudit() error {
 	// silently no-ops.
 	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "audit-"+primaryName, primary)
 	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "audit-"+primaryName, primary)
+	return nil
+}
+
+func validateAuditNotaryBuild(c config.AuditConfig) error {
+	n := c.Notary
+	if !n.Enabled {
+		return nil
+	}
+	if !c.Enabled {
+		return errors.New("audit.notary.enabled requires audit.enabled=true")
+	}
+	if !c.HashChain {
+		return errors.New("audit.notary.enabled requires audit.hash_chain=true")
+	}
+	backend := strings.ToLower(strings.TrimSpace(c.Backend))
+	if backend != "sqlite" && backend != "postgres" {
+		return fmt.Errorf("audit.notary.enabled requires durable primary backend sqlite or postgres, got %q", c.Backend)
+	}
+	if strings.TrimSpace(n.KeyFile) == "" || !filepath.IsAbs(n.KeyFile) {
+		return errors.New("audit.notary.key_file must be a non-empty absolute path")
+	}
+	return nil
+}
+
+func (b *appBuilder) wireAuditNotary(primary audit.Sink, primaryName string) error {
+	n := b.cfg.Audit.Notary
+	if !n.Enabled {
+		return nil
+	}
+	if primaryName == "sqlite" {
+		if closer, ok := primary.(interface{ Close() error }); ok {
+			b.addAuditCloser(func(context.Context) error { return closer.Close() })
+		}
+	}
+	tip, tipOK := primary.(audit.ChainTip)
+	store, storeOK := primary.(audit.CheckpointStore)
+	if !tipOK || !storeOK {
+		return fmt.Errorf("audit.notary.enabled requires primary sink implementing audit.ChainTip and audit.CheckpointStore; backend %q is unsupported", b.cfg.Audit.Backend)
+	}
+	signer, err := serverbuildauthn.BuildAuditCheckpointSigner(n.KeyFile)
+	if err != nil {
+		return fmt.Errorf("audit.notary: %w", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := audit.StartNotary(ctx, tip, store, signer, n.Interval, b.recorder, b.logger)
+	b.addAuditCloser(func(ctx context.Context) error {
+		cancel()
+		select {
+		case <-done:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	b.logger.Info("audit: signed checkpoint producer enabled",
+		"backend", strings.ToLower(strings.TrimSpace(b.cfg.Audit.Backend)),
+		"key_file", n.KeyFile, "public_key", fmt.Sprintf("%x", signer.PublicKey()))
 	return nil
 }
 

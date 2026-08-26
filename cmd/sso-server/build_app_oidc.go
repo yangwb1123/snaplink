@@ -226,7 +226,7 @@ func (b *appBuilder) wireExternalAuditWorker() error {
 	}
 	b.recorder.AddSink(runtime)
 	b.opts = append(b.opts, sso.WithReadyCheck("external-audit-worker", runtime.Ready))
-	b.externalAuditClose = runtime.Close
+	b.addAuditCloser(runtime.Close)
 	return nil
 }
 

@@ -1,12 +1,17 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
+)
 
 // AuditConfig configures security audit logging. When Enabled is false, no
 // audit Recorder is wired and the API endpoints are not mounted.
 //
-// Backend selects the primary [audit.Sink] backend ("memory" or
-// "sqlite"). MemorySink is a process-local ring buffer that drops
+// Backend selects the primary [audit.Sink] backend ("memory", "sqlite",
+// or "postgres"). MemorySink is a process-local ring buffer that drops
 // events on restart; SQLite persists to a shared file so audit
 // survives restarts and replicates across replicas pointed at the
 // same DSN. Both still feed into the same MultiSink+Webhook
@@ -19,6 +24,7 @@ type AuditConfig struct {
 	MemoryCapacity int                       `yaml:"memory_capacity"`
 	Async          AuditAsyncConfig          `yaml:"async"`
 	HashChain      bool                      `yaml:"hash_chain"`
+	Notary         AuditNotaryConfig         `yaml:"notary"`
 	PIIRedaction   AuditPIIRedactionConfig   `yaml:"pii_redaction"`
 	Webhook        AuditWebhookConfig        `yaml:"webhook"`
 	ExternalWorker ExternalAuditWorkerConfig `yaml:"external_worker"`
@@ -40,6 +46,40 @@ type AuditConfig struct {
 	// registers its factory explicitly; enabling this in a binary without
 	// that compiled module fails boot closed.
 	Kafka AuditKafkaConfig `yaml:"kafka"`
+}
+
+// AuditNotaryConfig enables the in-tree signed chain-head checkpoint producer.
+// The private key is an operator-provisioned PKCS#8 Ed25519 PEM file, kept
+// separate from the token signing-key registry. No key is generated or stored
+// in YAML. The producer writes to the primary durable audit sink's independent
+// audit_checkpoints table and leaves the hash-chain Recorder head untouched.
+type AuditNotaryConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	Interval time.Duration `yaml:"interval"`
+	KeyFile  string        `yaml:"key_file"`
+}
+
+// validate checks the producer's boot-time prerequisites. Interval <= 0 is
+// intentionally accepted: audit.Notary applies its existing five-minute
+// default, preserving the library's immediate-first-attempt behavior.
+func (n AuditNotaryConfig) validate(a AuditConfig) error {
+	if !n.Enabled {
+		return nil
+	}
+	if !a.Enabled {
+		return fmt.Errorf("config: audit.notary.enabled requires audit.enabled=true")
+	}
+	if !a.HashChain {
+		return fmt.Errorf("config: audit.notary.enabled requires audit.hash_chain=true")
+	}
+	backend := strings.ToLower(strings.TrimSpace(a.Backend))
+	if backend != "sqlite" && backend != "postgres" {
+		return fmt.Errorf("config: audit.notary.enabled requires durable audit.backend sqlite or postgres, got %q", a.Backend)
+	}
+	if strings.TrimSpace(n.KeyFile) == "" || !filepath.IsAbs(n.KeyFile) {
+		return fmt.Errorf("config: audit.notary.key_file must be a non-empty absolute path")
+	}
+	return nil
 }
 
 // AuditCEFConfig enables an ArcSight CEF (Common Event Format) sink.

@@ -228,6 +228,15 @@ audit:
   # delete, or mutation. In-process only — the last event isn't
   # detectable without an external attestation.
   hash_chain: false
+  # Optional signed chain-head checkpoints. Fully off by default and
+  # requires hash_chain=true plus backend=sqlite or postgres. The operator
+  # must provision a stable PKCS#8 Ed25519 PRIVATE KEY PEM at key_file;
+  # sso-server never generates or writes this key, and it is independent of
+  # keys.signing. interval <= 0 uses the existing 5m Notary default.
+  notary:
+    enabled: false
+    interval: 0s              # <=0 uses the existing 5m Notary default
+    key_file: ""             # absolute path; required when enabled
   # Conservative PII redaction (DefaultPIIRedactor: actor hashed,
   # ip truncated, user-agent stripped) before the chain runs. Salt
   # MUST be deployment-stable and secret — prefer salt_file (out-of-

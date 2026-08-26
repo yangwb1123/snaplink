@@ -121,6 +121,24 @@ func TestCloseMemoryStoreReapers_NilServerIsNoOp(t *testing.T) {
 	closeMemoryStoreReapers(&app{})
 }
 
+func TestAddAuditCloserPreservesExistingClose(t *testing.T) {
+	var order []string
+	b := &appBuilder{externalAuditClose: func(context.Context) error {
+		order = append(order, "existing")
+		return nil
+	}}
+	b.addAuditCloser(func(context.Context) error {
+		order = append(order, "new")
+		return nil
+	})
+	if err := b.externalAuditClose(context.Background()); err != nil {
+		t.Fatalf("close chain: %v", err)
+	}
+	if len(order) != 2 || order[0] != "new" || order[1] != "existing" {
+		t.Fatalf("close order = %v; want [new existing]", order)
+	}
+}
+
 func TestCloseMemoryStoreReapers_ClosesRunningReapersWithoutPanicking(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{}
