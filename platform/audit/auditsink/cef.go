@@ -141,6 +141,7 @@ var cefEventNames = map[auditspi.EventType]string{
 	auditspi.EventAdminSubjectExported:            "Admin: Subject Exported",
 	auditspi.EventAdminSubjectErased:              "Admin: Subject Erased",
 	auditspi.EventAdminGRPCCalled:                 "Admin: gRPC Call",
+	auditspi.EventAdminAuthDenied:                 "Admin: Authentication Denied",
 	auditspi.EventAdminWriteQuotaExceeded:         "Admin: Write Quota Exceeded",
 	auditspi.EventAdminIPDenied:                   "Admin: IP Denied",
 	auditspi.EventAdminRateLimited:                "Admin: Rate Limited",

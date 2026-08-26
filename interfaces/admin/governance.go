@@ -239,8 +239,11 @@ const (
 	errAdminRateLimitExceeded     = "rate_limit_exceeded"
 )
 
-func recordAdminDenial(rec *audit.Recorder, r *http.Request, typ audit.EventType, reason, actorID, tenantID string) {
-	e := &audit.Event{Type: typ, Outcome: audit.OutcomeFailure, ActorID: actorID, TenantID: tenantID}
+func recordAdminDenial(rec *audit.Recorder, r *http.Request, typ audit.EventType, reason, actorID, tenantID, clientID string) {
+	e := &audit.Event{Type: typ, Outcome: audit.OutcomeFailure, ActorID: actorID, TenantID: tenantID, ClientID: clientID}
+	if typ == audit.EventAdminAuthDenied {
+		e.Reason = reason
+	}
 	if ip := geo.DefaultIPExtractor(r); ip != nil {
 		e.ActorIP = ip.String()
 	}
@@ -332,7 +335,7 @@ func checkRateLimit(w http.ResponseWriter, r *http.Request, store *ratelimit.Pol
 	}
 	w.Header().Set("Retry-After", strconv.Itoa(secs))
 	http.Error(w, `{"error":"`+errAdminRateLimitExceeded+`"}`, http.StatusTooManyRequests)
-	recordAdminDenial(rec, r, audit.EventAdminRateLimited, errAdminRateLimitExceeded, "", "")
+	recordAdminDenial(rec, r, audit.EventAdminRateLimited, errAdminRateLimitExceeded, "", "", "")
 	return false
 }
 
@@ -381,7 +384,7 @@ func checkIPPolicy(w http.ResponseWriter, r *http.Request, p *adminIPPolicy, rec
 		return true
 	}
 	http.Error(w, `{"error":"`+errAdminIPDenied+`"}`, http.StatusForbidden)
-	recordAdminDenial(rec, r, audit.EventAdminIPDenied, errAdminIPDenied, "", "")
+	recordAdminDenial(rec, r, audit.EventAdminIPDenied, errAdminIPDenied, "", "", "")
 	return false
 }
 
@@ -397,7 +400,7 @@ func checkDestructiveConfirm(w http.ResponseWriter, r *http.Request, set admingo
 		return true
 	}
 	http.Error(w, `{"error":"`+errDestructiveConfirmRequired+`"}`, http.StatusConflict)
-	recordAdminDenial(rec, r, audit.EventAdminDestructiveConfirmRequired, errDestructiveConfirmRequired, "", "")
+	recordAdminDenial(rec, r, audit.EventAdminDestructiveConfirmRequired, errDestructiveConfirmRequired, "", "", "")
 	return false
 }
 
@@ -425,7 +428,7 @@ func checkWriteQuota(w http.ResponseWriter, r *http.Request, q *adminQuotaConfig
 			w.Header().Set("Retry-After", strconv.Itoa(int(time.Until(res.ResetAt).Seconds())))
 		}
 		http.Error(w, `{"error":"`+errAdminWriteQuotaExceeded+`"}`, http.StatusTooManyRequests)
-		recordAdminDenial(rec, r, audit.EventAdminWriteQuotaExceeded, errAdminWriteQuotaExceeded, actorID, tenantHint)
+		recordAdminDenial(rec, r, audit.EventAdminWriteQuotaExceeded, errAdminWriteQuotaExceeded, actorID, tenantHint, "")
 		return false
 	}
 	return true
