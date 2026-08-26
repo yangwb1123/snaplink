@@ -80,6 +80,63 @@ func LoadSecretFile(path string) (string, error) {
 	return s, nil
 }
 
+// LoadEd25519PrivateKeyPEM reads an operator-provisioned PKCS#8 PEM file.
+// Only a "PRIVATE KEY" block containing an Ed25519 key is accepted. The
+// returned key is independent of the token signing-key registry and errors
+// name the path/type only; private-key bytes never enter an error message.
+func LoadEd25519PrivateKeyPEM(path string) (ed25519.PrivateKey, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return nil, fmt.Errorf("%s: empty private key file", path)
+	}
+	block, rest := pem.Decode(raw)
+	if block == nil {
+		return nil, fmt.Errorf("%s: no PEM block found", path)
+	}
+	if block.Type != "PRIVATE KEY" {
+		return nil, fmt.Errorf("%s: unsupported PEM type; want PRIVATE KEY", path)
+	}
+	if strings.TrimSpace(string(rest)) != "" {
+		return nil, fmt.Errorf("%s: unexpected data after PRIVATE KEY PEM block", path)
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse private key in %s: %w", path, err)
+	}
+	priv, ok := parsed.(ed25519.PrivateKey)
+	if !ok || len(priv) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("%s: parsed key is %T; want ed25519.PrivateKey", path, parsed)
+	}
+	return append(ed25519.PrivateKey(nil), priv...), nil
+}
+
+// ed25519CheckpointSigner is deliberately local to the server composition
+// root. It implements the audit signer port without exposing or registering
+// the checkpoint key as a token issuer key.
+type ed25519CheckpointSigner struct{ private ed25519.PrivateKey }
+
+func (s *ed25519CheckpointSigner) Sign(data []byte) ([]byte, error) {
+	return ed25519.Sign(s.private, data), nil
+}
+
+func (s *ed25519CheckpointSigner) PublicKey() []byte {
+	return append([]byte(nil), s.private[ed25519.SeedSize:]...)
+}
+
+// BuildAuditCheckpointSigner loads the stable, file-backed checkpoint signer.
+// It never generates a replacement key, so a restart keeps the same signer
+// identity and durable checkpoints remain verifiable across process lifetime.
+func BuildAuditCheckpointSigner(path string) (audit.CheckpointSigner, error) {
+	private, err := LoadEd25519PrivateKeyPEM(path)
+	if err != nil {
+		return nil, err
+	}
+	return &ed25519CheckpointSigner{private: private}, nil
+}
+
 // LoadEd25519PublicKeyPEM reads a PEM file containing a "PUBLIC KEY"
 // block and returns the parsed Ed25519 key. Refuses any other key
 // type to keep operators from accidentally feeding RSA/ECDSA pubkeys

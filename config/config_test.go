@@ -1,8 +1,10 @@
 package config
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateVersion(t *testing.T) {
@@ -37,6 +39,64 @@ func TestCurrentSchemaVersion(t *testing.T) {
 func TestDefaultFileName(t *testing.T) {
 	if DefaultFileName != "config.yaml" {
 		t.Errorf("expected 'config.yaml', got %q", DefaultFileName)
+	}
+}
+
+func TestAuditNotaryValidation(t *testing.T) {
+	t.Parallel()
+	if cfg := (AuditConfig{}); cfg.Notary.Enabled {
+		t.Fatal("notary must default to disabled")
+	}
+	if err := (AuditNotaryConfig{}).validate(AuditConfig{}); err != nil {
+		t.Fatalf("disabled notary rejected: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		cfg  AuditConfig
+		want string
+	}{
+		{
+			name: "audit disabled",
+			cfg:  AuditConfig{Notary: AuditNotaryConfig{Enabled: true, KeyFile: "/etc/sso/notary.pem"}},
+			want: "audit.enabled",
+		},
+		{
+			name: "hash chain disabled",
+			cfg:  AuditConfig{Enabled: true, Backend: "sqlite", Notary: AuditNotaryConfig{Enabled: true, KeyFile: "/etc/sso/notary.pem"}},
+			want: "audit.hash_chain",
+		},
+		{
+			name: "memory backend",
+			cfg:  AuditConfig{Enabled: true, HashChain: true, Backend: "memory", Notary: AuditNotaryConfig{Enabled: true, KeyFile: "/etc/sso/notary.pem"}},
+			want: "durable audit.backend",
+		},
+		{
+			name: "relative key",
+			cfg:  AuditConfig{Enabled: true, HashChain: true, Backend: "postgres", Notary: AuditNotaryConfig{Enabled: true, KeyFile: "notary.pem"}},
+			want: "absolute",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.cfg.Notary.validate(test.cfg); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v; want %q", err, test.want)
+			}
+		})
+	}
+
+	valid := AuditConfig{
+		Enabled:   true,
+		HashChain: true,
+		Backend:   "sqlite",
+		Notary: AuditNotaryConfig{
+			Enabled:  true,
+			Interval: -time.Second,
+			KeyFile:  filepath.Join("/", "etc", "sso", "notary.pem"),
+		},
+	}
+	if err := valid.Notary.validate(valid); err != nil {
+		t.Fatalf("valid config rejected: %v", err)
 	}
 }
 

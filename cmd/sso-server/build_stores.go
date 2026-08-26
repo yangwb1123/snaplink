@@ -64,7 +64,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr erro
 	// calls it at shutdown. Registered here (after wireFoundation populates
 	// netCancel, before the later phases) so the LIFO cleanup fires for any
 	// later error, exactly as the original defer did.
-	if b.netCancel != nil || b.cfg.Audit.ExternalWorker.Enabled {
+	if b.netCancel != nil || b.externalAuditClose != nil {
 		defer func() {
 			if retErr != nil {
 				b.closeBuildFailure()

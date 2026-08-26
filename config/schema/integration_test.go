@@ -25,6 +25,23 @@ func TestGenerate_RealConfigDoesNotPanicAndHasKnownSections(t *testing.T) {
 	}
 }
 
+func TestGenerate_RealConfigIncludesAuditNotaryShape(t *testing.T) {
+	doc := schema.Generate(config.Config{})
+	auditDoc, ok := doc.Properties["audit"]
+	if !ok {
+		t.Fatal("expected audit property")
+	}
+	notaryDoc, ok := auditDoc.Properties["notary"]
+	if !ok {
+		t.Fatal("expected audit.notary property")
+	}
+	for _, field := range []string{"enabled", "interval", "key_file"} {
+		if _, ok := notaryDoc.Properties[field]; !ok {
+			t.Errorf("expected audit.notary.%s in generated schema", field)
+		}
+	}
+}
+
 func TestGenerate_RealConfigNestedSectionsAreNeverRequired(t *testing.T) {
 	// Regression guard for the required-ness heuristic: nested config
 	// sections (structs) must never land in Required, even though none of

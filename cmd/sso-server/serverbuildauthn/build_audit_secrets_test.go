@@ -73,6 +73,61 @@ func TestLoadSecretFile_ValidEmptyAndMissing(t *testing.T) {
 	}
 }
 
+func TestLoadEd25519PrivateKeyPEM_ValidAndRejectsInvalidInputs(t *testing.T) {
+	t.Parallel()
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("genkey: %v", err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(private)
+	if err != nil {
+		t.Fatalf("marshal private key: %v", err)
+	}
+	validPath := writeFile(t, "notary.pem", string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})))
+	loaded, err := LoadEd25519PrivateKeyPEM(validPath)
+	if err != nil {
+		t.Fatalf("LoadEd25519PrivateKeyPEM: %v", err)
+	}
+	if !ed25519.PrivateKey(loaded).Equal(private) {
+		t.Fatal("loaded private key differs from the provisioned key")
+	}
+	signer, err := BuildAuditCheckpointSigner(validPath)
+	if err != nil {
+		t.Fatalf("BuildAuditCheckpointSigner: %v", err)
+	}
+	message := []byte("checkpoint-test")
+	signature, err := signer.Sign(message)
+	if err != nil || !ed25519.Verify(signer.PublicKey(), message, signature) {
+		t.Fatalf("round-trip signature invalid: err=%v", err)
+	}
+
+	emptyPath := writeFile(t, "empty.pem", "\n")
+	if _, err := LoadEd25519PrivateKeyPEM(emptyPath); err == nil {
+		t.Fatal("empty private-key file was accepted")
+	}
+	wrongTypePath := writeFile(t, "wrong-type.pem", string(pem.EncodeToMemory(&pem.Block{
+		Type: "RSA PRIVATE KEY", Bytes: []byte("private-material-must-not-be-logged"),
+	})))
+	if _, err := LoadEd25519PrivateKeyPEM(wrongTypePath); err == nil || strings.Contains(err.Error(), "private-material") {
+		t.Fatalf("wrong PEM type error = %v; want rejection without key material", err)
+	}
+	ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate wrong-algorithm key: %v", err)
+	}
+	ecdsaDER, err := x509.MarshalPKCS8PrivateKey(ecdsaKey)
+	if err != nil {
+		t.Fatalf("marshal wrong-algorithm key: %v", err)
+	}
+	wrongAlgorithmPath := writeFile(t, "wrong-algorithm.pem", string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: ecdsaDER})))
+	if _, err := LoadEd25519PrivateKeyPEM(wrongAlgorithmPath); err == nil || !strings.Contains(err.Error(), wrongAlgorithmPath) {
+		t.Fatalf("wrong algorithm error = %v; want a path-bearing rejection", err)
+	}
+	if _, err := LoadEd25519PrivateKeyPEM("/no/such/notary.pem"); err == nil {
+		t.Fatal("missing private-key file was accepted")
+	}
+}
+
 func TestLoadEd25519PublicKeyPEM_RoundTrip(t *testing.T) {
 	t.Parallel()
 	pub, path := writeEd25519PubKeyFixture(t)

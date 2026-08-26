@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manages one lifecycle-supervised audit-batch worker, checks signed local
   release provenance or remote mTLS/SPIFFE identity, contributes readiness and
   graceful shutdown, and emits bounded lifecycle audit events.
+- Opt-in in-tree signed audit checkpoint producer: `audit.notary` loads a
+  stable operator-provisioned PKCS#8 Ed25519 private key, signs chain heads,
+  and persists checkpoints through the durable SQLite/Postgres primary sink;
+  default-off behavior, the Recorder head, event registry, and HTTP surface
+  remain unchanged.
 - Lifecycle-managed stock-server webhook exporter: `webhooks.enabled` now
   wires a precompiled audit tap with generation leases, readiness, graceful
   drain, shared subscription/dead-letter stores, safe SIGHUP delivery-policy
