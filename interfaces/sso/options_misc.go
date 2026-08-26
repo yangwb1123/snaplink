@@ -64,10 +64,11 @@ func WithGeoProvider(p geo.Provider) Option {
 }
 
 // WithGeoMiddlewareOptions tunes how the geo middleware extracts
-// the client IP and bounds the lookup. Optional — the middleware
-// has sane defaults (XFF first hop → X-Real-IP → RemoteAddr,
-// 200ms timeout, no error reporter). Pass a custom Extractor when
-// the deployment doesn't trust forwarded headers (no edge proxy).
+// the client IP and bounds the lookup. The default extractor parses the
+// canonical peertrust.RequestInfo when present and otherwise uses RemoteAddr;
+// it never reads raw X-Forwarded-For or X-Real-IP. The default also uses a
+// 200ms timeout and no error reporter. A custom IPExtractor is the caller's
+// responsibility when a deployment intentionally needs another source.
 func WithGeoMiddlewareOptions(opts GeoMiddlewareOptions) Option {
 	return func(s *Server) { s.geoMiddlewareOpts = opts }
 }

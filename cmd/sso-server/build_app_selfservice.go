@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 
@@ -21,7 +20,6 @@ import (
 	"github.com/yangwb1123/snaplink/domains/threataction"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
-	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/trust"
@@ -190,8 +188,9 @@ func (b *appBuilder) wireGeoRegionRisk() error {
 	return nil
 }
 
-// wireGeoMiddlewareOptions wires the geo middleware's Timeout/IPExtractor/
-// OnError. Only called when a geo provider is configured.
+// wireGeoMiddlewareOptions wires the configured geo lookup timeout and
+// error reporter. The platform default extractor consumes the canonical
+// peer-trust context stamped by the outer TrustedProxies middleware.
 func (b *appBuilder) wireGeoMiddlewareOptions() {
 	cfg, logger := b.cfg, b.logger
 	geoOpts := sso.GeoMiddlewareOptions{
@@ -200,36 +199,9 @@ func (b *appBuilder) wireGeoMiddlewareOptions() {
 			logger.Error("geo lookup failed", "error", err)
 		},
 	}
-	if len(cfg.Security.TrustedProxies.CIDRs) > 0 {
-		// TrustedProxiesConfig's doc comment promises the validated
-		// real client IP feeds "rate-limiting AND geo enrichment" —
-		// without this, geo (and any RiskConfig.CountryDenyList rule
-		// that reads RiskRequest.Geo) falls back to
-		// geo.DefaultIPExtractor, which trusts the raw, leftmost
-		// X-Forwarded-For hop verbatim. That lets any caller — even
-		// one that legitimately traverses the configured trusted
-		// proxy — steer the resolved country by prepending an
-		// arbitrary forged hop, regardless of trusted_proxies being
-		// configured. Route geo through the same TrustedProxies-
-		// validated IP the rate limiter already uses.
-		geoOpts.IPExtractor = trustedProxyIPExtractor
-	}
-	// Always wired (not gated on LookupTimeout/TrustedProxies being set) so
-	// OnError reaches the operator's logger regardless of those other
-	// knobs -- a geo-provider outage is fail-open by design, but should
-	// never be silent. Timeout/IPExtractor keep their exact prior
-	// zero-value/nil defaults when the corresponding condition doesn't hold.
+	// Always wire the reporter (not gated on LookupTimeout) so a geo-provider
+	// outage reaches the operator's logger. Geo remains fail-open by design.
 	b.opts = append(b.opts, sso.WithGeoMiddlewareOptions(geoOpts))
-}
-
-// trustedProxyIPExtractor resolves the geo (and, transitively, risk-scorer)
-// client IP from the TrustedProxies-validated address instead of trusting
-// forwarded headers directly. middleware.RealClientIP degrades to
-// r.RemoteAddr — never a raw, attacker-supplied X-Forwarded-For hop — when
-// TrustedProxies middleware didn't run, so this is never less safe than
-// geo.DefaultIPExtractor even on a request that bypasses the chain.
-func trustedProxyIPExtractor(r *http.Request) net.IP {
-	return net.ParseIP(middleware.RealClientIP(r))
 }
 
 // wireRegion wires the serving-region resolver + residency enforcement +

@@ -12,6 +12,7 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/geo"
 	"github.com/yangwb1123/snaplink/platform/geo/static"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 // stubProvider always returns the configured info / err. Used to
@@ -152,69 +153,86 @@ func TestGeoMiddleware_E2EWithStaticProvider(t *testing.T) {
 	}
 }
 
-func TestDefaultGeoIPExtractor_PriorityOrder(t *testing.T) {
+func TestDefaultGeoIPExtractor_PeerTrustGate(t *testing.T) {
 	cases := []struct {
 		name  string
 		setup func(*http.Request)
 		want  string
 	}{
 		{
-			name: "xff first hop wins",
+			name: "trusted canonical peer wins",
 			setup: func(r *http.Request) {
-				r.Header.Set("X-Forwarded-For", "1.2.3.4, 5.6.7.8")
-				r.Header.Set("X-Real-IP", "9.9.9.9")
+				r.Header.Set("X-Forwarded-For", "9.9.9.9")
 				r.RemoteAddr = "127.0.0.1:1234"
+				*r = *withPeerTrust(r, peertrust.RequestInfo{
+					ClientIP: "1.2.3.4", ForwardedHeadersTrusted: true,
+				})
 			},
 			want: "1.2.3.4",
 		},
 		{
-			name: "xri when xff absent",
+			name: "untrusted canonical peer is used",
 			setup: func(r *http.Request) {
-				r.Header.Set("X-Real-IP", "9.9.9.9")
-				r.RemoteAddr = "127.0.0.1:1234"
+				r.Header.Set("X-Forwarded-For", "9.9.9.9")
+				r.Header.Set("X-Real-IP", "8.8.8.8")
+				r.RemoteAddr = "192.0.2.1:1234"
+				*r = *withPeerTrust(r, peertrust.RequestInfo{
+					ClientIP: "192.0.2.1", ForwardedHeadersTrusted: false,
+				})
 			},
-			want: "9.9.9.9",
+			want: "192.0.2.1",
 		},
 		{
-			name: "remoteaddr fallback",
+			name: "without context ignores forged headers",
 			setup: func(r *http.Request) {
-				r.RemoteAddr = "192.168.1.1:8080"
+				r.Header.Set("X-Forwarded-For", "1.2.3.4")
+				r.Header.Set("X-Real-IP", "5.6.7.8")
+				r.RemoteAddr = "192.0.2.2:1234"
 			},
-			want: "192.168.1.1",
+			want: "192.0.2.2",
 		},
 		{
-			name: "ipv6 remoteaddr",
+			name: "empty canonical falls back to remote",
 			setup: func(r *http.Request) {
-				r.RemoteAddr = "[::1]:8080"
+				r.Header.Set("X-Real-IP", "5.6.7.8")
+				r.RemoteAddr = "192.0.2.3:1234"
+				*r = *withPeerTrust(r, peertrust.RequestInfo{})
 			},
-			want: "::1",
+			want: "192.0.2.3",
 		},
 		{
-			name: "remoteaddr without port",
+			name: "invalid canonical falls back to remote",
 			setup: func(r *http.Request) {
-				r.RemoteAddr = "192.168.1.1"
+				r.Header.Set("X-Forwarded-For", "5.6.7.8")
+				r.RemoteAddr = "192.0.2.4:1234"
+				*r = *withPeerTrust(r, peertrust.RequestInfo{ClientIP: "bad-ip"})
 			},
-			want: "192.168.1.1",
+			want: "192.0.2.4",
 		},
 		{
-			name: "bad xff falls through",
-			setup: func(r *http.Request) {
-				r.Header.Set("X-Forwarded-For", "garbage")
-				r.RemoteAddr = "192.168.1.1:8080"
-			},
-			want: "192.168.1.1",
+			name:  "remoteaddr without port",
+			setup: func(r *http.Request) { r.RemoteAddr = "192.168.1.1" },
+			want:  "192.168.1.1",
 		},
 		{
-			name:  "no headers no remote returns nil",
+			name:  "ipv6 remoteaddr",
+			setup: func(r *http.Request) { r.RemoteAddr = "[::1]:8080" },
+			want:  "::1",
+		},
+		{
+			name:  "no remote returns nil",
 			setup: func(r *http.Request) { r.RemoteAddr = "" },
+			want:  "",
+		},
+		{
+			name:  "invalid remote returns nil",
+			setup: func(r *http.Request) { r.RemoteAddr = "not-an-ip" },
 			want:  "",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, "/", nil)
-			r.Header.Del("X-Forwarded-For")
-			r.Header.Del("X-Real-IP")
 			tc.setup(r)
 			got := sso.DefaultGeoIPExtractor(r)
 			if tc.want == "" {
@@ -228,6 +246,10 @@ func TestDefaultGeoIPExtractor_PriorityOrder(t *testing.T) {
 			}
 		})
 	}
+}
+
+func withPeerTrust(r *http.Request, info peertrust.RequestInfo) *http.Request {
+	return r.WithContext(peertrust.WithRequestInfo(r.Context(), info))
 }
 
 func TestGeoFromHandlerContext_NilContext(t *testing.T) {

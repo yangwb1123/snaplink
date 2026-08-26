@@ -247,6 +247,9 @@ func TestResidency_AuditCarriesServingRegionWithoutClobberingGeo(t *testing.T) {
 		sso.WithTokenIssuer(sso.TokenStrategySession, defaultimpl.NewSessionTokenIssuer()),
 		sso.WithTenantStore(tstore),
 		sso.WithGeoProvider(geoProv),
+		// This fixture intentionally sends a forwarded Geo address; install the
+		// canonical peer-trust middleware rather than relying on raw headers.
+		mustResidencyTrustedProxies(t),
 		// Pin to the home region so the login SUCCEEDS (we want a login event).
 		sso.WithRegionMiddleware(region.ConfigPinnedResolver{Region: "eu-west-1"}, region.MiddlewareOptions{}),
 		sso.WithTenantResidencyCheck(0),
@@ -290,6 +293,15 @@ func TestResidency_AuditCarriesServingRegionWithoutClobberingGeo(t *testing.T) {
 	if got := login.Metadata["geo.region"]; got != "US-CA" {
 		t.Errorf("geo.region clobbered/conflated with region.serving: %v", login.Metadata)
 	}
+}
+
+func mustResidencyTrustedProxies(t *testing.T) sso.Option {
+	t.Helper()
+	opt, err := sso.WithTrustedProxies([]string{"127.0.0.0/8"}, 0)
+	if err != nil {
+		t.Fatalf("WithTrustedProxies: %v", err)
+	}
+	return opt
 }
 
 // --- prompt=none silent-renewal residency gate ---------------------------

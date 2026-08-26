@@ -120,10 +120,10 @@ type protocolState struct {
 	// trustedProxies validates X-Forwarded-For chains when wired via
 	// WithTrustedProxies. When non-nil its Middleware is inserted outermost
 	// in Handler() (before rate limiting and every other middleware), so
-	// downstream KeyByClientIP calls see the validated IP via RealClientIP
-	// rather than the raw header. Nil = no XFF validation; every XFF
-	// consumer trusts the raw header unconditionally — safe only behind an
-	// edge that strips and re-adds XFF.
+	// downstream KeyByClientIP and Geo default extractor see the same peer-trust
+	// result rather than raw header. Nil = no XFF validation context; Geo's
+	// default uses RemoteAddr, while legacy XFF consumers retain documented
+	// first-hop behavior — safe only behind an edge that strips and re-adds XFF.
 	trustedProxies         *middleware.TrustedProxies
 	tenantMetricsAllowlist map[string]struct{} // nil/empty = per-tenant metrics off (§5)
 	rateLimitPolicy        *ratelimit.Policy

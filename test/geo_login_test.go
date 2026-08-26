@@ -37,10 +37,19 @@ func (s *stubAuthenticator) Callback(_ context.Context, _ *sso.CallbackState) (*
 }
 
 // loginFixture wires the smallest set of plumbing the login handler
-// needs: stub authenticator, in-memory stores, a session-token issuer.
-// Geo provider is wired via WithGeoProvider; tests vary the per-call
-// X-Forwarded-For to drive different lookups.
+// needs: stub authenticator, in-memory stores, a session-token issuer, and
+// the canonical trusted-proxy context used by forwarded-address tests.
 func loginFixture(t *testing.T, auth sso.Authenticator, geoProv geo.Provider) *httptest.Server {
+	return loginFixtureWithOptions(t, auth, geoProv, geoLoginTrustedProxyOption(t))
+}
+
+// loginFixtureWithoutTrustedProxies keeps the real SDK path intentionally
+// unconfigured so the default-deny behavior for forged geo headers is tested.
+func loginFixtureWithoutTrustedProxies(t *testing.T, auth sso.Authenticator, geoProv geo.Provider) *httptest.Server {
+	return loginFixtureWithOptions(t, auth, geoProv)
+}
+
+func loginFixtureWithOptions(t *testing.T, auth sso.Authenticator, geoProv geo.Provider, extra ...sso.Option) *httptest.Server {
 	t.Helper()
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
@@ -48,7 +57,7 @@ func loginFixture(t *testing.T, auth sso.Authenticator, geoProv geo.Provider) *h
 		AllowedAuthenticators: []string{auth.Name()},
 		TokenStrategy:         sso.TokenStrategySession,
 	})
-	srv := sso.NewServer(
+	opts := []sso.Option{
 		sso.WithRouter(sso.NewStdRouter()),
 		sso.WithAuthenticator(auth),
 		sso.WithClientStore(clients),
@@ -56,19 +65,37 @@ func loginFixture(t *testing.T, auth sso.Authenticator, geoProv geo.Provider) *h
 		sso.WithSessionManager(defaultimpl.NewMemorySessionManager(0)),
 		sso.WithTokenIssuer(sso.TokenStrategySession, defaultimpl.NewSessionTokenIssuer()),
 		sso.WithGeoProvider(geoProv),
-	)
+	}
+	opts = append(opts, extra...)
+	srv := sso.NewServer(opts...)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
 }
 
+func geoLoginTrustedProxyOption(t *testing.T) sso.Option {
+	t.Helper()
+	opt, err := sso.WithTrustedProxies([]string{"127.0.0.0/8"}, 0)
+	if err != nil {
+		t.Fatalf("WithTrustedProxies: %v", err)
+	}
+	return opt
+}
+
 func postLogin(t *testing.T, ts *httptest.Server, xff string) map[string]any {
+	return postLoginWithHeaders(t, ts, xff, "")
+}
+
+func postLoginWithHeaders(t *testing.T, ts *httptest.Server, xff, xreal string) map[string]any {
 	t.Helper()
 	body := `{"provider":"stub","client_id":"web-app","credential":{"u":"alice"}}`
 	req, _ := http.NewRequest("POST", ts.URL+"/auth/login", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if xff != "" {
 		req.Header.Set("X-Forwarded-For", xff)
+	}
+	if xreal != "" {
+		req.Header.Set("X-Real-IP", xreal)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -169,6 +196,25 @@ func TestLogin_FillsCountryCodeFromGeo(t *testing.T) {
 	}
 }
 
+func TestLogin_DefaultGeoExtractorIgnoresForgedForwardedHeaders(t *testing.T) {
+	stub := &stubAuthenticator{
+		name:   "stub",
+		result: &sso.AuthResult{UserID: "user-alice", Provider: "stub"},
+	}
+	prov := static.New()
+	_ = prov.Add("127.0.0.0/8", geo.GeoInfo{CountryCode: "US", RecommendedLanguage: "en-US"})
+	_ = prov.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "CA", RecommendedLanguage: "fr-CA"})
+	ts := loginFixtureWithoutTrustedProxies(t, stub, prov)
+
+	out := postLoginWithHeaders(t, ts, "10.5.6.7", "10.5.6.8")
+	if got := out[sso.KeyCountryCode]; got != "US" {
+		t.Errorf("country_code = %v, want RemoteAddr country US", got)
+	}
+	if got := out[sso.KeyRecommendedLang]; got != "en-US" {
+		t.Errorf("recommended_language = %v, want RemoteAddr language en-US", got)
+	}
+}
+
 // loginFixtureWithAudit mirrors loginFixture but wires an audit
 // MemorySink so tests can assert on what landed in the audit log.
 func loginFixtureWithAudit(t *testing.T, auth sso.Authenticator, geoProv geo.Provider) (*httptest.Server, *audit.MemorySink) {
@@ -190,6 +236,7 @@ func loginFixtureWithAudit(t *testing.T, auth sso.Authenticator, geoProv geo.Pro
 		sso.WithTokenIssuer(sso.TokenStrategySession, defaultimpl.NewSessionTokenIssuer()),
 		sso.WithAuditRecorder(rec),
 		sso.WithGeoProvider(geoProv),
+		geoLoginTrustedProxyOption(t),
 	)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

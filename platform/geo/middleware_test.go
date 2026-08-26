@@ -12,6 +12,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/geo"
 	"github.com/yangwb1123/snaplink/platform/geo/static"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 // blockingProvider stalls Lookup until ctx is cancelled, then surfaces the
@@ -244,22 +245,27 @@ func TestMiddleware_CustomExtractorIsUsed(t *testing.T) {
 	}
 }
 
-func TestMiddleware_ZeroValueOptionsUseDefaults(t *testing.T) {
+func TestMiddleware_ZeroValueOptionsUseCanonicalPeerTrust(t *testing.T) {
 	t.Parallel()
-	// Zero MiddlewareOptions → DefaultIPExtractor + DefaultLookupTimeout.
-	// Drive it through a forwarded header to confirm the default extractor ran.
+	// Zero MiddlewareOptions uses DefaultIPExtractor. A trusted-proxy result
+	// is the only forwarded address it accepts, even when the raw headers
+	// contain a different leftmost value.
 	p := static.New()
 	_ = p.Add("192.0.2.0/24", geo.GeoInfo{CountryCode: "US", City: "doc"})
 
 	mw := geo.Middleware(p, geo.MiddlewareOptions{})
 	r := requestWithRemoteAddr("10.0.0.1:1234")
-	r.Header.Set("X-Forwarded-For", "192.0.2.10")
+	r.Header.Set("X-Forwarded-For", "198.51.100.10")
+	r.Header.Set("X-Real-IP", "198.51.100.11")
+	r = r.WithContext(peertrust.WithRequestInfo(r.Context(), peertrust.RequestInfo{
+		ClientIP: "192.0.2.10", ForwardedHeadersTrusted: true,
+	}))
 	hctx := newHCtx(r)
 	mw(hctx)
 
 	info, ok := geo.FromHandlerContext(hctx)
 	if !ok {
-		t.Fatal("default extractor did not honor X-Forwarded-For")
+		t.Fatal("default extractor did not use canonical peer-trust IP")
 	}
 	if info.City != "doc" {
 		t.Errorf("City=%q want doc", info.City)
@@ -291,44 +297,69 @@ func TestFromHandlerContext_WrongType(t *testing.T) {
 	}
 }
 
-func TestDefaultIPExtractor_ForwardedForFirstHop(t *testing.T) {
+func TestDefaultIPExtractor_TrustedPeerContext(t *testing.T) {
 	t.Parallel()
 	r := requestWithRemoteAddr("10.0.0.1:9999")
-	r.Header.Set("X-Forwarded-For", "203.0.113.7, 70.41.3.18, 150.172.238.178")
+	r.Header.Set("X-Forwarded-For", "203.0.113.7, 70.41.3.18")
+	r = r.WithContext(peertrust.WithRequestInfo(r.Context(), peertrust.RequestInfo{
+		ClientIP: "198.51.100.9", ForwardedHeadersTrusted: true,
+	}))
 	got := geo.DefaultIPExtractor(r)
-	if got == nil || got.String() != "203.0.113.7" {
-		t.Errorf("got %v, want 203.0.113.7 (first hop)", got)
+	if got == nil || got.String() != "198.51.100.9" {
+		t.Errorf("got %v, want canonical peer-trust IP", got)
 	}
 }
 
-func TestDefaultIPExtractor_ForwardedForSingleValueTrimmed(t *testing.T) {
+func TestDefaultIPExtractor_UntrustedPeerContext(t *testing.T) {
 	t.Parallel()
-	r := requestWithRemoteAddr("10.0.0.1:9999")
-	r.Header.Set("X-Forwarded-For", "  203.0.113.9  ")
+	// TrustedProxies records the direct peer as ClientIP when the peer is
+	// untrusted. The false verdict must not make Geo inspect the raw headers.
+	r := requestWithRemoteAddr("203.0.113.9:9999")
+	r.Header.Set("X-Forwarded-For", "9.9.9.9")
+	r.Header.Set("X-Real-IP", "8.8.8.8")
+	r = r.WithContext(peertrust.WithRequestInfo(r.Context(), peertrust.RequestInfo{
+		ClientIP: "203.0.113.9", ForwardedHeadersTrusted: false,
+	}))
 	got := geo.DefaultIPExtractor(r)
 	if got == nil || got.String() != "203.0.113.9" {
-		t.Errorf("got %v, want 203.0.113.9", got)
+		t.Errorf("got %v, want canonical direct-peer IP", got)
 	}
 }
 
-func TestDefaultIPExtractor_InvalidForwardedForFallsToRealIP(t *testing.T) {
+func TestDefaultIPExtractor_WithoutPeerTrustIgnoresForwardedHeaders(t *testing.T) {
 	t.Parallel()
-	r := requestWithRemoteAddr("10.0.0.1:9999")
-	r.Header.Set("X-Forwarded-For", "garbage")
-	r.Header.Set("X-Real-IP", "198.51.100.22")
+	r := requestWithRemoteAddr("192.0.2.44:9999")
+	r.Header.Set("X-Forwarded-For", "198.51.100.22")
+	r.Header.Set("X-Real-IP", "198.51.100.23")
 	got := geo.DefaultIPExtractor(r)
-	if got == nil || got.String() != "198.51.100.22" {
-		t.Errorf("got %v, want 198.51.100.22 (X-Real-IP fallback)", got)
+	if got == nil || got.String() != "192.0.2.44" {
+		t.Errorf("got %v, want RemoteAddr when peer trust is absent", got)
 	}
 }
 
-func TestDefaultIPExtractor_RealIP(t *testing.T) {
+func TestDefaultIPExtractor_EmptyPeerTrustClientIPFallsBackToRemoteAddr(t *testing.T) {
 	t.Parallel()
-	r := requestWithRemoteAddr("10.0.0.1:9999")
-	r.Header.Set("X-Real-IP", "  198.51.100.5 ")
+	r := requestWithRemoteAddr("192.0.2.45:9999")
+	r.Header.Set("X-Real-IP", "198.51.100.23")
+	r = r.WithContext(peertrust.WithRequestInfo(r.Context(), peertrust.RequestInfo{
+		ForwardedHeadersTrusted: true,
+	}))
 	got := geo.DefaultIPExtractor(r)
-	if got == nil || got.String() != "198.51.100.5" {
-		t.Errorf("got %v, want 198.51.100.5", got)
+	if got == nil || got.String() != "192.0.2.45" {
+		t.Errorf("got %v, want RemoteAddr for empty canonical ClientIP", got)
+	}
+}
+
+func TestDefaultIPExtractor_InvalidPeerTrustClientIPFallsBackToRemoteAddr(t *testing.T) {
+	t.Parallel()
+	r := requestWithRemoteAddr("192.0.2.46:9999")
+	r.Header.Set("X-Forwarded-For", "198.51.100.22")
+	r = r.WithContext(peertrust.WithRequestInfo(r.Context(), peertrust.RequestInfo{
+		ClientIP: "not-an-ip", ForwardedHeadersTrusted: true,
+	}))
+	got := geo.DefaultIPExtractor(r)
+	if got == nil || got.String() != "192.0.2.46" {
+		t.Errorf("got %v, want RemoteAddr for invalid canonical ClientIP", got)
 	}
 }
 

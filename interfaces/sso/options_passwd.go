@@ -225,24 +225,30 @@ func WithTenantUsageAggregator(a metering.Aggregator) Option {
 	return func(s *Server) { s.usageAggregator = a }
 }
 
-// WithTrustedProxies configures a trusted-proxy CIDR allowlist gating every
-// forwarded-header consumer on the DIRECT peer (RemoteAddr). When set: the
-// rate-limiter IP key (ratelimit.KeyByClientIP via middleware.RealClientIP)
-// walks the XFF chain right-to-left only for a trusted peer (untrusted ⇒
-// RemoteAddr); base-URL derivation (issuer/discovery/registration URIs/DPoP
-// htu) honors X-Forwarded-Proto/Host only from a trusted peer (untrusted ⇒
-// direct Host/TLS); the mesh ext_authz endpoint derives identity only for a
+// WithTrustedProxies configures a trusted-proxy CIDR allowlist gating the
+// forwarded-header consumers that use peertrust. When set: the rate-limiter
+// IP key (ratelimit.KeyByClientIP via middleware.RealClientIP) walks the XFF
+// chain right-to-left only for a trusted peer (untrusted ⇒ RemoteAddr); base-
+// URL derivation (issuer/discovery/registration URIs/DPoP htu) honors
+// X-Forwarded-Proto/Host only from a trusted peer (untrusted ⇒ direct
+// Host/TLS); and the mesh ext_authz endpoint derives identity only for a
 // trusted peer (untrusted ⇒ the same 401 invalid_token as an invalid bearer).
+// Geo's default extractor consumes the same canonical peertrust.ClientIP
+// context; with no context, or an empty/unparseable canonical address, it
+// uses RemoteAddr and never reads raw X-Forwarded-For/X-Real-IP.
 //
 // cidrs lists the trusted proxy tiers (e.g. ["10.0.0.0/8"]); hops=0 means
 // "trust at most len(cidrs) proxy hops". Errors on any unparseable CIDR so
 // misconfigured deployments fail loudly at startup.
 //
-// Without WithTrustedProxies, every forwarded-header consumer trusts the raw
-// header unconditionally — safe ONLY behind an edge that strips and re-adds
-// those headers. An internet-facing deployment without such an edge MUST use
-// this option, or an attacker forges X-Forwarded-For: <trusted-IP> to bypass
-// IP rate limiting (or X-Forwarded-Host to steer the derived issuer).
+// Without WithTrustedProxies, the legacy forwarded-header consumers above
+// trust raw headers unconditionally — safe ONLY behind an edge that strips
+// and re-adds those headers. The Geo default is different: it falls back to
+// RemoteAddr. An explicit GeoMiddlewareOptions.IPExtractor is the caller's
+// responsibility and may choose another source. An internet-facing
+// deployment without such an edge MUST use this option, or an attacker forges
+// X-Forwarded-For: <trusted-IP> to bypass IP rate limiting (or
+// X-Forwarded-Host to steer the derived issuer).
 func WithTrustedProxies(cidrs []string, hops int) (Option, error) {
 	tp, err := middleware.NewTrustedProxies(cidrs, hops)
 	if err != nil {

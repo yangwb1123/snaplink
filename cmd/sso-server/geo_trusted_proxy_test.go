@@ -18,15 +18,12 @@ import (
 // TrustedProxies-validated real client IP, NOT the raw, attacker-settable
 // leftmost X-Forwarded-For hop.
 //
-// config/config_metrics_security.go's TrustedProxiesConfig doc comment
-// promises the validated address feeds "rate-limiting AND geo enrichment",
-// but before this fix cmd/sso-server never wired GeoMiddlewareOptions'
-// IPExtractor: geo.DefaultIPExtractor always trusts the raw leftmost XFF
-// entry directly. A request that legitimately traverses the ONE configured
-// trusted-proxy tier can still have its resolved country hijacked by
-// prepending an arbitrary forged hop to the left of the chain — letting an
-// attacker evade a country_deny_list rule (or manufacture a false
-// RequireMFA/Deny) regardless of the trusted_proxies allowlist.
+// The stock build deliberately supplies no GeoMiddlewareOptions.IPExtractor:
+// platform/geo.DefaultIPExtractor consumes the canonical peertrust.RequestInfo
+// stamped by the outer TrustedProxies middleware. This test therefore covers
+// the module-level default through the real server path, proving that the
+// validated address feeds both rate limiting and geo enrichment rather than
+// relying on cmd-local extractor wiring.
 func TestWireGeoRegionRisk_TrustedProxiesGatesGeoIPExtraction(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{}
@@ -94,8 +91,8 @@ func TestWireGeoRegionRisk_TrustedProxiesGatesGeoIPExtraction(t *testing.T) {
 
 	got := events[0].Metadata["geo.country_code"]
 	if got != "US" {
-		t.Errorf("geo.country_code = %q; want %q (the trusted-proxy-validated client IP's country) — "+
-			"got the attacker-forged leftmost X-Forwarded-For hop's country instead, proving geo "+
-			"enrichment ignores security.trusted_proxies", got, "US")
+		t.Errorf("geo.country_code = %q; want %q (the canonical peer-trust client's country) — "+
+			"got the attacker-forged leftmost X-Forwarded-For hop's country instead, proving the "+
+			"module default extractor bypasses the peer-trust context", got, "US")
 	}
 }

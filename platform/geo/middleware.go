@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 // HandlerContextKey is the value-bag key the geo middleware uses to
@@ -22,20 +23,19 @@ const HandlerContextKey = "geo:info"
 // request-blocking concern — keep this short.
 const DefaultLookupTimeout = 200 * time.Millisecond
 
-// IPExtractor pulls a client IP from a request. Implementations
-// may trust forwarded headers (when there's a known edge proxy)
-// or stick to RemoteAddr (when the SSO server faces the internet
-// directly). Returning nil tells the middleware to skip the
-// lookup for this request.
+// IPExtractor pulls a client IP from a request. The default extractor uses
+// the canonical peer-trust result when one is present and otherwise sticks to
+// RemoteAddr. Custom extractors may trust forwarded headers when their caller
+// has established that boundary; returning nil skips this request's lookup.
 type IPExtractor func(r *http.Request) net.IP
 
 // MiddlewareOptions tune the geo middleware. Zero value is fine —
 // the middleware uses sane defaults (DefaultIPExtractor +
 // DefaultLookupTimeout, no error reporter).
 type MiddlewareOptions struct {
-	// IPExtractor extracts the client IP. Defaults to
-	// DefaultIPExtractor (honors X-Forwarded-For, X-Real-IP,
-	// then RemoteAddr).
+	// IPExtractor extracts the client IP. Defaults to DefaultIPExtractor,
+	// which parses canonical peertrust.RequestInfo when present and otherwise
+	// uses RemoteAddr. It never reads raw X-Forwarded-For or X-Real-IP.
 	IPExtractor IPExtractor
 
 	// Timeout caps a single Provider.Lookup call. Defaults to
@@ -123,21 +123,17 @@ func CountryCodeFromContext(hctx core.HandlerContext) string {
 	return info.CountryCode
 }
 
-// DefaultIPExtractor pulls the apparent client IP using the same
-// precedence the audit middleware uses: X-Forwarded-For (first
-// hop) → X-Real-IP → RemoteAddr. Only trust forwarded headers
-// when the SSO server sits behind a known edge proxy.
+// DefaultIPExtractor pulls the apparent client IP from the canonical
+// peertrust.RequestInfo stamped by TrustedProxies. A present but empty or
+// malformed ClientIP, and a request without RequestInfo, fall back only to
+// RemoteAddr. Raw X-Forwarded-For and X-Real-IP are deliberately ignored;
+// callers that need another source must provide an explicit IPExtractor.
 func DefaultIPExtractor(r *http.Request) net.IP {
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		if i := strings.IndexByte(v, ','); i >= 0 {
-			v = v[:i]
-		}
-		if ip := net.ParseIP(strings.TrimSpace(v)); ip != nil {
-			return ip
-		}
+	if r == nil {
+		return nil
 	}
-	if v := r.Header.Get("X-Real-IP"); v != "" {
-		if ip := net.ParseIP(strings.TrimSpace(v)); ip != nil {
+	if info, ok := peertrust.RequestInfoFrom(r); ok {
+		if ip := net.ParseIP(strings.TrimSpace(info.ClientIP)); ip != nil {
 			return ip
 		}
 	}
