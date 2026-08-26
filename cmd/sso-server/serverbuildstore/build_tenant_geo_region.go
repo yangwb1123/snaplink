@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -22,6 +23,7 @@ import (
 	connectionssqlite "github.com/yangwb1123/snaplink/domains/connections/sqlite"
 
 	"github.com/yangwb1123/snaplink/platform/geo"
+	maxmindgeo "github.com/yangwb1123/snaplink/platform/geo/maxmind"
 
 	"github.com/yangwb1123/snaplink/domains/metering"
 	geostatic "github.com/yangwb1123/snaplink/platform/geo/static"
@@ -166,23 +168,58 @@ func BuildGeoProvider(cfg *config.Config, logger spi.Logger) (geo.Provider, erro
 	}
 	switch strings.ToLower(cfg.Geo.Backend) {
 	case "", "static":
-		p := geostatic.New()
-		for _, e := range cfg.Geo.Static.Entries {
-			if err := p.Add(e.CIDR, geo.GeoInfo{
-				CountryCode:         e.CountryCode,
-				Region:              e.Region,
-				City:                e.City,
-				TimeZone:            e.TimeZone,
-				RecommendedLanguage: e.RecommendedLanguage,
-			}); err != nil {
-				return nil, fmt.Errorf("geo static entry %q: %w", e.CIDR, err)
-			}
+		p, err := buildStaticGeoProvider(cfg.Geo.Static)
+		if err != nil {
+			return nil, err
 		}
 		logger.Info("geo provider: static", "entries", p.Len())
 		return p, nil
+	case "maxmind":
+		overrides, err := buildStaticGeoProvider(cfg.Geo.Static)
+		if err != nil {
+			return nil, err
+		}
+		primary, err := buildMaxMindGeoProvider(cfg.Geo.MaxMind)
+		if err != nil {
+			return nil, err
+		}
+		logger.Info("geo provider: maxmind", "static_entries", overrides.Len())
+		return geo.NewComposite(overrides, primary), nil
 	default:
 		return nil, fmt.Errorf("unknown geo.backend %q", cfg.Geo.Backend)
 	}
+}
+
+func buildStaticGeoProvider(cfg config.GeoStaticConfig) (*geostatic.Provider, error) {
+	p := geostatic.New()
+	for _, e := range cfg.Entries {
+		if err := p.Add(e.CIDR, geo.GeoInfo{
+			CountryCode:         e.CountryCode,
+			Region:              e.Region,
+			City:                e.City,
+			TimeZone:            e.TimeZone,
+			RecommendedLanguage: e.RecommendedLanguage,
+		}); err != nil {
+			return nil, fmt.Errorf("geo static entry %q: %w", e.CIDR, err)
+		}
+	}
+	return p, nil
+}
+
+func buildMaxMindGeoProvider(cfg config.GeoMaxMindConfig) (*maxmindgeo.Provider, error) {
+	path := strings.TrimSpace(cfg.MMDBPath)
+	if path == "" {
+		return nil, errors.New("geo.maxmind/mmdb path is required when backend=maxmind")
+	}
+	database, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("geo.maxmind/mmdb %q: read: %w", path, err)
+	}
+	provider, err := maxmindgeo.New(database)
+	if err != nil {
+		return nil, fmt.Errorf("geo.maxmind/mmdb %q: %w", path, err)
+	}
+	return provider, nil
 }
 
 // BuildRegionResolver materialises the region.Resolver from RegionConfig.

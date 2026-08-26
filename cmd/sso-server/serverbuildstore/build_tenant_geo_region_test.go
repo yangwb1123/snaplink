@@ -1,13 +1,21 @@
 package serverbuildstore
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/maxmind/mmdbwriter"
+	"github.com/maxmind/mmdbwriter/mmdbtype"
 	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/platform/geo"
 	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
@@ -139,6 +147,107 @@ func TestBuildGeoProvider_BadCIDRErrors(t *testing.T) {
 	if _, err := BuildGeoProvider(cfg, testLogger()); err == nil {
 		t.Fatal("expected error: malformed CIDR in a static geo entry")
 	}
+}
+
+func TestBuildGeoProvider_MaxMindStaticOverlay(t *testing.T) {
+	t.Parallel()
+	path := writeGeoMMDBFixture(t, buildGeoMMDBFixture(t))
+	cfg := &config.Config{}
+	cfg.Geo.Enabled = true
+	cfg.Geo.Backend = "maxmind"
+	cfg.Geo.MaxMind.MMDBPath = path
+	cfg.Geo.Static.Entries = []config.GeoStaticEntry{
+		{CIDR: "1.0.0.0/8", CountryCode: "FR"},
+		{CIDR: "1.1.1.0/24", CountryCode: "GB"},
+		{CIDR: "9.9.9.0/24", CountryCode: "JP"},
+	}
+
+	provider, err := BuildGeoProvider(cfg, testLogger())
+	if err != nil {
+		t.Fatalf("BuildGeoProvider: %v", err)
+	}
+	checks := []struct {
+		name    string
+		ip      string
+		country string
+	}{
+		{name: "mmdb primary", ip: "8.8.8.7", country: "US"},
+		{name: "specific static overlay", ip: "1.1.1.7", country: "GB"},
+		{name: "static-only overlay", ip: "9.9.9.7", country: "JP"},
+	}
+	for _, check := range checks {
+		info, lookupErr := geo.LookupString(context.Background(), provider, check.ip)
+		if lookupErr != nil || info.CountryCode != check.country {
+			t.Errorf("%s: info=%+v err=%v; want country %q", check.name, info, lookupErr, check.country)
+		}
+	}
+	for _, ip := range []string{"10.0.0.1", "203.0.113.99"} {
+		if _, lookupErr := geo.LookupString(context.Background(), provider, ip); !errors.Is(lookupErr, geo.ErrNotFound) {
+			t.Errorf("%s: err=%v; want geo.ErrNotFound", ip, lookupErr)
+		}
+	}
+}
+
+func TestBuildGeoProvider_MaxMindPathErrorsAtBuild(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "blank path"},
+		{name: "missing file", path: filepath.Join(t.TempDir(), "missing.mmdb")},
+		{name: "empty file", path: writeGeoMMDBFixture(t, nil)},
+		{name: "malformed file", path: writeGeoMMDBFixture(t, []byte("not a mmdb"))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Geo.Enabled = true
+			cfg.Geo.Backend = "maxmind"
+			cfg.Geo.MaxMind.MMDBPath = tc.path
+			if _, err := BuildGeoProvider(cfg, testLogger()); err == nil {
+				t.Fatal("expected maxmind build error")
+			} else if !strings.Contains(err.Error(), "geo.maxmind/mmdb") {
+				t.Fatalf("error = %q; want geo.maxmind/mmdb context", err)
+			}
+		})
+	}
+}
+
+func buildGeoMMDBFixture(t *testing.T) []byte {
+	t.Helper()
+	tree, err := mmdbwriter.New(mmdbwriter.Options{DatabaseType: "GeoLite2-City", RecordSize: 24})
+	if err != nil {
+		t.Fatalf("mmdbwriter.New: %v", err)
+	}
+	insert := func(cidr, country string) {
+		_, network, parseErr := net.ParseCIDR(cidr)
+		if parseErr != nil {
+			t.Fatalf("ParseCIDR(%q): %v", cidr, parseErr)
+		}
+		record := mmdbtype.Map{
+			"country": mmdbtype.Map{"iso_code": mmdbtype.String(country)},
+		}
+		if insertErr := tree.Insert(network, record); insertErr != nil {
+			t.Fatalf("Insert(%q): %v", cidr, insertErr)
+		}
+	}
+	insert("8.8.8.0/24", "US")
+	insert("1.1.1.0/24", "DE")
+	var buf bytes.Buffer
+	if _, err := tree.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func writeGeoMMDBFixture(t *testing.T, database []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "geo.mmdb")
+	if err := os.WriteFile(path, database, 0o600); err != nil {
+		t.Fatalf("WriteFile(%q): %v", path, err)
+	}
+	return path
 }
 
 func TestBuildRegionResolver_NilWhenUnconfigured(t *testing.T) {

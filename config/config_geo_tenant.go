@@ -20,17 +20,24 @@ type ReleaseProbeHTTPConfig struct {
 // entirely. Backend selects which geo.Provider implementation
 // supplies the lookups.
 //
-// The static backend is in-process and useful for small operator
-// curated tables (private RFC1918 ranges, regional office
-// blocks). Real geo coverage typically wants a future maxmind
-// backend stacked behind static — see geo/ docs.
+// The static backend is in-process and useful for small operator-curated
+// tables (private RFC1918 ranges, regional office blocks). The maxmind
+// backend loads one operator-provided local .mmdb at startup and composes it
+// behind the static table. It does not download, refresh, or checksum data.
 type GeoConfig struct {
-	Enabled bool            `yaml:"enabled"`
-	Backend string          `yaml:"backend"` // "static" (default)
-	Static  GeoStaticConfig `yaml:"static"`
+	Enabled bool             `yaml:"enabled"`
+	Backend string           `yaml:"backend"` // "static" (default) | "maxmind"
+	Static  GeoStaticConfig  `yaml:"static"`
+	MaxMind GeoMaxMindConfig `yaml:"maxmind"`
 	// LookupTimeout caps a single Lookup in the request hot path.
 	// Defaults to sso.DefaultGeoLookupTimeout (200ms) when zero.
 	LookupTimeout time.Duration `yaml:"lookup_timeout"`
+}
+
+// GeoMaxMindConfig configures the fixed local MaxMind database loaded at
+// startup. The path is configuration-only; request input is never consulted.
+type GeoMaxMindConfig struct {
+	MMDBPath string `yaml:"mmdb_path"`
 }
 
 // GeoStaticConfig configures the in-process CIDR → GeoInfo table.

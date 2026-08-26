@@ -1504,17 +1504,23 @@ tenant:
 
 # IP → geo enrichment. Best for UX hints (preferred language, country
 # code on login response); NOT a security boundary. static backend
-# is in-process CIDR longest-prefix match — fine for the small operator-
-# curated table of intranet ranges + regional offices. Real geo
-# coverage needs a future maxmind backend stacked behind static.
+# is an in-process CIDR longest-prefix match — fine for the small operator-
+# curated table of intranet ranges + regional offices. maxmind loads one
+# operator-provided local .mmdb at startup, behind the static overlay; its
+# path is never taken from request input. Startup fails if the path cannot be
+# read or the file is empty/invalid. The stock server does not download,
+# checksum, or refresh GeoIP data automatically.
 # lookup_timeout caps a single Lookup in the request hot path (200ms
 # default).
 geo:
   enabled: false
-  backend: "static"
+  backend: "static"              # "static" (default) | "maxmind"
   lookup_timeout: 200ms
+  maxmind:
+    # Required when backend is "maxmind"; fixed local path read at startup.
+    mmdb_path: ""                 # e.g. /var/lib/sso/GeoIP/GeoLite2-Country.mmdb
   static:
-    entries: []
+    entries: []                    # longest-prefix entries override maxmind
     # - cidr: "10.0.0.0/8"
     #   country_code: "US"
     #   region: "CA"

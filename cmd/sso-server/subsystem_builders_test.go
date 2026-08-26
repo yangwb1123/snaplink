@@ -330,7 +330,7 @@ func TestBuildGeoProvider_UnknownBackendErrors(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Geo.Enabled = true
-	cfg.Geo.Backend = "maxmind"
+	cfg.Geo.Backend = "carrier-pigeon"
 	if _, err := serverbuildstore.BuildGeoProvider(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error for unknown geo backend")
 	}
