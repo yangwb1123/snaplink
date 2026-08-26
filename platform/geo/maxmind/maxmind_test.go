@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync/atomic"
 	"testing"
 
 	"github.com/maxmind/mmdbwriter"
@@ -52,6 +53,53 @@ func buildFixture(t *testing.T) []byte {
 		t.Fatalf("write mmdb: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func TestProvider_CanceledContextReturnsContextCanceled(t *testing.T) {
+	t.Parallel()
+	p, err := New(buildFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = p.Lookup(ctx, net.ParseIP("8.8.8.7"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if errors.Is(err, geo.ErrNotFound) {
+		t.Fatal("cancellation was disguised as ErrNotFound")
+	}
+}
+
+type cancelOnSecondErrContext struct {
+	context.Context
+	cancel context.CancelFunc
+	checks atomic.Int32
+}
+
+func (c *cancelOnSecondErrContext) Err() error {
+	if c.checks.Add(1) == 2 {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func TestProvider_ChecksContextAfterReader(t *testing.T) {
+	t.Parallel()
+	p, err := New(buildFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &cancelOnSecondErrContext{Context: base, cancel: cancel}
+
+	_, err = p.Lookup(ctx, net.ParseIP("8.8.8.7"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled after reader", err)
+	}
 }
 
 func TestProvider_LookupAndMiss(t *testing.T) {

@@ -95,17 +95,32 @@ func (p *Provider) Len() int {
 	return len(p.entries)
 }
 
-func (p *Provider) Lookup(_ context.Context, ip net.IP) (*geo.GeoInfo, error) {
+func (p *Provider) Lookup(ctx context.Context, ip net.IP) (*geo.GeoInfo, error) {
 	if ip == nil {
 		return nil, geo.ErrInvalidIP
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for _, e := range p.entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if e.net.Contains(ip) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			cp := e.info
 			return &cp, nil
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return nil, geo.ErrNotFound
 }
