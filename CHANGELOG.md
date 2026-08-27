@@ -310,6 +310,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Developer guide, release process, security policy documentation
 
 ### Changed
+- Additive login-discovery compatibility: the existing optional `unavailable`
+  marker now also surfaces a recorded degraded connection health result, so
+  degraded and unreachable enterprise IdPs share the same advisory UX signal.
 - FAPI 2.0 conformance harness progress (`test/oidc-conformance`): the
   `--fapi` run now registers the suite login client via DCR with
   `id_token_signed_response_alg: RS256` (served by the dedicated

@@ -85,6 +85,13 @@ server; the frontend renders the form and calls the API):
    `{"provider":"password","client_id":"...","response_type":"code",
    "redirect_uri":"...","scope":[...],"code_challenge":"...",
    "code_challenge_method":"S256","credential":{"username":"...","password":"..."}}`
+   When `provider` is omitted, the home-realm discovery response may instead
+   carry `connection_required` and `connection_id`. It may also carry the
+   optional `unavailable: true` marker when the most recent admin-triggered
+   probe recorded `degraded` or `unreachable`. This is a display-only,
+   potentially stale advisory: it does not indicate account existence or the
+   final authentication result. Healthy, unknown, nil, or unreadable health
+   is omitted; the UI must not treat its absence as proof of availability.
 3. On success the response carries the `code` (or `redirect_to` for
    form_post/JARM rendering) plus optional UX fields (MFA challenge,
    `suggested_username`, `must_change_password`, ...).

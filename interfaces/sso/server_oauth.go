@@ -466,12 +466,12 @@ func (s *Server) respondLoginProviders(ctx HandlerContext, req *login.Request) b
 	}
 	if conn, ok := s.resolveHomeRealm(ctx, req.LoginHint); ok {
 		resp := map[string]any{keyHRConnectionRequired: true, keyHRConnectionID: conn.ID, keyHRType: string(conn.Type), keyHRTenantID: conn.TenantID, keyHRDisplayName: conn.DisplayName, keyAuthzRequestPassthrough: s.federatedContinuationSupported(ctx, req.ClientID), KeyIss: s.resolveIssuer(ctx)}
-		// Login-path consumption of the admin-probe health: an unreachable
+		// Login-path consumption of the admin-probe health: a degraded or unreachable
 		// IdP is flagged so the UI can grey it out before the user clicks
 		// into a timeout. Fail-open: a health read error leaves the flag
 		// unset and the attempt still collapses to the standard error.
 		if s.connectionStore != nil {
-			if h, herr := s.connectionStore.Health(ctx.Request().Context(), conn.ID); herr == nil && h != nil && h.Status == connections.HealthUnreachable {
+			if h, herr := s.connectionStore.Health(ctx.Request().Context(), conn.ID); herr == nil && h != nil && (h.Status == connections.HealthUnreachable || h.Status == connections.HealthDegraded) {
 				resp[keyHRUnavailable] = true
 			}
 		}

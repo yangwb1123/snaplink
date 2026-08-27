@@ -1050,6 +1050,8 @@ export interface LoginDiscoveryResponse {
   authorization_request_passthrough_supported?: boolean;
   /** Authenticator names this client may use. */
   providers: string[];
+  /** Optional home-realm login-discovery marker. Present as `true` when */
+  unavailable?: boolean;
 }
 
 export interface LoginRequest {
@@ -2962,8 +2964,8 @@ export class SSOClient {
   }
 
   /** B2B home-realm discovery — resolve an email domain to its IdP. */
-  async homeRealmDiscovery(body?: { identifier?: string; login_hint?: string }): Promise<{ connection_id?: string; display_name?: string; found?: boolean; tenant_id?: string; type?: "oidc" | "saml" }> {
-    return this.request<{ connection_id?: string; display_name?: string; found?: boolean; tenant_id?: string; type?: "oidc" | "saml" }>("POST", `/auth/home-realm`, { body });
+  async homeRealmDiscovery(body?: { identifier?: string; login_hint?: string }): Promise<{ connection_id?: string; display_name?: string; found?: boolean; tenant_id?: string; type?: "oidc" | "saml"; unavailable?: boolean }> {
+    return this.request<{ connection_id?: string; display_name?: string; found?: boolean; tenant_id?: string; type?: "oidc" | "saml"; unavailable?: boolean }>("POST", `/auth/home-realm`, { body });
   }
 
   /** Start a browser-based federated login. */

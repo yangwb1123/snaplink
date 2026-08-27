@@ -274,7 +274,7 @@ const (
 	// via the named connection's upstream IdP rather than the provider list.
 	keyHRConnectionRequired = "connection_required"
 	// keyHRUnavailable marks a home-realm connection whose stored probe
-	// health is HealthUnreachable — display-level for the login UI.
+	// health is HealthDegraded or HealthUnreachable — display-level for the login UI.
 	keyHRUnavailable = "unavailable"
 )
 

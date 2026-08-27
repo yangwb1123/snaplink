@@ -847,6 +847,7 @@ class LocalUserResponse(TypedDict, total=False):
 class LoginDiscoveryResponse(TypedDict, total=False):
     authorization_request_passthrough_supported: bool  # True only when top-level federated GET can preserve the complete
     providers: List[str]  # Authenticator names this client may use.
+    unavailable: bool  # Optional home-realm login-discovery marker. Present as `true` when
 
 
 class LoginRequest(TypedDict, total=False):
