@@ -1,5 +1,5 @@
 completion_report:
-  summary: "Added the bounded read-only sso-ctl audit-export --anchor-latest seam; no server/API/schema/event changes."
+  summary: "Added read-only --anchor-latest checkpoint loading for audit-export."
   changed_files:
     - cmd/sso-ctl/auditexport/main.go
     - cmd/sso-ctl/auditexport/checkpoint.go
@@ -7,15 +7,13 @@ completion_report:
     - docs/design/audit-export-latest-checkpoint.md
     - docs/campaigns/reports/audit-export-latest-checkpoint.md
   requirements_covered:
-    - "--anchor-latest requires --dsn and rejects --anchor, --verify, and --from-url with exit 2."
-    - "It uses only Latest on a narrow reader after the existing read-only opener; no Append, DDL, DML, raw query, or HTTP checkpoint path is exposed."
-    - "Latest is signature-checked and exact bundle-head equality is required before output; missing, store-error, tampered, filtered, and incomplete cases fail closed."
-    - "Default unanchored, file-anchor, --from-url, and --verify behavior is preserved."
-    - "Usage documents read-only complete-export semantics and that this is not an out-of-band signer pin."
-    - "No server, API, schema, configuration, error-code, feature-registry, or event changes."
+    - "Latest checkpoint is signature-verified and must exactly match the exported head."
+    - "Uses only the existing read-only opener and narrow Latest reader; no Append, DDL, DML, HTTP endpoint, or server changes."
+    - "Misuse exits 2; missing, invalid, tampered, filtered, or mismatched checkpoints exit 1 without output."
+    - "Default, file-anchor, from-url, and verify behavior remains unchanged."
   tests_added:
-    - "Real SQLite hash-chain plus audit.NewNotary(sink, sink, signer, ...) durable checkpoint round trip."
-    - "Latest equality, signature/head checks, offline --verify, no-checkpoint/no-output, misuse exit 2, head mismatch, and tampered-signature failures."
+    - "SQLite hash-chain and real Notary durable round trip."
+    - "No checkpoint, misuse, head mismatch, tampered signature, and offline verify coverage."
   commands_executed:
     - command: "go build ./... && go vet ./... && go test -run 'TestMaintainability_|TestArchitecture_' ."
       result: passed
@@ -27,31 +25,22 @@ completion_report:
       result: passed
     - command: "go test ./infrastructure/postgres/... && go build ./infrastructure/postgres/..."
       result: passed
-      details: "Live DSN-gated tests were skipped because SSO_TEST_POSTGRES_DSN was unset."
+      details: "Live DSN-gated tests skipped."
+    - command: "python cli.py check-test && make docs-validate && make ci && git diff --check"
+      result: passed
     - command: "SSO_TEST_POSTGRES_DSN=<live DSN> go test ./infrastructure/postgres"
       result: not_executed
-      details: "No live PostgreSQL DSN was available; no Postgres round-trip is claimed."
-    - command: "python cli.py check-test"
-      result: passed
-    - command: "make docs-validate"
-      result: passed
-    - command: "make ci"
-      result: passed
-    - command: "git diff --check"
-      result: passed
-  architecture_checks: "passed: existing auditexport package only; no upward import or new package; main.go is 467 lines; concrete stores are asserted only through Latest."
-  security_checks: "passed: signature and exact-head checks precede writeBundle; failures leave no bundle and expose no event/token/body; no server route, raw query, signer pin, generated ID, or key change."
+      details: "No live PostgreSQL DSN available."
+  architecture_checks: "Passed; main.go is 467 lines, no new package or upward import."
+  security_checks: "Passed; exact-head and signature checks precede bundle writing; no PII/token/body leakage."
   compatibility:
     breaking_change: false
-    details: "Without --anchor-latest, output, read order, exit behavior, file-anchor behavior, and --verify remain unchanged."
   migration:
     required: false
     rollback_verified: true
-    details: "The CLI reads the existing audit_checkpoints table only; rollback is omitting the flag."
   residual_risks:
-    - "Latest and event Query are separate reads; concurrent growth can cause an exact-head failure rather than a false attestation."
-    - "Live PostgreSQL export round-trip was not run because no DSN was available."
-    - "Distributed producer ownership and database snapshot isolation remain out of scope."
+    - "Latest and event Query are separate reads; concurrent growth fails closed."
+    - "Live PostgreSQL round-trip was not run."
   assumptions:
-    - "The existing durable schemas are current and the existing producer rows are authoritative."
-    - "PostgreSQL operators enforce read-only access through a role or transaction policy."
+    - "Existing durable schemas and producer checkpoints are authoritative."
+    - "PostgreSQL operators enforce read-only access."
