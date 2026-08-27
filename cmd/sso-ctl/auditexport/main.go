@@ -37,7 +37,9 @@
 // head check only — the residual risk this anchor closes). The embedded
 // copy alone is a self-contained convenience record, not enforcement:
 // a bundle writer can forge it, so evidence-grade verification requires
-// the flag.
+// the flag. --anchor-latest is a read-only DSN lookup that requires a
+// complete export ending at the stored head; it is not an out-of-band
+// signer pin.
 //
 // Exit codes: 0 wrote / verified a clean bundle (including an empty
 // window), 1 load / verify error (incl. a tampered bundle, and an
@@ -68,24 +70,25 @@ const progName = "sso-ctl audit-export"
 // parameters (see platform/audit/handlers.go) so operators see one
 // consistent vocabulary across audit-verify and audit-export.
 const (
-	flagDSN       = "dsn"
-	flagVerify    = "verify"
-	flagFromURL   = "from-url"
-	flagBearer    = "bearer"
-	flagTimeout   = "timeout-sec"
-	flagOut       = "out"
-	flagType      = "type"
-	flagOutcome   = "outcome"
-	flagActorID   = "actor-id"
-	flagClientID  = "client-id"
-	flagTenantID  = "tenant-id"
-	flagProvider  = "provider"
-	flagRequestID = "request-id"
-	flagTraceID   = "trace-id"
-	flagSince     = "since"
-	flagUntil     = "until"
-	flagLimit     = "limit"
-	flagAnchor    = "anchor"
+	flagDSN          = "dsn"
+	flagVerify       = "verify"
+	flagFromURL      = "from-url"
+	flagBearer       = "bearer"
+	flagTimeout      = "timeout-sec"
+	flagOut          = "out"
+	flagType         = "type"
+	flagOutcome      = "outcome"
+	flagActorID      = "actor-id"
+	flagClientID     = "client-id"
+	flagTenantID     = "tenant-id"
+	flagProvider     = "provider"
+	flagRequestID    = "request-id"
+	flagTraceID      = "trace-id"
+	flagSince        = "since"
+	flagUntil        = "until"
+	flagLimit        = "limit"
+	flagAnchor       = "anchor"
+	flagAnchorLatest = "anchor-latest"
 )
 
 // options holds the resolved CLI inputs. run takes it by value so tests
@@ -98,6 +101,7 @@ type options struct {
 	requestID, traceID, since, until                    string
 	limit                                               int
 	anchor                                              string
+	anchorLatest                                        bool
 }
 
 // usageFlags is the FlagSet built in Run, referenced by the standalone
@@ -135,6 +139,9 @@ func Run(args []string) int {
 // and --verify runs reject an unknown --outcome.
 func dispatch(o options) (int, error) {
 	if err := validateOutcome(o.outcome); err != nil {
+		return 2, err
+	}
+	if err := validateAnchorLatest(o); err != nil {
 		return 2, err
 	}
 	modes := 0
@@ -181,6 +188,7 @@ func bindFlags(fs *flag.FlagSet, o *options) {
 	fs.StringVar(&o.until, flagUntil, "", "filter: end of window (RFC3339 or unix seconds; exclusive)")
 	fs.IntVar(&o.limit, flagLimit, 0, "max events to export (0 = all matching)")
 	fs.StringVar(&o.anchor, flagAnchor, "", "signed notary checkpoint (JSON) to bind this evidence to (export: embedded into the bundle; verify: checked against the bundle head)")
+	fs.BoolVar(&o.anchorLatest, flagAnchorLatest, false, "read the latest signed checkpoint from the --dsn store (read-only; requires a complete export ending at its head; exclusive with --anchor, --from-url, and --verify)")
 }
 
 // run is the testable core: it opens the store read-only, builds the
@@ -198,7 +206,7 @@ func run(o options) (int, error) {
 	warnUnknownType(o.typ)
 	var cp *audit.SignedCheckpoint
 	if o.anchor != "" {
-		cp, err = loadCheckpoint(o.anchor)
+		cp, err = loadCheckpointFile(o.anchor)
 		if err != nil {
 			return 1, err
 		}
@@ -214,13 +222,19 @@ func run(o options) (int, error) {
 		return 1, fmt.Errorf("open audit store: %w", err)
 	}
 	defer func() { _ = closer.Close() }()
+	if o.anchorLatest {
+		cp, err = loadLatestCheckpoint(context.Background(), pager)
+		if err != nil {
+			return 1, err
+		}
+	}
 
 	bundle, err := auditexport.BuildExportBundle(context.Background(), pager, q)
 	if err != nil {
 		return 1, err
 	}
 	if cp != nil {
-		if err := enforceAnchorHead(bundle.HeadHash, cp); err != nil {
+		if err := enforceCheckpointHead(bundle.HeadHash, cp); err != nil {
 			return 1, err
 		}
 		bundle.Anchor = cp
@@ -280,7 +294,7 @@ func runVerify(path, anchorPath string) (int, error) {
 	var cp *audit.SignedCheckpoint
 	fromFlag := false
 	if anchorPath != "" {
-		cp, err = loadCheckpoint(anchorPath)
+		cp, err = loadCheckpointFile(anchorPath)
 		if err != nil {
 			return 1, err
 		}
@@ -302,44 +316,11 @@ func runVerify(path, anchorPath string) (int, error) {
 			return 1, fmt.Errorf("embedded anchor FAILED signature check: %w", err)
 		}
 	}
-	if err := enforceAnchorHead(b.HeadHash, cp); err != nil {
+	if err := enforceCheckpointHead(b.HeadHash, cp); err != nil {
 		return 1, err
 	}
 	printVerifyOK(&b, cp, fromFlag)
 	return 0, nil
-}
-
-// loadCheckpoint reads a SignedCheckpoint JSON file exactly once and
-// returns the in-memory struct, so the signature check and head equality
-// run over the same bytes (no re-read, no TOCTOU). The signature is
-// enforced here for the flag path: a checkpoint a store tamperer could
-// not re-sign is the only enforcement-grade anchor.
-func loadCheckpoint(path string) (*audit.SignedCheckpoint, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read anchor %s: %w", path, err)
-	}
-	var cp audit.SignedCheckpoint
-	if err := json.Unmarshal(raw, &cp); err != nil {
-		return nil, fmt.Errorf("parse anchor %s: %w", path, err)
-	}
-	if err := audit.VerifyCheckpointSignature(&cp); err != nil {
-		return nil, fmt.Errorf("anchor %s FAILED signature check: %w", path, err)
-	}
-	return &cp, nil
-}
-
-// enforceAnchorHead is the single head-equality check for both modes:
-// checkpoints attest chain heads only, so exact equality is the only
-// sound offline relation (an empty bundle's "" equals GenesisHash, the
-// notary's empty-chain convention). Failing closed on mismatch is what
-// makes an anchored bundle evidence rather than a re-attestable claim.
-func enforceAnchorHead(head string, cp *audit.SignedCheckpoint) error {
-	if head != cp.Checkpoint.HeadHash {
-		return fmt.Errorf("anchor head mismatch: bundle head_hash %q, checkpoint attestation %q (checkpoints attest chain heads only)",
-			head, cp.Checkpoint.HeadHash)
-	}
-	return nil
 }
 
 func buildQuery(o options) (audit.Query, error) {
@@ -443,7 +424,7 @@ func usage() {
 	fmt.Fprint(os.Stderr, progName+` — export or offline-verify a tamper-evident bulk audit bundle for compliance evidence.
 
 Usage:
-  `+progName+` --dsn <sqlite-dsn|postgres-dsn> [filters] [--out evidence.json]
+  `+progName+` --dsn <sqlite-dsn|postgres-dsn> [--anchor-latest] [filters] [--out evidence.json]
   `+progName+` --from-url <base> --bearer <admin-token> [filters] [--out evidence.json]
   `+progName+` --verify <bundle.json>
 
@@ -480,11 +461,7 @@ func warnUnknownType(typ string) {
 		progName, flagType, typ)
 }
 
-// usageErrorf formats a CLI-misuse diagnostic. The progName prefix is NOT
-// embedded — Run adds exactly one when it prints, reproducing the old
-// usageErr output; embedding it here would double-print it. Returns the
-// error so misuse flows back through dispatch as exit code 2 instead of
-// an in-process os.Exit.
+// usageErrorf returns a misuse error; Run adds the single program prefix.
 func usageErrorf(format string, args ...any) error {
 	return fmt.Errorf(format, args...)
 }
