@@ -12,7 +12,8 @@
 //
 // validate exits 0 when the config loads and passes validation, 1 otherwise.
 // --print additionally dumps the fully-resolved config (after defaults are
-// applied) as JSON, so operators can see exactly what the server would run.
+// applied) as redacted JSON, so operators can see the server's non-sensitive
+// runtime values without exposing credentials.
 //
 // schema and validate-schema are implemented in schema.go — see its doc for
 // how they relate to the warn-only schema check Loader.Load already runs on
@@ -27,6 +28,7 @@ import (
 	"os"
 
 	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/platform/configaudit"
 )
 
 const progName = "sso-ctl config"
@@ -73,7 +75,7 @@ Subcommands:
 
 Flags:
   --file     Path to the config file (required for validate / validate-schema).
-  --print    Also print the fully-resolved config (after defaults) as JSON.
+  --print    Also print the fully-resolved config (after defaults) as redacted JSON.
   --out      Write the schema to a file instead of stdout (schema only).
 
 Examples:
@@ -86,7 +88,7 @@ Examples:
 func runValidate(args []string) int {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	file := fs.String("file", "", "path to the config file (required)")
-	printResolved := fs.Bool("print", false, "print the fully-resolved config as JSON")
+	printResolved := fs.Bool("print", false, "print the fully-resolved config as redacted JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -111,10 +113,21 @@ func runValidate(args []string) int {
 	return 0
 }
 
-// printConfig writes the resolved config as indented JSON. Factored out so the
-// rendering is unit-testable without capturing os.Stdout.
+// printConfig writes the resolved config as indented, redacted JSON. It
+// projects through JSON so configaudit.Redact can operate without mutating
+// the loaded config. Factored out so rendering is unit-testable without
+// capturing os.Stdout.
 func printConfig(w io.Writer, cfg *config.Config) error {
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	var snapshot map[string]any
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return err
+	}
+
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(cfg)
+	return enc.Encode(configaudit.Redact(snapshot))
 }

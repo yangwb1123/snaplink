@@ -4,15 +4,18 @@ import "testing"
 
 func TestIsSensitiveKey(t *testing.T) {
 	cases := map[string]bool{
-		"client_secret": true,
-		"Password":      true,
-		"DSN":           true,
-		"api_token":     true,
-		"signing_key":   true,
-		"SECRET_VALUE":  true,
-		"username":      false,
-		"redirect_uris": false,
-		"enabled":       false,
+		"client_secret":        true,
+		"Password":             true,
+		"DSN":                  true,
+		"api_token":            true,
+		"signing_key":          true,
+		"SECRET_VALUE":         true,
+		"Authorization":        true,
+		"X-API-Key":            true,
+		"AuthorizationServers": false,
+		"username":             false,
+		"redirect_uris":        false,
+		"enabled":              false,
 	}
 	for name, want := range cases {
 		if got := IsSensitiveKey(name); got != want {
@@ -57,7 +60,12 @@ func TestRedact_DeepSnapshot(t *testing.T) {
 		"server": map[string]any{
 			"name":      "sso-1",
 			"admin_key": "topsecret",
-			"tags":      []any{"prod", map[string]any{"api_token": "xyz"}},
+			"headers": map[string]any{
+				"Authorization": "Bearer nested-secret",
+				"X-API-Key":     "nested-api-key",
+				"X-Benign":      "visible",
+			},
+			"tags": []any{"prod", map[string]any{"api_token": "xyz"}},
 		},
 	}
 	out := Redact(snap)
@@ -74,6 +82,16 @@ func TestRedact_DeepSnapshot(t *testing.T) {
 	}
 	if server["admin_key"] != "***" {
 		t.Errorf("nested sensitive key not redacted: %+v", server)
+	}
+	headers, ok := server["headers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested headers map, got %T", server["headers"])
+	}
+	if headers["Authorization"] != "***" || headers["X-API-Key"] != "***" {
+		t.Errorf("credential-bearing headers not redacted: %+v", headers)
+	}
+	if headers["X-Benign"] != "visible" {
+		t.Errorf("benign header must survive, got %+v", headers)
 	}
 	tags, ok := server["tags"].([]any)
 	if !ok || len(tags) != 2 {

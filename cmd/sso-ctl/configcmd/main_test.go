@@ -1,11 +1,14 @@
 package configcmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/yangwb1123/snaplink/config"
 )
 
 const validConfig = `server:
@@ -38,6 +41,79 @@ func TestRun_InvalidConfig_Sentinel(t *testing.T) {
 	bad := strings.Replace(validConfig, "http://localhost:8080\n  base_url", "snaplink-sso\n  base_url", 1)
 	if code := Run([]string{"validate", "--file", writeTemp(t, bad)}); code != 1 {
 		t.Errorf("validate(sentinel issuer) exit = %d, want 1", code)
+	}
+}
+
+func TestPrintConfig_RedactsResolvedCredentials(t *testing.T) {
+	t.Parallel()
+	const sensitiveConfig = validConfig + `
+clients:
+  - id: print-client
+    secret: client-secret-value
+smtp:
+  password: smtp-password-value
+redis:
+  password: redis-password-value
+postgres:
+  dsn: postgres://db-user:db-password@db.example/sso
+audit:
+  webhook:
+    signing_secret: webhook-signing-secret-value
+    headers:
+      Authorization: Bearer authorization-header-token-value
+      X-API-Key: nested-api-key-value
+      X-Benign: visible-header-value
+  external_worker:
+    auth_token: auth-token-value
+mfa:
+  provider:
+    push:
+      webhook:
+        bearer_token: bearer-token-value
+`
+	cfg, err := config.Load(writeTemp(t, sensitiveConfig))
+	if err != nil {
+		t.Fatalf("load sensitive config: %v", err)
+	}
+
+	var output bytes.Buffer
+	if err := printConfig(&output, cfg); err != nil {
+		t.Fatalf("printConfig: %v", err)
+	}
+	printed := output.String()
+	var document map[string]any
+	if err := json.Unmarshal(output.Bytes(), &document); err != nil {
+		t.Fatalf("printed config is not JSON: %v", err)
+	}
+
+	for _, secret := range []string{
+		"client-secret-value",
+		"smtp-password-value",
+		"redis-password-value",
+		"webhook-signing-secret-value",
+		"postgres://db-user:db-password@db.example/sso",
+		"bearer-token-value",
+		"auth-token-value",
+		"authorization-header-token-value",
+		"nested-api-key-value",
+	} {
+		if strings.Contains(printed, secret) {
+			t.Errorf("printed config contains sensitive value %q: %s", secret, printed)
+		}
+	}
+	server, ok := document["Server"].(map[string]any)
+	if !ok || server["Issuer"] != "http://localhost:8080" {
+		t.Errorf("printed config omitted server issuer: %s", printed)
+	}
+	if !strings.Contains(printed, "visible-header-value") {
+		t.Errorf("printed config omitted benign header: %s", printed)
+	}
+	if !strings.Contains(printed, "***") {
+		t.Errorf("printed config contains no redaction marker: %s", printed)
+	}
+	if cfg.Clients[0].Secret != "client-secret-value" ||
+		cfg.Audit.Webhook.Headers["Authorization"] != "Bearer authorization-header-token-value" {
+		t.Fatal("printConfig mutated the loaded config")
 	}
 }
 

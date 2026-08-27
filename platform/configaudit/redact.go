@@ -11,9 +11,13 @@ import "strings"
 var sensitiveSubstrings = []string{"secret", "password", "dsn", "token", "key"}
 
 // IsSensitiveKey reports whether name (a JSON object key, matched
-// case-insensitively) looks like it holds a credential.
+// case-insensitively) looks like it holds a credential. Authorization is an
+// exact key match so fields such as AuthorizationServers remain visible.
 func IsSensitiveKey(name string) bool {
 	lower := strings.ToLower(name)
+	if lower == "authorization" {
+		return true
+	}
 	for _, s := range sensitiveSubstrings {
 		if strings.Contains(lower, s) {
 			return true
