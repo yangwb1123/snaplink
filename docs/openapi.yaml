@@ -1008,7 +1008,12 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Matching connection metadata or an empty result.
+          description: |
+            Matching connection metadata or an empty result. The optional
+            `unavailable` marker, when present for home-realm login discovery,
+            means the most recent admin-triggered probe recorded `degraded` or
+            `unreachable`; it is advisory and may be stale, and does not
+            indicate account existence or the final authentication result.
         "400":
           $ref: "#/components/responses/BadRequest"
     post:
@@ -1047,6 +1052,14 @@ paths:
                   type: { type: string, enum: [oidc, saml] }
                   tenant_id: { type: string }
                   display_name: { type: string }
+                  unavailable:
+                    type: boolean
+                    description: |
+                      Optional display-only marker. `true` means the most
+                      recent admin-triggered probe recorded `degraded` or
+                      `unreachable`. It is advisory and may be stale; it does
+                      not indicate account existence or the final
+                      authentication result.
 
   /auth/callback:
     get:
@@ -15261,6 +15274,15 @@ components:
             True only when top-level federated GET can preserve the complete
             authorization request, the active client has a valid secure
             `login_page_uri`, and terminal JSON attests effective delivery.
+        unavailable:
+          type: boolean
+          description: |
+            Optional home-realm login-discovery marker. Present as `true` when
+            the most recent admin-triggered probe recorded `degraded` or
+            `unreachable`. This is an advisory, potentially stale display
+            signal; it does not indicate account existence or the final
+            authentication result. Healthy, unknown, nil, or unreadable health
+            is omitted.
 
     MFARequiredResponse:
       type: object
