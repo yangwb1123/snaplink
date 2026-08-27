@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/yangwb1123/snaplink/domains/authenticators"
@@ -17,19 +19,27 @@ import (
 
 func newHomeRealmServer(t *testing.T, withConnections bool) *httptest.Server {
 	t.Helper()
+	var store connections.Store
+	if withConnections {
+		store = connections.NewMemoryStore()
+		_ = store.Upsert(context.Background(), &connections.Connection{
+			ID: "acme-okta", TenantID: "acme", Type: connections.TypeOIDC,
+			DisplayName: "Acme Okta", Domains: []string{"acme.com"}, Enabled: true,
+			Config: map[string]string{"oidc_client_secret": "SHOULD-NOT-LEAK"},
+		})
+	}
+	return newHomeRealmServerWithStore(t, store)
+}
+
+func newHomeRealmServerWithStore(t *testing.T, store connections.Store) *httptest.Server {
+	t.Helper()
 	opts := []sso.Option{
 		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
 		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
 		sso.WithDefaultTokenStrategy("jwt"),
 	}
-	if withConnections {
-		store := connections.NewMemoryStore()
-		_ = store.Upsert(context.Background(), &connections.Connection{
-			ID: "acme-okta", TenantID: "acme", Type: connections.TypeOIDC,
-			DisplayName: "Acme Okta", Domains: []string{"acme.com"}, Enabled: true,
-			Config: map[string]string{"oidc_client_secret": "SHOULD-NOT-LEAK"},
-		})
+	if store != nil {
 		opts = append(opts, sso.WithConnectionStore(store))
 	}
 	srv := sso.NewServer(opts...)
@@ -50,6 +60,50 @@ func postHomeRealm(t *testing.T, srv *httptest.Server, loginHint string) (int, m
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
 	return resp.StatusCode, out
+}
+
+func requestHomeRealm(t *testing.T, srv *httptest.Server, method, loginHint string) (int, http.Header, map[string]any) {
+	t.Helper()
+	endpoint := srv.URL + "/auth/home-realm"
+	var body io.Reader
+	if method == http.MethodGet {
+		endpoint += "?login_hint=" + url.QueryEscape(loginHint)
+	} else {
+		payload, err := json.Marshal(map[string]string{"login_hint": loginHint})
+		if err != nil {
+			t.Fatalf("marshal request: %v", err)
+		}
+		body = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequest(method, endpoint, body)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s: %v", method, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read %s response: %v", method, err)
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode %s response: %v", method, err)
+	}
+	return resp.StatusCode, resp.Header, out
+}
+
+type homeRealmErrorStore struct {
+	*connections.MemoryStore
+}
+
+func (*homeRealmErrorStore) ByDomain(context.Context, string) (*connections.Connection, error) {
+	return nil, errors.New("home realm lookup failed")
 }
 
 func TestHomeRealm_ResolvesAndHidesSecrets(t *testing.T) {
@@ -86,6 +140,62 @@ func TestHomeRealm_NotMountedWithoutStore(t *testing.T) {
 	srv := newHomeRealmServer(t, false)
 	if status, _ := postHomeRealm(t, srv, "alice@acme.com"); status != http.StatusNotFound {
 		t.Errorf("without WithConnectionStore the endpoint must be absent (404), got %d", status)
+	}
+}
+
+func TestHomeRealm_NoStoreHeadersPreserveGETPOSTSemantics(t *testing.T) {
+	srv := newHomeRealmServer(t, true)
+	for _, tc := range []struct {
+		name      string
+		method    string
+		loginHint string
+		wantFound bool
+	}{
+		{name: "GET found", method: http.MethodGet, loginHint: "alice@acme.com", wantFound: true},
+		{name: "GET miss", method: http.MethodGet, loginHint: "x@unknown.com"},
+		{name: "POST found", method: http.MethodPost, loginHint: "alice@acme.com", wantFound: true},
+		{name: "POST miss", method: http.MethodPost, loginHint: "x@unknown.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, headers, body := requestHomeRealm(t, srv, tc.method, tc.loginHint)
+			if got := headers.Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control = %q, want no-store", got)
+			}
+			if got := headers.Get("Pragma"); got != "no-cache" {
+				t.Errorf("Pragma = %q, want no-cache", got)
+			}
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, body = %v; want 200", status, body)
+			}
+			if body["found"] != tc.wantFound {
+				t.Fatalf("found = %v, body = %v; want %t", body["found"], body, tc.wantFound)
+			}
+			if tc.wantFound {
+				if body["connection_id"] != "acme-okta" || body["tenant_id"] != "acme" ||
+					body["type"] != "oidc" || body["display_name"] != "Acme Okta" ||
+					body["authorization_request_passthrough_supported"] != true {
+					t.Errorf("found response semantics changed: %v", body)
+				}
+			} else if len(body) != 1 {
+				t.Errorf("miss response semantics changed: %v", body)
+			}
+		})
+	}
+}
+
+func TestHomeRealm_NoStoreHeadersOnConnectionStoreError(t *testing.T) {
+	srv := newHomeRealmServerWithStore(t, &homeRealmErrorStore{
+		MemoryStore: connections.NewMemoryStore(),
+	})
+	status, headers, body := requestHomeRealm(t, srv, http.MethodPost, "alice@acme.com")
+	if got := headers.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+	if got := headers.Get("Pragma"); got != "no-cache" {
+		t.Errorf("Pragma = %q, want no-cache", got)
+	}
+	if status != http.StatusInternalServerError || body["error"] != "internal_error" {
+		t.Errorf("error response = %d / %v, want 500 / internal_error", status, body)
 	}
 }
 

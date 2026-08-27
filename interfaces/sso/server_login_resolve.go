@@ -419,6 +419,7 @@ func (s *Server) connectionLoginAuthenticator(ctx HandlerContext, id string) (Au
 // flow. A miss returns {"found": false} (fall back to the default login); this
 // is a routing decision (which IdP), NOT a credential oracle.
 func (s *Server) handleHomeRealm(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
 	r := ctx.Request()
 	hint := strings.TrimSpace(r.URL.Query().Get("login_hint"))
 	if hint == "" {
