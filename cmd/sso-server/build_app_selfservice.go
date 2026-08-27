@@ -39,6 +39,7 @@ func (b *appBuilder) wireSelfServicePassword() error {
 	}
 	b.passwordStore = passwordStore
 
+	b.wirePasswordPolicy()
 	auths, tempStore, totpAuth, totpEnrollStore, err := serverbuildauthn.BuildAuthenticatorsDurableWithLinker(cfg, logger, passwordStore, b.userProvider, b.redis, b.pgDB, b.pgDialect, b.identityLinker)
 	if err != nil {
 		return fmt.Errorf("authenticators: %w", err)
@@ -76,7 +77,15 @@ func (b *appBuilder) wireSelfServicePassword() error {
 	return nil
 }
 
-// wireSelfServiceSignup opts in the unauthenticated self-service
+// wirePasswordPolicy appends the optional stock password-policy validator.
+// Missing and all-zero policies deliberately leave b.opts unchanged.
+func (b *appBuilder) wirePasswordPolicy() {
+	if policy := serverbuildauthn.PasswordPolicyOption(b.cfg.Authenticators.Password); policy != nil {
+		b.opts = append(b.opts, policy)
+	}
+}
+
+// wireSelfServiceSignup opts into the unauthenticated self-service
 // registration endpoint POST /auth/register. Default-off — open signup is
 // an abuse surface; enable deliberately for B2C.
 func (b *appBuilder) wireSelfServiceSignup() error {

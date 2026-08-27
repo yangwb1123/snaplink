@@ -11,6 +11,7 @@ import (
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // Admin/helpdesk management-plane handlers for a user's self-service state
@@ -183,6 +184,9 @@ func HandleAdminResetUserPassword(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
+	if !checkAdminPasswordPolicy(d, ctx, req.NewPassword) {
+		return
+	}
 	if !checkAdminPasswordHistory(d, ctx, userID, req.NewPassword) {
 		return
 	}
@@ -195,6 +199,26 @@ func HandleAdminResetUserPassword(d Deps, ctx core.HandlerContext) {
 	revokeAdminPasswordResetCredentials(d, ctx, userID)
 	recordAdminUserAction(d, ctx, audit.EventAdminPasswordReset, userID, "", "")
 	ctx.JSON(http.StatusNoContent, nil)
+}
+
+type passwordPolicyProvider interface {
+	PasswordPolicyValidator() spi.PasswordPolicyValidator
+}
+
+// checkAdminPasswordPolicy applies the optional shared policy without adding
+// it to admin.Deps. This keeps existing test doubles and SDK embedders source
+// compatible while *sso.Server satisfies the optional extension.
+func checkAdminPasswordPolicy(d Deps, ctx core.HandlerContext, password string) bool {
+	provider, ok := any(d).(passwordPolicyProvider)
+	if !ok {
+		return true
+	}
+	validator := provider.PasswordPolicyValidator()
+	if validator == nil || validator.ValidatePassword(ctx.Request().Context(), password) == nil {
+		return true
+	}
+	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrPasswordPolicyViolation))
+	return false
 }
 
 // checkAdminPasswordHistory rejects a new password that matches userID's

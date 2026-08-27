@@ -575,6 +575,14 @@ authenticators:
   # PasswordVerifier against their own user store.
   password:
     enabled: true
+    # Optional stock password policy; omitted/commented means disabled.
+    # policy:
+    #   min_length: 12
+    #   require_upper: true
+    #   require_lower: true
+    #   require_digit: true
+    #   require_special: true
+    #   max_age_days: 0
     users:
       - username: admin
         bcrypt_hash_file: /tmp/admin.bcrypt

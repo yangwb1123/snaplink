@@ -13,11 +13,11 @@ import (
 // poses no credential-oracle risk (the caller already proved the
 // password).
 //
-// This SSO has no runtime register / change-password endpoint: operators
-// pre-bcrypt and seed credentials, so login is the ONLY moment the server
-// ever sees plaintext. That makes login the only place a strength/breach
-// signal can be derived, and it must be emitted without disturbing the
-// authentication outcome.
+// The server also exposes password-setting endpoints, but this SPI is
+// intentionally login-only: setting paths use PasswordPolicyValidator for
+// synchronous local rules, while health remains an advisory signal after a
+// successful authentication. Keeping the concerns separate avoids making a
+// password write depend on an external health service.
 //
 // Fail-open contract: a Check error is logged by the caller (or swallowed
 // where no logger is reachable) and NEVER blocks login — failing closed on
@@ -28,9 +28,9 @@ import (
 // the synchronous login path.
 //
 // The reference [defaultimpl.DictionaryPasswordHealthChecker] does an
-// offline dictionary match with no external dependency. An operator who
-// wants online breach lookup (e.g. HIBP k-anonymity range queries)
-// implements this interface themselves — the SDK ships no network call.
+// offline dictionary match with no external dependency. The stock
+// implementation also provides an optional HIBP k-anonymity range checker;
+// custom deployments may implement this interface for another provider.
 type PasswordHealthChecker interface {
 	// Check evaluates the just-verified plaintext password and returns a
 	// non-blocking signal, or (nil, nil) when the credential is healthy.

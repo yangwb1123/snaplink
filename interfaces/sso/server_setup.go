@@ -11,6 +11,7 @@ import (
 	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 const (
@@ -85,6 +86,10 @@ func (s *Server) handleSetup(ctx HandlerContext) {
 		return
 	}
 	if err := s.provisionFirstAdmin(reqCtx, req.Admin.Username, req.Admin.Password); err != nil {
+		if errors.Is(err, spi.ErrPasswordPolicyViolation) {
+			ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
+			return
+		}
 		s.logger.Error("setup: provision first admin failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
@@ -192,6 +197,9 @@ func setupClientCredentials(id, secret string) map[string]string {
 func (s *Server) provisionFirstAdmin(ctx context.Context, username, password string) error {
 	if s.permissions == nil || s.userProvider == nil || s.passwordCredentialStore == nil {
 		return errors.New("setup: user, permissions and password stores must all be wired")
+	}
+	if v := s.passwordPolicyValidator; v != nil && v.ValidatePassword(ctx, password) != nil {
+		return spi.ErrPasswordPolicyViolation
 	}
 	if err := s.permissions.AddRole(ctx, setupAdminClientID, permissions.Role{
 		Code: setupAdminRoleCode, Name: "SSO Administrator",

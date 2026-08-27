@@ -206,6 +206,9 @@ func (c *Config) validateLogging() error {
 }
 
 func (c *Config) validateFeatureConfig() error {
+	if err := c.Authenticators.Password.validate(); err != nil {
+		return err
+	}
 	if err := c.Security.CORS.validate(); err != nil {
 		return err
 	}

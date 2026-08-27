@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/authenticators"
@@ -124,6 +125,7 @@ type PasswordConfig struct {
 	Enabled bool                  `yaml:"enabled"`
 	Users   []PasswordUserConfig  `yaml:"users,omitempty"`
 	Health  *PasswordHealthConfig `yaml:"health,omitempty"`
+	Policy  *PasswordPolicyConfig `yaml:"policy,omitempty"`
 
 	// ImportedHashLogin enables login for users migrated via cmd/sso-import,
 	// whose credential hash (any of bcrypt / argon2id / PBKDF2) lives on the
@@ -144,6 +146,44 @@ type PasswordConfig struct {
 	// imported corpus (argon2id / PBKDF2) can't be matched exactly — import at a
 	// uniform KDF for full timing parity.
 	ImportedHashDummyCost int `yaml:"imported_hash_dummy_cost,omitempty"`
+}
+
+// PasswordPolicyConfig projects the stock synchronous password validator into
+// YAML. A nil policy, or a policy whose fields are all zero, keeps the legacy
+// password-write behavior. Password history is intentionally not part of this
+// projection; it requires an explicit PasswordHistoryStore wiring.
+type PasswordPolicyConfig struct {
+	MinLength      int  `yaml:"min_length,omitempty"`
+	RequireUpper   bool `yaml:"require_upper,omitempty"`
+	RequireLower   bool `yaml:"require_lower,omitempty"`
+	RequireDigit   bool `yaml:"require_digit,omitempty"`
+	RequireSpecial bool `yaml:"require_special,omitempty"`
+	MaxAgeDays     int  `yaml:"max_age_days,omitempty"`
+}
+
+const (
+	maxPasswordPolicyLength    = 1024
+	maxPasswordPolicyAgeInDays = 36500
+)
+
+func (c *PasswordPolicyConfig) validate() error {
+	if c == nil {
+		return nil
+	}
+	if c.MinLength < 0 || c.MinLength > maxPasswordPolicyLength {
+		return fmt.Errorf("config: authenticators.password.policy.min_length must be between 0 and %d, got %d", maxPasswordPolicyLength, c.MinLength)
+	}
+	if c.MaxAgeDays < 0 || c.MaxAgeDays > maxPasswordPolicyAgeInDays {
+		return fmt.Errorf("config: authenticators.password.policy.max_age_days must be between 0 and %d, got %d", maxPasswordPolicyAgeInDays, c.MaxAgeDays)
+	}
+	return nil
+}
+
+func (c *PasswordConfig) validate() error {
+	if c == nil {
+		return nil
+	}
+	return c.Policy.validate()
 }
 
 // PasswordHealthConfig wires the optional login-time credential-health

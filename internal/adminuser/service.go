@@ -100,6 +100,24 @@ func resolveUserProvider[T any](d Deps) (T, bool) {
 	return svc, ok
 }
 
+type passwordPolicyProvider interface {
+	PasswordPolicyValidator() spi.PasswordPolicyValidator
+}
+
+func validatePasswordPolicy(ctx context.Context, deps Deps, password string) error {
+	provider, ok := any(deps).(passwordPolicyProvider)
+	if !ok {
+		return nil
+	}
+	validator := provider.PasswordPolicyValidator()
+	if validator == nil || validator.ValidatePassword(ctx, password) == nil {
+		return nil
+	}
+	// Keep the existing local-user validation mapping generic. In particular,
+	// do not pass through a custom validator's rule details.
+	return ErrValidationPassword
+}
+
 // checkUsernameUniqueness checks username availability via optional provider.
 func checkUsernameUniqueness(ctx context.Context, deps Deps, username string) error {
 	checker, ok := resolveUserProvider[core.UsernameCheckProvider](deps)
@@ -169,6 +187,9 @@ func CreateUser(ctx context.Context, deps Deps, req *CreateUserRequest) (*core.U
 		return nil, err
 	}
 	if err := ValidatePassword(req.Password); err != nil {
+		return nil, err
+	}
+	if err := validatePasswordPolicy(ctx, deps, req.Password); err != nil {
 		return nil, err
 	}
 	if err := checkUsernameUniqueness(ctx, deps, req.Username); err != nil {

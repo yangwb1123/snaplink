@@ -311,6 +311,48 @@ notifications:
   session_scan_interval: 1m
 ```
 
+## Password policy
+
+The optional `authenticators.password.policy` block wires the stock local
+password validator into every stock plaintext password-setting path: signup,
+`/me/password`, password reset, admin reset, local-user creation, and first-run
+setup. It is **disabled by default**; an omitted block leaves the prior
+behavior unchanged. The validator is synchronous and local, and rejected
+passwords retain each endpoint's existing generic error response.
+
+| Key | Effect |
+|---|---|
+| `authenticators.password.policy.min_length` | Minimum password length; `0` means no minimum. Valid range: `0..1024` |
+| `authenticators.password.policy.require_upper` | Require at least one uppercase letter; default `false` |
+| `authenticators.password.policy.require_lower` | Require at least one lowercase letter; default `false` |
+| `authenticators.password.policy.require_digit` | Require at least one digit; default `false` |
+| `authenticators.password.policy.require_special` | Require at least one special character; default `false` |
+| `authenticators.password.policy.max_age_days` | Login-time maximum age for successful password authentication; `0` means no expiry. Valid range: `0..36500` |
+
+`max_age_days` is enforced only after successful password authentication and
+only when the credential store implements the optional `PasswordAgeReader`.
+Missing support or an age-read error fails open, as does a non-password login;
+WebAuthn and federation logins are unaffected. It does not change the
+successful password write's timestamp behavior. Health checks and password
+history are separate mechanisms: `authenticators.password.health` is a
+fail-open login-time signal, while password history remains an explicit
+`WithPasswordHistoryStore`/`PasswordHistoryStore` wiring concern and has no
+stock durable YAML backend in this configuration. `max_history` is therefore
+not a supported YAML field.
+
+```yaml
+authenticators:
+  password:
+    enabled: true
+    policy:
+      min_length: 12
+      require_upper: true
+      require_lower: true
+      require_digit: true
+      require_special: true
+      max_age_days: 0
+```
+
 ## SMS
 
 The phone one-time-code authenticator (`authenticators.phone`) dials an

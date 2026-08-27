@@ -35,6 +35,24 @@ func BuildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 	return BuildAuthenticatorsDurable(cfg, logger, passwordStore, userProvider, rdb, nil, "")
 }
 
+// PasswordPolicyOption converts the stock YAML policy into the existing SSO
+// option. A missing or all-zero policy returns nil so the default server
+// receives no new option and keeps its pre-policy behavior.
+func PasswordPolicyOption(a *config.PasswordConfig) sso.Option {
+	if a == nil || a.Policy == nil {
+		return nil
+	}
+	p := a.Policy
+	if p.MinLength == 0 && !p.RequireUpper && !p.RequireLower && !p.RequireDigit &&
+		!p.RequireSpecial && p.MaxAgeDays == 0 {
+		return nil
+	}
+	return sso.WithPasswordPolicy(spi.NewPasswordPolicyValidator(spi.PasswordPolicyConfig{
+		MinLength: p.MinLength, RequireUpper: p.RequireUpper, RequireLower: p.RequireLower,
+		RequireDigit: p.RequireDigit, RequireSpecial: p.RequireSpecial, MaxAgeDays: p.MaxAgeDays,
+	}))
+}
+
 // BuildAuthenticatorsDurable is BuildAuthenticators plus the shared Postgres
 // durable pool + dialect, so an authenticator whose state MUST be cluster-shared
 // (today: TOTP enrollment secrets) can select the postgres db-cluster backend.

@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Additive, default-off stock password policy configuration at
+  `authenticators.password.policy` for local complexity rules and optional
+  login-time password expiry. Existing password-history enforcement remains an
+  explicit `WithPasswordHistoryStore` wiring concern; no `max_history` YAML
+  setting or durable stock history backend is introduced.
 - SDK artifact drift gate: `python cli.py sdk-drift check` regenerates the
   TypeScript and Python clients in a temporary directory, rejects uncommitted
   non-`dist/` files under `docs/sdks/`, and byte-sweeps the optional ignored
