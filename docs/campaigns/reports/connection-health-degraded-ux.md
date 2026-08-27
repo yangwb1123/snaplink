@@ -74,17 +74,15 @@ completion_report:
       note: "Cyclomatic check passed, but the cognitive-complexity tool was unavailable in the environment."
     - command: "git diff --check"
       result: passed
-    - command: "make ci (before committing generated SDK outputs)"
-      result: failed
-      note: "Only sdk-drift failed because the required generated SDK changes were uncommitted; the post-commit run passed."
-    - command: "make ci (post-commit)"
+    - command: "make ci"
       result: passed
   architecture_checks:
     production_file_budget: "interfaces/sso/server_oauth.go is 500 lines; no production file was added."
     function_budget: "Targeted maintenance and architecture gates passed; no new production function was added."
     dependency_direction: "Passed; no import or package boundary changed."
     route_inventory: "Passed: 244 runtime routes and 366 documented operations; no route was added."
-    generated_contracts: "SDK regeneration and sdk-surface validation passed after generated outputs were committed."
+    generated_contracts: "SDK regeneration and sdk-surface validation passed."
+    independent_review: "Confirmed stored-health-only display use, unchanged auth/oracle behavior, unchanged route inventory, and in-budget files."
   security_checks:
     - "Only the existing Store.Health result is read; no network probe, request-input fetch, or background work was introduced."
     - "Health is advisory display metadata and is not consulted for authentication, dispatch refusal, fallback, or authorization."

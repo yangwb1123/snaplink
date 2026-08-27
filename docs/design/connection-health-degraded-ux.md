@@ -8,10 +8,11 @@
 - `domains/connections/probe.go` 将上游错误状态或 malformed metadata 记录为
   `HealthDegraded`，将握手无法完成或没有可探测配置记录为
   `HealthUnreachable`。
-- 当前 HEAD 的 `interfaces/sso/server_oauth.go` 为 500 行，
+- 变更前基线的 `interfaces/sso/server_oauth.go` 为 500 行，
   `respondLoginProviders` 已读取 `Store.Health`，但只把
   `HealthUnreachable` 映射为 `unavailable: true`。`HealthHealthy`、
-  `HealthUnknown`、nil health 和 `Health` 读取错误都不设置该键。
+  `HealthUnknown`、nil health 和 `Health` 读取错误都不设置该键；本批次只将
+  这个既有条件扩展到 `HealthDegraded`。
 - `server_login_resolve.go` 的 `resolveHomeRealm` 只解析已存储的连接和租户
   边界；它不发起网络请求。直接 `/auth/home-realm` 的路由解析保持原有行为。
 
