@@ -38,11 +38,13 @@ completion_report:
   architecture_checks:
     - "Existing production files only; no package, dependency, exemption, or capped-directory file was added."
     - "middleware.go and governance.go remain below 500 lines; handler_helpers.go was reused."
+    - "Permissions/order: HTTPMiddleware runs IP -> rate -> destructive -> auth -> idle -> quota -> handler; authorizeGRPC validates then checks permissions (interfaces/admin/middleware.go; domains/permissions/matcher.go)."
   security_checks:
     - "Correlation is observational and does not affect auth, authorization, responses, or middleware order."
     - "HTTP IP uses only geo.DefaultIPExtractor; gRPC IP uses only transport peer; proxy headers are not ActorIP."
     - "No token, body, query, arbitrary header, or generated ID is recorded."
     - "Existing denial status, challenge, reachability, event types, and reasons are preserved."
+    - "Audit metadata never feeds Matches."
   compatibility: "No OpenAPI, config, error-code, event-registry, dependency, SSE protocol, or framing changes."
   migration: "none"
   residual_risks:
