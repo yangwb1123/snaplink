@@ -158,8 +158,6 @@ func (r *Registry) Deregister(ctx context.Context, instanceID string) error {
 	r.mu.Lock()
 	leaseID, ok := r.leases[instanceID]
 	cancel := r.cancel[instanceID]
-	delete(r.leases, instanceID)
-	delete(r.cancel, instanceID)
 	r.mu.Unlock()
 
 	if !ok {
@@ -168,9 +166,16 @@ func (r *Registry) Deregister(ctx context.Context, instanceID string) error {
 	if cancel != nil {
 		cancel()
 	}
-	if _, err := r.client.Revoke(ctx, leaseID); err != nil {
+	if _, err := r.leaseOperations().Revoke(ctx, leaseID); err != nil {
 		return fmt.Errorf("registry/etcd: revoke: %w", err)
 	}
+
+	r.mu.Lock()
+	if currentLease, stillRegistered := r.leases[instanceID]; stillRegistered && currentLease == leaseID {
+		delete(r.leases, instanceID)
+		delete(r.cancel, instanceID)
+	}
+	r.mu.Unlock()
 	return nil
 }
 

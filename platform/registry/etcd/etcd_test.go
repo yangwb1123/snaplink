@@ -239,6 +239,104 @@ func TestDrainKeepAlive_ExitsOnClosedChannel(t *testing.T) {
 	}
 }
 
+func TestDeregister_RevokeFailureRetainsStateForRetry(t *testing.T) {
+	t.Parallel()
+	revokeErr := errors.New("revoke failed")
+	client := &deregisterClientStub{revokeErrors: []error{revokeErr}}
+	r := &Registry{
+		leaseOps: client,
+		leases:   map[string]clientv3.LeaseID{"id": 42},
+		cancel:   map[string]context.CancelFunc{"id": func() {}},
+	}
+
+	if err := r.Deregister(context.Background(), "id"); !errors.Is(err, revokeErr) {
+		t.Fatalf("first Deregister error = %v, want wrapped %v", err, revokeErr)
+	}
+	r.mu.Lock()
+	leaseID, leaseOK := r.leases["id"]
+	_, cancelOK := r.cancel["id"]
+	r.mu.Unlock()
+	if !leaseOK || leaseID != 42 || !cancelOK {
+		t.Fatalf("failed revoke removed bookkeeping: lease=%d/%t cancel=%t", leaseID, leaseOK, cancelOK)
+	}
+
+	if err := r.Deregister(context.Background(), "id"); err != nil {
+		t.Fatalf("retry Deregister: %v", err)
+	}
+	if len(r.leases) != 0 || len(r.cancel) != 0 {
+		t.Fatalf("successful retry left bookkeeping: leases=%v cancel=%v", r.leases, r.cancel)
+	}
+	if len(client.revokedIDs) != 2 || client.revokedIDs[0] != 42 || client.revokedIDs[1] != 42 {
+		t.Fatalf("revoke IDs = %v, want two attempts for lease 42", client.revokedIDs)
+	}
+}
+
+func TestDeregister_DoesNotDeleteReplacementLease(t *testing.T) {
+	t.Parallel()
+	const oldLeaseID clientv3.LeaseID = 42
+	const replacementLeaseID clientv3.LeaseID = 43
+	replacementCancel := func() {}
+	r := &Registry{
+		leases: map[string]clientv3.LeaseID{"id": oldLeaseID},
+		cancel: map[string]context.CancelFunc{"id": func() {}},
+	}
+	client := &deregisterClientStub{}
+	client.onRevoke = func() {
+		r.mu.Lock()
+		r.leases["id"] = replacementLeaseID
+		r.cancel["id"] = replacementCancel
+		r.mu.Unlock()
+	}
+	r.leaseOps = client
+
+	if err := r.Deregister(context.Background(), "id"); err != nil {
+		t.Fatalf("Deregister: %v", err)
+	}
+	r.mu.Lock()
+	leaseID, leaseOK := r.leases["id"]
+	_, cancelOK := r.cancel["id"]
+	r.mu.Unlock()
+	if !leaseOK || leaseID != replacementLeaseID || !cancelOK {
+		t.Fatalf("replacement bookkeeping was removed: lease=%d/%t cancel=%t", leaseID, leaseOK, cancelOK)
+	}
+	if len(client.revokedIDs) != 1 || client.revokedIDs[0] != oldLeaseID {
+		t.Fatalf("revoke IDs = %v, want old lease %d", client.revokedIDs, oldLeaseID)
+	}
+}
+
+type deregisterClientStub struct {
+	revokeErrors []error
+	revokedIDs   []clientv3.LeaseID
+	onRevoke     func()
+}
+
+func (c *deregisterClientStub) Grant(context.Context, int64) (*clientv3.LeaseGrantResponse, error) {
+	return nil, nil
+}
+
+func (c *deregisterClientStub) Put(context.Context, string, string, ...clientv3.OpOption) (*clientv3.PutResponse, error) {
+	return nil, nil
+}
+
+func (c *deregisterClientStub) KeepAlive(context.Context, clientv3.LeaseID) (<-chan *clientv3.LeaseKeepAliveResponse, error) {
+	return nil, nil
+}
+
+func (c *deregisterClientStub) Revoke(_ context.Context, id clientv3.LeaseID) (*clientv3.LeaseRevokeResponse, error) {
+	c.revokedIDs = append(c.revokedIDs, id)
+	if c.onRevoke != nil {
+		onRevoke := c.onRevoke
+		c.onRevoke = nil
+		onRevoke()
+	}
+	if len(c.revokeErrors) == 0 {
+		return &clientv3.LeaseRevokeResponse{}, nil
+	}
+	err := c.revokeErrors[0]
+	c.revokeErrors = c.revokeErrors[1:]
+	return nil, err
+}
+
 func TestRegisterFailureCleansUpGrantedLease(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
