@@ -44,6 +44,18 @@ type DomainVerification struct {
 // endpoint can map it to a 404 without confusing it with a missing connection.
 var ErrNoDomainClaim = errors.New("connections: no domain claim for connection")
 
+// TokenBoundDomainVerifier is an optional Store capability for DNS-proof
+// promotion. Implementations must compare token with the currently stored
+// claim and promote that same claim atomically. A mismatch returns (false,
+// nil); a missing claim returns ErrNoDomainClaim and storage failures are
+// returned. It is optional so existing Store implementations remain source
+// compatible, but VerifyDomainOwnership refuses unsafe token-free promotion.
+type TokenBoundDomainVerifier interface {
+	VerifyDomainWithToken(ctx context.Context, connID, domain, token string) (bool, error)
+}
+
+var errTokenBoundDomainVerificationUnsupported = errors.New("connections: token-bound domain verification unsupported")
+
 // DefaultRecordPrefix is the DNS label prepended to a claimed domain to form the
 // challenge TXT record name when StoreConfig.RecordPrefix is empty.
 const DefaultRecordPrefix = "_snaplink-domain-verify"
@@ -119,14 +131,16 @@ func DomainVerificationRecordName(prefix, domain string) string {
 // VerifyDomainOwnership performs the DNS-TXT challenge check for connID's claim
 // on domain: it loads the claim (ErrNoDomainClaim if connID never claimed
 // domain — propagated for a 404), short-circuits an already-verified claim
-// WITHOUT a network call, then looks up the claim's Record and marks it
-// verified when any TXT value equals the claim Token.
+// WITHOUT a network call, then looks up the claim's Record and uses the
+// token-bound promotion capability when any TXT value equals the claim Token.
 //
 // Fail-closed: a store error loading the claim is returned (never swallowed) so
-// a read failure can NEVER silently authorize a domain takeover. A DNS lookup
-// error (the common NXDOMAIN-before-publish case, or a transient failure) is
-// NOT an error — it is the expected "not yet verified" state, so it returns
-// (false, nil) and the admin retries after publishing the record.
+// a read failure can NEVER silently authorize a domain takeover. A pending claim
+// without the token-bound capability is also rejected rather than falling back
+// to Store.VerifyDomain, which cannot close the claim-read/DNS/promotion TOCTOU.
+// A DNS lookup error (the common NXDOMAIN-before-publish case, or a transient
+// failure) is NOT an error — it is the expected "not yet verified" state, so it
+// returns (false, nil) and the admin retries after publishing the record.
 func VerifyDomainOwnership(ctx context.Context, store Store, resolver DNSResolver, connID, domain string, timeout time.Duration) (bool, error) {
 	claim, err := store.DomainClaim(ctx, connID, domain)
 	if err != nil {
@@ -134,6 +148,10 @@ func VerifyDomainOwnership(ctx context.Context, store Store, resolver DNSResolve
 	}
 	if claim.Status == DomainVerified {
 		return true, nil
+	}
+	verifier, ok := store.(TokenBoundDomainVerifier)
+	if !ok {
+		return false, errTokenBoundDomainVerificationUnsupported
 	}
 	if timeout <= 0 {
 		timeout = DefaultDomainVerificationTimeout
@@ -145,9 +163,14 @@ func VerifyDomainOwnership(ctx context.Context, store Store, resolver DNSResolve
 		return false, nil
 	}
 	for _, t := range txts {
-		if t == claim.Token {
-			return true, store.VerifyDomain(ctx, connID, domain)
+		if t != claim.Token {
+			continue
 		}
+		verified, err := verifier.VerifyDomainWithToken(ctx, connID, domain, claim.Token)
+		if err != nil {
+			return false, err
+		}
+		return verified, nil
 	}
 	return false, nil
 }

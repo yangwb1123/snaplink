@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/yangwb1123/snaplink/domains/connections"
 	csqlite "github.com/yangwb1123/snaplink/domains/connections/sqlite"
@@ -23,6 +25,28 @@ func (f fakeResolver) LookupTXT(_ context.Context, name string) ([]string, error
 		return nil, f.err
 	}
 	return f.records[name], nil
+}
+
+type pausedResolver struct {
+	started     chan struct{}
+	released    chan struct{}
+	startOnce   sync.Once
+	releaseOnce sync.Once
+	token       string
+}
+
+func (f *pausedResolver) LookupTXT(ctx context.Context, _ string) ([]string, error) {
+	f.startOnce.Do(func() { close(f.started) })
+	select {
+	case <-f.released:
+		return []string{f.token}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (f *pausedResolver) release() {
+	f.releaseOnce.Do(func() { close(f.released) })
 }
 
 func newVerifiedStore(t *testing.T) *csqlite.Store {
@@ -94,6 +118,74 @@ func TestSQLite_DomainVerificationRequired_BlocksHijack(t *testing.T) {
 	}
 	if a, _ := s.DomainClaim(ctx, "a", "shared.com"); a == nil || a.Status != connections.DomainPending {
 		t.Errorf("prior owner must be demoted to pending, got %+v", a)
+	}
+}
+
+func TestSQLite_VerifyDomainOwnership_RejectsReplacedClaim(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newVerifiedStore(t)
+	if err := s.Upsert(ctx, &connections.Connection{ID: "a", Domains: []string{"acme.com"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	oldClaim, err := s.DomainClaim(ctx, "a", "acme.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := &pausedResolver{
+		started:  make(chan struct{}),
+		released: make(chan struct{}),
+		token:    oldClaim.Token,
+	}
+	resultCh := make(chan struct {
+		verified bool
+		err      error
+	}, 1)
+	go func() {
+		verified, err := connections.VerifyDomainOwnership(ctx, s, resolver, "a", "acme.com", 0)
+		resultCh <- struct {
+			verified bool
+			err      error
+		}{verified, err}
+	}()
+	defer resolver.release()
+	select {
+	case <-resolver.started:
+	case <-time.After(time.Second):
+		t.Fatal("DNS resolver was not reached after loading the old claim")
+	}
+
+	if err := s.Delete(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Upsert(ctx, &connections.Connection{ID: "a", Domains: []string{"acme.com"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	freshClaim, err := s.DomainClaim(ctx, "a", "acme.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if freshClaim.Token == oldClaim.Token {
+		t.Fatal("recreated claim unexpectedly reused the old token")
+	}
+	if freshClaim.Status != connections.DomainPending {
+		t.Fatalf("recreated claim = %q, want pending", freshClaim.Status)
+	}
+
+	resolver.release()
+	result := <-resultCh
+	if result.verified || result.err != nil {
+		t.Fatalf("old DNS proof = (%v, %v), want (false, nil)", result.verified, result.err)
+	}
+	claim, err := s.DomainClaim(ctx, "a", "acme.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.Status != connections.DomainPending {
+		t.Fatalf("recreated claim after old proof = %q, want pending", claim.Status)
+	}
+	if c, err := connections.Resolve(ctx, s, "x@acme.com"); c != nil || !errors.Is(err, connections.ErrNoConnection) {
+		t.Fatalf("recreated claim must not route: %v / %v", c, err)
 	}
 }
 

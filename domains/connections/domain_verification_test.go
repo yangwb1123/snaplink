@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yangwb1123/snaplink/domains/connections"
 )
@@ -36,6 +37,40 @@ func (f *fakeDNSResolver) set(name string, values ...string) {
 		f.records = map[string][]string{}
 	}
 	f.records[name] = values
+}
+
+type pausedDNSResolver struct {
+	started     chan struct{}
+	released    chan struct{}
+	startOnce   sync.Once
+	releaseOnce sync.Once
+	token       string
+}
+
+func (f *pausedDNSResolver) LookupTXT(ctx context.Context, _ string) ([]string, error) {
+	f.startOnce.Do(func() { close(f.started) })
+	select {
+	case <-f.released:
+		return []string{f.token}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (f *pausedDNSResolver) release() {
+	f.releaseOnce.Do(func() { close(f.released) })
+}
+
+type storeWithoutTokenBoundVerifier struct {
+	connections.Store
+}
+
+type erroringTokenBoundVerifier struct {
+	connections.Store
+}
+
+func (*erroringTokenBoundVerifier) VerifyDomainWithToken(context.Context, string, string, string) (bool, error) {
+	return true, errors.New("promotion failed")
 }
 
 func mustClaim(t *testing.T, s connections.Store, connID, domain string) *connections.DomainVerification {
@@ -108,6 +143,101 @@ func TestVerifyDomainOwnership_FakeResolver(t *testing.T) {
 	// A domain this connection never claimed is a distinct sentinel (-> 404 at HTTP).
 	if _, err := connections.VerifyDomainOwnership(ctx, s, res2, "a", "never.com", 0); !errors.Is(err, connections.ErrNoDomainClaim) {
 		t.Errorf("unclaimed domain err = %v, want ErrNoDomainClaim", err)
+	}
+}
+
+func TestMemoryStore_VerifyDomainOwnership_RejectsReplacedClaim(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := connections.NewMemoryStore(connections.WithDomainVerificationRequired(true))
+	if err := s.Upsert(ctx, &connections.Connection{ID: "a", Domains: []string{"acme.com"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	oldClaim := mustClaim(t, s, "a", "acme.com")
+	resolver := &pausedDNSResolver{
+		started:  make(chan struct{}),
+		released: make(chan struct{}),
+		token:    oldClaim.Token,
+	}
+	resultCh := make(chan struct {
+		verified bool
+		err      error
+	}, 1)
+	go func() {
+		verified, err := connections.VerifyDomainOwnership(ctx, s, resolver, "a", "acme.com", 0)
+		resultCh <- struct {
+			verified bool
+			err      error
+		}{verified, err}
+	}()
+	defer resolver.release()
+	select {
+	case <-resolver.started:
+	case <-time.After(time.Second):
+		t.Fatal("DNS resolver was not reached after loading the old claim")
+	}
+
+	if err := s.Delete(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Upsert(ctx, &connections.Connection{ID: "a", Domains: []string{"acme.com"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	freshClaim := mustClaim(t, s, "a", "acme.com")
+	if freshClaim.Token == oldClaim.Token {
+		t.Fatal("recreated claim unexpectedly reused the old token")
+	}
+	if freshClaim.Status != connections.DomainPending {
+		t.Fatalf("recreated claim = %q, want pending", freshClaim.Status)
+	}
+
+	resolver.release()
+	result := <-resultCh
+	if result.verified || result.err != nil {
+		t.Fatalf("old DNS proof = (%v, %v), want (false, nil)", result.verified, result.err)
+	}
+	if got := mustClaim(t, s, "a", "acme.com"); got.Status != connections.DomainPending {
+		t.Fatalf("recreated claim after old proof = %q, want pending", got.Status)
+	}
+	if c, err := connections.Resolve(ctx, s, "x@acme.com"); c != nil || !errors.Is(err, connections.ErrNoConnection) {
+		t.Fatalf("recreated claim must not route: %v / %v", c, err)
+	}
+}
+
+func TestVerifyDomainOwnership_FailsClosedWithoutTokenBoundVerifier(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	base := connections.NewMemoryStore(connections.WithDomainVerificationRequired(true))
+	if err := base.Upsert(ctx, &connections.Connection{ID: "a", Domains: []string{"acme.com"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	claim := mustClaim(t, base, "a", "acme.com")
+	store := &storeWithoutTokenBoundVerifier{Store: base}
+	resolver := &fakeDNSResolver{}
+	resolver.set(claim.Record, claim.Token)
+	verified, err := connections.VerifyDomainOwnership(ctx, store, resolver, "a", "acme.com", 0)
+	if verified || err == nil {
+		t.Fatalf("unsupported token-bound verifier = (%v, %v), want (false, error)", verified, err)
+	}
+	if got := mustClaim(t, base, "a", "acme.com"); got.Status != connections.DomainPending {
+		t.Fatalf("claim after unsupported verification = %q, want pending", got.Status)
+	}
+}
+
+func TestVerifyDomainOwnership_PromotionErrorNeverReportsVerified(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	base := connections.NewMemoryStore(connections.WithDomainVerificationRequired(true))
+	if err := base.Upsert(ctx, &connections.Connection{ID: "a", Domains: []string{"acme.com"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	claim := mustClaim(t, base, "a", "acme.com")
+	store := &erroringTokenBoundVerifier{Store: base}
+	resolver := &fakeDNSResolver{}
+	resolver.set(claim.Record, claim.Token)
+	verified, err := connections.VerifyDomainOwnership(ctx, store, resolver, "a", "acme.com", 0)
+	if verified || err == nil {
+		t.Fatalf("promotion error = (%v, %v), want (false, error)", verified, err)
 	}
 }
 

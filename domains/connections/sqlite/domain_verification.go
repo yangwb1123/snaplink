@@ -183,6 +183,48 @@ func (s *Store) VerifyDomain(ctx context.Context, connID, domain string) error {
 	return tx.Commit()
 }
 
+// VerifyDomainWithToken uses a conditional claim update before promotion so
+// the DNS proof can only authorize the claim carrying the proven token. The
+// conditional update and routing changes commit as one transaction.
+func (s *Store) VerifyDomainWithToken(ctx context.Context, connID, domain, token string) (bool, error) {
+	d := normDomain(domain)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("sqlite: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx,
+		`UPDATE connection_domain_claims SET status=?, verified_at=?
+		 WHERE connection_id=? AND domain=? AND token=?`,
+		string(connections.DomainVerified), nowRFC3339(), connID, d, token)
+	if err != nil {
+		return false, fmt.Errorf("sqlite: verify claim token: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("sqlite: verify claim token rows: %w", err)
+	}
+	if affected == 0 {
+		var one int
+		err := tx.QueryRowContext(ctx,
+			`SELECT 1 FROM connection_domain_claims WHERE connection_id=? AND domain=?`, connID, d).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, connections.ErrNoDomainClaim
+		}
+		if err != nil {
+			return false, fmt.Errorf("sqlite: claim lookup: %w", err)
+		}
+		return false, nil
+	}
+	if err := promoteDomainTx(ctx, tx, connID, d); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // scanClaim reads a claim row and derives its public Record from the store's
 // configured prefix.
 func (s *Store) scanClaim(sc scanner) (*connections.DomainVerification, error) {

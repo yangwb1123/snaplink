@@ -120,6 +120,24 @@ func (m *MemoryStore) VerifyDomain(_ context.Context, connID, domain string) err
 	return nil
 }
 
+// VerifyDomainWithToken atomically checks the current claim token and promotes
+// it while holding the store lock. A DNS proof for a replaced claim therefore
+// cannot promote the replacement.
+func (m *MemoryStore) VerifyDomainWithToken(_ context.Context, connID, domain, token string) (bool, error) {
+	d := strings.ToLower(strings.TrimSpace(domain))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	claim, ok := m.claims[connID][d]
+	if !ok {
+		return false, ErrNoDomainClaim
+	}
+	if claim.Token != token {
+		return false, nil
+	}
+	m.promoteDomainLocked(connID, d)
+	return true, nil
+}
+
 // cloneClaimLocked copies a claim and derives its public Record name from the
 // store's configured prefix, so callers never mutate stored state and never need
 // to know the prefix. Caller holds m.mu.
