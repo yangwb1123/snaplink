@@ -8,10 +8,12 @@ package etcd
 //   * input validation (empty endpoints)
 //   * Service JSON roundtrip on the wire format
 //   * translateEvent's three branches (Put-add, Put-modify, Delete)
+//   * registration lease cleanup on Put/KeepAlive failure
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -235,4 +237,108 @@ func TestDrainKeepAlive_ExitsOnClosedChannel(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("drainKeepAlive did not return after channel close")
 	}
+}
+
+func TestRegisterFailureCleansUpGrantedLease(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		failPut       bool
+		failKeepAlive bool
+	}{
+		{name: "put", failPut: true},
+		{name: "keepalive", failKeepAlive: true},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			runRegisterFailureTest(t, test.name, test.failPut, test.failKeepAlive)
+		})
+	}
+}
+
+func runRegisterFailureTest(t *testing.T, name string, failPut, failKeepAlive bool) {
+	t.Helper()
+	operationErr := errors.New(name + " operation failed")
+	cleanupErr := errors.New("cleanup failed")
+	callerCtx, cancelCaller := context.WithCancel(context.Background())
+	defer cancelCaller()
+	client := &registerClientStub{
+		leaseID:       42,
+		operationErr:  operationErr,
+		cleanupErr:    cleanupErr,
+		cancelCaller:  cancelCaller,
+		failPut:       failPut,
+		failKeepAlive: failKeepAlive,
+	}
+	r := &Registry{prefix: DefaultPrefix, leaseOps: client}
+
+	got := r.Register(callerCtx, &registry.Service{ID: "id", Name: "name"})
+	if !errors.Is(got, operationErr) {
+		t.Fatalf("Register error = %v, want operation error %v", got, operationErr)
+	}
+	if errors.Is(got, cleanupErr) {
+		t.Fatalf("Register error %v replaced or joined cleanup error", got)
+	}
+	if client.revokeCalls != 1 || client.revokedID != client.leaseID {
+		t.Fatalf("revoke calls = %d, id = %d; want one revoke of %d", client.revokeCalls, client.revokedID, client.leaseID)
+	}
+	if callerCtx.Err() != context.Canceled {
+		t.Fatal("failure stub did not cancel the caller context")
+	}
+	assertCleanupContext(t, client)
+}
+
+func assertCleanupContext(t *testing.T, client *registerClientStub) {
+	t.Helper()
+	if client.revokeContextErr != nil {
+		t.Fatalf("cleanup context error = %v, want independent live context", client.revokeContextErr)
+	}
+	deadline := client.revokeDeadline
+	if !client.revokeHasDeadline || time.Until(deadline) <= 0 || time.Until(deadline) > leaseCleanupTimeout {
+		t.Fatalf("cleanup deadline = %v, want bounded deadline within %v", deadline, leaseCleanupTimeout)
+	}
+}
+
+type registerClientStub struct {
+	leaseID           clientv3.LeaseID
+	operationErr      error
+	cleanupErr        error
+	cancelCaller      context.CancelFunc
+	failPut           bool
+	failKeepAlive     bool
+	revokeCalls       int
+	revokedID         clientv3.LeaseID
+	revokeContextErr  error
+	revokeDeadline    time.Time
+	revokeHasDeadline bool
+}
+
+func (c *registerClientStub) Grant(context.Context, int64) (*clientv3.LeaseGrantResponse, error) {
+	return &clientv3.LeaseGrantResponse{ID: c.leaseID}, nil
+}
+
+func (c *registerClientStub) Put(context.Context, string, string, ...clientv3.OpOption) (*clientv3.PutResponse, error) {
+	if c.failPut {
+		c.cancelCaller()
+		return nil, c.operationErr
+	}
+	return &clientv3.PutResponse{}, nil
+}
+
+func (c *registerClientStub) KeepAlive(context.Context, clientv3.LeaseID) (<-chan *clientv3.LeaseKeepAliveResponse, error) {
+	if c.failKeepAlive {
+		c.cancelCaller()
+		return nil, c.operationErr
+	}
+	return make(chan *clientv3.LeaseKeepAliveResponse), nil
+}
+
+func (c *registerClientStub) Revoke(ctx context.Context, id clientv3.LeaseID) (*clientv3.LeaseRevokeResponse, error) {
+	c.revokeCalls++
+	c.revokedID = id
+	c.revokeContextErr = ctx.Err()
+	c.revokeDeadline, c.revokeHasDeadline = ctx.Deadline()
+	return nil, c.cleanupErr
 }

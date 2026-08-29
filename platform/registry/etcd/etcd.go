@@ -26,6 +26,8 @@ const (
 	DefaultPrefix      = "/snaplink/registry"
 	DefaultDialTimeout = 5 * time.Second
 	DefaultTTL         = 30 * time.Second
+
+	leaseCleanupTimeout = 2 * time.Second
 )
 
 // Config configures the etcd Registry.
@@ -37,10 +39,21 @@ type Config struct {
 	Password    string
 }
 
+// leaseClient contains the etcd operations needed during registration. Keeping
+// this seam narrow allows lease failure paths to be tested without an etcd
+// server.
+type leaseClient interface {
+	Grant(context.Context, int64) (*clientv3.LeaseGrantResponse, error)
+	Put(context.Context, string, string, ...clientv3.OpOption) (*clientv3.PutResponse, error)
+	KeepAlive(context.Context, clientv3.LeaseID) (<-chan *clientv3.LeaseKeepAliveResponse, error)
+	Revoke(context.Context, clientv3.LeaseID) (*clientv3.LeaseRevokeResponse, error)
+}
+
 // Registry is the etcd-backed implementation.
 type Registry struct {
-	client *clientv3.Client
-	prefix string
+	client   *clientv3.Client
+	leaseOps leaseClient
+	prefix   string
 
 	mu     sync.Mutex
 	leases map[string]clientv3.LeaseID // instanceID -> leaseID
@@ -70,10 +83,11 @@ func New(cfg Config) (*Registry, error) {
 		return nil, fmt.Errorf("registry/etcd: dial: %w", err)
 	}
 	return &Registry{
-		client: cli,
-		prefix: cfg.Prefix,
-		leases: make(map[string]clientv3.LeaseID),
-		cancel: make(map[string]context.CancelFunc),
+		client:   cli,
+		leaseOps: cli,
+		prefix:   cfg.Prefix,
+		leases:   make(map[string]clientv3.LeaseID),
+		cancel:   make(map[string]context.CancelFunc),
 	}, nil
 }
 
@@ -84,10 +98,11 @@ func NewWithClient(cli *clientv3.Client, prefix string) *Registry {
 		prefix = DefaultPrefix
 	}
 	return &Registry{
-		client: cli,
-		prefix: prefix,
-		leases: make(map[string]clientv3.LeaseID),
-		cancel: make(map[string]context.CancelFunc),
+		client:   cli,
+		leaseOps: cli,
+		prefix:   prefix,
+		leases:   make(map[string]clientv3.LeaseID),
+		cancel:   make(map[string]context.CancelFunc),
 	}
 }
 
@@ -107,20 +122,23 @@ func (r *Registry) Register(ctx context.Context, svc *registry.Service) error {
 		return fmt.Errorf("registry/etcd: marshal: %w", err)
 	}
 
-	lease, err := r.client.Grant(ctx, ttlSec)
+	leaseOps := r.leaseOperations()
+	lease, err := leaseOps.Grant(ctx, ttlSec)
 	if err != nil {
 		return fmt.Errorf("registry/etcd: lease grant: %w", err)
 	}
 
-	if _, err := r.client.Put(ctx, r.serviceKey(svc.Name, svc.ID), string(data),
+	if _, err := leaseOps.Put(ctx, r.serviceKey(svc.Name, svc.ID), string(data),
 		clientv3.WithLease(lease.ID)); err != nil {
+		cleanupGrantedLease(leaseOps, lease.ID)
 		return fmt.Errorf("registry/etcd: put: %w", err)
 	}
 
 	keepCtx, cancel := context.WithCancel(context.Background())
-	keepAlive, err := r.client.KeepAlive(keepCtx, lease.ID)
+	keepAlive, err := leaseOps.KeepAlive(keepCtx, lease.ID)
 	if err != nil {
 		cancel()
+		cleanupGrantedLease(leaseOps, lease.ID)
 		return fmt.Errorf("registry/etcd: keepalive: %w", err)
 	}
 	go drainKeepAlive(keepAlive)
@@ -257,6 +275,22 @@ func (r *Registry) Close() error {
 		_, _ = r.client.Revoke(revokeCtx, l)
 	}
 	return r.client.Close()
+}
+
+func (r *Registry) leaseOperations() leaseClient {
+	if r.leaseOps != nil {
+		return r.leaseOps
+	}
+	return r.client
+}
+
+// cleanupGrantedLease does not inherit the request context: after a grant,
+// cleanup must still run if the failed operation canceled that context. The
+// deadline bounds a stuck revoke without replacing the original error.
+func cleanupGrantedLease(client leaseClient, leaseID clientv3.LeaseID) {
+	ctx, cancel := context.WithTimeout(context.Background(), leaseCleanupTimeout)
+	defer cancel()
+	_, _ = client.Revoke(ctx, leaseID)
 }
 
 // serviceKey is the etcd key for one instance.
