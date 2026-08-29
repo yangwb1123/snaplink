@@ -37,6 +37,40 @@ func TestHACoherenceRejectsPerProcessCriticalStores(t *testing.T) {
 	}
 }
 
+func TestHACoherenceRejectsClientSecretRotationInMultiReplica(t *testing.T) {
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			Topology: config.TopologyConfig{Mode: config.TopologyModeMulti},
+		},
+		ClientSecretRotation: config.ClientSecretRotationConfig{Enabled: true},
+	}
+	err := (&appBuilder{cfg: cfg, logger: quietLogger()}).enforceHACoherence()
+	if err == nil {
+		t.Fatal("multi-replica topology accepted unowned client-secret rotation")
+	}
+	for _, want := range []string{
+		"client_secret_rotation.enabled",
+		"single scheduler owner",
+		"coordination mechanism",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not explain %s", err, want)
+		}
+	}
+}
+
+func TestHACoherenceAcceptsClientSecretRotationInSingleTopology(t *testing.T) {
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			Topology: config.TopologyConfig{Mode: config.TopologyModeSingle},
+		},
+		ClientSecretRotation: config.ClientSecretRotationConfig{Enabled: true},
+	}
+	if err := (&appBuilder{cfg: cfg, logger: quietLogger()}).enforceHACoherence(); err != nil {
+		t.Fatalf("single topology rejected client-secret rotation: %v", err)
+	}
+}
+
 func TestHACoherenceAcceptsSharedCriticalStores(t *testing.T) {
 	cfg := &config.Config{
 		OAuth:    config.OAuthConfig{Backend: "redis"},
@@ -115,7 +149,7 @@ func TestHACoherenceAcceptsPostgresOAuth(t *testing.T) {
 	}
 }
 
-func TestHACoherenceUnsafeOverrideIsExplicit(t *testing.T) {
+func TestHACoherenceClientSecretRotationUnsafeOverrideIsExplicit(t *testing.T) {
 	cfg := &config.Config{
 		Server: config.ServerConfig{
 			Topology: config.TopologyConfig{
@@ -123,6 +157,7 @@ func TestHACoherenceUnsafeOverrideIsExplicit(t *testing.T) {
 				AllowPerPodState: true,
 			},
 		},
+		ClientSecretRotation: config.ClientSecretRotationConfig{Enabled: true},
 	}
 	b := &appBuilder{cfg: cfg, logger: quietLogger()}
 	if err := b.enforceHACoherence(); err != nil {
@@ -147,7 +182,8 @@ func TestKubernetesAdmissionPolicyCoversHACoherenceContract(t *testing.T) {
 		SelfService: config.SelfServiceConfig{
 			IdentityLink: config.IdentityLinkConfig{Enabled: true},
 		},
-		UserLifecycle: config.UserLifecycleConfig{Enabled: true},
+		UserLifecycle:        config.UserLifecycleConfig{Enabled: true},
+		ClientSecretRotation: config.ClientSecretRotationConfig{Enabled: true},
 	}
 	issues := (&appBuilder{cfg: cfg}).haCoherenceIssues()
 	contract := map[string]string{
@@ -161,6 +197,7 @@ func TestKubernetesAdmissionPolicyCoversHACoherenceContract(t *testing.T) {
 		"server.pairwise_subjects.backend":   "SSO_SERVER__PAIRWISE_SUBJECTS__BACKEND",
 		"keys.signing.revocation_backend":    "SSO_KEYS__SIGNING__REVOCATION_BACKEND",
 		"user_lifecycle.backend":             "SSO_USER_LIFECYCLE__BACKEND",
+		"client_secret_rotation.enabled":     "SSO_CLIENT_SECRET_ROTATION__ENABLED",
 	}
 	root := filepath.Join("..", "..")
 	policy := readHAContractFile(t, filepath.Join(root, "ops", "deploy", "k8s-admission", "topology-policy.yaml"))

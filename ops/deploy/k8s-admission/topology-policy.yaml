@@ -38,6 +38,13 @@ spec:
       message: multi-replica sso-server forbids allow_per_pod_state
     - expression: >-
         !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        !object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          c.env.exists(e, e.name == "SSO_CLIENT_SECRET_ROTATION__ENABLED" &&
+                            e.value.lowerAscii() == "true"))
+      message: multi-replica sso-server cannot enable client_secret_rotation.enabled without a single scheduler owner or coordination mechanism
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
         object.spec.template.spec.containers.exists(c,
           c.name == "sso-server" && has(c.env) &&
           c.env.exists(e, e.name == "SSO_OAUTH__BACKEND" &&

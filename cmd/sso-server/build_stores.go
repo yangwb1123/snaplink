@@ -89,8 +89,11 @@ func (b *appBuilder) enforceHACoherence() error {
 	}
 	topology := b.cfg.Server.Topology
 	if topology.Mode == config.TopologyModeMulti && !topology.AllowPerPodState {
-		return fmt.Errorf("multi-replica topology requires shared critical stores: %s",
-			strings.Join(issues, "; "))
+		message := "multi-replica topology requires shared critical stores"
+		if strings.Contains(strings.Join(issues, "; "), "client_secret_rotation.enabled") {
+			message = "multi-replica topology cannot enable client_secret_rotation.enabled without a single scheduler owner or coordination mechanism"
+		}
+		return fmt.Errorf("%s: %s", message, strings.Join(issues, "; "))
 	}
 	b.logger.Error("HA INCOHERENCE: critical stores are per-process; select shared backends before placing replicas behind one load balancer",
 		"per_pod_stores", issues, "unsafe_override", topology.AllowPerPodState)
@@ -118,6 +121,7 @@ func (b *appBuilder) haCoherenceIssues() []string {
 		{multi && b.cfg.SelfService.IdentityLink.Enabled, "self_service.identity_link.backend", b.cfg.SelfService.IdentityLink.Backend},
 		{multi && b.cfg.Server.PairwiseSubjects.Enabled, "server.pairwise_subjects.backend", b.cfg.Server.PairwiseSubjects.Backend},
 		{multi && b.cfg.UserLifecycle.Enabled, "user_lifecycle.backend", b.cfg.UserLifecycle.Backend},
+		{multiFeatureEnabled(multi, b.cfg.ClientSecretRotation.Enabled), "client_secret_rotation.enabled", ""},
 		{multiFeatureEnabled(multi, b.cfg.ReBAC.Enabled), "rebac.backend", b.cfg.ReBAC.Backend},
 	}
 	var stuck []string

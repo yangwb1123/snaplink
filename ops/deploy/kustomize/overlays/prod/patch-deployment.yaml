@@ -33,6 +33,7 @@ spec:
             # the process reads the same values, so admission and startup agree.
             - { name: SSO_SERVER__TOPOLOGY__MODE, value: multi }
             - { name: SSO_SERVER__TOPOLOGY__ALLOW_PER_POD_STATE, value: "false" }
+            - { name: SSO_CLIENT_SECRET_ROTATION__ENABLED, value: "false" }
             - { name: SSO_OAUTH__BACKEND, value: redis }
             - { name: SSO_IDENTITY__BACKEND, value: postgres }
             - { name: SSO_IDENTITY__SESSION_BACKEND, value: redis }
