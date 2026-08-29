@@ -11,14 +11,16 @@
 // Design constraints:
 //   - Public clients (token_endpoint_auth_method=none) carry no secret and
 //     are exempt — no noise.
-//   - One event per (client, window) per day: a dedup map bounds audit
-//     volume while keeping the daily cadence for the 30d and 14d windows.
+//   - One event per (client, window, expiry generation) per UTC day: local
+//     state preserves the fallback behavior and an optional claim store shares
+//     the decision across scanner restarts and replicas.
 //   - The scanner is read-only: rotation stays a human/admin decision
 //     (RotateSecret already supports the SecretOverlapUntil grace period).
 package rotation
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/yangwb1123/snaplink/platform/audit"
@@ -35,8 +37,8 @@ var ClientSecretWarningWindows = []time.Duration{
 	7 * 24 * time.Hour,
 }
 
-// ClientSecretScanInterval bounds the sweep cadence (and the dedup map's
-// growth): at most len(windows) entries per client per day.
+// ClientSecretScanInterval bounds the sweep cadence; local claim state is
+// pruned when the scanner advances to a later UTC day.
 const ClientSecretScanInterval = 6 * time.Hour
 
 // ClientSecretExpiryScanner is the background expiry-warning loop.
@@ -45,16 +47,21 @@ type ClientSecretExpiryScanner struct {
 	auditor          *audit.Recorder
 	metrics          *metrics.Metrics
 	logger           spi.Logger
+	claimStore       ClientSecretWarningClaimStore
 	interval         time.Duration
-	emitted          map[string]time.Time // "clientID|window" -> date of last emission
+	emittedMu        sync.Mutex
+	emitted          map[string]time.Time // claim fingerprint -> UTC day
+	emittedDay       time.Time            // last day retained in emitted
 	publicAuthMethod map[string]bool
 }
 
 // NewClientSecretExpiryScanner builds the scanner over the wired client
 // store + recorder. store is required; nil auditor/metrics degrade to
 // log-only (the scan still runs — silence is the failure mode we prevent).
-func NewClientSecretExpiryScanner(store core.ClientStore, auditor *audit.Recorder, m *metrics.Metrics, logger spi.Logger) *ClientSecretExpiryScanner {
-	return &ClientSecretExpiryScanner{
+// Optional claim-store wiring is additive so existing embedders retain the
+// local-only behavior.
+func NewClientSecretExpiryScanner(store core.ClientStore, auditor *audit.Recorder, m *metrics.Metrics, logger spi.Logger, opts ...ClientSecretExpiryScannerOption) *ClientSecretExpiryScanner {
+	s := &ClientSecretExpiryScanner{
 		store:            store,
 		auditor:          auditor,
 		metrics:          m,
@@ -63,6 +70,12 @@ func NewClientSecretExpiryScanner(store core.ClientStore, auditor *audit.Recorde
 		emitted:          make(map[string]time.Time),
 		publicAuthMethod: map[string]bool{"none": true},
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+	return s
 }
 
 // Run executes the loop until ctx is cancelled, returning when the ctx
@@ -86,18 +99,18 @@ func (s *ClientSecretExpiryScanner) Run(ctx context.Context) {
 // channel that closes when the loop exits (cancel ctx to stop). The
 // composition root wires this beside the rotation scheduler and joins the
 // done channel into its shutdown set.
-func StartClientSecretScan(ctx context.Context, store core.ClientStore, auditor *audit.Recorder, m *metrics.Metrics, logger spi.Logger) <-chan struct{} {
+func StartClientSecretScan(ctx context.Context, store core.ClientStore, auditor *audit.Recorder, m *metrics.Metrics, logger spi.Logger, opts ...ClientSecretExpiryScannerOption) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		NewClientSecretExpiryScanner(store, auditor, m, logger).Run(ctx)
+		NewClientSecretExpiryScanner(store, auditor, m, logger, opts...).Run(ctx)
 	}()
 	return done
 }
 
 // sweep lists the client store and emits a warning per client whose secret
 // expires inside a warning window. Fail-open: a store outage logs and aborts
-// the sweep (never crashes, never blocks the server).
+// the sweep, while a claim-store outage falls back to local deduplication.
 func (s *ClientSecretExpiryScanner) sweep(ctx context.Context) {
 	clients, err := s.store.List(ctx)
 	if err != nil {
@@ -106,8 +119,8 @@ func (s *ClientSecretExpiryScanner) sweep(ctx context.Context) {
 		}
 		return
 	}
-	now := time.Now()
-	today := now.Truncate(24 * time.Hour)
+	now := time.Now().UTC()
+	today := clientSecretWarningDay(now)
 	for _, c := range clients {
 		if c == nil || s.publicAuthMethod[c.TokenEndpointAuthMethod] {
 			continue
@@ -123,14 +136,58 @@ func (s *ClientSecretExpiryScanner) sweep(ctx context.Context) {
 			if remaining > window {
 				continue
 			}
-			key := c.ID + "|" + window.String()
-			if last, ok := s.emitted[key]; ok && !last.Before(today) {
-				continue // already emitted for this window today
+			claim := ClientSecretWarningClaim{
+				ClientID: c.ID, Window: window, Day: today, SecretExpiresAt: c.SecretExpiresAt,
 			}
-			s.emitted[key] = today
+			if !s.claimWarning(ctx, claim) {
+				continue
+			}
 			s.emit(ctx, c.ID, window, remaining)
 		}
 	}
+}
+
+// claimWarning records local state before consulting the optional shared store.
+// This makes a store outage fail open without allowing repeated local emits.
+func (s *ClientSecretExpiryScanner) claimWarning(ctx context.Context, claim ClientSecretWarningClaim) bool {
+	if !s.claimLocally(claim) {
+		return false
+	}
+	if s.claimStore == nil {
+		return true
+	}
+	won, err := s.claimStore.Claim(ctx, claim)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("client secret expiry warning claim failed",
+				"client_id", claim.ClientID, "window", claim.Window.String(), "error", err)
+		}
+		return true
+	}
+	return won
+}
+
+func (s *ClientSecretExpiryScanner) claimLocally(claim ClientSecretWarningClaim) bool {
+	day := clientSecretWarningDay(claim.Day)
+	key := claim.Fingerprint()
+	s.emittedMu.Lock()
+	defer s.emittedMu.Unlock()
+	if s.emitted == nil {
+		s.emitted = make(map[string]time.Time)
+	}
+	if s.emittedDay.IsZero() || day.After(s.emittedDay) {
+		for fingerprint, emittedDay := range s.emitted {
+			if emittedDay.Before(day) {
+				delete(s.emitted, fingerprint)
+			}
+		}
+		s.emittedDay = day
+	}
+	if _, exists := s.emitted[key]; exists {
+		return false
+	}
+	s.emitted[key] = day
+	return true
 }
 
 // emit records one bounded audit event + metric for a client entering a

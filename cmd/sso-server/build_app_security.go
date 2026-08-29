@@ -13,6 +13,7 @@ import (
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
 	"github.com/yangwb1123/snaplink/domains/threataction"
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/platform/configaudit"
@@ -405,8 +406,13 @@ func (b *appBuilder) startGovernanceWorkers(srv *sso.Server) error {
 	if b.clientStore != nil {
 		ctx, cancel := context.WithCancel(context.Background())
 		b.clientSecretScanCancel = cancel
+		var scanOpts []rotation.ClientSecretExpiryScannerOption
+		if b.redis != nil {
+			scanOpts = append(scanOpts, rotation.WithClientSecretWarningClaimStore(
+				redisbackend.NewClientSecretWarningClaimStore(b.redis)))
+		}
 		b.clientSecretScanDone = rotation.StartClientSecretScan(
-			ctx, b.clientStore, b.recorder, b.metricsRegistry, b.logger)
+			ctx, b.clientStore, b.recorder, b.metricsRegistry, b.logger, scanOpts...)
 		b.logger.Info("client secret expiry scan enabled", "interval", rotation.ClientSecretScanInterval)
 	}
 	if b.credentialScheduler != nil {

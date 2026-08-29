@@ -2,7 +2,9 @@ package rotation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -56,13 +58,20 @@ func (c *captureLogger) Error(msg string, _ ...any) {
 func (c *captureLogger) Info(string, ...any)  {}
 func (c *captureLogger) Debug(string, ...any) {}
 
+type failingWarningClaimStore struct{}
+
+func (failingWarningClaimStore) Claim(context.Context, ClientSecretWarningClaim) (bool, error) {
+	return false, errors.New("claim unavailable")
+}
+
 func TestClientSecretScan_WarnsWithinWindows(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
+	const secret = "client-secret-not-in-audit"
 	store := &fakeClientStore{clients: []*core.Client{
-		{ID: "c-10d", SecretExpiresAt: time.Now().Add(10 * 24 * time.Hour)}, // inside 30d + 14d
-		{ID: "c-3d", SecretExpiresAt: time.Now().Add(3 * 24 * time.Hour)},   // inside all three
-		{ID: "c-far", SecretExpiresAt: time.Now().Add(90 * 24 * time.Hour)}, // outside all
+		{ID: "c-10d", Secret: secret, SecretExpiresAt: time.Now().Add(10 * 24 * time.Hour)}, // inside 30d + 14d
+		{ID: "c-3d", SecretExpiresAt: time.Now().Add(3 * 24 * time.Hour)},                   // inside all three
+		{ID: "c-far", SecretExpiresAt: time.Now().Add(90 * 24 * time.Hour)},                 // outside all
 		{ID: "c-never"}, // no expiry pinned
 		{ID: "c-public", TokenEndpointAuthMethod: "none", SecretExpiresAt: time.Now().Add(24 * time.Hour)},
 		{ID: "c-expired", SecretExpiresAt: time.Now().Add(-time.Hour)},
@@ -93,6 +102,13 @@ func TestClientSecretScan_WarnsWithinWindows(t *testing.T) {
 			t.Errorf("client %s emitted events: %v", id, windows)
 		}
 	}
+	encoded, err := json.Marshal(events)
+	if err != nil {
+		t.Fatalf("marshal warning events: %v", err)
+	}
+	if strings.Contains(string(encoded), secret) {
+		t.Fatalf("warning event payload contains client secret: %s", encoded)
+	}
 }
 
 func TestClientSecretScan_DedupsPerDayPerWindow(t *testing.T) {
@@ -104,6 +120,9 @@ func TestClientSecretScan_DedupsPerDayPerWindow(t *testing.T) {
 	sink := audit.NewMemorySink(50)
 	rec := audit.New(sink)
 	sc := NewClientSecretExpiryScanner(store, rec, nil, spi.NopLogger{})
+	if sc.claimStore != nil {
+		t.Fatal("default scanner unexpectedly has a shared claim store")
+	}
 
 	sc.sweep(ctx)
 	sc.sweep(ctx) // same day: dedup must suppress
@@ -111,6 +130,117 @@ func TestClientSecretScan_DedupsPerDayPerWindow(t *testing.T) {
 	events, _ := sink.Query(ctx, audit.Query{Type: audit.EventClientSecretExpiring})
 	if len(events) != 3 {
 		t.Fatalf("events after two sweeps = %d, want 3 (one per window, deduped)", len(events))
+	}
+}
+
+func TestClientSecretScan_ChangedExpiryGenerationWarnsAgain(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	expires := time.Now().UTC().Add(5 * 24 * time.Hour)
+	store := &fakeClientStore{clients: []*core.Client{{ID: "c-1", SecretExpiresAt: expires}}}
+	sink := audit.NewMemorySink(20)
+	rec := audit.New(sink)
+	sc := NewClientSecretExpiryScanner(store, rec, nil, nil)
+
+	sc.sweep(ctx)
+	store.mu.Lock()
+	store.clients[0].SecretExpiresAt = expires.Add(time.Hour)
+	store.mu.Unlock()
+	sc.sweep(ctx)
+
+	events, _ := sink.Query(ctx, audit.Query{Type: audit.EventClientSecretExpiring})
+	if len(events) != 6 {
+		t.Fatalf("events after changed expiry generation = %d, want 6", len(events))
+	}
+}
+
+func TestClientSecretScan_SharedClaimStoreDeduplicatesReplicas(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := &fakeClientStore{clients: []*core.Client{{ID: "c-1", SecretExpiresAt: time.Now().Add(5 * 24 * time.Hour)}}}
+	sink := audit.NewMemorySink(20)
+	rec := audit.New(sink)
+	claims := NewMemoryClientSecretWarningClaimStore()
+	scanners := []*ClientSecretExpiryScanner{
+		NewClientSecretExpiryScanner(store, rec, nil, nil, WithClientSecretWarningClaimStore(claims)),
+		NewClientSecretExpiryScanner(store, rec, nil, nil, WithClientSecretWarningClaimStore(claims)),
+	}
+	var wg sync.WaitGroup
+	wg.Add(len(scanners))
+	for _, sc := range scanners {
+		go func(sc *ClientSecretExpiryScanner) {
+			defer wg.Done()
+			sc.sweep(ctx)
+		}(sc)
+	}
+	wg.Wait()
+
+	events, _ := sink.Query(ctx, audit.Query{Type: audit.EventClientSecretExpiring})
+	if len(events) != 3 {
+		t.Fatalf("shared claim events = %d, want 3", len(events))
+	}
+}
+
+func TestClientSecretScan_ClaimStoreOutageFallsBackToLocalDedup(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := &fakeClientStore{clients: []*core.Client{{ID: "c-1", SecretExpiresAt: time.Now().Add(5 * 24 * time.Hour)}}}
+	sink := audit.NewMemorySink(20)
+	rec := audit.New(sink)
+	log := &captureLogger{}
+	sc := NewClientSecretExpiryScanner(store, rec, nil, log,
+		WithClientSecretWarningClaimStore(failingWarningClaimStore{}))
+
+	sc.sweep(ctx)
+	sc.sweep(ctx)
+
+	events, _ := sink.Query(ctx, audit.Query{Type: audit.EventClientSecretExpiring})
+	if len(events) != 3 {
+		t.Fatalf("claim outage events = %d, want 3", len(events))
+	}
+	claimFailures := 0
+	for _, msg := range log.errors {
+		if msg == "client secret expiry warning claim failed" {
+			claimFailures++
+		}
+	}
+	if claimFailures != 3 {
+		t.Fatalf("claim failure logs = %d, want 3: %v", claimFailures, log.errors)
+	}
+}
+
+func TestMemoryClientSecretWarningClaimStore_Concurrent(t *testing.T) {
+	t.Parallel()
+	store := NewMemoryClientSecretWarningClaimStore()
+	claim := ClientSecretWarningClaim{
+		ClientID: "c-1", Window: 7 * 24 * time.Hour,
+		Day:             time.Date(2026, time.January, 2, 0, 0, 0, 0, time.UTC),
+		SecretExpiresAt: time.Date(2026, time.January, 9, 0, 0, 0, 0, time.UTC),
+	}
+	const attempts = 64
+	results := make(chan bool, attempts)
+	var wg sync.WaitGroup
+	wg.Add(attempts)
+	for i := 0; i < attempts; i++ {
+		go func() {
+			defer wg.Done()
+			won, err := store.Claim(context.Background(), claim)
+			if err != nil {
+				t.Errorf("claim: %v", err)
+			}
+			results <- won
+		}()
+	}
+	wg.Wait()
+	close(results)
+	winners := 0
+	for won := range results {
+		if won {
+			winners++
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("concurrent winners = %d, want 1", winners)
 	}
 }
 
