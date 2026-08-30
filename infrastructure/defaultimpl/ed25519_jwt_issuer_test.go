@@ -204,3 +204,42 @@ func TestEd25519JWT_ClockInjectionControlsClaims(t *testing.T) {
 		t.Errorf("ExpiresAt = %v, want %v", claims.ExpiresAt, want)
 	}
 }
+
+func TestEd25519JWT_MTLSCertLifetimeCeiling(t *testing.T) {
+	t.Parallel()
+	fixed := time.Now().Truncate(time.Second)
+	ttl := time.Hour
+	cases := []struct {
+		name     string
+		notAfter time.Time
+		wantExp  time.Time
+		wantIn   int
+	}{
+		{"before TTL", fixed.Add(10 * time.Minute), fixed.Add(10 * time.Minute), 10 * 60},
+		{"after TTL", fixed.Add(2 * time.Hour), fixed.Add(ttl), int(ttl.Seconds())},
+		{"zero uncapped", time.Time{}, fixed.Add(ttl), int(ttl.Seconds())},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			iss := defaultimpl.NewEd25519JWTIssuer(
+				defaultimpl.WithEd25519TokenTTL(ttl),
+				defaultimpl.WithEd25519Clock(fixedClock{t: fixed}),
+			)
+			tok, err := iss.Issue(context.Background(), &sso.Subject{ID: "u", NotAfter: tc.notAfter}, nil)
+			if err != nil {
+				t.Fatalf("Issue: %v", err)
+			}
+			claims, err := iss.Validate(context.Background(), tok.AccessToken)
+			if err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			if !claims.ExpiresAt.Equal(tc.wantExp) {
+				t.Errorf("ExpiresAt = %v, want %v", claims.ExpiresAt, tc.wantExp)
+			}
+			if tok.ExpiresIn != tc.wantIn {
+				t.Errorf("ExpiresIn = %d, want %d", tok.ExpiresIn, tc.wantIn)
+			}
+		})
+	}
+}

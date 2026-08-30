@@ -132,6 +132,13 @@ func TestMTLSBound_StampsCnfX5TS256(t *testing.T) {
 	if got != want {
 		t.Errorf("cnf.x5t#S256 = %q want %q", got, want)
 	}
+	exp, ok := payload["exp"].(float64)
+	if !ok {
+		t.Fatalf("exp missing from access token: %v", payload)
+	}
+	if int64(exp) > cert.NotAfter.Unix() {
+		t.Errorf("access-token exp = %d exceeds certificate NotAfter = %d", int64(exp), cert.NotAfter.Unix())
+	}
 	// Token type stays Bearer — RFC 8705 doesn't introduce a new type.
 	if out["token_type"] != "Bearer" {
 		t.Errorf("token_type = %v want Bearer (mTLS keeps Bearer)", out["token_type"])

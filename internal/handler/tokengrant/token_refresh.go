@@ -226,7 +226,7 @@ func refreshIssueAndRotate(d RefreshGrantDeps, ctx core.HandlerContext, client *
 		return
 	}
 	issuedSub := d.ApplyPairwiseSubject(ctx.Request().Context(), client, info.UserID)
-	subject := refreshRotatedSubject(client, info, issuedSub, servingRegionFrom(ctx), dpopJKT, mtlsX5T)
+	subject := refreshRotatedSubject(client, info, issuedSub, servingRegionFrom(ctx), dpopJKT, mtlsX5T, MTLSCertNotAfterFrom(ctx))
 	token, err := ti.Issue(ctx.Request().Context(), subject, grantScopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)
@@ -284,7 +284,7 @@ func refreshRotateFamily(d RefreshGrantDeps, ctx core.HandlerContext, client *co
 // refreshRotatedSubject builds the Subject for a rotated access token. RFC 9068:
 // a rotation does NOT reset auth_time and keeps the original AMR — the underlying
 // authentication event is the original login, not this exchange.
-func refreshRotatedSubject(client *core.Client, info *oauth.RefreshToken, issuedSub, servingRegion, dpopJKT, mtlsX5T string) *core.Subject {
+func refreshRotatedSubject(client *core.Client, info *oauth.RefreshToken, issuedSub, servingRegion, dpopJKT, mtlsX5T string, mtlsNotAfter time.Time) *core.Subject {
 	return &core.Subject{
 		ID: issuedSub, Provider: info.Provider, Claims: info.Attributes,
 		Resources: info.Resources,
@@ -324,6 +324,7 @@ func refreshRotatedSubject(client *core.Client, info *oauth.RefreshToken, issued
 		TTL:                 client.AccessTokenTTL,
 		ConfirmationJKT:     dpopJKT,
 		ConfirmationX5TS256: mtlsX5T,
+		NotAfter:            mtlsNotAfter,
 	}
 }
 

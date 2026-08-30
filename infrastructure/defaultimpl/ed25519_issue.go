@@ -25,7 +25,7 @@ func (j *Ed25519JWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scop
 	// default — preserves backwards compatibility for callers
 	// that don't set Subject.TTL.
 	effectiveTTL := effectiveAccessTTL(subject, j.tokenTTL)
-	expiresAt := now.Add(effectiveTTL)
+	expiresAt, expiresIn := accessTokenExpiry(now, effectiveTTL, subject.NotAfter)
 
 	// RFC 9068 §2.1: header `typ` MUST be `at+jwt` to distinguish
 	// access tokens from other JWT shapes (ID tokens, generic JWT)
@@ -51,7 +51,7 @@ func (j *Ed25519JWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scop
 	return &sso.Token{
 		AccessToken: token,
 		TokenType:   sso.TokenTypeBearer,
-		ExpiresIn:   int(effectiveTTL.Seconds()),
+		ExpiresIn:   expiresIn,
 		Scope:       payload.Scope,
 		CreatedAt:   now,
 	}, nil

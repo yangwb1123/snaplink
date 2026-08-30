@@ -124,6 +124,7 @@ func issueSAML2Token(d SAML2BearerGrantDeps, ctx core.HandlerContext, client *co
 		TTL:                 client.AccessTokenTTL,
 		ConfirmationJKT:     dpopJKT,
 		ConfirmationX5TS256: mtlsX5T,
+		NotAfter:            MTLSCertNotAfterFrom(ctx),
 		ServingRegion:       servingRegionFrom(ctx),
 	}, scopes)
 	if err != nil {

@@ -113,6 +113,7 @@ func issueJWTBearerToken(d JWTBearerGrantDeps, ctx core.HandlerContext, client *
 		TTL:                 client.AccessTokenTTL,
 		ConfirmationJKT:     dpopJKT,
 		ConfirmationX5TS256: mtlsX5T,
+		NotAfter:            MTLSCertNotAfterFrom(ctx),
 		ServingRegion:       servingRegionFrom(ctx),
 	}, scopes)
 	if err != nil {

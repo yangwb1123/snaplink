@@ -110,25 +110,24 @@ func buildCIBATokenResponse(d CIBAGrantDeps, ctx core.HandlerContext, client *co
 	}
 	provider := cibaProvider(r)
 	issuedSub := d.ApplyPairwiseSubject(ctx.Request().Context(), client, r.SubjectID)
-	// Global scope registry (opt-in): the stored entry's scopes are the
-	// effective set; one check covers poll AND push (MintCIBATokensForPush
-	// shares this builder).
+	// Global scope registry (opt-in): the stored entry's scopes are the effective
+	// set; one check covers poll AND push (MintCIBATokensForPush shares this builder).
 	if scoperegistry.RejectUnregistered(ctx, d.ScopeRegistry(), r.Scopes) {
 		return nil, false
 	}
 	token, err := ti.Issue(ctx.Request().Context(), &core.Subject{
-		ID:                  issuedSub,
-		Provider:            provider,
-		Resources:           r.Resources,
-		ClientID:            client.ID,
-		TenantID:            client.TenantID,
-		AuthTime:            now,
-		AMR:                 []string{provider},
-		ACR:                 r.ACRValues,
-		ServingRegion:       servingRegionFrom(ctx),
-		TTL:                 client.AccessTokenTTL,
-		ConfirmationJKT:     dpopJKT,
-		ConfirmationX5TS256: mtlsX5T,
+		ID:              issuedSub,
+		Provider:        provider,
+		Resources:       r.Resources,
+		ClientID:        client.ID,
+		TenantID:        client.TenantID,
+		AuthTime:        now,
+		AMR:             []string{provider},
+		ACR:             r.ACRValues,
+		ServingRegion:   servingRegionFrom(ctx),
+		TTL:             client.AccessTokenTTL,
+		ConfirmationJKT: dpopJKT, ConfirmationX5TS256: mtlsX5T,
+		NotAfter: MTLSCertNotAfterFrom(ctx),
 	}, r.Scopes)
 	if err != nil {
 		d.SrvLogger().Error("ciba token issuance failed", "strategy", strategy, "error", err)

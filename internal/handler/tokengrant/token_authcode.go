@@ -143,6 +143,7 @@ func authCodeIssueAccessToken(d AuthCodeGrantDeps, ctx core.HandlerContext, clie
 		TTL:                  client.AccessTokenTTL,
 		ConfirmationJKT:      dpopJKT,
 		ConfirmationX5TS256:  mtlsX5T,
+		NotAfter:             MTLSCertNotAfterFrom(ctx),
 		// OIDC §5.5: login-time claims param rides the token for /userinfo.
 		RequestedClaims: oauth.CloneRawJSON(info.RequestedClaims),
 	}, scopes)

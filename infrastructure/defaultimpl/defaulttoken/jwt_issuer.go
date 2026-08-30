@@ -54,9 +54,21 @@ func NewJWTIssuer(opts ...JWTIssuerOption) *JWTIssuer {
 	return j
 }
 
+// accessTokenExpiry applies the optional RFC 8705 certificate lifetime ceiling.
+// The zero-ceiling path preserves the issuer's existing TTL-derived response.
+func accessTokenExpiry(now time.Time, ttl time.Duration, notAfter time.Time) (time.Time, int) {
+	expiresAt := now.Add(ttl)
+	expiresIn := int(ttl.Seconds())
+	if !notAfter.IsZero() && notAfter.Before(expiresAt) {
+		expiresAt = notAfter
+		expiresIn = int(max(time.Duration(0), expiresAt.Sub(now)).Seconds())
+	}
+	return expiresAt, expiresIn
+}
+
 func (j *JWTIssuer) Issue(ctx context.Context, subject *core.Subject, scopes []string) (*core.Token, error) {
 	now := time.Now()
-	expiresAt := now.Add(j.tokenTTL)
+	expiresAt, expiresIn := accessTokenExpiry(now, j.tokenTTL, subject.NotAfter)
 
 	claims := &core.TokenClaims{
 		TokenUse:  core.TokenUseAccessToken,
@@ -80,7 +92,7 @@ func (j *JWTIssuer) Issue(ctx context.Context, subject *core.Subject, scopes []s
 	return &core.Token{
 		AccessToken: tokenString,
 		TokenType:   core.TokenTypeBearer,
-		ExpiresIn:   int(j.tokenTTL.Seconds()),
+		ExpiresIn:   expiresIn,
 		Scope:       strings.Join(scopes, " "),
 		CreatedAt:   now,
 	}, nil

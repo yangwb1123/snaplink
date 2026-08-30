@@ -103,6 +103,7 @@ func deviceMintAndRespond(d DeviceGrantDeps, ctx core.HandlerContext, client *co
 		TTL:                 client.AccessTokenTTL,
 		ConfirmationJKT:     dpopJKT,
 		ConfirmationX5TS256: mtlsX5T,
+		NotAfter:            MTLSCertNotAfterFrom(ctx),
 	}, dc.Scopes)
 	if err != nil {
 		d.SrvLogger().Error("device token issuance failed", "strategy", strategy, "error", err)

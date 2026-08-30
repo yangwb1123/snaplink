@@ -3,6 +3,8 @@ package tokengrant
 import (
 	"sync"
 	"time"
+
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // refreshGraceCache makes a benign concurrent double-submit of a refresh token
@@ -32,6 +34,16 @@ type refreshGraceEntry struct {
 
 func NewRefreshGraceCache(window time.Duration) *RefreshGraceCache {
 	return &RefreshGraceCache{window: window, m: make(map[string]refreshGraceEntry)}
+}
+
+// MTLSCertNotAfterFrom reads the request-scoped mTLS certificate expiry. A
+// missing or incorrectly typed value is deliberately treated as uncapped.
+func MTLSCertNotAfterFrom(ctx core.HandlerContext) time.Time {
+	if ctx == nil {
+		return time.Time{}
+	}
+	notAfter, _ := ctx.Get(core.MTLSCertNotAfterContextKey).(time.Time)
+	return notAfter
 }
 
 // remember caches resp as the successor for the just-consumed token. resp is

@@ -62,6 +62,18 @@ func effectiveAccessTTL(subject *sso.Subject, defaultTTL time.Duration) time.Dur
 	return effectiveTTL
 }
 
+// accessTokenExpiry applies the optional RFC 8705 certificate lifetime ceiling.
+// The zero-ceiling path preserves the issuer's existing TTL-derived response.
+func accessTokenExpiry(now time.Time, ttl time.Duration, notAfter time.Time) (time.Time, int) {
+	expiresAt := now.Add(ttl)
+	expiresIn := int(ttl.Seconds())
+	if !notAfter.IsZero() && notAfter.Before(expiresAt) {
+		expiresAt = notAfter
+		expiresIn = int(max(time.Duration(0), expiresAt.Sub(now)).Seconds())
+	}
+	return expiresAt, expiresIn
+}
+
 // applyOptionalClaims projects the optional RFC 9068 §2.2 access-token
 // claims onto an already-populated ed25519Payload. Each `if` guard is
 // wire-visible — it controls whether the claim is emitted — so every

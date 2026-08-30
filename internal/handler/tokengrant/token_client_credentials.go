@@ -53,6 +53,7 @@ func HandleClientCredentialsGrant(d ClientCredentialsDeps, ctx core.HandlerConte
 		TTL:                 client.AccessTokenTTL,
 		ConfirmationJKT:     dpopJKT,
 		ConfirmationX5TS256: mtlsX5T,
+		NotAfter:            MTLSCertNotAfterFrom(ctx),
 		ServingRegion:       servingRegionFrom(ctx),
 	}, grantCCScopes)
 	if err != nil {

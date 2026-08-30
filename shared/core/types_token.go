@@ -263,6 +263,13 @@ type Subject struct {
 	// ConfirmationJKT — a single token uses one PoP mechanism.
 	ConfirmationX5TS256 string
 
+	// NotAfter is the absolute ceiling for this access token's expiry. Issuers
+	// clamp downward only: min(now+TTL, NotAfter). Zero means uncapped.
+	// Refresh-token lifetime is not capped by this field (out of scope). An
+	// already-expired value produces an immediately-expired token without a
+	// new error.
+	NotAfter time.Time
+
 	// Actor (RFC 8693 §4.1) names the party acting on behalf of
 	// the Subject for delegation chains. When set, the issued
 	// access token carries an `act` claim — a nested object

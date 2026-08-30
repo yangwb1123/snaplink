@@ -47,8 +47,8 @@ type tokExState struct {
 	// confJKT / confX5T are the sender-constraint thumbprints (DPoP JKT / mTLS
 	// x5t#S256) captured from the /token request; set on the issued access token's
 	// cnf so a sender-constrained exchange yields a bound token, not an unbound one.
-	confJKT string
-	confX5T string
+	confJKT, confX5T string
+	mtlsNotAfter     time.Time
 }
 
 // tokExValidateRequestTypes runs the RFC 8693 pre-flight type validation. Every
@@ -424,10 +424,10 @@ func tokExSubject(client *core.Client, st *tokExState, servingRegion string) *co
 		// authorization the user originally consented to.
 		AuthorizationDetails: oauth.CloneRawJSON(st.claims.AuthorizationDetails),
 		// RFC 9449 / RFC 8705 sender constraint: bind the exchanged token to the
-		// presented DPoP key / mTLS cert thumbprint when one was supplied, matching
-		// every other issuance grant. Empty leaves the token unbound (as before).
-		ConfirmationJKT:     st.confJKT,
-		ConfirmationX5TS256: st.confX5T,
+		// presented DPoP key / mTLS cert thumbprint when supplied, matching every
+		// other issuance grant. Empty leaves the token unbound (as before).
+		ConfirmationJKT: st.confJKT, ConfirmationX5TS256: st.confX5T,
+		NotAfter: st.mtlsNotAfter,
 	}
 }
 

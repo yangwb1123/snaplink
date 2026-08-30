@@ -58,7 +58,7 @@ func (s *SessionTokenIssuer) Issue(_ context.Context, subject *core.Subject, sco
 	}
 	tokenID := base64.RawURLEncoding.EncodeToString(buf)
 	now := time.Now()
-	expiresAt := now.Add(s.ttl)
+	expiresAt, expiresIn := accessTokenExpiry(now, s.ttl, subject.NotAfter)
 
 	s.tokens.Store(tokenID, &sessionEntry{
 		claims: &core.TokenClaims{
@@ -76,7 +76,7 @@ func (s *SessionTokenIssuer) Issue(_ context.Context, subject *core.Subject, sco
 	return &core.Token{
 		AccessToken: tokenID,
 		TokenType:   core.TokenTypeBearer,
-		ExpiresIn:   int(s.ttl.Seconds()),
+		ExpiresIn:   expiresIn,
 		Scope:       strings.Join(scopes, " "),
 		CreatedAt:   now,
 	}, nil

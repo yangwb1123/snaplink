@@ -13,6 +13,7 @@ import (
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
 	"github.com/yangwb1123/snaplink/protocols/oauth/txntoken"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func (s *Server) handleToken(ctx HandlerContext) {
@@ -221,7 +222,7 @@ func (s *Server) dispatchTokenExchangeOrTxnToken(ctx HandlerContext, client *Cli
 		s.handleTransactionTokenGrant(ctx, client, req)
 		return
 	}
-	s.handleTokenExchangeGrant(ctx, client, buildTokenExchangeRequest(req, dpopJKT, mtlsX5T))
+	s.handleTokenExchangeGrant(ctx, client, buildTokenExchangeRequest(ctx, req, dpopJKT, mtlsX5T))
 }
 
 // buildTokenExchangeRequest maps the parsed /token parameters onto the RFC 8693
@@ -229,7 +230,7 @@ func (s *Server) dispatchTokenExchangeOrTxnToken(ctx HandlerContext, client *Cli
 // sender-constraint thumbprints so the exchanged token is cnf-bound like every
 // other issuance grant. Kept out of dispatchTokenGrant to hold that switch within
 // the function-length budget.
-func buildTokenExchangeRequest(req oauth.TokenRequest, dpopJKT, mtlsX5T string) tokengrant.TokenExchangeRequest {
+func buildTokenExchangeRequest(ctx HandlerContext, req oauth.TokenRequest, dpopJKT, mtlsX5T string) tokengrant.TokenExchangeRequest {
 	return tokengrant.TokenExchangeRequest{
 		SubjectToken:       req.SubjectToken,
 		SubjectTokenType:   req.SubjectTokenType,
@@ -242,6 +243,7 @@ func buildTokenExchangeRequest(req oauth.TokenRequest, dpopJKT, mtlsX5T string) 
 		ACRValues:          req.ACRValues,
 		DPoPJKT:            dpopJKT,
 		MTLSX5T:            mtlsX5T,
+		MTLSNotAfter:       tokengrant.MTLSCertNotAfterFrom(ctx),
 	}
 }
 
@@ -290,14 +292,14 @@ func (s *Server) captureSenderConstraint(ctx HandlerContext) (dpopJKT, mtlsX5T s
 	// client cert extractor is wired AND the inbound request
 	// carries a client cert, stamp the cert's SHA-256 thumbprint
 	// into the token's cnf.x5t#S256 claim. Mutually exclusive
-	// with DPoP — first-set wins (caller MUST NOT supply both,
-	// the configuration is per-token).
+	// with DPoP — first-set wins (caller MUST NOT supply both, the configuration
+	// is per-token).
 	if s.clientCertExtractor != nil {
 		if cert, ok := s.clientCertExtractor.ExtractClientCert(ctx.Request()); ok && cert != nil {
+			ctx.Set(core.MTLSCertNotAfterContextKey, cert.NotAfter)
 			mtlsX5T = certificateThumbprintS256(cert)
 		}
 	}
-
 	return dpopJKT, mtlsX5T, false
 }
 

@@ -59,6 +59,44 @@ func TestJWTIssuer_DefaultsApplied(t *testing.T) {
 	}
 }
 
+func TestJWTIssuer_MTLSCertLifetimeCeiling(t *testing.T) {
+	t.Parallel()
+	ttl := 2 * time.Hour
+	cases := []struct {
+		name     string
+		notAfter time.Time
+	}{
+		{"before TTL", time.Now().Add(10 * time.Minute)},
+		{"after TTL", time.Now().Add(3 * time.Hour)},
+		{"zero uncapped", time.Time{}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			j := NewJWTIssuer(WithJWTTokenTTL(ttl))
+			tok, err := j.Issue(context.Background(), &core.Subject{ID: "u", NotAfter: tc.notAfter}, nil)
+			if err != nil {
+				t.Fatalf("Issue: %v", err)
+			}
+			claims, err := j.Validate(context.Background(), tok.AccessToken)
+			if err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			want := tok.CreatedAt.Add(ttl)
+			if !tc.notAfter.IsZero() && tc.notAfter.Before(want) {
+				want = tc.notAfter
+			}
+			if !claims.ExpiresAt.Equal(want) {
+				t.Errorf("ExpiresAt = %v, want %v", claims.ExpiresAt, want)
+			}
+			wantIn := int(max(time.Duration(0), claims.ExpiresAt.Sub(tok.CreatedAt)).Seconds())
+			if tok.ExpiresIn != wantIn {
+				t.Errorf("ExpiresIn = %d, want %d", tok.ExpiresIn, wantIn)
+			}
+		})
+	}
+}
+
 func TestJWTIssuer_GeneratesUniqueTokens(t *testing.T) {
 	t.Parallel()
 	j := NewJWTIssuer()

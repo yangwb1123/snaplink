@@ -1,11 +1,16 @@
 package sso
 
 import (
+	"crypto/x509"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // TestBoundLoginProvider is the cardinality-DoS regression guard: an arbitrary
@@ -31,7 +36,8 @@ func TestBoundLoginProvider(t *testing.T) {
 // grant (the binding was previously dropped for token-exchange only).
 func TestBuildTokenExchangeRequest_ThreadsSenderConstraint(t *testing.T) {
 	t.Parallel()
-	got := buildTokenExchangeRequest(oauth.TokenRequest{
+	ctx := core.NewContext(httptest.NewRecorder(), httptest.NewRequest("POST", "/token", nil))
+	got := buildTokenExchangeRequest(ctx, oauth.TokenRequest{
 		SubjectToken:     "st",
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:access_token",
 		Scope:            "openid",
@@ -41,6 +47,33 @@ func TestBuildTokenExchangeRequest_ThreadsSenderConstraint(t *testing.T) {
 	}
 	if got.SubjectToken != "st" || got.Scope != "openid" {
 		t.Fatalf("base fields not mapped: %+v", got)
+	}
+}
+
+func TestCaptureSenderConstraintStampsMTLSNotAfter(t *testing.T) {
+	t.Parallel()
+	notAfter := time.Date(2030, time.January, 2, 3, 4, 5, 0, time.UTC)
+	cert := &x509.Certificate{Raw: []byte("test-certificate-der"), NotAfter: notAfter}
+	s := &Server{}
+	s.clientCertExtractor = ClientCertExtractorFunc(func(_ *http.Request) (*x509.Certificate, bool) {
+		return cert, true
+	})
+	ctx := core.NewContext(httptest.NewRecorder(), httptest.NewRequest("POST", "/token", nil))
+	_, thumbprint, handled := s.captureSenderConstraint(ctx)
+	if handled || thumbprint == "" {
+		t.Fatalf("captureSenderConstraint handled=%v thumbprint=%q", handled, thumbprint)
+	}
+	if got := tokengrant.MTLSCertNotAfterFrom(ctx); !got.Equal(notAfter) {
+		t.Fatalf("MTLS NotAfter = %v, want %v", got, notAfter)
+	}
+
+	missing := core.NewContext(httptest.NewRecorder(), httptest.NewRequest("POST", "/token", nil))
+	if got := tokengrant.MTLSCertNotAfterFrom(missing); !got.IsZero() {
+		t.Fatalf("missing MTLS NotAfter = %v, want zero", got)
+	}
+	missing.Set(core.MTLSCertNotAfterContextKey, "wrong type")
+	if got := tokengrant.MTLSCertNotAfterFrom(missing); !got.IsZero() {
+		t.Fatalf("wrong-typed MTLS NotAfter = %v, want zero", got)
 	}
 }
 

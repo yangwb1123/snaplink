@@ -43,6 +43,9 @@ type TokenExchangeRequest struct {
 	// grants do. Empty = no sender-constraint (unbound token, as before).
 	DPoPJKT string
 	MTLSX5T string
+	// MTLSNotAfter is the presented certificate's lifetime ceiling for the
+	// exchanged access token. It is not applied to any refresh-token output.
+	MTLSNotAfter time.Time
 }
 
 // TokenExchangeDeps is what HandleTokenExchangeGrant needs. *sso.Server
@@ -127,7 +130,7 @@ func HandleTokenExchangeGrant(d TokenExchangeDeps, ctx core.HandlerContext, clie
 	if tokExValidateRequestTypes(d, ctx, client, req) {
 		return
 	}
-	st := &tokExState{confJKT: req.DPoPJKT, confX5T: req.MTLSX5T}
+	st := &tokExState{confJKT: req.DPoPJKT, confX5T: req.MTLSX5T, mtlsNotAfter: req.MTLSNotAfter}
 	// tokExRefuseNonDelegable rejects a NON-DELEGABLE break-glass subject_token
 	// before any mint; short-circuited so st.claims is read only after resolve.
 	if tokExResolveSubject(d, ctx, req, st) || tokExRefuseNonDelegable(ctx, st) {

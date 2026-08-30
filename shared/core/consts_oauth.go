@@ -2,6 +2,10 @@ package core
 
 import "time"
 
+// MTLSCertNotAfterContextKey carries the presented mTLS certificate's absolute
+// expiry through a request-scoped HandlerContext to token issuance.
+const MTLSCertNotAfterContextKey = "mtls:cert_not_after"
+
 // PathMyPreferences is kept with the split wire constants to keep the main
 // endpoint-constant file below its hard line budget.
 const PathMyPreferences = "/me/preferences"
