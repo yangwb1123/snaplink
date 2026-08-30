@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"time"
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
@@ -113,14 +114,14 @@ func tokenIdempotencyCacheKey(clientID, rawKey string, req oauth.TokenRequest, d
 	return "token:" + base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-// verifyMTLSBearer enforces the resource-side half of RFC 8705 §3.
+// verifyMTLSBearer enforces the resource-side half of RFC 8705 §3 and §4.
 // Mirror of verifyDPoPBearer: when the access token carries
 // cnf.x5t#S256, the inbound request MUST be on a TLS connection
-// whose client cert has the matching SHA-256 thumbprint.
+// whose client cert has the matching SHA-256 thumbprint and is currently valid.
 //
 // Returns nil when:
 //   - the token isn't mTLS-bound (no cnf.x5t#S256), OR
-//   - the inbound cert thumbprint equals the bound value.
+//   - the inbound cert thumbprint equals the bound value and the cert is currently valid.
 //
 // Returns an error mapped to invalid_token (same wire shape as
 // "invalid bearer") on mismatch — oracle-resistance: probes can't
@@ -150,6 +151,9 @@ func (s *Server) verifyMTLSBearer(ctx HandlerContext, claims *TokenClaims) error
 	if got != claims.ConfirmationX5TS256 {
 		return errCertThumbprintMismatch
 	}
+	if !certCurrentlyValid(cert, time.Now()) {
+		return errCertNotValid
+	}
 	return nil
 }
 
@@ -158,6 +162,7 @@ func (s *Server) verifyMTLSBearer(ctx HandlerContext, claims *TokenClaims) error
 var (
 	errCertRequired           = httpError("mtls: token bound but no client cert presented")
 	errCertThumbprintMismatch = httpError("mtls: cert thumbprint does not match cnf.x5t#S256")
+	errCertNotValid           = httpError("mtls: client certificate is not currently valid")
 )
 
 // httpError is a stdlib-free sentinel-error type kept local to

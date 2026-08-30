@@ -3,6 +3,7 @@ package sso
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,12 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
+
+// certCurrentlyValid follows TLS certificate validity semantics: both boundary
+// instants are valid, so rejection is strictly before NotBefore or after NotAfter.
+func certCurrentlyValid(cert *x509.Certificate, now time.Time) bool {
+	return cert != nil && !now.Before(cert.NotBefore) && !now.After(cert.NotAfter)
+}
 
 func verifyDPoPProof(
 	ctx context.Context,

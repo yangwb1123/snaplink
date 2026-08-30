@@ -50,6 +50,34 @@ func TestBuildTokenExchangeRequest_ThreadsSenderConstraint(t *testing.T) {
 	}
 }
 
+func TestCertCurrentlyValidBoundaries(t *testing.T) {
+	t.Parallel()
+	before := time.Date(2030, time.January, 2, 3, 4, 5, 0, time.UTC)
+	after := before.Add(time.Hour)
+	cert := &x509.Certificate{NotBefore: before, NotAfter: after}
+	// Equality at either boundary is valid; only instants outside the window reject.
+	tests := []struct {
+		name string
+		now  time.Time
+		want bool
+	}{
+		{"exactly NotBefore", before, true},
+		{"exactly NotAfter", after, true},
+		{"before NotBefore", before.Add(-time.Nanosecond), false},
+		{"after NotAfter", after.Add(time.Nanosecond), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := certCurrentlyValid(cert, tc.now); got != tc.want {
+				t.Errorf("certCurrentlyValid(..., %v) = %v, want %v", tc.now, got, tc.want)
+			}
+		})
+	}
+	if certCurrentlyValid(nil, before) {
+		t.Error("nil certificate must not be currently valid")
+	}
+}
+
 func TestCaptureSenderConstraintStampsMTLSNotAfter(t *testing.T) {
 	t.Parallel()
 	notAfter := time.Date(2030, time.January, 2, 3, 4, 5, 0, time.UTC)

@@ -208,6 +208,7 @@ func newMTLSResourceHarness(t *testing.T) (*httptest.Server, *x509.Certificate, 
 			return &sso.AuthResult{UserID: mtlsUser, Provider: "password"}, nil
 		},
 	))
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: mtlsClient})
 	extractor := &mutableCertExtractor{cert: mintCert}
 	srv := sso.NewServer(
 		sso.WithUserProvider(users),
@@ -252,6 +253,44 @@ func TestMTLSResource_RejectsWhenCertMissing(t *testing.T) {
 	if infoResp.StatusCode != http.StatusUnauthorized {
 		rb, _ := io.ReadAll(infoResp.Body)
 		t.Fatalf("status=%d want 401 (cert missing on bound token) body=%s", infoResp.StatusCode, rb)
+	}
+}
+
+func TestMTLSResource_RejectsWhenCertValidityWindowFails(t *testing.T) {
+	srv, cert, _ := newMTLSResourceHarness(t)
+	access := mintMTLSResourceToken(t, srv)
+	originalBefore, originalAfter := cert.NotBefore, cert.NotAfter
+
+	t.Run("expired", func(t *testing.T) {
+		cert.NotAfter = time.Now().Add(-time.Second)
+		assertMTLSResourceInvalidToken(t, mtlsResourceUserinfo(t, srv, access))
+	})
+	t.Run("not yet valid", func(t *testing.T) {
+		cert.NotBefore = time.Now().Add(time.Hour)
+		cert.NotAfter = originalAfter
+		assertMTLSResourceInvalidToken(t, mtlsResourceUserinfo(t, srv, access))
+	})
+	t.Run("currently valid", func(t *testing.T) {
+		cert.NotBefore, cert.NotAfter = originalBefore, originalAfter
+		resp := mtlsResourceUserinfo(t, srv, access)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("currently valid matching cert status=%d, want 200", resp.StatusCode)
+		}
+	})
+}
+
+func TestMTLSResource_NonBoundTokenIgnoresExpiredCert(t *testing.T) {
+	srv, cert, extractor := newMTLSResourceHarness(t)
+	extractor.cert = nil
+	access := mintMTLSResourceToken(t, srv)
+	extractor.cert = cert
+	cert.NotAfter = time.Now().Add(-time.Second)
+
+	resp := mtlsResourceUserinfo(t, srv, access)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("non-bound token with expired cert status=%d, want 200", resp.StatusCode)
 	}
 }
 
@@ -312,15 +351,61 @@ func TestMTLSResource_LegacyBearerSkipsCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = infoResp.Body.Close() }()
-	// The exact status varies based on user lookup; the key
-	// assertion is that we DID NOT get 401 from the mTLS gate.
-	// /userinfo with an unbound token + no user record returns
-	// 404 user_not_found.
+	// The key assertion is that we DID NOT get 401 from the mTLS gate.
 	if infoResp.StatusCode == http.StatusUnauthorized {
-		// 401 here would be wrong only if it's from the mTLS gate.
-		// We can't tell from status alone; just log for debug.
 		body, _ := io.ReadAll(infoResp.Body)
 		t.Logf("body=%s", body)
+	}
+}
+
+func mintMTLSResourceToken(t *testing.T, srv *httptest.Server) string {
+	t.Helper()
+	form := "grant_type=client_credentials&client_id=" + mtlsClient + "&client_secret=" + mtlsSecret + "&scope=openid"
+	resp, err := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form))
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode token response: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("token status=%d body=%v", resp.StatusCode, out)
+	}
+	access, _ := out["access_token"].(string)
+	if access == "" {
+		t.Fatal("no access_token")
+	}
+	return access
+}
+
+func mtlsResourceUserinfo(t *testing.T, srv *httptest.Server, access string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/userinfo", nil)
+	if err != nil {
+		t.Fatalf("new userinfo request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+access)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("userinfo: %v", err)
+	}
+	return resp
+}
+
+func assertMTLSResourceInvalidToken(t *testing.T, resp *http.Response) {
+	t.Helper()
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status=%d want 401", resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode invalid-token response: %v", err)
+	}
+	if out["error"] != "invalid_token" {
+		t.Fatalf("error=%v want invalid_token", out["error"])
 	}
 }
 
