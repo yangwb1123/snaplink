@@ -143,6 +143,38 @@ func TestSessionTokenIssuer_ExpiredTokenDeleted(t *testing.T) {
 	}
 }
 
+func TestSessionTokenIssuer_SweepExpired(t *testing.T) {
+	t.Parallel()
+	s := NewSessionTokenIssuer(WithSessionTokenTTL(time.Millisecond))
+	ctx := context.Background()
+	expired := make([]string, 2)
+	for i := range expired {
+		tok, err := s.Issue(ctx, &core.Subject{ID: subjectN(i)}, nil)
+		if err != nil {
+			t.Fatalf("Issue expired token: %v", err)
+		}
+		expired[i] = tok.AccessToken
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	s.ttl = time.Hour
+	live, err := s.Issue(ctx, &core.Subject{ID: "live"}, nil)
+	if err != nil {
+		t.Fatalf("Issue live token: %v", err)
+	}
+	s.lastSweep.Store(0)
+	s.maybeSweepExpired(time.Now())
+
+	for _, token := range expired {
+		if _, ok := s.tokens.Load(token); ok {
+			t.Errorf("expired token %q remains retained", token)
+		}
+	}
+	if _, ok := s.tokens.Load(live.AccessToken); !ok {
+		t.Error("live token was swept")
+	}
+}
+
 func TestSessionTokenIssuer_Revoke(t *testing.T) {
 	t.Parallel()
 	s := NewSessionTokenIssuer()

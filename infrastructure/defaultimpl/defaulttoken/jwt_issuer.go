@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -19,10 +20,11 @@ const (
 
 // JWTIssuer is a simple in-memory JWT-like token issuer.
 type JWTIssuer struct {
-	secret   []byte
-	issuer   string
-	tokenTTL time.Duration
-	tokens   sync.Map // token -> *core.TokenClaims
+	secret    []byte
+	issuer    string
+	tokenTTL  time.Duration
+	tokens    sync.Map // token -> *core.TokenClaims
+	lastSweep atomic.Int64
 }
 
 type JWTIssuerOption func(*JWTIssuer)
@@ -68,6 +70,7 @@ func accessTokenExpiry(now time.Time, ttl time.Duration, notAfter time.Time) (ti
 
 func (j *JWTIssuer) Issue(ctx context.Context, subject *core.Subject, scopes []string) (*core.Token, error) {
 	now := time.Now()
+	j.maybeSweepExpired(now)
 	expiresAt, expiresIn := accessTokenExpiry(now, j.tokenTTL, subject.NotAfter)
 
 	claims := &core.TokenClaims{
@@ -105,6 +108,7 @@ func (j *JWTIssuer) Validate(ctx context.Context, token string) (*core.TokenClai
 	}
 	c := claims.(*core.TokenClaims)
 	if time.Since(c.ExpiresAt) > 0 {
+		j.tokens.Delete(token)
 		return nil, fmt.Errorf("jwt: token expired")
 	}
 	return c, nil
@@ -115,6 +119,18 @@ func (j *JWTIssuer) Revoke(ctx context.Context, token string) error {
 		return fmt.Errorf("jwt: token not found")
 	}
 	return nil
+}
+
+func (j *JWTIssuer) maybeSweepExpired(now time.Time) {
+	nowUnix := now.UnixNano()
+	previous := j.lastSweep.Load()
+	if nowUnix-previous < sweepInterval.Nanoseconds() ||
+		!j.lastSweep.CompareAndSwap(previous, nowUnix) {
+		return
+	}
+	sweepExpired(&j.tokens, now, func(value any) time.Time {
+		return value.(*core.TokenClaims).ExpiresAt
+	})
 }
 
 func (j *JWTIssuer) buildToken(claims *core.TokenClaims) (string, error) {

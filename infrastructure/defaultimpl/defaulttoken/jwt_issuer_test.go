@@ -134,6 +134,9 @@ func TestJWTIssuer_ValidateExpired(t *testing.T) {
 	if _, err := j.Validate(context.Background(), tok.AccessToken); err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Errorf("err = %v, want expired", err)
 	}
+	if _, ok := j.tokens.Load(tok.AccessToken); ok {
+		t.Error("expired token remains retained after Validate")
+	}
 }
 
 func TestJWTIssuer_Revoke(t *testing.T) {

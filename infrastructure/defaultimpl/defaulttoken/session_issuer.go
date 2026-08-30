@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -25,8 +26,9 @@ const (
 // stateless self-contained tokens, or as the strategy for browser apps that
 // just need a long-lived bearer cookie.
 type SessionTokenIssuer struct {
-	tokens sync.Map // tokenID -> *sessionEntry
-	ttl    time.Duration
+	tokens    sync.Map // tokenID -> *sessionEntry
+	ttl       time.Duration
+	lastSweep atomic.Int64
 }
 
 type sessionEntry struct {
@@ -58,6 +60,7 @@ func (s *SessionTokenIssuer) Issue(_ context.Context, subject *core.Subject, sco
 	}
 	tokenID := base64.RawURLEncoding.EncodeToString(buf)
 	now := time.Now()
+	s.maybeSweepExpired(now)
 	expiresAt, expiresIn := accessTokenExpiry(now, s.ttl, subject.NotAfter)
 
 	s.tokens.Store(tokenID, &sessionEntry{
@@ -102,4 +105,16 @@ func (s *SessionTokenIssuer) Revoke(_ context.Context, token string) error {
 		return errors.New("session_issuer: token not found")
 	}
 	return nil
+}
+
+func (s *SessionTokenIssuer) maybeSweepExpired(now time.Time) {
+	nowUnix := now.UnixNano()
+	previous := s.lastSweep.Load()
+	if nowUnix-previous < sweepInterval.Nanoseconds() ||
+		!s.lastSweep.CompareAndSwap(previous, nowUnix) {
+		return
+	}
+	sweepExpired(&s.tokens, now, func(value any) time.Time {
+		return value.(*sessionEntry).expiresAt
+	})
 }
