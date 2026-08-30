@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -71,10 +72,24 @@ var (
 	_ PushTransport     = PushTransportFunc(nil)
 )
 
+const sweepInterval = time.Minute
+
+// sweepExpiredEntries removes entries whose expiry is strictly before now.
+// An entry expiring exactly at now stays until a later sweep, preserving the
+// strict expiry boundary used by the lazy lookup paths.
+func sweepExpiredEntries[T any](entries map[string]*T, now time.Time, expiresAt func(*T) time.Time) {
+	for id, entry := range entries {
+		if expiresAt(entry).Before(now) {
+			delete(entries, id)
+		}
+	}
+}
+
 // MemoryPushApprovalStore is a process-local PushApprovalStore.
 type MemoryPushApprovalStore struct {
-	mu      sync.Mutex
-	entries map[string]*PushApproval
+	mu        sync.Mutex
+	entries   map[string]*PushApproval
+	lastSweep atomic.Int64
 }
 
 func NewMemoryPushApprovalStore() *MemoryPushApprovalStore {
@@ -87,6 +102,15 @@ func (m *MemoryPushApprovalStore) Put(_ context.Context, a *PushApproval) error 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := time.Now()
+	nowNanos := now.UnixNano()
+	previous := m.lastSweep.Load()
+	if nowNanos-previous >= int64(sweepInterval) &&
+		m.lastSweep.CompareAndSwap(previous, nowNanos) {
+		sweepExpiredEntries(m.entries, now, func(entry *PushApproval) time.Time {
+			return entry.ExpiresAt
+		})
+	}
 	cp := *a
 	m.entries[a.ID] = &cp
 	return nil

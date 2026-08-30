@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yangwb1123/snaplink/protocols/oauth"
@@ -13,15 +14,30 @@ import (
 // cibaIDBytes is the random suffix size for auth_req_id tokens. 32
 // bytes / 256 bits matches the entropy floor of the MFA challenge +
 // push approval ids so the audit trail looks uniform.
-const cibaIDBytes = 32
+const (
+	cibaIDBytes   = 32
+	sweepInterval = time.Minute
+)
+
+// sweepExpiredEntries removes requests whose expiry is strictly before now.
+// A request expiring exactly at now stays until a later sweep, preserving the
+// strict expiry boundary used by the lazy lookup paths.
+func sweepExpiredEntries(entries map[string]*oauth.CIBARequest, now time.Time) {
+	for id, entry := range entries {
+		if entry.ExpiresAt.Before(now) {
+			delete(entries, id)
+		}
+	}
+}
 
 // MemoryCIBAStore is an in-process [oauth.CIBAStore]. Single-replica
 // dev / tests; cluster deploys MUST ship the SQLite (or Redis) peer so
 // an Issue on replica A is resolvable by the callback hitting replica
 // B and the poll hitting replica C.
 type MemoryCIBAStore struct {
-	mu      sync.Mutex
-	entries map[string]*oauth.CIBARequest
+	mu        sync.Mutex
+	entries   map[string]*oauth.CIBARequest
+	lastSweep atomic.Int64
 }
 
 // NewMemoryCIBAStore returns an empty in-process store.
@@ -57,6 +73,13 @@ func (m *MemoryCIBAStore) Issue(_ context.Context, req *oauth.CIBARequest) (stri
 		ExpiresAt:               req.ExpiresAt,
 	}
 	m.mu.Lock()
+	now := time.Now()
+	nowNanos := now.UnixNano()
+	previous := m.lastSweep.Load()
+	if nowNanos-previous >= int64(sweepInterval) &&
+		m.lastSweep.CompareAndSwap(previous, nowNanos) {
+		sweepExpiredEntries(m.entries, now)
+	}
 	m.entries[id] = stored
 	m.mu.Unlock()
 	return id, nil

@@ -3,6 +3,7 @@ package defaultmfa
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -16,8 +17,9 @@ import (
 // Race-free Consume via map delete + return-if-found-and-fresh — the
 // same pattern MemoryAuthCodeStore / MemoryDeviceCodeStore use.
 type MemoryMFAChallengeStore struct {
-	mu      sync.Mutex
-	entries map[string]*spi.MFAChallenge
+	mu        sync.Mutex
+	entries   map[string]*spi.MFAChallenge
+	lastSweep atomic.Int64
 }
 
 // NewMemoryMFAChallengeStore builds an empty MFA challenge store.
@@ -34,6 +36,15 @@ func (m *MemoryMFAChallengeStore) Put(_ context.Context, c *spi.MFAChallenge) er
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := time.Now()
+	nowNanos := now.UnixNano()
+	previous := m.lastSweep.Load()
+	if nowNanos-previous >= int64(sweepInterval) &&
+		m.lastSweep.CompareAndSwap(previous, nowNanos) {
+		sweepExpiredEntries(m.entries, now, func(entry *spi.MFAChallenge) time.Time {
+			return entry.ExpiresAt
+		})
+	}
 	// Defensive copy so the caller mutating the supplied struct after
 	// Put doesn't poison the stored entry. Cheap: MFAChallenge is a
 	// small struct of values + one []byte (shared by reference but
