@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/tenant/commerce"
@@ -191,13 +192,20 @@ func (s *Service) CommitAuthorized(
 }
 
 func (s *Service) ReleaseAuthorized(
-	ctx context.Context, evidence SourceBindingEvidence, reservationID string,
+	ctx context.Context, evidence SourceBindingEvidence, reservationID, idempotencyKey string,
 ) (*Reservation, error) {
 	identity, err := authorizedReservationIdentity(evidence, reservationID)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.ReleaseReservationAuthorized(ctx, identity, s.now(), evidence)
+	if !validReleaseIdempotencyKey(idempotencyKey) {
+		return nil, ErrInvalidReservation
+	}
+	return s.store.ReleaseReservationAuthorized(ctx, identity, s.now(), evidence, idempotencyKey)
+}
+
+func validReleaseIdempotencyKey(value string) bool {
+	return value != "" && len(value) <= 256 && value == strings.TrimSpace(value)
 }
 
 func authorizedReservationIdentity(

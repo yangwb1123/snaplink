@@ -33,10 +33,32 @@ func TestReservationLifecyclePassesBoundIdentity(t *testing.T) {
 	}
 	releasePath := "/api/v1/metering/reservations/reservation-1"
 	response = serveRequest(router, defaultClaims(ScopeMeteringWrite),
-		http.MethodDelete, releasePath, "", nil)
+		http.MethodDelete, releasePath, "", jsonHeaders("release-message"))
 	if response.Code != http.StatusOK || usage.releaseEvidence != usage.commitEvidence ||
-		usage.releaseID != usage.commitID {
+		usage.releaseID != usage.commitID || usage.releaseKey != "release-message" {
 		t.Fatalf("release response/evidence = %d %+v", response.Code, usage.releaseEvidence)
+	}
+}
+
+func TestReleaseRequiresKeyAndTerminalReleaseState(t *testing.T) {
+	deps, usage, _ := defaultDeps()
+	router := testRouter(t, deps)
+	path := "/api/v1/metering/reservations/reservation-1"
+	for _, key := range []string{"", " ", strings.Repeat("x", maxIdempotencyBytes+1)} {
+		response := serveRequest(router, defaultClaims(ScopeMeteringWrite), http.MethodDelete,
+			path, "", map[string]string{headerIdempotency: key})
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("key %q response = %d %s", key, response.Code, response.Body.String())
+		}
+	}
+	if usage.releaseID != "" {
+		t.Fatal("invalid release request reached usage service")
+	}
+	usage.releaseStatus = usageledger.ReservationCommitted
+	response := serveRequest(router, defaultClaims(ScopeMeteringWrite), http.MethodDelete,
+		path, "", jsonHeaders("release-committed"))
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), ErrorReservationConflict) {
+		t.Fatalf("committed release response = %d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -64,11 +86,14 @@ func TestReservationRequestsRejectAuthorityAndUnsafeTTL(t *testing.T) {
 		}
 	}
 	response := serveRequest(router, defaultClaims(ScopeMeteringWrite), http.MethodDelete,
-		"/api/v1/metering/reservations/reservation-1", `{}`, map[string]string{
-			"Content-Type": "application/json",
-		})
+		"/api/v1/metering/reservations/reservation-1", `{}`, jsonHeaders("release-invalid"))
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("release body response = %d %s", response.Code, response.Body.String())
+	}
+	response = serveRequest(router, defaultClaims(ScopeMeteringWrite), http.MethodDelete,
+		"/api/v1/metering/reservations/reservation-1", "", nil)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("release missing key response = %d %s", response.Code, response.Body.String())
 	}
 }
 

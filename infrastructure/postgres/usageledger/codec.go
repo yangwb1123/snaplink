@@ -113,7 +113,7 @@ func scanFact(scanner rowScanner) (*ledger.UsageFact, error) {
 
 const reservationColumns = `id, tenant_id, source_system, dimension, quantity,
 period_start_ns, period_end_ns, idempotency_key, status, limit_soft, limit_hard,
-limit_unlimited, expires_at_ns, fact_id, version, created_at_ns, updated_at_ns`
+limit_unlimited, expires_at_ns, fact_id, release_idempotency_key, version, created_at_ns, updated_at_ns`
 
 func scanReservation(scanner rowScanner) (*ledger.Reservation, error) {
 	reservation := &ledger.Reservation{}
@@ -123,7 +123,8 @@ func scanReservation(scanner rowScanner) (*ledger.Reservation, error) {
 		&reservation.ID, &reservation.TenantID, &reservation.SourceSystem, &dimension,
 		&reservation.Quantity, &start, &end, &reservation.IdempotencyKey, &status,
 		&reservation.Limit.Soft, &reservation.Limit.Hard, &reservation.Limit.Unlimited,
-		&expires, &reservation.FactID, &reservation.Version, &created, &updated,
+		&expires, &reservation.FactID, &reservation.ReleaseIdempotencyKey,
+		&reservation.Version, &created, &updated,
 	)
 	if err != nil {
 		return nil, err

@@ -13673,18 +13673,23 @@ paths:
       tags: [metering]
       summary: Release a pending usage reservation.
       description: |
-        Requires `metering:write`. The route accepts no body. A missing ID and
-        an ID belonging to another tenant/source both return the same not-found
-        error; binding evidence is revalidated in the release transaction.
+        Requires `metering:write` and a non-empty `Idempotency-Key`. The route
+        accepts no body. The key is durably bound to this tenant/source and
+        reservation; retry the same DELETE with the same key to replay the
+        terminal release result. Reusing a key for another reservation, or
+        changing the key after a release, is a conflict. A missing ID and an ID
+        belonging to another tenant/source both return the same not-found error;
+        binding evidence is revalidated in the release transaction.
       operationId: releaseMachineUsageReservation
       x-required-scope: metering:write
       security:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/MeteringReservationID"
+        - $ref: "#/components/parameters/MeteringIdempotencyKey"
       responses:
         "200":
-          description: Reservation released or terminal release replayed.
+          description: Reservation released or terminal release replayed with the same idempotency key.
           headers:
             Cache-Control: { $ref: "#/components/headers/MeteringCacheControl" }
             Pragma: { $ref: "#/components/headers/MeteringPragma" }

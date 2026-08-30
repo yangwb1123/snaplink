@@ -83,6 +83,7 @@ type AuthorizedReservationStore interface {
 	) (*Reservation, *Counter, error)
 	ReleaseReservationAuthorized(
 		ctx context.Context, identity ReservationIdentity, now time.Time, evidence SourceBindingEvidence,
+		idempotencyKey string,
 	) (*Reservation, error)
 }
 

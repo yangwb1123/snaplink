@@ -54,15 +54,21 @@ func (a *API) HandleRelease(ctx core.HandlerContext) {
 		return
 	}
 	reservationID := ctx.Param("reservation_id")
-	if !validRequestID(reservationID, true) || !emptyRequestBody(ctx) {
+	key, keyOK := idempotencyKey(ctx)
+	if !validRequestID(reservationID, true) || !emptyRequestBody(ctx) || !keyOK {
 		a.failRequest(ctx, binding, operationRelease, reservationID, errInvalidJSON)
 		return
 	}
 	reservation, err := a.deps.Usage.ReleaseAuthorized(
-		ctx.Request().Context(), binding.Evidence(), reservationID,
+		ctx.Request().Context(), binding.Evidence(), reservationID, key,
 	)
 	if err != nil {
 		a.failUsage(ctx, binding, operationRelease, "", reservationID, err)
+		return
+	}
+	if reservation == nil || (reservation.Status != usageledger.ReservationReleased &&
+		reservation.Status != usageledger.ReservationExpired) {
+		a.failUsage(ctx, binding, operationRelease, "", reservationID, usageledger.ErrReservationConflict)
 		return
 	}
 	a.observeSuccess(ctx, binding, operationRelease, reservation.Dimension, reservationID)

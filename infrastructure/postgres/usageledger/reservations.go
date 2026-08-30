@@ -83,12 +83,13 @@ func reserveTx(
 
 func insertReservationTx(ctx context.Context, tx *sql.Tx, reservation *ledger.Reservation) error {
 	result, err := tx.ExecContext(ctx, `INSERT INTO usage_ledger_reservations (`+reservationColumns+`)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) ON CONFLICT DO NOTHING`,
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT DO NOTHING`,
 		reservation.ID, reservation.TenantID, reservation.SourceSystem, reservation.Dimension,
 		reservation.Quantity, timeNano(reservation.Period.Start), timeNano(reservation.Period.End),
 		reservation.IdempotencyKey, reservation.Status, reservation.Limit.Soft, reservation.Limit.Hard,
 		reservation.Limit.Unlimited, timeNano(reservation.ExpiresAt), reservation.FactID,
-		reservation.Version, timeNano(reservation.CreatedAt), timeNano(reservation.UpdatedAt))
+		reservation.ReleaseIdempotencyKey, reservation.Version, timeNano(reservation.CreatedAt),
+		timeNano(reservation.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("usageledger/postgres: insert reservation: %w", err)
 	}
@@ -254,90 +255,6 @@ WHERE id=$1 AND status='pending' AND version=$4`,
 		return ledger.ErrReservationConflict
 	}
 	return err
-}
-
-func (s *Store) ReleaseReservation(
-	ctx context.Context, identity ledger.ReservationIdentity, now time.Time,
-) (*ledger.Reservation, error) {
-	return s.releaseReservation(ctx, identity, now, nil)
-}
-
-func (s *Store) ReleaseReservationAuthorized(
-	ctx context.Context, identity ledger.ReservationIdentity, now time.Time,
-	evidence ledger.SourceBindingEvidence,
-) (*ledger.Reservation, error) {
-	return s.releaseReservation(ctx, identity, now, &evidence)
-}
-
-func (s *Store) releaseReservation(
-	ctx context.Context, identity ledger.ReservationIdentity, now time.Time,
-	evidence *ledger.SourceBindingEvidence,
-) (*ledger.Reservation, error) {
-	if err := identity.Validate(); err != nil {
-		return nil, err
-	}
-	var reservation *ledger.Reservation
-	err := runLocked(ctx, s.db, func(tx *sql.Tx) error {
-		var err error
-		reservation, err = releaseReservationTx(ctx, tx, identity, now, evidence)
-		return err
-	})
-	return reservation, err
-}
-
-func releaseReservationTx(
-	ctx context.Context, tx *sql.Tx, identity ledger.ReservationIdentity, now time.Time,
-	evidence *ledger.SourceBindingEvidence,
-) (*ledger.Reservation, error) {
-	reservationIdentity, err := loadBoundReservationTx(ctx, tx, identity, false)
-	if err != nil {
-		return nil, err
-	}
-	if err := verifySourceBindingTx(
-		ctx, tx, evidence, reservationIdentity.TenantID,
-		reservationIdentity.SourceSystem, reservationIdentity.Dimension,
-	); err != nil {
-		return nil, err
-	}
-	state, err := lockBucketTx(ctx, tx,
-		keyFor(reservationIdentity.TenantID, reservationIdentity.Dimension, reservationIdentity.Period), now)
-	if err != nil {
-		return nil, err
-	}
-	if err := expireBucketTx(ctx, tx, &state, now); err != nil {
-		return nil, err
-	}
-	reservation, err := loadBoundReservationTx(ctx, tx, identity, true)
-	if err != nil {
-		return nil, err
-	}
-	if reservation.Status == ledger.ReservationReleased || reservation.Status == ledger.ReservationExpired {
-		return reservation, nil
-	}
-	if reservation.Status != ledger.ReservationPending {
-		return nil, ledger.ErrReservationConflict
-	}
-	if err := setReservationReleasedTx(ctx, tx, reservation, now); err != nil {
-		return nil, err
-	}
-	if err := addReservedTx(ctx, tx, state.key, -reservation.Quantity, now); err != nil {
-		return nil, err
-	}
-	reservation.Status, reservation.UpdatedAt = ledger.ReservationReleased, now
-	reservation.Version++
-	return reservation, nil
-}
-
-func setReservationReleasedTx(
-	ctx context.Context, tx *sql.Tx, reservation *ledger.Reservation, now time.Time,
-) error {
-	_, err := tx.ExecContext(ctx, `UPDATE usage_ledger_reservations SET
-status='released', version=version+1, updated_at_ns=$2 WHERE id=$1`,
-		reservation.ID, timeNano(now))
-	if err != nil {
-		return fmt.Errorf("usageledger/postgres: release reservation: %w", err)
-	}
-	return nil
 }
 
 func (s *Store) SweepExpiredReservations(ctx context.Context, now time.Time, limit int) (int, error) {

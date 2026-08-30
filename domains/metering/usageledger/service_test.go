@@ -124,6 +124,69 @@ func TestServiceReservationLifecycleAndReplay(t *testing.T) {
 	}
 }
 
+func TestServiceReleasePersistsKeyAndReplaysTerminalState(t *testing.T) {
+	service, store, clock, period := newTestService(t, 10)
+	binding := &SourceBinding{
+		ID: "binding-1", ClientID: "machine-1", TenantID: "tenant-1", SourceSystem: "aero-im",
+		AllowedDimensions: []Dimension{Dimension(commerce.LimitMessagesPerMonth)}, Enabled: true,
+		Revision: 1, CreatedAt: clock.Now(), UpdatedAt: clock.Now(),
+	}
+	if _, err := store.SaveSourceBinding(context.Background(), binding, 0); err != nil {
+		t.Fatal(err)
+	}
+	reservation, _, err := service.ReserveAuthorized(context.Background(), binding.Evidence(),
+		reservationCommand("release-1", "reserve-release-1", 1, period))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := ReservationIdentity{ID: reservation.ID, TenantID: "tenant-1", SourceSystem: "aero-im"}
+	// A reservation created/released by the pre-key rollout remains replayable;
+	// the first keyed retry adopts the durable key.
+	if _, err := store.ReleaseReservation(context.Background(), identity, clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	released, err := service.ReleaseAuthorized(context.Background(), binding.Evidence(), reservation.ID, "release-key")
+	if err != nil || released.Status != ReservationReleased || released.ReleaseIdempotencyKey != "release-key" {
+		t.Fatalf("release = %+v, %v", released, err)
+	}
+	clock.Advance(time.Minute)
+	replayed, err := service.ReleaseAuthorized(context.Background(), binding.Evidence(), identity.ID, "release-key")
+	if err != nil || replayed.Version != released.Version {
+		t.Fatalf("release replay = %+v, %v", replayed, err)
+	}
+	if _, err := service.ReleaseAuthorized(context.Background(), binding.Evidence(), identity.ID, "other-key"); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("release key conflict = %v", err)
+	}
+	if _, err := service.ReleaseAuthorized(context.Background(), binding.Evidence(), identity.ID, " "); !errors.Is(err, ErrInvalidReservation) {
+		t.Fatalf("invalid release key = %v", err)
+	}
+	second, _, err := service.ReserveAuthorized(context.Background(), binding.Evidence(),
+		reservationCommand("release-2", "reserve-release-2", 1, period))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ReleaseAuthorized(context.Background(), binding.Evidence(), second.ID, "release-key"); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("cross-reservation key conflict = %v", err)
+	}
+	expired, _, err := service.ReserveAuthorized(context.Background(), binding.Evidence(),
+		reservationCommand("release-expired", "reserve-release-expired", 1, period))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(2 * time.Hour)
+	expiredRelease, err := service.ReleaseAuthorized(
+		context.Background(), binding.Evidence(), expired.ID, "expired-key")
+	if err != nil || expiredRelease.Status != ReservationExpired ||
+		expiredRelease.ReleaseIdempotencyKey != "expired-key" {
+		t.Fatalf("expired release = %+v, %v", expiredRelease, err)
+	}
+	expiredReplay, err := service.ReleaseAuthorized(
+		context.Background(), binding.Evidence(), expired.ID, "expired-key")
+	if err != nil || expiredReplay.Version != expiredRelease.Version {
+		t.Fatalf("expired release replay = %+v, %v", expiredReplay, err)
+	}
+}
+
 func TestServiceRejectsMissingEntitlementAndSensitiveMetadata(t *testing.T) {
 	service, _, _, period := newTestService(t, 10)
 	command := usageCommand("usage-1", "send-1", 1, period)

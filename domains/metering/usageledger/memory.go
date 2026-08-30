@@ -21,6 +21,7 @@ type MemoryStore struct {
 	factsByBucket        map[bucketKey][]string
 	reservations         map[string]*Reservation
 	reservationKeys      map[string]string
+	releaseKeys          map[string]string
 	reservationsByBucket map[bucketKey][]string
 	rollups              map[bucketKey]*Rollup
 	outbox               map[string]*commerce.OutboxEvent
@@ -39,8 +40,9 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		facts: make(map[string]*UsageFact), factKeys: make(map[string]string),
 		factsByBucket: make(map[bucketKey][]string), reservations: make(map[string]*Reservation),
-		reservationKeys: make(map[string]string), reservationsByBucket: make(map[bucketKey][]string),
-		rollups: make(map[bucketKey]*Rollup), outbox: make(map[string]*commerce.OutboxEvent),
+		reservationKeys: make(map[string]string), releaseKeys: make(map[string]string),
+		reservationsByBucket: make(map[bucketKey][]string),
+		rollups:              make(map[bucketKey]*Rollup), outbox: make(map[string]*commerce.OutboxEvent),
 		outboxKeys: make(map[string]string), bindings: make(map[string]*SourceBinding),
 	}
 }

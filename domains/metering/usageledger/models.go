@@ -106,9 +106,13 @@ type Reservation struct {
 	Limit          commerce.LimitGrant `json:"limit"`
 	ExpiresAt      time.Time           `json:"expires_at"`
 	FactID         string              `json:"fact_id,omitempty"`
-	Version        uint64              `json:"version"`
-	CreatedAt      time.Time           `json:"created_at"`
-	UpdatedAt      time.Time           `json:"updated_at"`
+	// ReleaseIdempotencyKey is persisted but never returned to callers. An
+	// empty value marks a reservation created before DELETE idempotency was
+	// introduced; its first keyed release adopts the key atomically.
+	ReleaseIdempotencyKey string    `json:"-"`
+	Version               uint64    `json:"version"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 func (r *Reservation) Validate() error {

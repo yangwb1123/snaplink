@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS usage_ledger_reservations (
     limit_unlimited BOOLEAN NOT NULL,
     expires_at_ns BIGINT NOT NULL,
     fact_id TEXT NOT NULL,
+    release_idempotency_key TEXT NOT NULL DEFAULT '',
     version BIGINT NOT NULL CHECK (version > 0),
     created_at_ns BIGINT NOT NULL,
     updated_at_ns BIGINT NOT NULL,
@@ -130,9 +131,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_usage_source_bindings_enabled_client
     ON usage_source_bindings(client_id) WHERE enabled;
 `
 
+const releaseIdempotencyMigration = `
+ALTER TABLE usage_ledger_reservations
+    ADD COLUMN IF NOT EXISTS release_idempotency_key TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_usage_ledger_reservations_release_key
+    ON usage_ledger_reservations(tenant_id, source_system, release_idempotency_key)
+    WHERE release_idempotency_key <> '';
+`
+
 var migrations = []migrate.Migration{
 	{Version: 1, Name: "invoice usage ledger baseline", SQL: schema},
 	{Version: 2, Name: "machine source identity bindings", SQL: sourceBindingSchema},
+	{Version: 3, Name: "reservation release idempotency", SQL: releaseIdempotencyMigration},
 }
 
 type Store struct {

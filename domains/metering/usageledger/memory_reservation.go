@@ -154,17 +154,19 @@ func (s *MemoryStore) committedReplayLocked(
 func (s *MemoryStore) ReleaseReservation(
 	ctx context.Context, identity ReservationIdentity, now time.Time,
 ) (*Reservation, error) {
-	return s.releaseReservation(ctx, identity, now, nil)
+	return s.releaseReservation(ctx, identity, now, nil, "")
 }
 
 func (s *MemoryStore) ReleaseReservationAuthorized(
 	ctx context.Context, identity ReservationIdentity, now time.Time, evidence SourceBindingEvidence,
+	idempotencyKey string,
 ) (*Reservation, error) {
-	return s.releaseReservation(ctx, identity, now, &evidence)
+	return s.releaseReservation(ctx, identity, now, &evidence, idempotencyKey)
 }
 
 func (s *MemoryStore) releaseReservation(
 	ctx context.Context, identity ReservationIdentity, now time.Time, evidence *SourceBindingEvidence,
+	idempotencyKey string,
 ) (*Reservation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -183,11 +185,21 @@ func (s *MemoryStore) releaseReservation(
 	); err != nil {
 		return nil, err
 	}
+	if reservation.Status == ReservationPending && !reservation.ExpiresAt.After(now) {
+		reservation.Status, reservation.UpdatedAt = ReservationExpired, now
+		reservation.Version++
+	}
 	if reservation.Status == ReservationReleased || reservation.Status == ReservationExpired {
+		if err := s.adoptReleaseKeyLocked(reservation, idempotencyKey); err != nil {
+			return nil, err
+		}
 		return cloneReservation(reservation), nil
 	}
 	if reservation.Status != ReservationPending {
 		return nil, ErrReservationConflict
+	}
+	if err := s.adoptReleaseKeyLocked(reservation, idempotencyKey); err != nil {
+		return nil, err
 	}
 	reservation.Status, reservation.UpdatedAt = ReservationReleased, now
 	reservation.Version++
@@ -215,6 +227,25 @@ func (s *MemoryStore) GetReservation(
 func reservationBoundTo(reservation *Reservation, identity ReservationIdentity) bool {
 	return reservation != nil && reservation.TenantID == identity.TenantID &&
 		reservation.SourceSystem == identity.SourceSystem
+}
+
+func (s *MemoryStore) adoptReleaseKeyLocked(reservation *Reservation, key string) error {
+	if key == "" {
+		return nil
+	}
+	if !validReleaseIdempotencyKey(key) {
+		return ErrInvalidReservation
+	}
+	if reservation.ReleaseIdempotencyKey != "" && reservation.ReleaseIdempotencyKey != key {
+		return ErrIdempotencyConflict
+	}
+	keyID := joinKey(reservation.TenantID, reservation.SourceSystem, key)
+	if owner, exists := s.releaseKeys[keyID]; exists && owner != reservation.ID {
+		return ErrIdempotencyConflict
+	}
+	reservation.ReleaseIdempotencyKey = key
+	s.releaseKeys[keyID] = reservation.ID
+	return nil
 }
 
 func (s *MemoryStore) SweepExpiredReservations(

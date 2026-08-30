@@ -27,15 +27,17 @@ func TestSchemaDeclaresInvoiceLedgerBoundaries(t *testing.T) {
 		"UNIQUE (tenant_id, idempotency_key)",
 		"idx_usage_ledger_outbox_claim",
 		"uq_usage_source_bindings_enabled_client",
+		"release_idempotency_key TEXT NOT NULL DEFAULT ''",
+		"uq_usage_ledger_reservations_release_key",
 	}
-	combinedSchema := schema + sourceBindingSchema
+	combinedSchema := schema + sourceBindingSchema + releaseIdempotencyMigration
 	for _, fragment := range required {
 		if !strings.Contains(combinedSchema, fragment) {
 			t.Errorf("usage ledger migration missing %q", fragment)
 		}
 	}
-	if MaxVersion() != 2 {
-		t.Fatalf("MaxVersion() = %d, want 2", MaxVersion())
+	if MaxVersion() != 3 {
+		t.Fatalf("MaxVersion() = %d, want 3", MaxVersion())
 	}
 }
 
@@ -177,16 +179,74 @@ func TestPostgresReservationCommitReleaseAndExpiry(t *testing.T) {
 		counter.Committed != 3 || counter.Reserved != 0 || counter.Projected != 3 {
 		t.Fatalf("commit = %+v, %+v, %v", committed, counter, err)
 	}
+	binding := pgSourceBinding("release-source", "release-machine", true)
+	if _, err := store.SaveSourceBinding(ctx, binding, 0); err != nil {
+		t.Fatal(err)
+	}
 	second := testReservation(
 		"reserve-release", "reserve-object-2", 2, testPeriod(),
 		integrationNow, integrationNow.Add(time.Hour), limit,
 	)
-	if _, _, err := store.Reserve(ctx, ledger.ReserveCommand{Reservation: second, Limit: limit}); err != nil {
+	evidence := binding.Evidence()
+	if _, _, err := store.Reserve(ctx, ledger.ReserveCommand{Reservation: second, Limit: limit, Evidence: &evidence}); err != nil {
 		t.Fatal(err)
 	}
-	released, err := store.ReleaseReservation(ctx, pgReservationIdentity(second), integrationNow.Add(time.Minute))
-	if err != nil || released.Status != ledger.ReservationReleased {
+	// The HTTP path supplies a key; it is persisted and replayed without a
+	// second state transition, while a different key is a request conflict.
+	released, err := store.ReleaseReservationAuthorized(ctx, pgReservationIdentity(second),
+		integrationNow.Add(time.Minute), evidence, "release-key")
+	if err != nil || released.Status != ledger.ReservationReleased || released.ReleaseIdempotencyKey != "release-key" {
 		t.Fatalf("release = %+v, %v", released, err)
+	}
+	replayed, err := store.ReleaseReservationAuthorized(ctx, pgReservationIdentity(second),
+		integrationNow.Add(2*time.Minute), evidence, "release-key")
+	if err != nil || replayed.ReleaseIdempotencyKey != "release-key" || replayed.Version != released.Version {
+		t.Fatalf("release replay = %+v, %v", replayed, err)
+	}
+	if _, err := store.ReleaseReservationAuthorized(ctx, pgReservationIdentity(second),
+		integrationNow.Add(3*time.Minute), evidence, "other-key"); !errors.Is(err, ledger.ErrIdempotencyConflict) {
+		t.Fatalf("release key conflict = %v", err)
+	}
+	cross := testReservation(
+		"reserve-release-cross", "reserve-object-cross", 1, testPeriod(),
+		integrationNow, integrationNow.Add(time.Hour), limit,
+	)
+	if _, _, err := store.Reserve(ctx, ledger.ReserveCommand{
+		Reservation: cross, Limit: limit, Evidence: &evidence,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReleaseReservationAuthorized(ctx, pgReservationIdentity(cross),
+		integrationNow.Add(4*time.Minute), evidence, "release-key"); !errors.Is(err, ledger.ErrIdempotencyConflict) {
+		t.Fatalf("cross-reservation key conflict = %v", err)
+	}
+	if _, err := store.ReleaseReservationAuthorized(ctx, pgReservationIdentity(cross),
+		integrationNow.Add(5*time.Minute), evidence, "cross-key"); err != nil {
+		t.Fatalf("cross-reservation cleanup = %v", err)
+	}
+	expired := testReservation(
+		"reserve-release-expired", "reserve-object-expired", 1, testPeriod(),
+		integrationNow, integrationNow.Add(time.Minute), limit,
+	)
+	if _, _, err := store.Reserve(ctx, ledger.ReserveCommand{
+		Reservation: expired, Limit: limit, Evidence: &evidence,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expiredRelease, err := store.ReleaseReservationAuthorized(ctx, pgReservationIdentity(expired),
+		integrationNow.Add(2*time.Minute), evidence, "expired-key")
+	if err != nil || expiredRelease.Status != ledger.ReservationExpired ||
+		expiredRelease.ReleaseIdempotencyKey != "expired-key" {
+		t.Fatalf("expired release = %+v, %v", expiredRelease, err)
+	}
+	expiredReplay, err := store.ReleaseReservationAuthorized(ctx, pgReservationIdentity(expired),
+		integrationNow.Add(3*time.Minute), evidence, "expired-key")
+	if err != nil || expiredReplay.Version != expiredRelease.Version {
+		t.Fatalf("expired release replay = %+v, %v", expiredReplay, err)
+	}
+	if _, err := store.ReleaseReservationAuthorized(ctx, pgReservationIdentity(expired),
+		integrationNow.Add(4*time.Minute), evidence, "other-expired-key"); !errors.Is(err, ledger.ErrIdempotencyConflict) {
+		t.Fatalf("expired release key conflict = %v", err)
 	}
 	assertReservationExpiry(t, store, limit)
 }

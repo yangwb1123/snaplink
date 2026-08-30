@@ -28,7 +28,7 @@ type UsageService interface {
 	) (
 		*usageledger.Reservation, *usageledger.Counter, error,
 	)
-	ReleaseAuthorized(context.Context, usageledger.SourceBindingEvidence, string) (
+	ReleaseAuthorized(context.Context, usageledger.SourceBindingEvidence, string, string) (
 		*usageledger.Reservation, error,
 	)
 }

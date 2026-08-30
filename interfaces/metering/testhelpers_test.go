@@ -29,10 +29,12 @@ type usageStub struct {
 	commitCommand   usageledger.AuthorizedCommitCommand
 	releaseEvidence usageledger.SourceBindingEvidence
 	releaseID       string
+	releaseKey      string
 	appendError     error
 	reserveError    error
 	commitError     error
 	releaseError    error
+	releaseStatus   usageledger.ReservationStatus
 	appendCalls     int
 }
 
@@ -82,17 +84,21 @@ func (s *usageStub) CommitAuthorized(
 }
 
 func (s *usageStub) ReleaseAuthorized(
-	_ context.Context, evidence usageledger.SourceBindingEvidence, reservationID string,
+	_ context.Context, evidence usageledger.SourceBindingEvidence, reservationID, key string,
 ) (*usageledger.Reservation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.releaseEvidence, s.releaseID = evidence, reservationID
+	s.releaseEvidence, s.releaseID, s.releaseKey = evidence, reservationID, key
 	if s.releaseError != nil {
 		return nil, s.releaseError
 	}
+	status := s.releaseStatus
+	if status == "" {
+		status = usageledger.ReservationReleased
+	}
 	return &usageledger.Reservation{
 		ID: reservationID, TenantID: evidence.TenantID, SourceSystem: evidence.SourceSystem,
-		Dimension: "messages_per_month", Status: usageledger.ReservationReleased,
+		Dimension: "messages_per_month", Status: status,
 	}, nil
 }
 
