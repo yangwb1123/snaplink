@@ -26,6 +26,13 @@ audit:
   api_enabled: false      # admin REST off by default; flip when admin mw is wired
   memory_capacity: 10000
 
+permissions:
+  enabled: true
+  backend: memory
+
+bootstrap:
+  state_path: /var/lib/sso/bootstrap.json
+
 # Clients, users, permissions, network policies, authenticators — all the
 # operator-specific configuration — belong here. Keep them in a
 # kustomize OVERLAY rather than baking them into this base ConfigMap,

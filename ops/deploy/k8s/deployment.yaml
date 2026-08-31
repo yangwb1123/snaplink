@@ -113,10 +113,14 @@ spec:
             - name: config
               mountPath: /etc/sso
               readOnly: true
+            - name: state
+              mountPath: /var/lib/sso
             # The distroless static image has no writable tmp by default;
             # if a feature ever needs /tmp, declare an emptyDir here.
 
       volumes:
+        - name: state
+          emptyDir: {}
         - name: config
           configMap:
             # Kustomize hashes the generated ConfigMap; the volume
