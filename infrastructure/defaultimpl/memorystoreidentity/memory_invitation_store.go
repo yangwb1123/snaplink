@@ -3,16 +3,37 @@ package memorystoreidentity
 import (
 	"context"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/yangwb1123/snaplink/shared/core"
 )
+
+const invitationSweepInterval = time.Minute
 
 // MemoryInvitationStore is an in-memory core.InvitationStore for org
 // invitations. Single-process only; multi-replica needs the sqlite peer.
 // Consume is destructive (single-use).
 type MemoryInvitationStore struct {
-	mu    sync.Mutex
-	invts map[string]*core.Invitation
+	mu        sync.Mutex
+	invts     map[string]*core.Invitation
+	lastSweep atomic.Int64
+}
+
+// sweepExpired removes only invitations that expired before now. The exact
+// boundary remains until a later sweep; Consume still rejects it immediately.
+func (m *MemoryInvitationStore) sweepExpired(now time.Time) {
+	nowNanos := now.UnixNano()
+	previous := m.lastSweep.Load()
+	if nowNanos-previous < int64(invitationSweepInterval) ||
+		!m.lastSweep.CompareAndSwap(previous, nowNanos) {
+		return
+	}
+	for token, invitation := range m.invts {
+		if invitation.ExpiresAt.Before(now) {
+			delete(m.invts, token)
+		}
+	}
 }
 
 // NewMemoryInvitationStore returns an empty store.
@@ -24,6 +45,7 @@ func NewMemoryInvitationStore() *MemoryInvitationStore {
 func (m *MemoryInvitationStore) Issue(_ context.Context, inv *core.Invitation) error {
 	cp := *inv
 	m.mu.Lock()
+	m.sweepExpired(time.Now())
 	m.invts[inv.Token] = &cp
 	m.mu.Unlock()
 	return nil
