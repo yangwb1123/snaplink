@@ -344,7 +344,7 @@ func (s *TrustedDeviceStore) Verify(ctx context.Context, userID, clientID, token
 func (s *TrustedDeviceStore) ListByUser(ctx context.Context, userID string) ([]core.TrustedDevice, error) {
 	rows, err := s.db.QueryContext(ctx, `
         SELECT id, client_id, label, created_at, expires_at, last_used_at
-          FROM trusted_devices WHERE user_id = ?`, userID)
+          FROM trusted_devices WHERE user_id = ? AND expires_at >= ?`, userID, time.Now().UnixNano())
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list trusted_devices by user: %w", err)
 	}

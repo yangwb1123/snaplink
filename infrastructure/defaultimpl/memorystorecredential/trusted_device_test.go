@@ -121,6 +121,45 @@ func TestMemoryTrustedDeviceStore_ListByUserOmitsTokenAndOtherUsers(t *testing.T
 	}
 }
 
+func TestMemoryTrustedDeviceStore_ListReclaimsExpired(t *testing.T) {
+	store := NewMemoryTrustedDeviceStore()
+	now := time.Now()
+	store.devices["alice"] = map[string]*trustedDeviceRecord{
+		"expired": {device: core.TrustedDevice{ID: "expired", UserID: "alice", ExpiresAt: now.Add(-time.Hour)}},
+		"live":    {device: core.TrustedDevice{ID: "live", UserID: "alice", ExpiresAt: now.Add(time.Hour)}},
+	}
+	store.lastSweep.Store(0)
+
+	devices, err := store.ListByUser(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(devices) != 1 || devices[0].ID != "live" {
+		t.Fatalf("devices = %#v, want only live device", devices)
+	}
+	if _, ok := store.devices["alice"]; !ok {
+		t.Error("empty user bucket should not survive expiry sweep")
+	}
+	if _, ok := store.devices["alice"]["expired"]; ok {
+		t.Error("expired device remains after list sweep")
+	}
+}
+
+func TestMemoryTrustedDeviceStore_SweepKeepsExactBoundary(t *testing.T) {
+	store := NewMemoryTrustedDeviceStore()
+	now := time.Now()
+	store.devices["alice"] = map[string]*trustedDeviceRecord{
+		"boundary": {device: core.TrustedDevice{ID: "boundary", ExpiresAt: now}},
+	}
+	store.lastSweep.Store(0)
+	store.mu.Lock()
+	store.sweepExpired(now)
+	store.mu.Unlock()
+	if _, ok := store.devices["alice"]["boundary"]; !ok {
+		t.Error("exact-boundary device was swept")
+	}
+}
+
 func TestMemoryTrustedDeviceStore_RevokeIsOwnershipScopedAndIdempotent(t *testing.T) {
 	s := NewMemoryTrustedDeviceStore()
 	token, dev, _ := s.Trust(context.Background(), "alice", "client-a", "", time.Hour)

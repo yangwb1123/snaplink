@@ -203,6 +203,29 @@ func TestSQLiteTrustedDeviceStore_ListByUserOmitsHashAndOtherUsers(t *testing.T)
 	var _ []core.TrustedDevice = devices
 }
 
+func TestSQLiteTrustedDeviceStore_ListOmitsExpired(t *testing.T) {
+	t.Parallel()
+	s := newTrustedDeviceStore(t, tempTrustedDeviceDSN(t))
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+
+	if _, _, err := s.Trust(ctx, "alice", "client-old", "old", time.Millisecond); err != nil {
+		t.Fatalf("expired trust: %v", err)
+	}
+	_, live, err := s.Trust(ctx, "alice", "client-live", "live", time.Hour)
+	if err != nil {
+		t.Fatalf("live trust: %v", err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	devices, err := s.ListByUser(ctx, "alice")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(devices) != 1 || devices[0].ID != live.ID {
+		t.Fatalf("devices = %#v, want only live device", devices)
+	}
+}
+
 func TestSQLiteTrustedDeviceStore_RevokeIsOwnershipScopedAndIdempotent(t *testing.T) {
 	t.Parallel()
 	s := newTrustedDeviceStore(t, tempTrustedDeviceDSN(t))

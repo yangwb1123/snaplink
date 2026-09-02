@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -140,9 +141,12 @@ type trustedDeviceRecord struct {
 // user's own slice — a cross-user leak or cross-user revoke is structurally
 // impossible rather than merely checked, the same discipline
 // MemoryMFAEnrollmentStore uses for RemoveFactor.
+const trustedDeviceSweepInterval = time.Minute
+
 type MemoryTrustedDeviceStore struct {
-	mu      sync.Mutex
-	devices map[string]map[string]*trustedDeviceRecord // userID -> deviceID -> record
+	mu        sync.Mutex
+	devices   map[string]map[string]*trustedDeviceRecord // userID -> deviceID -> record
+	lastSweep atomic.Int64
 }
 
 // NewMemoryTrustedDeviceStore returns an empty MemoryTrustedDeviceStore.
@@ -177,6 +181,7 @@ func (m *MemoryTrustedDeviceStore) Trust(_ context.Context, userID, clientID, la
 	}
 
 	m.mu.Lock()
+	m.sweepExpired(now)
 	if m.devices[userID] == nil {
 		m.devices[userID] = make(map[string]*trustedDeviceRecord)
 	}
@@ -184,6 +189,28 @@ func (m *MemoryTrustedDeviceStore) Trust(_ context.Context, userID, clientID, la
 	m.mu.Unlock()
 
 	return token, &dev, nil
+}
+
+// sweepExpired removes only grants whose expiry is strictly before now.
+// Exact-boundary grants remain until a later pass; Verify retains its existing
+// inclusive boundary behavior for the live-grant decision.
+func (m *MemoryTrustedDeviceStore) sweepExpired(now time.Time) {
+	nowNanos := now.UnixNano()
+	previous := m.lastSweep.Load()
+	if nowNanos-previous < int64(trustedDeviceSweepInterval) ||
+		!m.lastSweep.CompareAndSwap(previous, nowNanos) {
+		return
+	}
+	for userID, records := range m.devices {
+		for deviceID, record := range records {
+			if record.device.ExpiresAt.Before(now) {
+				delete(records, deviceID)
+			}
+		}
+		if len(records) == 0 {
+			delete(m.devices, userID)
+		}
+	}
 }
 
 // Verify scans only userID's own records (never another user's), so a
@@ -221,6 +248,7 @@ func (m *MemoryTrustedDeviceStore) Verify(_ context.Context, userID, clientID, t
 func (m *MemoryTrustedDeviceStore) ListByUser(_ context.Context, userID string) ([]core.TrustedDevice, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.sweepExpired(time.Now())
 	recs := m.devices[userID]
 	out := make([]core.TrustedDevice, 0, len(recs))
 	for _, r := range recs {
