@@ -6,10 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/tenant/commerce"
 )
+
+const activationTicketSweepInterval = time.Minute
 
 type MemoryStoreOption func(*MemoryStore)
 
@@ -38,6 +41,7 @@ type MemoryStore struct {
 	invitationIndex map[string]string
 	tickets         map[string]memoryTicket
 	bindings        map[string]*AccountContext
+	lastTicketSweep atomic.Int64
 }
 
 type memoryCode struct {
@@ -109,6 +113,7 @@ func (s *MemoryStore) Prepare(ctx context.Context, input PrepareInput) (*Prepara
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.sweepExpiredTickets(now)
 	code := s.lookupCode(input)
 	if code == nil || !codeAvailable(code, now) || code.code.ProductID != input.ProductID ||
 		(input.TenantHint != "" && input.TenantHint != code.code.TenantID) || claimsFull(code) {
@@ -124,6 +129,22 @@ func (s *MemoryStore) Prepare(ctx context.Context, input PrepareInput) (*Prepara
 		tenantHint: input.TenantHint, expiresAt: expiresAt,
 	}
 	return &Preparation{Ticket: rawTicket, ProductID: input.ProductID, ExpiresAt: expiresAt}, nil
+}
+
+// sweepExpiredTickets retains tickets expiring exactly at now; Claim's
+// existing boundary check remains the authoritative rejection path.
+func (s *MemoryStore) sweepExpiredTickets(now time.Time) {
+	nowNanos := now.UnixNano()
+	previous := s.lastTicketSweep.Load()
+	if nowNanos-previous < int64(activationTicketSweepInterval) ||
+		!s.lastTicketSweep.CompareAndSwap(previous, nowNanos) {
+		return
+	}
+	for key, ticket := range s.tickets {
+		if ticket.expiresAt.Before(now) {
+			delete(s.tickets, key)
+		}
+	}
 }
 
 func (s *MemoryStore) Claim(ctx context.Context, input ClaimInput) (*AccountContext, error) {
