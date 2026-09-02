@@ -30,6 +30,8 @@ const (
 	leaseCleanupTimeout = 2 * time.Second
 )
 
+var errClosed = errors.New("registry/etcd: registry closed")
+
 // Config configures the etcd Registry.
 type Config struct {
 	Endpoints   []string      // etcd cluster endpoints, e.g. ["localhost:2379"]
@@ -110,6 +112,9 @@ func (r *Registry) Register(ctx context.Context, svc *registry.Service) error {
 	if svc == nil || svc.ID == "" || svc.Name == "" {
 		return errors.New("registry/etcd: service id and name required")
 	}
+	if err := r.checkOpen(); err != nil {
+		return err
+	}
 
 	ttl := svc.TTL
 	if ttl <= 0 {
@@ -143,14 +148,35 @@ func (r *Registry) Register(ctx context.Context, svc *registry.Service) error {
 	}
 	go drainKeepAlive(keepAlive)
 
-	r.mu.Lock()
-	if old, ok := r.cancel[svc.ID]; ok {
-		old()
-		_, _ = r.client.Revoke(ctx, r.leases[svc.ID])
+	if err := r.publishLease(ctx, svc.ID, lease.ID, cancel, leaseOps); err != nil {
+		cancel()
+		cleanupGrantedLease(leaseOps, lease.ID)
+		return err
 	}
-	r.leases[svc.ID] = lease.ID
-	r.cancel[svc.ID] = cancel
-	r.mu.Unlock()
+	return nil
+}
+
+func (r *Registry) checkOpen() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return errClosed
+	}
+	return nil
+}
+
+func (r *Registry) publishLease(ctx context.Context, serviceID string, leaseID clientv3.LeaseID, cancel context.CancelFunc, leaseOps leaseClient) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return errClosed
+	}
+	if old, ok := r.cancel[serviceID]; ok {
+		old()
+		_, _ = leaseOps.Revoke(ctx, r.leases[serviceID])
+	}
+	r.leases[serviceID] = leaseID
+	r.cancel[serviceID] = cancel
 	return nil
 }
 

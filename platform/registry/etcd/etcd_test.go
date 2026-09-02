@@ -337,6 +337,49 @@ func (c *deregisterClientStub) Revoke(_ context.Context, id clientv3.LeaseID) (*
 	return nil, err
 }
 
+func TestRegisterClosedBeforeRemoteWork(t *testing.T) {
+	t.Parallel()
+	client := &registerClientStub{leaseID: 42}
+	r := &Registry{leaseOps: client, closed: true}
+
+	if err := r.Register(context.Background(), &registry.Service{ID: "id", Name: "name"}); !errors.Is(err, errClosed) {
+		t.Fatalf("Register error = %v, want closed error", err)
+	}
+	if client.revokeCalls != 0 {
+		t.Fatalf("closed registration made cleanup calls: %d", client.revokeCalls)
+	}
+}
+
+func TestRegisterCloseBeforePublishCleansUpGrantedLease(t *testing.T) {
+	t.Parallel()
+	client := &registerClientStub{leaseID: 42}
+	r := &Registry{
+		prefix:   DefaultPrefix,
+		leaseOps: client,
+		leases:   make(map[string]clientv3.LeaseID),
+		cancel:   make(map[string]context.CancelFunc),
+	}
+	client.onKeepAlive = func() {
+		r.mu.Lock()
+		r.closed = true
+		r.leases = nil
+		r.cancel = nil
+		r.mu.Unlock()
+	}
+	keepAlive := make(chan *clientv3.LeaseKeepAliveResponse)
+	close(keepAlive)
+	client.keepAlive = keepAlive
+
+	err := r.Register(context.Background(), &registry.Service{ID: "id", Name: "name"})
+	if !errors.Is(err, errClosed) {
+		t.Fatalf("Register error = %v, want closed error", err)
+	}
+	if client.revokeCalls != 1 || client.revokedID != client.leaseID {
+		t.Fatalf("cleanup calls = %d, id = %d; want one revoke of %d", client.revokeCalls, client.revokedID, client.leaseID)
+	}
+	assertCleanupContext(t, client)
+}
+
 func TestRegisterFailureCleansUpGrantedLease(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -406,6 +449,8 @@ type registerClientStub struct {
 	cancelCaller      context.CancelFunc
 	failPut           bool
 	failKeepAlive     bool
+	onKeepAlive       func()
+	keepAlive         <-chan *clientv3.LeaseKeepAliveResponse
 	revokeCalls       int
 	revokedID         clientv3.LeaseID
 	revokeContextErr  error
@@ -426,9 +471,17 @@ func (c *registerClientStub) Put(context.Context, string, string, ...clientv3.Op
 }
 
 func (c *registerClientStub) KeepAlive(context.Context, clientv3.LeaseID) (<-chan *clientv3.LeaseKeepAliveResponse, error) {
+	if c.onKeepAlive != nil {
+		onKeepAlive := c.onKeepAlive
+		c.onKeepAlive = nil
+		onKeepAlive()
+	}
 	if c.failKeepAlive {
 		c.cancelCaller()
 		return nil, c.operationErr
+	}
+	if c.keepAlive != nil {
+		return c.keepAlive, nil
 	}
 	return make(chan *clientv3.LeaseKeepAliveResponse), nil
 }
