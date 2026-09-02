@@ -3,16 +3,39 @@ package memorystorecredential
 import (
 	"context"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/yangwb1123/snaplink/shared/core"
 )
+
+const credentialTokenSweepInterval = time.Minute
+
+// sweepExpiredCredentialEntries removes entries strictly before now. Entries
+// at the exact boundary remain until a later sweep, matching lazy expiry.
+func sweepExpiredCredentialEntries[T any](
+	lastSweep *atomic.Int64, entries map[string]*T, now time.Time, expiresAt func(*T) time.Time,
+) {
+	nowNanos := now.UnixNano()
+	previous := lastSweep.Load()
+	if nowNanos-previous < int64(credentialTokenSweepInterval) ||
+		!lastSweep.CompareAndSwap(previous, nowNanos) {
+		return
+	}
+	for key, entry := range entries {
+		if expiresAt(entry).Before(now) {
+			delete(entries, key)
+		}
+	}
+}
 
 // MemoryEmailChangeStore is an in-memory core.EmailChangeStore for the
 // verified-email-change flow. Single-process only; multi-replica needs the
 // sqlite peer. Consume is destructive (single-use).
 type MemoryEmailChangeStore struct {
-	mu     sync.Mutex
-	tokens map[string]*core.EmailChangeToken
+	mu        sync.Mutex
+	tokens    map[string]*core.EmailChangeToken
+	lastSweep atomic.Int64
 }
 
 // NewMemoryEmailChangeStore returns an empty store.
@@ -24,6 +47,9 @@ func NewMemoryEmailChangeStore() *MemoryEmailChangeStore {
 func (m *MemoryEmailChangeStore) Issue(_ context.Context, tok *core.EmailChangeToken) error {
 	cp := *tok
 	m.mu.Lock()
+	sweepExpiredCredentialEntries(&m.lastSweep, m.tokens, time.Now(), func(entry *core.EmailChangeToken) time.Time {
+		return entry.ExpiresAt
+	})
 	m.tokens[tok.Token] = &cp
 	m.mu.Unlock()
 	return nil

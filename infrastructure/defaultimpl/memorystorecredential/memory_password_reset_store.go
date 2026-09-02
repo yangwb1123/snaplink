@@ -3,6 +3,8 @@ package memorystorecredential
 import (
 	"context"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/yangwb1123/snaplink/shared/core"
 )
@@ -11,8 +13,9 @@ import (
 // forgot-password flow. Single-process only; multi-replica needs the sqlite
 // peer. Consume is destructive (single-use).
 type MemoryPasswordResetStore struct {
-	mu     sync.Mutex
-	tokens map[string]*core.PasswordResetToken
+	mu        sync.Mutex
+	tokens    map[string]*core.PasswordResetToken
+	lastSweep atomic.Int64
 }
 
 // NewMemoryPasswordResetStore returns an empty store.
@@ -24,6 +27,9 @@ func NewMemoryPasswordResetStore() *MemoryPasswordResetStore {
 func (m *MemoryPasswordResetStore) Issue(_ context.Context, rt *core.PasswordResetToken) error {
 	cp := *rt
 	m.mu.Lock()
+	sweepExpiredCredentialEntries(&m.lastSweep, m.tokens, time.Now(), func(entry *core.PasswordResetToken) time.Time {
+		return entry.ExpiresAt
+	})
 	m.tokens[rt.Token] = &cp
 	m.mu.Unlock()
 	return nil
