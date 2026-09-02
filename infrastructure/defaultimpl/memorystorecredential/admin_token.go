@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -12,11 +13,14 @@ import (
 
 var ErrTokenNotFound = errors.New("sso: admin token not found")
 
+const adminTokenSweepInterval = time.Minute
+
 // MemoryAdminTokenStore is an in-process, non-persistent admin token
 // store. Suitable for single-replica dev and test.
 type MemoryAdminTokenStore struct {
-	mu     sync.RWMutex
-	tokens map[string]core.AdminToken
+	mu        sync.RWMutex
+	tokens    map[string]core.AdminToken
+	lastSweep atomic.Int64
 }
 
 // NewMemoryAdminTokenStore returns an empty MemoryAdminTokenStore.
@@ -29,8 +33,26 @@ func NewMemoryAdminTokenStore() *MemoryAdminTokenStore {
 func (s *MemoryAdminTokenStore) Record(_ context.Context, token core.AdminToken) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.sweepExpired(time.Now())
 	s.tokens[token.ID] = token
 	return nil
+}
+
+// sweepExpired removes finite-lifetime records strictly before now. Zero
+// expiry means never-expiring and remains retained; exact-boundary records
+// remain until a later sweep while readers continue to reject expired tokens.
+func (s *MemoryAdminTokenStore) sweepExpired(now time.Time) {
+	nowNanos := now.UnixNano()
+	previous := s.lastSweep.Load()
+	if nowNanos-previous < int64(adminTokenSweepInterval) ||
+		!s.lastSweep.CompareAndSwap(previous, nowNanos) {
+		return
+	}
+	for id, token := range s.tokens {
+		if !token.ExpiresAt.IsZero() && token.ExpiresAt.Before(now) {
+			delete(s.tokens, id)
+		}
+	}
 }
 
 func (s *MemoryAdminTokenStore) GetByID(_ context.Context, id string) (core.AdminToken, error) {
