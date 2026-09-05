@@ -7,6 +7,8 @@ package memory
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/yangwb1123/snaplink/domains/tenant"
@@ -38,9 +40,9 @@ func (s *ExternalUserStore) Add(_ context.Context, g *tenant.GuestRecord) error 
 	if err := g.Validate(); err != nil {
 		return err
 	}
-	cp := *g
+	cp := cloneGuestRecord(g)
 	s.mu.Lock()
-	s.records[guestKey(g.GuestTenantID, g.ExternalSubjectID)] = &cp
+	s.records[guestKey(g.GuestTenantID, g.ExternalSubjectID)] = cp
 	s.mu.Unlock()
 	return nil
 }
@@ -61,8 +63,7 @@ func (s *ExternalUserStore) Get(_ context.Context, guestTenantID, externalSubjec
 	if !ok {
 		return nil, tenant.ErrNoGuestRecord
 	}
-	cp := *g
-	return &cp, nil
+	return cloneGuestRecord(g), nil
 }
 
 // ListByGuestTenant implements [tenant.ExternalUserStore]. Order is
@@ -73,14 +74,20 @@ func (s *ExternalUserStore) ListByGuestTenant(_ context.Context, guestTenantID s
 	out := make([]*tenant.GuestRecord, 0, len(s.records))
 	for _, g := range s.records {
 		if g.GuestTenantID == guestTenantID {
-			cp := *g
-			out = append(out, &cp)
+			out = append(out, cloneGuestRecord(g))
 		}
 	}
 	return out, nil
 }
 
 var _ tenant.ExternalUserStore = (*ExternalUserStore)(nil)
+
+func cloneGuestRecord(g *tenant.GuestRecord) *tenant.GuestRecord {
+	cp := *g
+	cp.Roles = slices.Clone(g.Roles)
+	cp.Attributes = maps.Clone(g.Attributes)
+	return &cp
+}
 
 // collabKey builds the (guestTenantID, homeTenantID) composite key.
 func collabKey(guestTenantID, homeTenantID string) string {

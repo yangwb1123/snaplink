@@ -51,6 +51,52 @@ func TestExternalUserStore_AddGetRemove(t *testing.T) {
 	}
 }
 
+func TestExternalUserStore_ClonesMutableFields(t *testing.T) {
+	ctx := context.Background()
+	store := NewExternalUserStore()
+	roles := []string{"read"}
+	attributes := map[string]string{"source": "directory"}
+	rec := &tenant.GuestRecord{
+		GuestTenantID: "guest", HomeTenantID: "home", ExternalSubjectID: "u1",
+		Roles: roles, Attributes: attributes,
+	}
+	if err := store.Add(ctx, rec); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	roles[0] = "admin"
+	attributes["source"] = "tampered"
+	attributes["new"] = "tampered"
+	got, err := store.Get(ctx, "guest", "u1")
+	if err != nil {
+		t.Fatalf("Get after input mutation: %v", err)
+	}
+	if len(got.Roles) != 1 || got.Roles[0] != "read" || got.Attributes["source"] != "directory" || len(got.Attributes) != 1 {
+		t.Fatalf("stored guest record changed through Add input: %+v", got)
+	}
+
+	got.Roles[0] = "admin"
+	got.Attributes["source"] = "tampered"
+	got.Attributes["new"] = "tampered"
+	list, err := store.ListByGuestTenant(ctx, "guest")
+	if err != nil {
+		t.Fatalf("ListByGuestTenant after Get mutation: %v", err)
+	}
+	if len(list) != 1 || list[0].Roles[0] != "read" || list[0].Attributes["source"] != "directory" || len(list[0].Attributes) != 1 {
+		t.Fatalf("stored guest record changed through Get result: %+v", list)
+	}
+
+	list[0].Roles[0] = "admin"
+	list[0].Attributes["source"] = "tampered"
+	again, err := store.Get(ctx, "guest", "u1")
+	if err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+	if again.Roles[0] != "read" || again.Attributes["source"] != "directory" {
+		t.Fatalf("stored guest record changed through List result: %+v", again)
+	}
+}
+
 func TestExternalUserStore_AddUpserts(t *testing.T) {
 	ctx := context.Background()
 	s := NewExternalUserStore()
