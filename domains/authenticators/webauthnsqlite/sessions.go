@@ -100,7 +100,12 @@ func (s *SessionStore) Put(ctx context.Context, sessionID string, data *gw.Sessi
 	if err != nil {
 		return fmt.Errorf("sqlite: marshal session: %w", err)
 	}
-	expiresAt := time.Now().Add(ttl).UnixNano()
+	now := time.Now()
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM webauthn_sessions WHERE expires_at < ?`, now.UnixNano()); err != nil {
+		return fmt.Errorf("sqlite: sweep expired sessions: %w", err)
+	}
+	expiresAt := now.Add(ttl).UnixNano()
 	// Upsert so a retry from the same sessionID (rare; the helper
 	// mints fresh IDs) doesn't surface a primary-key collision.
 	_, err = s.db.ExecContext(ctx, `

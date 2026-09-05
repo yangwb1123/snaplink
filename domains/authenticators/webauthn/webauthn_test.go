@@ -315,6 +315,48 @@ func TestMemorySessionStore_PutThenTake(t *testing.T) {
 	}
 }
 
+func TestMemorySessionStore_PutReclaimsAbandoned(t *testing.T) {
+	store := NewMemorySessionStore()
+	now := time.Now()
+	store.sessions["stale"] = &sessionEntry{
+		data:      &gw.SessionData{Challenge: "stale"},
+		expiresAt: now.Add(-time.Hour),
+	}
+	store.sessions["live"] = &sessionEntry{
+		data:      &gw.SessionData{Challenge: "live"},
+		expiresAt: now.Add(time.Hour),
+	}
+	store.lastSweep.Store(0)
+
+	if err := store.Put(context.Background(), "fresh", &gw.SessionData{Challenge: "fresh"}, time.Minute); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if len(store.sessions) != 2 {
+		t.Fatalf("sessions after sweep = %d, want 2", len(store.sessions))
+	}
+	if _, ok := store.sessions["stale"]; ok {
+		t.Error("abandoned expired session remains after Put sweep")
+	}
+	for _, id := range []string{"live", "fresh"} {
+		if _, ok := store.sessions[id]; !ok {
+			t.Errorf("session %q should be retained", id)
+		}
+	}
+}
+
+func TestMemorySessionStore_SweepKeepsExactBoundary(t *testing.T) {
+	store := NewMemorySessionStore()
+	now := time.Now()
+	store.sessions["boundary"] = &sessionEntry{expiresAt: now}
+	store.lastSweep.Store(now.Add(-webauthnSessionSweepInterval).UnixNano())
+	store.mu.Lock()
+	store.sweepExpiredLocked(now)
+	store.mu.Unlock()
+	if _, ok := store.sessions["boundary"]; !ok {
+		t.Error("exact-boundary session was swept")
+	}
+}
+
 func TestMemorySessionStore_TakeIsSingleUse(t *testing.T) {
 	t.Parallel()
 	store := NewMemorySessionStore()

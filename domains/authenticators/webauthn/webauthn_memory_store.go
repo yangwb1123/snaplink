@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -220,13 +221,16 @@ func cloneExtensions(ext CredentialExtensions) CredentialExtensions {
 
 var _ CredentialExtensionSetter = (*MemoryUserStore)(nil)
 
+const webauthnSessionSweepInterval = time.Minute
+
 // MemorySessionStore is an in-process [SessionStore]. Production
 // multi-replica setups MUST plug a shared store — a session minted
 // on replica A would otherwise be invisible to replica B at finish
 // time.
 type MemorySessionStore struct {
-	mu       sync.Mutex
-	sessions map[string]*sessionEntry
+	mu        sync.Mutex
+	sessions  map[string]*sessionEntry
+	lastSweep atomic.Int64
 }
 
 type sessionEntry struct {
@@ -241,11 +245,13 @@ func NewMemorySessionStore() *MemorySessionStore {
 
 // Put implements [SessionStore].
 func (m *MemorySessionStore) Put(_ context.Context, sessionID string, data *gw.SessionData, ttl time.Duration) error {
+	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.sweepExpiredLocked(now)
 	m.sessions[sessionID] = &sessionEntry{
 		data:      data,
-		expiresAt: time.Now().Add(ttl),
+		expiresAt: now.Add(ttl),
 	}
 	return nil
 }
@@ -253,10 +259,12 @@ func (m *MemorySessionStore) Put(_ context.Context, sessionID string, data *gw.S
 // Take implements [SessionStore]. Atomic remove-and-return so a
 // session ID can be consumed at most once.
 func (m *MemorySessionStore) Take(_ context.Context, sessionID string) (*gw.SessionData, error) {
+	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	e, ok := m.sessions[sessionID]
 	delete(m.sessions, sessionID)
+	m.sweepExpiredLocked(now)
 	if !ok {
 		return nil, ErrSessionUnknown
 	}
@@ -264,6 +272,23 @@ func (m *MemorySessionStore) Take(_ context.Context, sessionID string) (*gw.Sess
 		return nil, ErrSessionExpired
 	}
 	return e.data, nil
+}
+
+// sweepExpiredLocked bounds abandoned ceremony state without a background
+// goroutine. The requested Take entry is removed before this runs, preserving
+// ErrSessionExpired for an expired session that the caller actually presents.
+func (m *MemorySessionStore) sweepExpiredLocked(now time.Time) {
+	nowNanos := now.UnixNano()
+	previous := m.lastSweep.Load()
+	if nowNanos-previous < int64(webauthnSessionSweepInterval) ||
+		!m.lastSweep.CompareAndSwap(previous, nowNanos) {
+		return
+	}
+	for id, entry := range m.sessions {
+		if entry.expiresAt.Before(now) {
+			delete(m.sessions, id)
+		}
+	}
 }
 
 func bytesEqual(a, b []byte) bool {

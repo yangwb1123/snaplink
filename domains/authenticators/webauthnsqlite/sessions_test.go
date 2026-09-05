@@ -81,6 +81,29 @@ func TestSessionStore_ExpiredSessionReturnsExpired(t *testing.T) {
 	}
 }
 
+func TestSessionStore_PutReclaimsAbandoned(t *testing.T) {
+	t.Parallel()
+	store := newSessionStoreForTest(t)
+	ctx := context.Background()
+	if err := store.Put(ctx, "stale", &gw.SessionData{Challenge: "stale"}, -time.Second); err != nil {
+		t.Fatalf("stale Put: %v", err)
+	}
+	if err := store.Put(ctx, "live", &gw.SessionData{Challenge: "live"}, time.Minute); err != nil {
+		t.Fatalf("live Put: %v", err)
+	}
+
+	if _, err := store.Take(ctx, "stale"); !errors.Is(err, webauthn.ErrSessionUnknown) {
+		t.Fatalf("stale Take after sweep: got %v want ErrSessionUnknown", err)
+	}
+	got, err := store.Take(ctx, "live")
+	if err != nil {
+		t.Fatalf("live Take: %v", err)
+	}
+	if got.Challenge != "live" {
+		t.Fatalf("live challenge = %q, want live", got.Challenge)
+	}
+}
+
 func TestSessionStore_TakeUnknownReturnsSentinel(t *testing.T) {
 	t.Parallel()
 	store := newSessionStoreForTest(t)
