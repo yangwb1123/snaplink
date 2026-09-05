@@ -2,6 +2,7 @@ package agentidentity
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 )
@@ -30,6 +31,7 @@ func (m *MemoryAgentSessionStore) Create(_ context.Context, sess *AgentSession) 
 		return err
 	}
 	cp := *sess
+	cp.GrantedScopes = slices.Clone(sess.GrantedScopes)
 	if cp.CreatedAt.IsZero() {
 		cp.CreatedAt = time.Now()
 	}
@@ -48,6 +50,7 @@ func (m *MemoryAgentSessionStore) Get(_ context.Context, id string) (*AgentSessi
 		return nil, ErrNoSuchSession
 	}
 	cp := *s
+	cp.GrantedScopes = slices.Clone(s.GrantedScopes)
 	return &cp, nil
 }
 

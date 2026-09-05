@@ -3,6 +3,7 @@ package agentidentity
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
@@ -77,6 +78,38 @@ func TestMemoryAgentSessionStore_CreateGetRevoke(t *testing.T) {
 	}
 	if err := m.Revoke(ctx, "never-existed"); err != nil {
 		t.Fatalf("Revoke of unknown id should be idempotent no-op, got %v", err)
+	}
+}
+
+func TestMemoryAgentSessionStore_ClonesGrantedScopes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryAgentSessionStore()
+	scopes := []string{"tickets:read", "tickets:write"}
+	sess := &AgentSession{
+		ID: "sess-copy", HumanSubject: "alice", AgentID: "agent-1",
+		GrantedScopes: scopes,
+	}
+	if err := store.Create(ctx, sess); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	scopes[0] = "admin:write"
+	got, err := store.Get(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("Get after input mutation: %v", err)
+	}
+	if got.GrantedScopes[0] != "tickets:read" {
+		t.Fatalf("stored scopes changed through Create input: %v", got.GrantedScopes)
+	}
+
+	got.GrantedScopes[1] = "admin:write"
+	again, err := store.Get(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+	if want := []string{"tickets:read", "tickets:write"}; !slices.Equal(again.GrantedScopes, want) {
+		t.Fatalf("stored scopes changed through Get result: %v, want %v", again.GrantedScopes, want)
 	}
 }
 
