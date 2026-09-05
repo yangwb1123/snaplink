@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -374,6 +375,120 @@ func TestTempTokenAuthenticator_CallbackUnsupported(t *testing.T) {
 	if u := a.LoginURL(""); u != "" {
 		t.Errorf("LoginURL = %q", u)
 	}
+}
+
+// seedTempEntry injects an entry directly, bypassing the sweep gate, so tests
+// can construct deterministic abandoned/expired state without a wall-clock wait.
+func seedTempEntry(m *MemoryTempTokenStore, token string, subject *sso.Subject, expiresAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.entries[token] = tempEntry{subject: subject, expiresAt: expiresAt}
+}
+
+func TestMemoryTempTokenStore_IssueSweepsAbandoned(t *testing.T) {
+	m := NewMemoryTempTokenStore()
+	seedTempEntry(m, "stale-1", &sso.Subject{ID: "u-stale"}, time.Now().Add(-time.Hour))
+	seedTempEntry(m, "live-1", &sso.Subject{ID: "u-live"}, time.Now().Add(time.Hour))
+	// Force the gate open so the next Issue performs a sweep.
+	m.nextSweep.Store(0)
+
+	if err := m.Issue(context.Background(), "fresh", &sso.Subject{ID: "u-fresh"}, time.Minute); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.entries) != 2 {
+		t.Fatalf("entries after Issue sweep = %d, want 2 (stale-1 purged, live-1+fresh kept)", len(m.entries))
+	}
+	if _, ok := m.entries["stale-1"]; ok {
+		t.Error("abandoned expired entry should be swept on Issue")
+	}
+	for _, keep := range []string{"live-1", "fresh"} {
+		if _, ok := m.entries[keep]; !ok {
+			t.Errorf("live entry %q should be retained", keep)
+		}
+	}
+}
+
+func TestMemoryTempTokenStore_ConsumeSweepsAbandoned(t *testing.T) {
+	m := NewMemoryTempTokenStore()
+	seedTempEntry(m, "stale-2", &sso.Subject{ID: "u-stale"}, time.Now().Add(-time.Hour))
+	m.nextSweep.Store(0)
+
+	if _, err := m.Consume(context.Background(), "missing"); err == nil {
+		t.Fatal("expected ErrCodeInvalid for unknown token")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.entries["stale-2"]; ok {
+		t.Error("abandoned expired entry should be swept on Consume")
+	}
+}
+
+func TestMemoryTempTokenStore_StrictBoundaryRetention(t *testing.T) {
+	m := NewMemoryTempTokenStore()
+	now := time.Now()
+	seedTempEntry(m, "boundary", &sso.Subject{ID: "u-boundary"}, now)
+	m.mu.Lock()
+	m.nextSweep.Store(now.UnixNano() - 1) // gate open so the sweep runs
+	m.mu.Unlock()
+
+	// Expiring exactly at now is not strictly before now, so it must survive.
+	m.mu.Lock()
+	m.maybeSweepLocked(now)
+	if _, ok := m.entries["boundary"]; !ok {
+		t.Error("entry expiring exactly at now must be retained (strictly-before only)")
+	}
+	m.mu.Unlock()
+
+	// One nanosecond past the boundary it must be swept.
+	m.mu.Lock()
+	m.nextSweep.Store(0)
+	m.maybeSweepLocked(now.Add(time.Nanosecond))
+	if _, ok := m.entries["boundary"]; ok {
+		t.Error("entry expiring strictly before now must be swept")
+	}
+	m.mu.Unlock()
+}
+
+func TestMemoryTempTokenStore_LiveConsumeSingleUse(t *testing.T) {
+	m := NewMemoryTempTokenStore()
+	sub := &sso.Subject{ID: "u-live", Claims: map[string]string{"role": "admin"}}
+	if err := m.Issue(context.Background(), "tok-live", sub, time.Minute); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	got, err := m.Consume(context.Background(), "tok-live")
+	if err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	if got.ID != "u-live" || got.Claims["role"] != "admin" {
+		t.Errorf("subject mapping changed: %+v", got)
+	}
+	// Single-use: the presented token is consumed atomically.
+	if _, err := m.Consume(context.Background(), "tok-live"); err == nil {
+		t.Error("expected ErrCodeInvalid on replay")
+	}
+}
+
+func TestMemoryTempTokenStore_ConcurrentIssueConsume(t *testing.T) {
+	m := NewMemoryTempTokenStore()
+	const n = 64
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(2)
+		tok := "tok-" + strconv.Itoa(i)
+		go func() {
+			defer wg.Done()
+			_ = m.Issue(context.Background(), tok, &sso.Subject{ID: "u-" + tok}, time.Minute)
+		}()
+		go func() {
+			defer wg.Done()
+			_, _ = m.Consume(context.Background(), tok)
+		}()
+	}
+	wg.Wait()
 }
 
 // ---------- APIKeyAuthenticator ----------

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
@@ -18,10 +19,17 @@ type TempTokenStore interface {
 	Consume(ctx context.Context, token string) (*sso.Subject, error)
 }
 
+// tempTokenSweepInterval bounds how stale the in-process entry map may grow.
+// Abandoned or expired tokens are purged by a write-path sweep at most this
+// often, so repeated Issue calls cannot leak memory without bound while keeping
+// the sweep cost amortized and off the hot read path.
+const tempTokenSweepInterval = time.Minute
+
 // MemoryTempTokenStore is a process-local TempTokenStore.
 type MemoryTempTokenStore struct {
-	mu      sync.Mutex
-	entries map[string]tempEntry
+	mu        sync.Mutex
+	entries   map[string]tempEntry
+	nextSweep atomic.Int64 // unix nanos; CAS gate so only one writer sweeps per interval
 }
 
 type tempEntry struct {
@@ -36,19 +44,40 @@ func NewMemoryTempTokenStore() *MemoryTempTokenStore {
 func (m *MemoryTempTokenStore) Issue(_ context.Context, token string, subject *sso.Subject, ttl time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.entries[token] = tempEntry{subject: subject, expiresAt: time.Now().Add(ttl)}
+	now := time.Now()
+	m.maybeSweepLocked(now)
+	m.entries[token] = tempEntry{subject: subject, expiresAt: now.Add(ttl)}
 	return nil
 }
 
 func (m *MemoryTempTokenStore) Consume(_ context.Context, token string) (*sso.Subject, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.maybeSweepLocked(time.Now())
 	e, ok := m.entries[token]
 	delete(m.entries, token)
 	if !ok || time.Since(e.expiresAt) > 0 {
 		return nil, ErrCodeInvalid
 	}
 	return e.subject, nil
+}
+
+// maybeSweepLocked purges entries expired strictly before now. Callers must hold
+// mu. The atomic gate lets exactly one writer per interval run the sweep; every
+// other writer skips so the O(n) purge stays amortized.
+func (m *MemoryTempTokenStore) maybeSweepLocked(now time.Time) {
+	next := m.nextSweep.Load()
+	if now.UnixNano() < next {
+		return
+	}
+	if !m.nextSweep.CompareAndSwap(next, now.Add(tempTokenSweepInterval).UnixNano()) {
+		return // another writer already claimed this interval's sweep
+	}
+	for k, e := range m.entries {
+		if e.expiresAt.Before(now) {
+			delete(m.entries, k)
+		}
+	}
 }
 
 // TempTokenAuthenticator authenticates the bearer of a one-time, opaque token.
