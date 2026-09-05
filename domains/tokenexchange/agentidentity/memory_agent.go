@@ -2,6 +2,7 @@ package agentidentity
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 )
@@ -29,6 +30,7 @@ func (m *MemoryAgentProvider) Register(_ context.Context, agent *Agent) error {
 		return err
 	}
 	cp := *agent
+	cp.AllowedScopes = slices.Clone(agent.AllowedScopes)
 	if cp.CreatedAt.IsZero() {
 		cp.CreatedAt = time.Now()
 	}
@@ -47,6 +49,7 @@ func (m *MemoryAgentProvider) Get(_ context.Context, agentID string) (*Agent, er
 		return nil, ErrNoSuchAgent
 	}
 	cp := *a
+	cp.AllowedScopes = slices.Clone(a.AllowedScopes)
 	return &cp, nil
 }
 
@@ -57,6 +60,7 @@ func (m *MemoryAgentProvider) List(_ context.Context) ([]*Agent, error) {
 	out := make([]*Agent, 0, len(m.agents))
 	for _, a := range m.agents {
 		cp := *a
+		cp.AllowedScopes = slices.Clone(a.AllowedScopes)
 		out = append(out, &cp)
 	}
 	return out, nil

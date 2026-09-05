@@ -6,6 +6,44 @@ import (
 	"testing"
 )
 
+func TestMemoryAgentProvider_ClonesAllowedScopes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryAgentProvider()
+	scopes := []string{"tickets:read", "tickets:write"}
+	agent := &Agent{ID: "agent-copy", DisplayName: "Copy Bot", AllowedScopes: scopes}
+	if err := store.Register(ctx, agent); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	scopes[0] = "admin:write"
+	got, err := store.Get(ctx, agent.ID)
+	if err != nil {
+		t.Fatalf("Get after input mutation: %v", err)
+	}
+	if got.AllowedScopes[0] != "tickets:read" {
+		t.Fatalf("stored ceiling changed through Register input: %v", got.AllowedScopes)
+	}
+
+	got.AllowedScopes[1] = "admin:write"
+	list, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List after Get mutation: %v", err)
+	}
+	if len(list) != 1 || list[0].AllowedScopes[1] != "tickets:write" {
+		t.Fatalf("stored ceiling changed through Get result: %+v", list)
+	}
+
+	list[0].AllowedScopes[0] = "admin:write"
+	again, err := store.Get(ctx, agent.ID)
+	if err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+	if again.AllowedScopes[0] != "tickets:read" {
+		t.Fatalf("stored ceiling changed through List result: %v", again.AllowedScopes)
+	}
+}
+
 func TestAgent_Validate(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
