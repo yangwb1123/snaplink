@@ -1,6 +1,7 @@
 package serverbuildstore
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -171,8 +172,11 @@ func TestQuotaSessionManagerHidesAndRecoversPendingSession(t *testing.T) {
 	if _, err := quotas.ReserveResource(t.Context(), "acme", core.ResourceSessions, pending.ID); err != nil {
 		t.Fatal(err)
 	}
-	pending.CreatedAt = time.Now().Add(-sessionQuotaPendingGrace - time.Second)
-	wrapped := wrapQuotaSessionsForTest(t, raw, quotas)
+	aged := &agedQuotaSessionManager{
+		MemorySessionManager: raw,
+		createdAt:            map[string]time.Time{pending.ID: time.Now().Add(-sessionQuotaPendingGrace - time.Second)},
+	}
+	wrapped := wrapQuotaSessionsForTest(t, aged, quotas)
 	if _, err := wrapped.Get(t.Context(), pending.ID); !errors.Is(err, core.ErrSessionNotFound) {
 		t.Fatalf("recovered pending Get = %v, want not found", err)
 	}
@@ -185,7 +189,7 @@ func TestQuotaSessionManagerHidesAndRecoversPendingSession(t *testing.T) {
 
 func wrapQuotaSessionsForTest(
 	t *testing.T,
-	raw *memorystoreidentity.MemorySessionManager,
+	raw core.SessionManager,
 	quotas *memorystoreidentity.MemoryTenantQuotaStore,
 ) core.SessionManager {
 	t.Helper()
@@ -194,6 +198,22 @@ func wrapQuotaSessionsForTest(
 		t.Fatal(err)
 	}
 	return wrapped
+}
+
+type agedQuotaSessionManager struct {
+	*memorystoreidentity.MemorySessionManager
+	createdAt map[string]time.Time
+}
+
+func (m *agedQuotaSessionManager) Get(ctx context.Context, id string) (*core.Session, error) {
+	session, err := m.MemorySessionManager.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if createdAt, ok := m.createdAt[id]; ok {
+		session.CreatedAt = createdAt
+	}
+	return session, nil
 }
 
 func assertSessionUsage(t *testing.T, quotas core.TenantQuotaStore, tenantID string, want int) {

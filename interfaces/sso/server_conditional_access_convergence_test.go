@@ -35,12 +35,15 @@ func TestConditionalAccessConvergenceRevokesExistingDeniedSession(t *testing.T) 
 	if err := store.Put(ctx, conditionalaccess.Policy{Name: "stale", Enabled: true, Conditions: conditionalaccess.Conditions{SessionAgeSeconds: 60}, Actions: conditionalaccess.Actions{Deny: true}}); err != nil {
 		t.Fatal(err)
 	}
-	mgr := defaultimpl.NewMemorySessionManager(time.Hour)
-	session, err := mgr.CreateWithMeta(ctx, "alice", core.SessionMeta{ClientID: "client", AuthorizedScopes: []string{"openid"}, AuthTime: time.Now().Add(-time.Hour)})
+	rawMgr := defaultimpl.NewMemorySessionManager(time.Hour)
+	session, err := rawMgr.CreateWithMeta(ctx, "alice", core.SessionMeta{ClientID: "client", AuthorizedScopes: []string{"openid"}, AuthTime: time.Now().Add(-time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.CreatedAt = time.Now().Add(-time.Hour)
+	mgr := &agedConvergenceSessionManager{
+		MemorySessionManager: rawMgr,
+		createdAt:            map[string]time.Time{session.ID: time.Now().Add(-time.Hour)},
+	}
 	srv := sso.NewServer(sso.WithSessionManager(mgr), sso.WithConditionalAccess(store, conditionalaccess.Config{Enforce: true, SessionSweepBatchSize: 10}))
 	summary, err := srv.RunConditionalAccessConvergence(ctx)
 	if err != nil {
@@ -52,6 +55,24 @@ func TestConditionalAccessConvergenceRevokesExistingDeniedSession(t *testing.T) 
 	if _, err := mgr.Get(ctx, session.ID); err == nil {
 		t.Fatal("denied session remained active")
 	}
+}
+
+type agedConvergenceSessionManager struct {
+	*defaultimpl.MemorySessionManager
+	createdAt map[string]time.Time
+}
+
+func (m *agedConvergenceSessionManager) ListAll(ctx context.Context) ([]*core.Session, error) {
+	sessions, err := m.MemorySessionManager.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, session := range sessions {
+		if createdAt, ok := m.createdAt[session.ID]; ok {
+			session.CreatedAt = createdAt
+		}
+	}
+	return sessions, nil
 }
 
 func TestConditionalAccessSessionScopeCeilingCapsRefresh(t *testing.T) {

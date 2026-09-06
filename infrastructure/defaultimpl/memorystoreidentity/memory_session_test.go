@@ -49,6 +49,97 @@ func TestMemorySessionManager_OverrideTTL(t *testing.T) {
 	}
 }
 
+func TestMemorySessionManager_ClonesCreateGetRefresh(t *testing.T) {
+	t.Parallel()
+	m, ctx, created := newScopedSessionManager(t)
+
+	created.AuthorizedScopes[0] = "admin"
+	created.Revoked = true
+	assertStoredScopes(t, m, ctx, created.ID)
+	if _, err := m.Refresh(ctx, created.ID); err != nil {
+		t.Fatalf("mutating Create result changed stored revocation: %v", err)
+	}
+
+	got, err := m.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	got.AuthorizedScopes[1] = "admin"
+	got.Revoked = true
+	assertStoredScopes(t, m, ctx, created.ID)
+
+	refreshed, err := m.Refresh(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	refreshed.AuthorizedScopes[0] = "admin"
+	refreshed.Revoked = true
+	assertStoredScopes(t, m, ctx, created.ID)
+}
+
+func TestMemorySessionManager_ClonesListResults(t *testing.T) {
+	t.Parallel()
+	m, ctx, created := newScopedSessionManager(t)
+
+	byUser, err := m.ListByUser(ctx, created.UserID)
+	if err != nil || len(byUser) != 1 {
+		t.Fatalf("ListByUser = %v, %v; want one session", byUser, err)
+	}
+	mutateSession(byUser[0])
+	assertStoredScopes(t, m, ctx, created.ID)
+
+	all, err := m.ListAll(ctx)
+	if err != nil || len(all) != 1 {
+		t.Fatalf("ListAll = %v, %v; want one session", all, err)
+	}
+	mutateSession(all[0])
+	assertStoredScopes(t, m, ctx, created.ID)
+
+	byTenant, err := m.ListByTenant(ctx, created.TenantID)
+	if err != nil || len(byTenant) != 1 {
+		t.Fatalf("ListByTenant = %v, %v; want one session", byTenant, err)
+	}
+	mutateSession(byTenant[0])
+	assertStoredScopes(t, m, ctx, created.ID)
+
+	page, _, _, err := m.ListPage(ctx, created.UserID, core.PageQuery{Limit: 10})
+	if err != nil || len(page) != 1 {
+		t.Fatalf("ListPage = %v, %v; want one session", page, err)
+	}
+	mutateSession(page[0])
+	assertStoredScopes(t, m, ctx, created.ID)
+}
+
+func newScopedSessionManager(t *testing.T) (*MemorySessionManager, context.Context, *core.Session) {
+	t.Helper()
+	ctx := context.Background()
+	m := NewMemorySessionManager(time.Hour)
+	s, err := m.CreateWithMeta(ctx, "alice", core.SessionMeta{
+		TenantID: "tenant-a", AuthorizedScopes: []string{"openid", "profile"},
+	})
+	if err != nil {
+		t.Fatalf("CreateWithMeta: %v", err)
+	}
+	return m, ctx, s
+}
+
+func mutateSession(s *core.Session) {
+	s.AuthorizedScopes[0] = "admin"
+	s.AuthorizedScopes[1] = "admin"
+	s.Revoked = true
+}
+
+func assertStoredScopes(t *testing.T, m *MemorySessionManager, ctx context.Context, id string) {
+	t.Helper()
+	got, err := m.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get stored session: %v", err)
+	}
+	if got.Revoked || len(got.AuthorizedScopes) != 2 || got.AuthorizedScopes[0] != "openid" || got.AuthorizedScopes[1] != "profile" {
+		t.Fatalf("stored session changed through alias: %+v", got)
+	}
+}
+
 func TestMemorySessionManager_GetMissingReturnsSentinel(t *testing.T) {
 	t.Parallel()
 	m := NewMemorySessionManager(time.Hour)
@@ -117,12 +208,12 @@ func TestMemorySessionManager_RefreshRefusesRevoked(t *testing.T) {
 	t.Parallel()
 	m := NewMemorySessionManager(time.Hour)
 	s, _ := m.Create(context.Background(), "alice")
-	// Mark revoked directly via the underlying map (admin
-	// revocation path; SDK exposes Destroy + revoke methods that
-	// vary by store, but the Revoked field on the struct is the
-	// canonical signal).
-	stored, _ := m.Get(context.Background(), s.ID)
-	stored.Revoked = true
+	// Mark revoked directly in the fixture (admin revocation path;
+	// SDK exposes Destroy + revoke methods that vary by store, but
+	// the Revoked field on the struct is the canonical signal).
+	m.mu.Lock()
+	m.sessions[s.ID].Revoked = true
+	m.mu.Unlock()
 	if _, err := m.Refresh(context.Background(), s.ID); !errors.Is(err, core.ErrSessionNotFound) {
 		t.Fatalf("revoked Refresh: got %v, want ErrSessionNotFound", err)
 	}

@@ -26,7 +26,11 @@ func TestConvergeSessionsAppliesDenyStepUpAndScopeRestriction(t *testing.T) {
 		}
 	}
 	engine := NewEngine(store, Config{Enforce: true})
-	summary, err := engine.ConvergeSessions(ctx, mgr, func(_ context.Context, s *core.Session, count int) AccessContext {
+	aged := &agedCAPSessionManager{
+		MemorySessionManager: mgr,
+		createdAt:            map[string]time.Time{deny.ID: time.Now().Add(-2 * time.Hour)},
+	}
+	summary, err := engine.ConvergeSessions(ctx, aged, func(_ context.Context, s *core.Session, count int) AccessContext {
 		return AccessContext{Subject: s.UserID, ClientID: s.ClientID, Groups: []string{s.UserID}, Now: time.Now(), SessionCreatedAt: s.CreatedAt, AuthTime: s.AuthTime, RequestedScopes: s.AuthorizedScopes, ConcurrentSessions: count, ConcurrentSessionsKnown: true}
 	})
 	if err != nil {
@@ -77,8 +81,23 @@ func mustCAPSession(t *testing.T, mgr *memorystoreidentity.MemorySessionManager,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if user == "deny" {
-		session.CreatedAt = time.Now().Add(-2 * time.Hour)
-	}
 	return session
+}
+
+type agedCAPSessionManager struct {
+	*memorystoreidentity.MemorySessionManager
+	createdAt map[string]time.Time
+}
+
+func (m *agedCAPSessionManager) ListAll(ctx context.Context) ([]*core.Session, error) {
+	sessions, err := m.MemorySessionManager.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, session := range sessions {
+		if createdAt, ok := m.createdAt[session.ID]; ok {
+			session.CreatedAt = createdAt
+		}
+	}
+	return sessions, nil
 }

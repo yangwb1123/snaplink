@@ -18,6 +18,7 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/internal/composition"
 	"github.com/yangwb1123/snaplink/platform/tracing"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -556,7 +557,21 @@ func setOPSessionAuthTime(t *testing.T, gate *composition.OpSessionGate, authTim
 	if len(sessions) != 1 {
 		t.Fatalf("OP sessions = %d, want 1", len(sessions))
 	}
-	sessions[0].CreatedAt = authTime
+	gate.SetMgr(&agedOPSessionManager{SessionManager: mgr, authTime: authTime})
+}
+
+type agedOPSessionManager struct {
+	core.SessionManager
+	authTime time.Time
+}
+
+func (m *agedOPSessionManager) Get(ctx context.Context, id string) (*core.Session, error) {
+	session, err := m.SessionManager.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	session.CreatedAt = m.authTime
+	return session, nil
 }
 
 func jwtTimeClaim(t *testing.T, raw any, name string) int64 {

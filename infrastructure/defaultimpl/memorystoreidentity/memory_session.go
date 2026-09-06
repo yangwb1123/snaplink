@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -98,7 +99,7 @@ func (m *MemorySessionManager) CreateWithMeta(_ context.Context, userID string, 
 		return nil, ErrStoreAtCapacity
 	}
 	m.sessions[id] = session
-	return session, nil
+	return cloneSession(session), nil
 }
 
 // MarkStepUp implements core.SessionTrustManager: it flags the session for a
@@ -179,7 +180,7 @@ func (m *MemorySessionManager) Get(_ context.Context, sessionID string) (*core.S
 	if s.Revoked || s.IsExpired() {
 		return nil, core.ErrSessionNotFound
 	}
-	return s, nil
+	return cloneSession(s), nil
 }
 
 func (m *MemorySessionManager) Destroy(_ context.Context, sessionID string) error {
@@ -207,7 +208,7 @@ func (m *MemorySessionManager) Refresh(_ context.Context, sessionID string) (*co
 		return nil, core.ErrSessionNotFound
 	}
 	s.ExpiresAt = time.Now().Add(m.ttl)
-	return s, nil
+	return cloneSession(s), nil
 }
 
 func (m *MemorySessionManager) ListByUser(_ context.Context, userID string) ([]*core.Session, error) {
@@ -216,7 +217,7 @@ func (m *MemorySessionManager) ListByUser(_ context.Context, userID string) ([]*
 	out := make([]*core.Session, 0)
 	for _, s := range m.sessions {
 		if s.UserID == userID && !s.Revoked && !s.IsExpired() {
-			out = append(out, s)
+			out = append(out, cloneSession(s))
 		}
 	}
 	return out, nil
@@ -227,7 +228,7 @@ func (m *MemorySessionManager) ListAll(_ context.Context) ([]*core.Session, erro
 	defer m.mu.RUnlock()
 	out := make([]*core.Session, 0, len(m.sessions))
 	for _, s := range m.sessions {
-		out = append(out, s)
+		out = append(out, cloneSession(s))
 	}
 	return out, nil
 }
@@ -240,7 +241,7 @@ func (m *MemorySessionManager) ListPage(_ context.Context, userID string, q core
 	m.mu.RLock()
 	sessions := make([]*core.Session, 0, len(m.sessions))
 	for _, s := range m.sessions {
-		sessions = append(sessions, s)
+		sessions = append(sessions, cloneSession(s))
 	}
 	m.mu.RUnlock()
 	var all []*core.Session
@@ -283,10 +284,19 @@ func (m *MemorySessionManager) ListByTenant(_ context.Context, tenantID string) 
 	out := make([]*core.Session, 0)
 	for _, s := range m.sessions {
 		if s.TenantID == tenantID {
-			out = append(out, s)
+			out = append(out, cloneSession(s))
 		}
 	}
 	return out, nil
+}
+
+func cloneSession(s *core.Session) *core.Session {
+	if s == nil {
+		return nil
+	}
+	cp := *s
+	cp.AuthorizedScopes = slices.Clone(s.AuthorizedScopes)
+	return &cp
 }
 
 func randomHex(n int) string {
