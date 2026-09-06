@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -67,7 +69,7 @@ func (m *MemoryClientStore) AddSeed(client *core.Client) {
 		}
 	}
 	m.mu.Lock()
-	m.clients[client.ID] = client
+	m.clients[client.ID] = cloneClient(client)
 	m.mu.Unlock()
 }
 
@@ -78,7 +80,7 @@ func (m *MemoryClientStore) Get(_ context.Context, clientID string) (*core.Clien
 	if !ok {
 		return nil, core.ErrNoSuchClient
 	}
-	return c, nil
+	return cloneClient(c), nil
 }
 
 func (m *MemoryClientStore) ValidateSecret(_ context.Context, clientID, clientSecret string) error {
@@ -122,7 +124,7 @@ func (m *MemoryClientStore) List(_ context.Context) ([]*core.Client, error) {
 	defer m.mu.RUnlock()
 	out := make([]*core.Client, 0, len(m.clients))
 	for _, c := range m.clients {
-		out = append(out, c)
+		out = append(out, cloneClient(c))
 	}
 	return out, nil
 }
@@ -138,7 +140,7 @@ func (m *MemoryClientStore) ListByTenant(_ context.Context, tenantID string) ([]
 	var out []*core.Client
 	for _, c := range m.clients {
 		if c.TenantID == tenantID {
-			out = append(out, c)
+			out = append(out, cloneClient(c))
 		}
 	}
 	return out, nil
@@ -155,7 +157,7 @@ func (m *MemoryClientStore) Stats(_ context.Context) (int, string, error) {
 	m.mu.RLock()
 	clients := make([]*core.Client, 0, len(m.clients))
 	for _, c := range m.clients {
-		clients = append(clients, c)
+		clients = append(clients, cloneClient(c))
 	}
 	m.mu.RUnlock()
 	return len(clients), core.ClientSetFingerprint(clients), nil
@@ -203,7 +205,7 @@ func (m *MemoryClientStore) Add(_ context.Context, c *core.Client) error {
 	if _, exists := m.clients[c.ID]; exists {
 		return core.ErrClientExists
 	}
-	m.clients[c.ID] = c
+	m.clients[c.ID] = cloneClient(c)
 	return nil
 }
 
@@ -230,7 +232,7 @@ func (m *MemoryClientStore) Update(_ context.Context, c *core.Client) error {
 	if _, exists := m.clients[c.ID]; !exists {
 		return core.ErrNoSuchClient
 	}
-	m.clients[c.ID] = c
+	m.clients[c.ID] = cloneClient(c)
 	return nil
 }
 
@@ -301,7 +303,7 @@ func (m *MemoryClientStore) ListPage(_ context.Context, q core.PageQuery) ([]*co
 	m.mu.RLock()
 	clients := make([]*core.Client, 0, len(m.clients))
 	for _, c := range m.clients {
-		clients = append(clients, c)
+		clients = append(clients, cloneClient(c))
 	}
 	m.mu.RUnlock()
 	field, value, ok := core.ParseFilterExpr(q.Filter)
@@ -336,7 +338,7 @@ func (m *MemoryClientStore) ListExpiringPage(_ context.Context, cutoff time.Time
 	m.mu.RLock()
 	clients := make([]*core.Client, 0, len(m.clients))
 	for _, c := range m.clients {
-		clients = append(clients, c)
+		clients = append(clients, cloneClient(c))
 	}
 	m.mu.RUnlock()
 	expiring := clients[:0]
@@ -363,6 +365,27 @@ var (
 	_ clientrotation.ClientSecretOverlapRotator   = (*MemoryClientStore)(nil)
 	_ clientrotation.ClientSecretLifecycleRotator = (*MemoryClientStore)(nil)
 )
+
+func cloneClient(c *core.Client) *core.Client {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	cp.RedirectURIs = slices.Clone(c.RedirectURIs)
+	cp.RedirectURIPatterns = slices.Clone(c.RedirectURIPatterns)
+	cp.AllowedScopes = slices.Clone(c.AllowedScopes)
+	cp.AllowedAuthenticators = slices.Clone(c.AllowedAuthenticators)
+	cp.AllowedProviderIDs = slices.Clone(c.AllowedProviderIDs)
+	cp.AllowedResources = slices.Clone(c.AllowedResources)
+	cp.PostLogoutRedirectURIs = slices.Clone(c.PostLogoutRedirectURIs)
+	cp.AllowedAuthorizationDetailsTypes = slices.Clone(c.AllowedAuthorizationDetailsTypes)
+	cp.AllowedPKCEMethods = slices.Clone(c.AllowedPKCEMethods)
+	cp.AllowedRequestURIs = slices.Clone(c.AllowedRequestURIs)
+	cp.JWKS = slices.Clone(c.JWKS)
+	cp.GrantTypes = slices.Clone(c.GrantTypes)
+	cp.Attributes = maps.Clone(c.Attributes)
+	return &cp
+}
 
 // generateSecret returns a base64url-encoded random string. 32 bytes ≈ 256
 // bits of entropy — comfortable for client secrets that may be long-lived.

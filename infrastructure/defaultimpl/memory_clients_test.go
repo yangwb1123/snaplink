@@ -190,6 +190,121 @@ func TestMemoryStats_EmptyStoreStable(t *testing.T) {
 	}
 }
 
+func TestMemoryClientStore_DefensiveCopiesPolicyFields(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := defaultimpl.NewMemoryClientStore()
+	input := &sso.Client{
+		ID: "copy", TenantID: "tenant-a", Active: true,
+		RedirectURIs:     []string{"https://app.example/callback"},
+		AllowedScopes:    []string{"openid"},
+		AllowedResources: []string{"https://api.example"},
+		JWKS:             []sso.JWK{{Kty: "OKP", Kid: "key-1"}},
+		Attributes:       map[string]string{"caep_receiver_endpoint": "https://rp.example/events"},
+	}
+	if err := store.Add(ctx, input); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	mutateClientPolicy(input)
+	got, err := store.Get(ctx, input.ID)
+	if err != nil {
+		t.Fatalf("Get after input mutation: %v", err)
+	}
+	assertClientPolicy(t, got)
+
+	mutateClientPolicy(got)
+	list, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List after Get mutation: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("List returned %d clients, want 1", len(list))
+	}
+	assertClientPolicy(t, list[0])
+
+	mutateClientPolicy(list[0])
+	byTenant, err := store.ListByTenant(ctx, input.TenantID)
+	if err != nil {
+		t.Fatalf("ListByTenant after List mutation: %v", err)
+	}
+	if len(byTenant) != 1 {
+		t.Fatalf("ListByTenant returned %d clients, want 1", len(byTenant))
+	}
+	assertClientPolicy(t, byTenant[0])
+	mutateClientPolicy(byTenant[0])
+	again, err := store.Get(ctx, input.ID)
+	if err != nil {
+		t.Fatalf("Get after ListByTenant mutation: %v", err)
+	}
+	assertClientPolicy(t, again)
+}
+
+func TestMemoryClientStore_UpdateDefensiveCopy(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := defaultimpl.NewMemoryClientStore()
+	if err := store.Add(ctx, &sso.Client{ID: "update", Active: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	updated := &sso.Client{
+		ID: "update", TenantID: "tenant-a", Active: true,
+		RedirectURIs:     []string{"https://app.example/callback"},
+		AllowedScopes:    []string{"openid"},
+		AllowedResources: []string{"https://api.example"},
+		JWKS:             []sso.JWK{{Kty: "OKP", Kid: "key-1"}},
+		Attributes:       map[string]string{"caep_receiver_endpoint": "https://rp.example/events"},
+	}
+	if err := store.Update(ctx, updated); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	mutateClientPolicy(updated)
+	got, err := store.Get(ctx, updated.ID)
+	if err != nil {
+		t.Fatalf("Get after Update input mutation: %v", err)
+	}
+	assertClientPolicy(t, got)
+}
+
+func TestMemoryClientStore_AddSeedDefensiveCopy(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := defaultimpl.NewMemoryClientStore()
+	seed := &sso.Client{
+		ID: "seed-copy", Active: true,
+		RedirectURIs:     []string{"https://seed.example/callback"},
+		AllowedScopes:    []string{"seed:read"},
+		AllowedResources: []string{"https://seed-api.example"},
+		JWKS:             []sso.JWK{{Kty: "OKP", Kid: "seed-key"}},
+		Attributes:       map[string]string{"source": "seed"},
+	}
+	store.AddSeed(seed)
+	mutateClientPolicy(seed)
+	got, err := store.Get(ctx, seed.ID)
+	if err != nil {
+		t.Fatalf("Get after AddSeed input mutation: %v", err)
+	}
+	if got.RedirectURIs[0] != "https://seed.example/callback" || got.AllowedScopes[0] != "seed:read" || got.AllowedResources[0] != "https://seed-api.example" || got.JWKS[0].Kid != "seed-key" || got.Attributes["source"] != "seed" || len(got.Attributes) != 1 {
+		t.Fatalf("AddSeed stored caller-owned policy fields: %+v", got)
+	}
+}
+
+func mutateClientPolicy(c *sso.Client) {
+	c.RedirectURIs[0] = "https://attacker.example/callback"
+	c.AllowedScopes[0] = "admin"
+	c.AllowedResources[0] = "https://attacker.example"
+	c.JWKS[0].Kid = "attacker-key"
+	c.Attributes["caep_receiver_endpoint"] = "https://attacker.example/events"
+	c.Attributes["mutated"] = "true"
+}
+
+func assertClientPolicy(t *testing.T, c *sso.Client) {
+	t.Helper()
+	if c.RedirectURIs[0] != "https://app.example/callback" || c.AllowedScopes[0] != "openid" || c.AllowedResources[0] != "https://api.example" || c.JWKS[0].Kid != "key-1" || c.Attributes["caep_receiver_endpoint"] != "https://rp.example/events" || len(c.Attributes) != 1 {
+		t.Fatalf("stored caller-owned policy fields: %+v", c)
+	}
+}
+
 // TestMemoryClients_SecretHashAtRest proves that Add/AddSeed store a bcrypt
 // hash and that ValidateSecret accepts the original plaintext.
 func TestMemoryClients_SecretHashAtRest(t *testing.T) {
