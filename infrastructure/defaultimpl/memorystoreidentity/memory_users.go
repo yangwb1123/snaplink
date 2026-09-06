@@ -3,6 +3,7 @@ package memorystoreidentity
 import (
 	"context"
 	"errors"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -39,7 +40,7 @@ func (p *MemoryUserProvider) GetByID(_ context.Context, id string) (*core.User, 
 	if !ok {
 		return nil, core.ErrNoSuchUser
 	}
-	return u, nil
+	return cloneUser(u), nil
 }
 
 func (p *MemoryUserProvider) GetByExternalID(_ context.Context, provider, externalID string) (*core.User, error) {
@@ -47,7 +48,7 @@ func (p *MemoryUserProvider) GetByExternalID(_ context.Context, provider, extern
 	defer p.mu.RUnlock()
 	for _, u := range p.users {
 		if u.Provider == provider && u.ExternalID == externalID {
-			return u, nil
+			return cloneUser(u), nil
 		}
 	}
 	return nil, core.ErrNoSuchUser
@@ -72,7 +73,7 @@ func (p *MemoryUserProvider) GetByUsername(_ context.Context, username string) (
 		// CreateOrUpdate/Delete for this id repairs the index anyway.
 		return nil, core.ErrNoSuchUser
 	}
-	return u, nil
+	return cloneUser(u), nil
 }
 
 // GetByEmail implements core.UserByEmailProvider. Case-insensitive match on
@@ -89,7 +90,7 @@ func (p *MemoryUserProvider) GetByEmail(_ context.Context, email string) (*core.
 		// See GetByUsername: no self-heal under RLock, same reasoning.
 		return nil, core.ErrNoSuchUser
 	}
-	return u, nil
+	return cloneUser(u), nil
 }
 
 // UsernameExists implements core.UsernameCheckProvider.
@@ -149,7 +150,7 @@ func (p *MemoryUserProvider) CreateOrUpdate(_ context.Context, user *core.User) 
 		p.byEmail[strings.ToLower(user.Email)] = user.ID
 	}
 
-	p.users[user.ID] = user
+	p.users[user.ID] = cloneUser(user)
 	return nil
 }
 
@@ -158,7 +159,7 @@ func (p *MemoryUserProvider) List(_ context.Context) ([]*core.User, error) {
 	defer p.mu.RUnlock()
 	out := make([]*core.User, 0, len(p.users))
 	for _, u := range p.users {
-		out = append(out, u)
+		out = append(out, cloneUser(u))
 	}
 	return out, nil
 }
@@ -196,7 +197,7 @@ func (p *MemoryUserProvider) ListPaginated(_ context.Context, offset, limit int)
 
 	out := make([]*core.User, 0, len(sorted))
 	for _, id := range sorted {
-		out = append(out, p.users[id])
+		out = append(out, cloneUser(p.users[id]))
 	}
 	return out, total, nil
 }
@@ -225,7 +226,7 @@ func (p *MemoryUserProvider) ListPage(_ context.Context, q core.PageQuery) ([]*c
 	p.mu.RLock()
 	users := make([]*core.User, 0, len(p.users))
 	for _, u := range p.users {
-		users = append(users, u)
+		users = append(users, cloneUser(u))
 	}
 	p.mu.RUnlock()
 	field, value, ok := core.ParseFilterExpr(q.Filter)
@@ -248,6 +249,15 @@ func (p *MemoryUserProvider) ListPage(_ context.Context, q core.PageQuery) ([]*c
 	keyID := func(u *core.User) (string, string) { return core.UserSortKey(u, q.OrderBy), u.ID }
 	core.SortKeyset(users, q.Desc, keyID)
 	return core.KeysetSlice(users, q, keyID)
+}
+
+func cloneUser(u *core.User) *core.User {
+	if u == nil {
+		return nil
+	}
+	cp := *u
+	cp.Attributes = maps.Clone(u.Attributes)
+	return &cp
 }
 
 // Compile-time interface check.

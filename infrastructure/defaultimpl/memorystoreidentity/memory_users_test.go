@@ -24,6 +24,99 @@ func TestMemoryUserProvider_CreateThenGet(t *testing.T) {
 	}
 }
 
+func TestMemoryUserProvider_ClonesCreateAttributes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	attrs := map[string]string{core.UserAttrActive: core.UserAttrInactive}
+	p := NewMemoryUserProvider()
+	user := &core.User{
+		ID: "u-copy", Provider: "password", ExternalID: "ext-copy",
+		Username: "alice", Email: "alice@example.com", Attributes: attrs,
+	}
+	if err := p.CreateOrUpdate(ctx, user); err != nil {
+		t.Fatalf("CreateOrUpdate: %v", err)
+	}
+
+	attrs[core.UserAttrActive] = "true"
+	attrs["tampered"] = "true"
+	assertUserInactive(t, p, ctx)
+}
+
+func TestMemoryUserProvider_ClonesLookupAttributes(t *testing.T) {
+	t.Parallel()
+	p, ctx := newInactiveUserProvider(t)
+	lookups := []func() (*core.User, error){
+		func() (*core.User, error) { return p.GetByID(ctx, "u-copy") },
+		func() (*core.User, error) { return p.GetByExternalID(ctx, "password", "ext-copy") },
+		func() (*core.User, error) { return p.GetByUsername(ctx, "alice") },
+		func() (*core.User, error) { return p.GetByEmail(ctx, "alice@example.com") },
+	}
+	for _, lookup := range lookups {
+		got, err := lookup()
+		if err != nil {
+			t.Fatalf("lookup: %v", err)
+		}
+		mutateUserAttributes(got)
+		assertUserInactive(t, p, ctx)
+	}
+}
+
+func TestMemoryUserProvider_ClonesListAttributes(t *testing.T) {
+	t.Parallel()
+	p, ctx := newInactiveUserProvider(t)
+	list, err := p.List(ctx)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("List = %v, %v; want one user", list, err)
+	}
+	mutateUserAttributes(list[0])
+	assertUserInactive(t, p, ctx)
+
+	page, _, err := p.ListPaginated(ctx, 0, 10)
+	if err != nil || len(page) != 1 {
+		t.Fatalf("ListPaginated = %v, %v; want one user", page, err)
+	}
+	mutateUserAttributes(page[0])
+	assertUserInactive(t, p, ctx)
+
+	filtered, _, _, err := p.ListPage(ctx, core.PageQuery{Limit: 10})
+	if err != nil || len(filtered) != 1 {
+		t.Fatalf("ListPage = %v, %v; want one user", filtered, err)
+	}
+	mutateUserAttributes(filtered[0])
+	assertUserInactive(t, p, ctx)
+}
+
+func newInactiveUserProvider(t *testing.T) (*MemoryUserProvider, context.Context) {
+	t.Helper()
+	ctx := context.Background()
+	p := NewMemoryUserProvider()
+	user := &core.User{
+		ID: "u-copy", Provider: "password", ExternalID: "ext-copy",
+		Username: "alice", Email: "alice@example.com",
+		Attributes: map[string]string{core.UserAttrActive: core.UserAttrInactive},
+	}
+	if err := p.CreateOrUpdate(ctx, user); err != nil {
+		t.Fatalf("CreateOrUpdate: %v", err)
+	}
+	return p, ctx
+}
+
+func mutateUserAttributes(user *core.User) {
+	user.Attributes[core.UserAttrActive] = "true"
+	user.Attributes["tampered"] = "true"
+}
+
+func assertUserInactive(t *testing.T, p *MemoryUserProvider, ctx context.Context) {
+	t.Helper()
+	got, err := p.GetByID(ctx, "u-copy")
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Attributes[core.UserAttrActive] != core.UserAttrInactive || got.IsActive() {
+		t.Fatalf("stored deprovisioning state changed: %+v", got.Attributes)
+	}
+}
+
 func TestMemoryUserProvider_GetByIDMissing(t *testing.T) {
 	t.Parallel()
 	p := NewMemoryUserProvider()
