@@ -174,8 +174,10 @@ func (r *Registry) broadcast(serviceName string, evt registry.Event) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, ch := range r.watchers[serviceName] {
+		isolated := evt
+		isolated.Service = cloneService(evt.Service)
 		select {
-		case ch <- evt:
+		case ch <- isolated:
 		default:
 			// Slow consumer — drop rather than block. Watch contract is
 			// "best-effort streaming"; consumers needing guaranteed delivery

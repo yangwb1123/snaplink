@@ -245,6 +245,45 @@ func TestRegisterDeepCopiesInputs(t *testing.T) {
 	}
 }
 
+func TestWatchEvents_IsolateServiceSnapshots(t *testing.T) {
+	t.Parallel()
+	r := memory.New()
+	defer func() { _ = r.Close() }()
+	ctx := context.Background()
+	first, _ := r.Watch(ctx, "sso")
+	second, _ := r.Watch(ctx, "sso")
+	svc := &registry.Service{
+		ID: "sso-1", Name: "sso", Tags: []string{"stable"},
+		Metadata: map[string]string{"region": "us-east"},
+	}
+	if err := r.Register(ctx, svc); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	firstEvent := waitEvent(t, first)
+	secondEvent := waitEvent(t, second)
+	firstEvent.Service.Tags[0] = "mutated"
+	firstEvent.Service.Metadata["region"] = "attacker"
+	firstEvent.Service.Name = "tampered"
+	if secondEvent.Service.Name != "sso" || secondEvent.Service.Tags[0] != "stable" ||
+		secondEvent.Service.Metadata["region"] != "us-east" {
+		t.Fatalf("watchers share a Service snapshot: %+v", secondEvent.Service)
+	}
+	found, err := r.Discover(ctx, "sso")
+	if err != nil || found[0].Name != "sso" || found[0].Metadata["region"] != "us-east" {
+		t.Fatalf("watch event mutation changed registry: %+v, %v", found, err)
+	}
+
+	if err := r.Deregister(ctx, svc.ID); err != nil {
+		t.Fatalf("Deregister: %v", err)
+	}
+	removedFirst := waitEvent(t, first)
+	removedSecond := waitEvent(t, second)
+	removedFirst.Service.Metadata["region"] = "tampered"
+	if removedSecond.Service.Metadata["region"] != "us-east" {
+		t.Fatalf("removal event leaked a shared Service snapshot: %+v", removedSecond.Service)
+	}
+}
+
 func TestServiceEndpoint(t *testing.T) {
 	t.Parallel()
 	if (&registry.Service{Address: "1.2.3.4", Port: 80}).Endpoint() != "1.2.3.4:80" {
