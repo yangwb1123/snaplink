@@ -107,8 +107,11 @@ func (b *appBuilder) wirePasswordReset() error {
 	if err != nil {
 		return fmt.Errorf("self_service password_reset store: %w", err)
 	}
-	if passwordResetStore == nil || b.passwordStore == nil {
+	if passwordResetStore == nil {
 		return nil
+	}
+	if b.passwordStore == nil {
+		return errors.New("self_service.password_reset.backend requires self_service.password.backend")
 	}
 	// Retained for the GDPR eraser (lateBindComplianceStores, compliance_routes.go).
 	if revoker, ok := passwordResetStore.(core.PasswordResetRevoker); ok {

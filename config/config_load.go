@@ -218,6 +218,9 @@ func (c *Config) validateFeatureConfig() error {
 	if err := c.Audit.Notary.validate(c.Audit); err != nil {
 		return err
 	}
+	if err := c.validateFeatureDependencies(); err != nil {
+		return err
+	}
 	if c.Audit.ExternalWorker.Enabled && !c.Audit.Enabled {
 		return errors.New("config: audit.external_worker.enabled requires audit.enabled")
 	}

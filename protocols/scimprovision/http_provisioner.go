@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/protocols/scim"
+	"github.com/yangwb1123/snaplink/shared/security/securityverify"
 )
 
 // DefaultHTTPTimeout bounds a single outbound SCIM HTTP call when
@@ -67,6 +68,9 @@ func WithHTTPTimeout(d time.Duration) HTTPOption {
 	return func(p *HTTPSCIMProvisioner) {
 		if d > 0 {
 			p.timeout = d
+			if p.client != nil {
+				p.client.Timeout = d
+			}
 		}
 	}
 }
@@ -76,9 +80,14 @@ func WithHTTPTimeout(d time.Duration) HTTPOption {
 // "https://app.example.com/scim/v2"). A trailing slash is trimmed so path
 // joins never produce a doubled "//".
 func NewHTTPSCIMProvisioner(baseURL string, opts ...HTTPOption) *HTTPSCIMProvisioner {
+	dialer := &securityverify.SSRFGuardedDialer{ErrPrefix: "scimprovision", Timeout: DefaultHTTPTimeout}
 	p := &HTTPSCIMProvisioner{
 		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		client:  &http.Client{Timeout: DefaultHTTPTimeout},
+		client: &http.Client{
+			Timeout:       DefaultHTTPTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+			Transport:     dialer.Transport(),
+		},
 		timeout: DefaultHTTPTimeout,
 	}
 	for _, opt := range opts {

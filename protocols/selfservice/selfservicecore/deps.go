@@ -179,6 +179,8 @@ func RecordSelfErase(d Deps, ctx core.HandlerContext, userID string, report *com
 	audit.SetMeta(evt, "consent_revoked", fmt.Sprintf("%d", report.ConsentRevoked))
 	audit.SetMeta(evt, "mfa_factors_removed", fmt.Sprintf("%d", report.MFAFactorsRemoved))
 	audit.SetMeta(evt, "reset_tokens_revoked", fmt.Sprintf("%d", report.ResetTokensRevoked))
+	audit.SetMeta(evt, "email_change_tokens_revoked", fmt.Sprintf("%d", report.EmailChangeTokensRevoked))
+	audit.SetMeta(evt, "password_credential_deleted", fmt.Sprintf("%t", report.PasswordCredentialDeleted))
 	audit.SetMeta(evt, "user_deleted", fmt.Sprintf("%t", report.UserDeleted))
 	if err := report.Err(); err != nil {
 		evt.Outcome = audit.OutcomeFailure

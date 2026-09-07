@@ -205,10 +205,12 @@ type ScopeLimitConfig struct {
 	MaxCount int `yaml:"max_count"`
 }
 
-// AdminConfig toggles the admin control plane. When Enabled is true the
-// sso-server mounts the four admin gRPC services and the grpc-gateway
-// REST proxy under /api/v1/admin/. APIRESTEnabled defaults to true when
-// Enabled is true; set false to expose admin gRPC-only.
+// AdminConfig toggles the command admin control plane. When Enabled is true
+// the sso-server mounts the admin gRPC services and AdminMiddleware. The
+// command's generated gRPC-gateway REST proxy is mounted under
+// /api/v1/admin/ only when APIRESTEnabled is true. Source-loaded configs
+// default APIRESTEnabled to true when omitted; set it false to disable that
+// generated gateway while retaining the separately wired SDK HTTP surfaces.
 type AdminConfig struct {
 	Enabled        bool `yaml:"enabled"`
 	APIRESTEnabled bool `yaml:"api_rest_enabled"`

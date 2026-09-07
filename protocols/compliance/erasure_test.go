@@ -107,6 +107,27 @@ func TestEraseSubject_FullErasure(t *testing.T) {
 	}
 }
 
+func TestEraseSubject_RemovesPasswordCredential(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	users := defaultimpl.NewMemoryUserProvider()
+	passwords := defaultimpl.NewMemoryPasswordCredentialStore()
+	if err := users.CreateOrUpdate(ctx, &core.User{ID: "u1"}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := passwords.SetPassword(ctx, "u1", "secret"); err != nil {
+		t.Fatalf("set password: %v", err)
+	}
+	eraser := &compliance.Eraser{Users: users, PasswordCredentials: passwords}
+	rep, err := eraser.EraseSubject(ctx, "u1", compliance.EraseOptions{})
+	if err != nil || !rep.PasswordCredentialDeleted {
+		t.Fatalf("erase report=%#v err=%v", rep, err)
+	}
+	if err := passwords.VerifyPassword(ctx, "u1", "secret"); err == nil {
+		t.Fatal("password credential still verifies after erasure")
+	}
+}
+
 func TestEraseSubject_Idempotent(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

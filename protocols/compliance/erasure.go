@@ -31,6 +31,10 @@ type Eraser struct {
 	// Users deletes the subject's account. Delete is idempotent, so
 	// re-running an erasure is safe.
 	Users core.UserProvider
+	// PasswordCredentials removes the stored password hash when the optional
+	// credential store extension is supported. It runs before Users so a
+	// mid-operation failure cannot leave a live password behind.
+	PasswordCredentials core.PasswordCredentialDeleter
 	// Sessions destroys the subject's active server-side sessions.
 	Sessions core.SessionManager
 	// Refresh revokes refresh tokens; requires Clients to enumerate the
@@ -69,15 +73,17 @@ type EraseOptions struct {
 // does not abort the others, so a single store outage can't strand the
 // rest of the subject's data. Err aggregates any step failures.
 type Report struct {
-	UserID               string
-	DryRun               bool
-	RefreshTokensDeleted int
-	SessionsDestroyed    int
-	ConsentRevoked       int
-	MFAFactorsRemoved    int
-	ResetTokensRevoked   int
-	NotificationsDeleted bool
-	UserDeleted          bool
+	UserID                    string
+	DryRun                    bool
+	RefreshTokensDeleted      int
+	SessionsDestroyed         int
+	ConsentRevoked            int
+	MFAFactorsRemoved         int
+	ResetTokensRevoked        int
+	EmailChangeTokensRevoked  int
+	PasswordCredentialDeleted bool
+	NotificationsDeleted      bool
+	UserDeleted               bool
 	// Skipped names steps skipped because their SPI wasn't wired (or,
 	// for refresh tokens under DryRun, because the step isn't previewable).
 	Skipped []string
@@ -102,6 +108,7 @@ func (e *Eraser) EraseSubject(ctx context.Context, userID string, opts EraseOpti
 
 	// Credentials first so a deletion that fails midway still leaves the
 	// subject locked out rather than half-erased-but-usable.
+	e.erasePasswordCredential(ctx, userID, opts, rep)
 	e.eraseRefreshTokens(ctx, userID, opts, rep)
 	e.eraseSessions(ctx, userID, opts, rep)
 	// Clear inheritable state BEFORE deleting the account so a re-registered id
@@ -113,6 +120,22 @@ func (e *Eraser) EraseSubject(ctx context.Context, userID string, opts EraseOpti
 	e.eraseUser(ctx, userID, opts, rep)
 
 	return rep, rep.Err()
+}
+
+func (e *Eraser) erasePasswordCredential(ctx context.Context, userID string, opts EraseOptions, rep *Report) {
+	if e.PasswordCredentials == nil {
+		rep.Skipped = append(rep.Skipped, "password_credential(not wired)")
+		return
+	}
+	if opts.DryRun {
+		rep.Skipped = append(rep.Skipped, "password_credential(dry-run not previewable)")
+		return
+	}
+	if err := e.PasswordCredentials.DeletePassword(ctx, userID); err != nil {
+		rep.Errors = append(rep.Errors, fmt.Errorf("delete password credential: %w", err))
+		return
+	}
+	rep.PasswordCredentialDeleted = true
 }
 
 func (e *Eraser) eraseNotifications(ctx context.Context, userID string, opts EraseOptions, rep *Report) {
@@ -203,7 +226,10 @@ func (e *Eraser) eraseSelfServiceTokens(ctx context.Context, userID string, opts
 		if n, err := e.EmailChange.RevokeByUser(ctx, userID); err != nil {
 			rep.Errors = append(rep.Errors, fmt.Errorf("revoke email-change tokens: %w", err))
 		} else {
+			// Keep ResetTokensRevoked's historical aggregate semantics while
+			// exposing a distinct count for callers that need one.
 			rep.ResetTokensRevoked += n
+			rep.EmailChangeTokensRevoked += n
 		}
 	}
 }

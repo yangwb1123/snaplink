@@ -231,6 +231,19 @@ func TestBuildPasswordCredentialStore_DisabledMemoryUnknown(t *testing.T) {
 	}
 }
 
+func TestBuildEmailChangeStore_DisabledMemoryUnknown(t *testing.T) {
+	t.Parallel()
+	if s, err := BuildEmailChangeStore(config.SelfServiceStoreConfig{}, nil, postgresbackend.Dialect("")); err != nil || s != nil {
+		t.Fatalf("disabled: store=%v err=%v, want (nil, nil)", s, err)
+	}
+	if s, err := BuildEmailChangeStore(config.SelfServiceStoreConfig{Backend: "memory"}, nil, postgresbackend.Dialect("")); err != nil || s == nil {
+		t.Fatalf("memory: store=%v err=%v", s, err)
+	}
+	if _, err := BuildEmailChangeStore(config.SelfServiceStoreConfig{Backend: "carrier-pigeon"}, nil, postgresbackend.Dialect("")); err == nil {
+		t.Fatal("expected error: unknown backend")
+	}
+}
+
 func TestBuildUserProvider_MemoryAndUnknownBackend(t *testing.T) {
 	t.Parallel()
 	if p, err := BuildUserProvider(config.IdentityConfig{}, nil, postgresbackend.Dialect("")); err != nil || p == nil {

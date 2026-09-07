@@ -48,7 +48,19 @@ func newTestSCIMServer(t *testing.T, requireToken string) (*httptest.Server, cor
 
 func newTestProvisioner(t *testing.T, srv *httptest.Server, token string) *HTTPSCIMProvisioner {
 	t.Helper()
-	return NewHTTPSCIMProvisioner(srv.URL+testBasePath, WithBearerToken(token))
+	// httptest binds loopback; explicitly inject a test client to bypass the
+	// production SSRF guard while retaining the real wire-level receiver.
+	return NewHTTPSCIMProvisioner(srv.URL+testBasePath, WithBearerToken(token),
+		WithHTTPClient(&http.Client{Timeout: DefaultHTTPTimeout}))
+}
+
+func TestNewHTTPSCIMProvisioner_DefaultClientGuardsPrivateAddresses(t *testing.T) {
+	t.Parallel()
+	p := NewHTTPSCIMProvisioner("http://127.0.0.1:1")
+	_, err := p.CreateUser(context.Background(), scim.Resource{ExternalID: "u1"})
+	if err == nil || !strings.Contains(err.Error(), "SSRF guard") {
+		t.Fatalf("private-address request error = %v, want SSRF guard rejection", err)
+	}
 }
 
 // fakeGroup is one stored Group in newFakeGroupSCIMServer's in-memory table.

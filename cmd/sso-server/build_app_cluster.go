@@ -285,6 +285,9 @@ func (b *appBuilder) wireFinalOptions() error {
 		logger.Info("setup wizard API enabled", "paths", "/api/v1/setup, /api/v1/setup/status")
 	}
 
+	if err := b.wireEmailChangeStore(); err != nil {
+		return err
+	}
 	return b.wireConsentNativeSSOPRM()
 }
 

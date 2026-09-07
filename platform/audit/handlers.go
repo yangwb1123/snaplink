@@ -52,6 +52,7 @@ type HandlerDeps interface {
 // query-string filters (type, actor_id, client_id, tenant_id, outcome,
 // since, until, limit, offset). Requires admin scope.
 func HandleEvents(d HandlerDeps, ctx core.HandlerContext) {
+	noStore(ctx)
 	rec := d.Auditor()
 	if rec == nil {
 		ctx.JSON(http.StatusInternalServerError, map[string]string{core.KeyError: ErrNotEnabled})
@@ -85,6 +86,7 @@ func HandleEvents(d HandlerDeps, ctx core.HandlerContext) {
 // existing audit_not_enabled code so the UI falls back to plain queries
 // rather than surfacing a hard error.
 func HandleFacets(d HandlerDeps, ctx core.HandlerContext) {
+	noStore(ctx)
 	rec := d.Auditor()
 	if rec == nil {
 		ctx.JSON(http.StatusInternalServerError, map[string]string{core.KeyError: ErrNotEnabled})
@@ -119,6 +121,7 @@ func HandleFacets(d HandlerDeps, ctx core.HandlerContext) {
 
 // HandleEventByID implements GET /api/v1/audit/events/:id.
 func HandleEventByID(d HandlerDeps, ctx core.HandlerContext) {
+	noStore(ctx)
 	rec := d.Auditor()
 	if rec == nil {
 		ctx.JSON(http.StatusInternalServerError, map[string]string{core.KeyError: ErrNotEnabled})
@@ -140,6 +143,11 @@ func HandleEventByID(d HandlerDeps, ctx core.HandlerContext) {
 		return
 	}
 	ctx.JSON(http.StatusOK, event)
+}
+
+func noStore(ctx core.HandlerContext) {
+	ctx.ResponseWriter().Header().Set("Cache-Control", "no-store")
+	ctx.ResponseWriter().Header().Set("Pragma", "no-cache")
 }
 
 func parseQuery(ctx core.HandlerContext) (Query, error) {

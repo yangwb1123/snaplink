@@ -112,6 +112,10 @@ type SelfServiceConfig struct {
 	// hash) and login is served from it, so a password changed via /me/password
 	// takes effect on the next login.
 	Password SelfServiceStoreConfig `yaml:"password"`
+	// EmailChange backs the verified email-change token flow
+	// (/me/email/change + /me/email/verify). Empty backend leaves the routes
+	// unmounted; memory is for single-node use and sqlite is durable.
+	EmailChange SelfServiceStoreConfig `yaml:"email_change"`
 	// Signup enables the opt-in unauthenticated self-service registration
 	// endpoint POST /auth/register (creates a user + sets a password). DEFAULT
 	// OFF — open signup is an abuse surface most enterprise deployments don't

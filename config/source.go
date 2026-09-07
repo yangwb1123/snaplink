@@ -141,10 +141,27 @@ func (l *Loader) Load(ctx context.Context) (*Config, error) {
 	}
 
 	c.applyDefaults()
+	applyAdminRESTDefault(c, merged)
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// applyAdminRESTDefault adds the command-level REST gateway default after
+// decoding the merged source tree. Presence is checked before changing the
+// plain bool so explicit false remains an effective opt-out.
+func applyAdminRESTDefault(c *Config, merged map[string]any) {
+	if !c.Admin.Enabled {
+		return
+	}
+	admin, ok := merged["admin"].(map[string]any)
+	if ok {
+		if _, present := admin["api_rest_enabled"]; present {
+			return
+		}
+	}
+	c.Admin.APIRESTEnabled = true
 }
 
 // checkSchema runs an ADDITIONAL validation pass alongside (not replacing)

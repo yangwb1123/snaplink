@@ -149,10 +149,14 @@ control plane exposes: clients, users, tenants, sessions, tokens, keys,
 policies, audit, network policy, branding, backups, DR mode, threat policies,
 releases, snapshots and the runtime endpoint inventory. Bearer
 authentication; 401 carries `Bearer realm="admin"` (the admin scope, not a
-user scope). The complete operation set is in [openapi.yaml](openapi.yaml)
-and the gRPC service definitions under `proto/`; the runtime truth for a
-given replica is `GET /api/v1/admin/endpoints` (admin-gated inventory of
-routes that replica actually registered).
+user scope). For the stock `sso-server`, `admin.enabled` and the default (or
+explicit `true`) `admin.api_rest_enabled` are required for generated admin
+gRPC-gateway operations; setting the latter to `false` intentionally leaves
+those operations gRPC-only, while SDK-native admin routes retain their own
+feature/store gates. The complete operation set is in
+[openapi.yaml](openapi.yaml) and the gRPC service definitions under `proto/`;
+the runtime truth for a given replica is `GET /api/v1/admin/endpoints`
+(admin-gated inventory of routes that replica actually registered).
 
 ## 7. First-run setup contract
 

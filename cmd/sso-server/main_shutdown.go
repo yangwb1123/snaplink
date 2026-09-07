@@ -185,6 +185,7 @@ func shutdownSubsystems(ctx context.Context, a *app, logger spi.Logger) {
 		}
 	}
 	shutdownAuditExporters(ctx, a, logger)
+	shutdownSCIMProvisioner(ctx, a, logger)
 	// Drain in-flight CAEP SET pushes so a shutting-down replica doesn't
 	// abandon a goroutine mid-POST. Bounded by the shutdown ctx; each send
 	// also has its own per-receiver timeout.
@@ -245,6 +246,21 @@ func shutdownWebhookRuntime(ctx context.Context, a *app, logger spi.Logger) {
 	}
 }
 
+// shutdownSCIMProvisioner drains outbound SCIM deliveries after the audit
+// queue has been drained, so queued events can finish before shutdown.
+func shutdownSCIMProvisioner(ctx context.Context, a *app, logger spi.Logger) {
+	if a == nil || a.server == nil {
+		return
+	}
+	closer, ok := a.server.SCIMProvisionSink().(interface{ Close(context.Context) error })
+	if !ok {
+		return
+	}
+	if err := closer.Close(ctx); err != nil {
+		logger.Error("scim provisioner drain timed out", "error", err)
+	}
+}
+
 func shutdownBCLManager(ctx context.Context, notifier sso.LogoutNotifier, logger spi.Logger) {
 	closer, ok := notifier.(interface{ Close(context.Context) error })
 	if !ok {
@@ -270,6 +286,7 @@ func closeMemoryStoreReapers(a *app) {
 	closeIfCloser(a.loginTransactionStore)
 	closeIfCloser(a.server.SessionManager())
 	closeIfCloser(a.server.IdentityLinkStore())
+	closeIfCloser(a.server.EmailChangeStore())
 	closeIfCloser(a.server.NotificationStore())
 	closeIfCloser(a.server.NotificationPreferenceStore())
 }

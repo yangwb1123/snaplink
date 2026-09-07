@@ -131,7 +131,8 @@ Values below are exactly what the binary's boot-time dispatch accepts
 | Product activation codes | `activation.backend` | off (`""`) · `memory` (single replica) · `postgres` |
 | Self-service consent | `self_service.consent.backend` | off · `memory` · `sqlite` · `postgres` |
 | Self-service password credentials | `self_service.password.backend` | off · `memory` · `sqlite` · `postgres` |
-| Password reset tokens | `self_service.password_reset.backend` | off · `memory` · `sqlite` · `redis` |
+| Verified email-change tokens | `self_service.email_change.backend` | off · `memory` · `sqlite` |
+| Password reset tokens | `self_service.password_reset.backend` | off · `memory` · `sqlite` · `redis` (requires `self_service.password.backend`) |
 | Tenants + Domains | `tenant.backend` | `memory` · `sqlite` · `postgres` |
 | Tenant resource quotas | `tenant.resource_quota.backend` | off (`disabled`/empty) · `memory` (single replica) · `postgres` (shared pool) |
 | Tenant usage metering | `tenant.usage_metering.backend` | off · `memory` · `sqlite` (reads the audit DB) |
@@ -200,9 +201,11 @@ natively probe) via `sso.WithConnectionProber`. Each probe increments
 | Key | Effect |
 |---|---|
 | `self_service.consent.max_ttl` | Hard server-wide ceiling on consent grant lifetime (`WithConsentTTL`): every recorded grant gets `ExpiresAt = GrantedAt + max_ttl`, after which `GetConsent` treats it as absent and `/auth/login` re-prompts. `0` (default) = no server-enforced expiry — permanent until revoked. Independent of, and can only be tightened by, a client's own `consent_refresh_interval`. Requires `self_service.consent.backend` to be set. |
+| `self_service.email_change.backend` | `memory` (single-node) or `sqlite` (durable; requires `.sqlite.dsn`) for the verified `POST /me/email/change` + `/me/email/verify` token flow. Empty leaves the routes unmounted; `smtp.enabled` with a host is also required |
 | `self_service.identity_link.enabled` | Wires `sso.WithIdentityLinkStore`, mounting `GET`/`DELETE /me/identities` and mapping subjects in built-in static/connection-backed OIDC federation. Disabled by default |
 | `self_service.identity_link.backend` | `memory` (default/compatibility, single process), `sqlite` (durable one-host install; requires `.sqlite.dsn`), or `postgres` (uses the global Postgres pool for multi-replica consistency). One active `(provider, subject)` can belong to exactly one local account |
 | `self_service.identity_link.merge_policy` | `""` / `"reject"` (**default, safe**) rejects conflicting account ownership. `"link_only"` atomically reassigns the losing account's active identity links to the existing owner; sessions, consents, OAuth/refresh tokens, MFA and audit ownership are deliberately NOT merged. Any other value fails at boot |
+| `self_service.password_reset.backend` | Requires `self_service.password.backend` when set; otherwise configuration loading fails closed rather than wiring a reset store with no credential store |
 
 ## Setup Wizard (first-run onboarding)
 
@@ -483,6 +486,7 @@ events.
 
 | Key | Effect |
 |---|---|
+| `audit.api_enabled` | Enables the local `/api/v1/audit/*` query API. Requires `audit.enabled: true`; when the stock admin middleware is enabled, the routes require `admin:read` |
 | `audit.retention.*` | `platform/audit/sqlite.Sink.Prune` |
 | `audit.notary.enabled` | Enables the in-tree signed chain-head checkpoint producer. Requires `audit.enabled: true`, `audit.hash_chain: true`, and the durable primary `audit.backend: sqlite` or `postgres`; default `false` leaves existing audit behavior unchanged. Checkpoints are written to the primary backend's independent `audit_checkpoints` table, never to `audit_events` |
 | `audit.notary.interval` | Checkpoint cadence; `<=0` uses the existing Notary default (`5m`). The first attempt remains immediate and an unchanged chain head produces no new checkpoint |
@@ -603,8 +607,8 @@ Outbound SCIM 2.0 provisioning (`protocols/scimprovision`, `sso.WithSCIMProvisio
 
 | Key | Effect |
 |---|---|
-| `scim.push.enabled` | Builds an `HTTPSCIMProvisioner` + `scimprovision.Sink` and wires `sso.WithSCIMProvisioner`. `false` (default) = no sink tap, no outbound requests |
-| `scim.push.base_url` | Downstream SCIM 2.0 service root (e.g. `https://app.example.com/scim/v2`); `/Users` and `/Groups` resolve relative to it. Required when enabled |
+| `scim.push.enabled` | Builds an `HTTPSCIMProvisioner` + `scimprovision.Sink` and wires `sso.WithSCIMProvisioner`. Requires `audit.enabled: true` because outbound provisioning consumes the audit stream. `false` (default) = no sink tap, no outbound requests |
+| `scim.push.base_url` | Downstream SCIM 2.0 HTTPS service root (e.g. `https://app.example.com/scim/v2`); `/Users` and `/Groups` resolve relative to it. Credentials, query, and fragment are rejected. Required when enabled |
 | `scim.push.bearer_token` | `Authorization: Bearer <token>` on every outbound request (RFC 7644 §2's common auth model). Inject via `SSO_SCIM__PUSH__BEARER_TOKEN` or a `secret://` reference — never commit the literal to YAML |
 | `scim.push.timeout` | Per-request HTTP timeout; 0 = SDK default (10s) |
 | `scim.push.group_client_id` | Which `permissions.Role` fleet to push as SCIM Groups; falls back to `scim.groups.group_client_id` when unset |

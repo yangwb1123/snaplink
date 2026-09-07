@@ -89,6 +89,9 @@ func TestHandleEvents_ReturnsEventsAndCount(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
 	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" || w.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("cache headers = %q/%q, want no-store/no-cache", got, w.Header().Get("Pragma"))
+	}
 	m := decodeBody(t, w)
 	if n, _ := m["count"].(float64); int(n) != 2 {
 		t.Fatalf("count = %v, want 2", m["count"])
