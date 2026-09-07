@@ -114,6 +114,52 @@ func TestMemoryDeadLetterStore_ListRespectsLimit(t *testing.T) {
 	}
 }
 
+func TestMemoryDeadLetterStore_IsolatesEventMetadata(t *testing.T) {
+	t.Parallel()
+	store := webhook.NewMemoryDeadLetterStore(0)
+	ctx := context.Background()
+	input := webhook.DeadLetterEntry{
+		SubscriptionID: "sub-1",
+		Event:          audit.Event{Metadata: map[string]string{"role": "reader"}},
+	}
+	added, err := store.Add(ctx, input)
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	input.Event.Metadata["role"] = "admin"
+	added.Event.Metadata["role"] = "operator"
+	id := added.ID
+
+	got, err := store.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Event.Metadata["role"] != "reader" || len(got.Event.Metadata) != 1 {
+		t.Fatalf("stored metadata changed through Add input/return: %v", got.Event.Metadata)
+	}
+	got.Event.Metadata["role"] = "mutated-get"
+
+	again, err := store.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get after mutation: %v", err)
+	}
+	if again.Event.Metadata["role"] != "reader" {
+		t.Fatalf("Get result aliases stored metadata: %v", again.Event.Metadata)
+	}
+	list, err := store.List(ctx, webhook.DeadLetterFilter{Limit: 1})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	list[0].Event.Metadata["role"] = "mutated-list"
+	final, err := store.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get after List mutation: %v", err)
+	}
+	if final.Event.Metadata["role"] != "reader" {
+		t.Fatalf("List result aliases stored metadata: %v", final.Event.Metadata)
+	}
+}
+
 func TestMemoryDeadLetterStore_DeleteIsIdempotent(t *testing.T) {
 	t.Parallel()
 	store := webhook.NewMemoryDeadLetterStore(0)

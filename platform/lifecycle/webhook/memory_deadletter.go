@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"maps"
 	"sync"
 )
 
@@ -46,8 +47,9 @@ func (m *MemoryDeadLetterStore) Add(_ context.Context, entry DeadLetterEntry) (D
 			delete(m.byID, oldest)
 		}
 	}
-	m.byID[entry.ID] = entry
-	return entry, nil
+	stored := cloneDeadLetterEntry(entry)
+	m.byID[entry.ID] = stored
+	return cloneDeadLetterEntry(stored), nil
 }
 
 // Get returns the entry by id, or ErrDeadLetterNotFound.
@@ -58,7 +60,7 @@ func (m *MemoryDeadLetterStore) Get(_ context.Context, id string) (DeadLetterEnt
 	if !ok {
 		return DeadLetterEntry{}, ErrDeadLetterNotFound
 	}
-	return e, nil
+	return cloneDeadLetterEntry(e), nil
 }
 
 // List returns entries newest-first, optionally narrowed to one
@@ -79,12 +81,20 @@ func (m *MemoryDeadLetterStore) List(_ context.Context, f DeadLetterFilter) ([]D
 		if f.SubscriptionID != "" && e.SubscriptionID != f.SubscriptionID {
 			continue
 		}
-		out = append(out, e)
+		out = append(out, cloneDeadLetterEntry(e))
 		if len(out) >= limit {
 			break
 		}
 	}
 	return out, nil
+}
+
+func cloneDeadLetterEntry(entry DeadLetterEntry) DeadLetterEntry {
+	clone := entry
+	if entry.Event.Metadata != nil {
+		clone.Event.Metadata = maps.Clone(entry.Event.Metadata)
+	}
+	return clone
 }
 
 // Delete removes the entry. Idempotent — deleting an unknown id is a no-op.
