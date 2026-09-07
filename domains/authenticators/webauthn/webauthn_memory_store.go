@@ -272,7 +272,7 @@ func (m *MemorySessionStore) Put(_ context.Context, sessionID string, data *gw.S
 	defer m.mu.Unlock()
 	m.sweepExpiredLocked(now)
 	m.sessions[sessionID] = &sessionEntry{
-		data:      data,
+		data:      cloneSessionData(data),
 		expiresAt: now.Add(ttl),
 	}
 	return nil
@@ -293,7 +293,95 @@ func (m *MemorySessionStore) Take(_ context.Context, sessionID string) (*gw.Sess
 	if time.Since(e.expiresAt) > 0 {
 		return nil, ErrSessionExpired
 	}
-	return e.data, nil
+	return cloneSessionData(e.data), nil
+}
+
+func cloneSessionData(data *gw.SessionData) *gw.SessionData {
+	if data == nil {
+		return nil
+	}
+	out := *data
+	out.UserID = cloneSessionBytes(data.UserID)
+	if data.AllowedCredentialIDs != nil {
+		out.AllowedCredentialIDs = make([][]byte, len(data.AllowedCredentialIDs))
+		for i, id := range data.AllowedCredentialIDs {
+			out.AllowedCredentialIDs[i] = cloneSessionBytes(id)
+		}
+	}
+	if data.Extensions != nil {
+		out.Extensions = cloneSessionExtensions(data.Extensions)
+	}
+	if data.CredParams != nil {
+		out.CredParams = make([]protocol.CredentialParameter, len(data.CredParams))
+		copy(out.CredParams, data.CredParams)
+	}
+	return &out
+}
+
+func cloneSessionBytes(data []byte) []byte {
+	if data == nil {
+		return nil
+	}
+	out := make([]byte, len(data))
+	copy(out, data)
+	return out
+}
+
+func cloneSessionExtensions(in protocol.AuthenticationExtensions) protocol.AuthenticationExtensions {
+	if in == nil {
+		return nil
+	}
+	out := make(protocol.AuthenticationExtensions, len(in))
+	for key, value := range in {
+		out[key] = cloneSessionExtensionValue(value)
+	}
+	return out
+}
+
+func cloneSessionExtensionValue(value any) any {
+	switch v := value.(type) {
+	case []byte:
+		return cloneSessionBytes(v)
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = cloneSessionExtensionValue(item)
+		}
+		return out
+	case []string:
+		out := make([]string, len(v))
+		copy(out, v)
+		return out
+	case map[string]any:
+		return cloneSessionExtensionMap(v)
+	case protocol.AuthenticationExtensions:
+		return cloneSessionExtensions(v)
+	case map[string]string:
+		out := make(map[string]string, len(v))
+		for key, item := range v {
+			out[key] = item
+		}
+		return out
+	case map[string]bool:
+		out := make(map[string]bool, len(v))
+		for key, item := range v {
+			out[key] = item
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func cloneSessionExtensionMap(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = cloneSessionExtensionValue(value)
+	}
+	return out
 }
 
 // sweepExpiredLocked bounds abandoned ceremony state without a background
