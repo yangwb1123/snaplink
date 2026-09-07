@@ -45,8 +45,9 @@ func (m *MemorySink) Record(_ context.Context, e *Event) error {
 			delete(m.byID, old.ID)
 		}
 	}
-	m.buf[m.head] = e
-	m.byID[e.ID] = e
+	stored := cloneEvent(e)
+	m.buf[m.head] = stored
+	m.byID[stored.ID] = stored
 	m.head = (m.head + 1) % m.capacity
 	if !m.full && m.head == 0 {
 		m.full = true
@@ -61,7 +62,7 @@ func (m *MemorySink) Get(_ context.Context, id string) (*Event, error) {
 	if !ok {
 		return nil, ErrEventNotFound
 	}
-	return e, nil
+	return cloneEvent(e), nil
 }
 
 func (m *MemorySink) Query(_ context.Context, q Query) ([]*Event, error) {
@@ -71,7 +72,7 @@ func (m *MemorySink) Query(_ context.Context, q Query) ([]*Event, error) {
 	matches := make([]*Event, 0, q.NormalizedLimit())
 	m.forEachNewestFirst(func(e *Event) bool {
 		if q.Match(e) {
-			matches = append(matches, e)
+			matches = append(matches, cloneEvent(e))
 		}
 		return true
 	})
@@ -102,6 +103,20 @@ func (m *MemorySink) Facets(_ context.Context, q Query) (*Facets, error) {
 		return true
 	})
 	return f, nil
+}
+
+func cloneEvent(e *Event) *Event {
+	if e == nil {
+		return nil
+	}
+	out := *e
+	if e.Metadata != nil {
+		out.Metadata = make(map[string]string, len(e.Metadata))
+		for key, value := range e.Metadata {
+			out.Metadata[key] = value
+		}
+	}
+	return &out
 }
 
 // forEachNewestFirst walks the buffer from newest to oldest. visit returns

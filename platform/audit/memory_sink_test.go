@@ -42,8 +42,8 @@ func TestMemorySink_GetReturnsRecordedEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got != e {
-		t.Fatal("Get should return the exact recorded pointer")
+	if got == e || got.ID != e.ID || got.Type != e.Type {
+		t.Fatal("Get should return an equivalent defensive copy")
 	}
 }
 
