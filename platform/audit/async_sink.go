@@ -365,7 +365,7 @@ func (a *AsyncSink) Record(_ context.Context, e *Event) error {
 		return nil
 	}
 	select {
-	case a.queue <- e:
+	case a.queue <- cloneEvent(e):
 		return nil
 	default:
 		a.dropsQueueFull.Add(1)
