@@ -78,6 +78,48 @@ func TestMemorySubscriptionStore_ListOrderedOldestFirst(t *testing.T) {
 	}
 }
 
+func TestMemorySubscriptionStore_IsolatesEventTypes(t *testing.T) {
+	t.Parallel()
+	store := webhook.NewMemorySubscriptionStore()
+	ctx := context.Background()
+	input := validSub("https://a.example/hook")
+	created, err := store.Create(ctx, input)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	input.EventTypes[0] = audit.EventLogout
+	created.EventTypes[0] = audit.EventLogout
+
+	got, err := store.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.EventTypes) != 1 || got.EventTypes[0] != audit.EventLogin {
+		t.Fatalf("stored EventTypes changed through Create input/return: %v", got.EventTypes)
+	}
+	got.EventTypes[0] = audit.EventLogout
+
+	again, err := store.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Get after mutation: %v", err)
+	}
+	if again.EventTypes[0] != audit.EventLogin {
+		t.Fatalf("Get result aliases stored EventTypes: %v", again.EventTypes)
+	}
+	list, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	list[0].EventTypes[0] = audit.EventLogout
+	final, err := store.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Get after List mutation: %v", err)
+	}
+	if final.EventTypes[0] != audit.EventLogin {
+		t.Fatalf("List result aliases stored EventTypes: %v", final.EventTypes)
+	}
+}
+
 func TestMemorySubscriptionStore_DeleteIsIdempotent(t *testing.T) {
 	t.Parallel()
 	store := webhook.NewMemorySubscriptionStore()

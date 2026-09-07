@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -36,10 +37,11 @@ func (m *MemorySubscriptionStore) Create(_ context.Context, sub EventSubscriptio
 	sub.CreatedAt = now
 	sub.UpdatedAt = now
 
+	sub.EventTypes = slices.Clone(sub.EventTypes)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.byID[sub.ID] = sub
-	return sub, nil
+	return cloneSubscription(sub), nil
 }
 
 // Get returns the subscription by id, or ErrSubscriptionNotFound.
@@ -50,7 +52,7 @@ func (m *MemorySubscriptionStore) Get(_ context.Context, id string) (EventSubscr
 	if !ok {
 		return EventSubscription{}, ErrSubscriptionNotFound
 	}
-	return sub, nil
+	return cloneSubscription(sub), nil
 }
 
 // List returns every registered subscription (enabled and disabled alike —
@@ -61,7 +63,7 @@ func (m *MemorySubscriptionStore) List(_ context.Context) ([]EventSubscription, 
 	defer m.mu.RUnlock()
 	out := make([]EventSubscription, 0, len(m.byID))
 	for _, sub := range m.byID {
-		out = append(out, sub)
+		out = append(out, cloneSubscription(sub))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
@@ -70,6 +72,11 @@ func (m *MemorySubscriptionStore) List(_ context.Context) ([]EventSubscription, 
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
 	return out, nil
+}
+
+func cloneSubscription(sub EventSubscription) EventSubscription {
+	sub.EventTypes = slices.Clone(sub.EventTypes)
+	return sub
 }
 
 // Delete removes the subscription. Idempotent — deleting an unknown id
