@@ -28,13 +28,9 @@ import (
 	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
-// buildApp is pure server-assembly wiring: it reads config and constructs the
-// Server with every WithXxx option, store, subsystem, and background worker.
-// The work is delegated to ordered wireXxx sub-builders on appBuilder (defined
-// across build_app*.go), grouped into three phases (foundation -> domains ->
-// edge) whose Option-application order is identical to the original monolith
-// (option order can decide which security feature wins), as is every
-// conditional, error-wrap, defer/cleanup, and background-worker handoff.
+// buildApp assembles the server from ordered wireXxx phases. The phases
+// preserve the original WithXxx option order, conditionals, cleanup, and
+// background-worker handoffs.
 func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr error) {
 	b := &appBuilder{cfg: cfg, logger: logger}
 	// The peer-trust checker must exist before any wireXxx phase runs: the
@@ -253,7 +249,9 @@ func (b *appBuilder) wireEdge() error {
 	if err := b.wireWebhookEngine(); err != nil {
 		return err
 	}
-	b.wireSCIMProvisioning()
+	if err := b.wireSCIMProvisioning(); err != nil {
+		return err
+	}
 	if err := b.wireFederation(); err != nil {
 		return err
 	}

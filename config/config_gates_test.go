@@ -124,3 +124,42 @@ func TestFeatureGatesConfig_WebSPAAliasNormalization(t *testing.T) {
 		t.Fatal("LoadFromSources with both branding and web_spa: want error")
 	}
 }
+
+// TestAdminConfig_APIRESTEnabledPresenceAwareDefault pins the command-level
+// REST default. The field stays a bool for compatibility, so merged-source
+// presence must be checked to distinguish an omitted key from false.
+func TestAdminConfig_APIRESTEnabledPresenceAwareDefault(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "omitted", body: "admin:\n  enabled: true\n", want: true},
+		{name: "explicit true", body: "admin:\n  enabled: true\n  api_rest_enabled: true\n", want: true},
+		{name: "explicit false", body: "admin:\n  enabled: true\n  api_rest_enabled: false\n", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeTemp(t, "admin.yaml", "server:\n  issuer: t\n"+tc.body)
+			cfg, err := LoadFromSources(context.Background(), NewFileSource(p))
+			if err != nil {
+				t.Fatalf("LoadFromSources: %v", err)
+			}
+			if cfg.Admin.APIRESTEnabled != tc.want {
+				t.Fatalf("admin.api_rest_enabled = %v, want %v", cfg.Admin.APIRESTEnabled, tc.want)
+			}
+		})
+	}
+
+	p := writeTemp(t, "admin-env.yaml", "server:\n  issuer: t\nadmin:\n  enabled: true\n")
+	envSrc := &EnvSource{Prefix: "SSO_", Separator: "__", Environ: envFn(
+		"SSO_ADMIN__API_REST_ENABLED=false",
+	)}
+	cfg, err := LoadFromSources(context.Background(), NewFileSource(p), envSrc)
+	if err != nil {
+		t.Fatalf("LoadFromSources with env override: %v", err)
+	}
+	if cfg.Admin.APIRESTEnabled {
+		t.Fatal("explicit false from the higher-priority env source was defaulted to true")
+	}
+}

@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/compliance"
@@ -43,6 +47,32 @@ func newSelfServiceEraser(users core.UserProvider, sessions core.SessionManager,
 	}
 }
 
+// wireEmailChangeStore adds the verified email-change token store after the
+// sender is built and the account eraser exists.
+func (b *appBuilder) wireEmailChangeStore() error {
+	store, err := serverbuildstore.BuildEmailChangeStore(b.cfg.SelfService.EmailChange, b.pgDB, b.pgDialect)
+	if err != nil {
+		return fmt.Errorf("self_service email_change store: %w", err)
+	}
+	if store == nil {
+		return nil
+	}
+	if b.emailSender == nil {
+		closeIfCloser(store)
+		return errors.New("self_service.email_change requires smtp.enabled with a host")
+	}
+	b.opts = append(b.opts, sso.WithEmailChangeStore(store, 0))
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "email-change", store)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "email-change", store)
+	if b.accountEraser != nil {
+		if revoker, ok := store.(core.EmailChangeRevoker); ok {
+			b.accountEraser.EmailChange = revoker
+		}
+	}
+	b.logger.Info("self-service email change enabled", "backend", b.cfg.SelfService.EmailChange.Backend)
+	return nil
+}
+
 // Compliance route prefixes. Mounted on the SSO router (so they share its
 // middleware stack) and gated by AdminMiddleware via IsProtectedPath's
 // /api/v1/compliance/ entry: GET export needs admin:read, POST erase
@@ -53,18 +83,36 @@ const (
 	complianceEraseSuffix  = "/erase"
 )
 
-// complianceDeps bundles the stores the GDPR workflows compose. Refresh
-// may be nil when the configured refresh-token store can't enumerate by
-// subject (the Eraser skips it then).
+func complianceCredentialStores(a *app) (core.PasswordCredentialDeleter, core.EmailChangeRevoker) {
+	if a == nil || a.server == nil {
+		return nil, nil
+	}
+	var passwordDeleter core.PasswordCredentialDeleter
+	if deleter, ok := a.server.PasswordCredentialStore().(core.PasswordCredentialDeleter); ok {
+		passwordDeleter = deleter
+	}
+	var emailChangeRevoker core.EmailChangeRevoker
+	if revoker, ok := a.server.EmailChangeStore().(core.EmailChangeRevoker); ok {
+		emailChangeRevoker = revoker
+	}
+	return passwordDeleter, emailChangeRevoker
+}
+
+// complianceDeps bundles the stores the GDPR workflows compose. Refresh may
+// be nil when the configured refresh-token store can't enumerate by subject.
 type complianceDeps struct {
-	Users          core.UserProvider
-	Sessions       core.SessionManager
-	Refresh        oauth.RefreshTokenSubjectIndex
-	Clients        core.ClientStore
-	Consent        core.ConsentStore
-	MFAEnrollments core.MFAEnrollmentStore
-	PasswordReset  core.PasswordResetRevoker
-	Recorder       *audit.Recorder
+	Users                   core.UserProvider
+	Sessions                core.SessionManager
+	Refresh                 oauth.RefreshTokenSubjectIndex
+	Clients                 core.ClientStore
+	Consent                 core.ConsentStore
+	MFAEnrollments          core.MFAEnrollmentStore
+	PasswordReset           core.PasswordResetRevoker
+	EmailChange             core.EmailChangeRevoker
+	PasswordCredential      core.PasswordCredentialDeleter
+	Notifications           core.NotificationStore
+	NotificationPreferences core.NotificationPreferenceStore
+	Recorder                *audit.Recorder
 }
 
 // mountComplianceRoutes registers the subject export + erase endpoints.
@@ -135,6 +183,22 @@ type eraseResponse struct {
 	Errors               []string `json:"errors,omitempty"`
 }
 
+func newComplianceEraser(deps *complianceDeps) *compliance.Eraser {
+	return &compliance.Eraser{
+		Users:                   deps.Users,
+		Sessions:                deps.Sessions,
+		Refresh:                 deps.Refresh,
+		Clients:                 deps.Clients,
+		Consent:                 deps.Consent,
+		MFAEnrollments:          deps.MFAEnrollments,
+		PasswordReset:           deps.PasswordReset,
+		EmailChange:             deps.EmailChange,
+		PasswordCredentials:     deps.PasswordCredential,
+		Notifications:           deps.Notifications,
+		NotificationPreferences: deps.NotificationPreferences,
+	}
+}
+
 func complianceEraseHandler(deps *complianceDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := complianceUserID(r.URL.Path, complianceEraseSuffix)
@@ -147,15 +211,7 @@ func complianceEraseHandler(deps *complianceDeps) http.HandlerFunc {
 			// Optional body; an empty/absent body is a non-dry-run erase.
 			_ = json.NewDecoder(r.Body).Decode(&req)
 		}
-		eraser := &compliance.Eraser{
-			Users:          deps.Users,
-			Sessions:       deps.Sessions,
-			Refresh:        deps.Refresh,
-			Clients:        deps.Clients,
-			Consent:        deps.Consent,
-			MFAEnrollments: deps.MFAEnrollments,
-			PasswordReset:  deps.PasswordReset,
-		}
+		eraser := newComplianceEraser(deps)
 		rep, opErr := eraser.EraseSubject(r.Context(), id, compliance.EraseOptions{DryRun: req.DryRun})
 		recordCompliance(deps.Recorder, audit.EventAdminSubjectErased, id, r, opErr)
 
@@ -207,6 +263,8 @@ func recordCompliance(rec *audit.Recorder, typ audit.EventType, subjectID string
 }
 
 func writeComplianceJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
@@ -233,8 +291,22 @@ func (b *appBuilder) lateBindComplianceStores() {
 		b.accountEraser.Consent = b.consentStore
 		b.accountEraser.MFAEnrollments = b.mfaEnrollStore
 		b.accountEraser.PasswordReset = b.passwordResetRevoker
+		if deleter, ok := b.passwordStore.(core.PasswordCredentialDeleter); ok {
+			b.accountEraser.PasswordCredentials = deleter
+		}
 	}
 	if b.dataExporter != nil {
 		b.dataExporter.Extra = compliance.SubjectExporters(b.consentStore, b.mfaEnrollStore)
 	}
+}
+
+// lateBindComplianceServerStores attaches optional notification stores after
+// the constructed Server exposes the shared pair. The eraser pointer is
+// retained by the self-service option and is safe to update before serving.
+func (b *appBuilder) lateBindComplianceServerStores(srv *sso.Server) {
+	if b.accountEraser == nil || srv == nil {
+		return
+	}
+	b.accountEraser.Notifications = srv.NotificationStore()
+	b.accountEraser.NotificationPreferences = srv.NotificationPreferenceStore()
 }

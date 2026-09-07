@@ -209,6 +209,18 @@ func (s *PasswordCredentialStore) VerifyPassword(ctx context.Context, userID, pl
 	return nil
 }
 
+// DeletePassword implements core.PasswordCredentialDeleter. Missing rows are
+// success so repeated erasure and admin deletion remain idempotent.
+func (s *PasswordCredentialStore) DeletePassword(ctx context.Context, userID string) error {
+	if userID == "" {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM password_credentials WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("postgres: delete password_credential: %w", err)
+	}
+	return nil
+}
+
 // HasPassword implements identitylink.PasswordPresenceChecker: reports
 // whether userID has a stored credential row, WITHOUT the timing-
 // equalization VerifyPassword performs. Safe to expose directly — this is a
@@ -251,5 +263,6 @@ func (s *PasswordCredentialStore) NeedsRehash(ctx context.Context, userID string
 var (
 	_ sso.PasswordCredentialStore          = (*PasswordCredentialStore)(nil)
 	_ sso.PasswordHashImporter             = (*PasswordCredentialStore)(nil)
+	_ core.PasswordCredentialDeleter       = (*PasswordCredentialStore)(nil)
 	_ identitylink.PasswordPresenceChecker = (*PasswordCredentialStore)(nil)
 )

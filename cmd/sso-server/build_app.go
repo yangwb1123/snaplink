@@ -251,11 +251,10 @@ func (b *appBuilder) finalize() (*app, error) {
 	if err := b.wireGovernance(threatExec); err != nil {
 		return nil, err
 	}
-	// Late-bind the self-service eraser + exporter's consent + MFA stores: they
-	// wire in wireFinalOptions, AFTER wireDomains constructed the eraser/exporter
-	// (build order), so both captured them nil. See lateBindComplianceStores.
+	// Late-bind compliance stores wired after the eraser/exporter construction.
 	b.lateBindComplianceStores()
 	srv = sso.NewServer(b.opts...)
+	b.lateBindComplianceServerStores(srv)
 	rt := serverRuntime{server: srv, cluster: cw}
 	rt.busStop, rt.signingKeyStop, rt.keyRotationStop, rt.keyRotationCancel, err = b.startBackgroundWorkers(srv, cw)
 	if err != nil {

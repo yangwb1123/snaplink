@@ -55,8 +55,8 @@ func HandleMyDataExport(d Deps, ctx core.HandlerContext) {
 }
 
 // HandleMyAccountErase serves POST /me/account/erase — GDPR Art. 17 self-service
-// erasure of the AUTHENTICATED bearer's OWN account (sessions + refresh tokens +
-// user record), scoped to their subject. Body: {confirm, dry_run}. The caller
+// erasure of the AUTHENTICATED bearer's OWN account (password credential,
+// sessions + refresh tokens + user record), scoped to their subject. Body: {confirm, dry_run}. The caller
 // MUST echo their own subject in `confirm` to authorize an irreversible delete
 // (guards against accidental / CSRF-driven deletion). dry_run previews without
 // mutating. Best-effort per-step (a store error doesn't strand the rest);

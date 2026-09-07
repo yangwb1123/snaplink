@@ -98,8 +98,8 @@ const (
 	// this one is scoped to the caller. Mounted only when an exporter is wired.
 	PathMyDataExport = "/me/data-export"
 	// PathMyAccountErase is the authenticated GDPR Art. 17 self-service erasure
-	// (POST): the bearer deletes their OWN account (sessions + refresh tokens +
-	// user record). Requires a confirmation matching the subject; supports
+	// (POST): the bearer deletes their OWN account (password credential,
+	// sessions + refresh tokens + user record). Requires a confirmation matching the subject; supports
 	// {dry_run} to preview. Opt-in + irreversible. Mounted only when wired.
 	PathMyAccountErase = "/me/account/erase"
 	// PathMyMFATOTPBegin mints a fresh TOTP secret + otpauth URI (POST);

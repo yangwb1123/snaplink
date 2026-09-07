@@ -1,6 +1,11 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"net/url"
+	"strings"
+	"time"
+)
 
 type DPoPConfig struct {
 	ProofMaxAge  time.Duration `yaml:"proof_max_age"`
@@ -41,9 +46,10 @@ type SCIMGroupsConfig struct {
 // users register at runtime.
 type SCIMPushConfig struct {
 	Enabled bool `yaml:"enabled"`
-	// BaseURL is the downstream SCIM 2.0 service root (e.g.
+	// BaseURL is the downstream SCIM 2.0 HTTPS service root (e.g.
 	// "https://app.example.com/scim/v2"); /Users and /Groups are resolved
-	// relative to it. Required when Enabled.
+	// relative to it. Credentials, query, and fragment are rejected.
+	// Required when Enabled.
 	BaseURL string `yaml:"base_url"`
 	// BearerToken authenticates every outbound request
 	// (Authorization: Bearer <token>) — SCIM's common auth model (RFC 7644
@@ -68,6 +74,52 @@ type SCIMPushRetryConfig struct {
 	MaxAttempts    int           `yaml:"max_attempts"`
 	InitialBackoff time.Duration `yaml:"initial_backoff"`
 	MaxBackoff     time.Duration `yaml:"max_backoff"`
+}
+
+// validateFeatureDependencies rejects combinations that otherwise leave a
+// configured feature silently unwired.
+func (c *Config) validateFeatureDependencies() error {
+	if c.Audit.APIEnabled && !c.Audit.Enabled {
+		return fmt.Errorf("config: audit.api_enabled requires audit.enabled")
+	}
+	if err := c.SCIM.validate(c.Audit.Enabled, c.Admin.Enabled); err != nil {
+		return err
+	}
+	if strings.TrimSpace(c.SelfService.PasswordReset.Backend) != "" && strings.TrimSpace(c.SelfService.Password.Backend) == "" {
+		return fmt.Errorf("config: self_service.password_reset.backend requires self_service.password.backend")
+	}
+	return nil
+}
+
+func (c SCIMConfig) validate(auditEnabled, adminEnabled bool) error {
+	if c.Groups.Enabled && !adminEnabled {
+		return fmt.Errorf("config: scim.groups.enabled requires admin.enabled")
+	}
+	if !c.Push.Enabled {
+		return nil
+	}
+	if !auditEnabled {
+		return fmt.Errorf("config: scim.push.enabled requires audit.enabled")
+	}
+	return c.Push.validate()
+}
+
+func (c SCIMPushConfig) validate() error {
+	base := strings.TrimSpace(c.BaseURL)
+	if base == "" {
+		return fmt.Errorf("config: scim.push.base_url is required when scim.push.enabled")
+	}
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" || u.Hostname() == "" || u.Scheme != "https" || u.User != nil || u.ForceQuery || u.RawQuery != "" || u.Fragment != "" || strings.Contains(base, "#") {
+		return fmt.Errorf("config: scim.push.base_url must be an absolute https URL without credentials, query, or fragment")
+	}
+	if c.Timeout < 0 {
+		return fmt.Errorf("config: scim.push.timeout must be >= 0")
+	}
+	if c.Retry.MaxAttempts < 0 || c.Retry.InitialBackoff < 0 || c.Retry.MaxBackoff < 0 {
+		return fmt.Errorf("config: scim.push.retry values must be >= 0")
+	}
+	return nil
 }
 
 // CIBAConfig opts into OIDC CIBA (Client-Initiated Backchannel

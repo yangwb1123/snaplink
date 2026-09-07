@@ -247,6 +247,25 @@ func BuildPasswordCredentialStore(cfg config.SelfServiceStoreConfig, pg *sql.DB,
 // BuildActivationStore selects the stock product-activation store. Empty
 // backend keeps the public activation routes unmounted; both built-in
 // backends hash seeded credentials and retain only short-lived tickets.
+// BuildEmailChangeStore selects the verified-email-change token backend.
+// Empty backend keeps the flow disabled; the stock server supports memory and
+// SQLite because the token store has no Postgres or Redis peer.
+func BuildEmailChangeStore(cfg config.SelfServiceStoreConfig, _ *sql.DB, _ postgresbackend.Dialect) (sso.EmailChangeStore, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "":
+		return nil, nil
+	case "memory":
+		return defaultimpl.NewMemoryEmailChangeStore(), nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("self_service.email_change.sqlite.dsn required when backend=sqlite")
+		}
+		return sqlitestores.NewEmailChangeStore(cfg.SQLite.DSN)
+	default:
+		return nil, fmt.Errorf("unknown self_service.email_change.backend %q (supported: memory, sqlite)", cfg.Backend)
+	}
+}
+
 func BuildActivationStore(cfg config.ActivationConfig, pg *sql.DB, dialect postgresbackend.Dialect) (activation.Store, error) {
 	var store activation.Store
 	switch backend := strings.ToLower(strings.TrimSpace(cfg.Backend)); backend {

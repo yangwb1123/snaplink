@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/interfaces/admin"
@@ -126,10 +128,16 @@ func scimRouteTable(groupsEnabled bool) []scimRoute {
 // nil b.provider (permissions not configured) is safe — group/role events
 // simply become no-ops, matching how the inbound receiver's own /Groups
 // surface is independently optional.
-func (b *appBuilder) wireSCIMProvisioning() {
+func (b *appBuilder) wireSCIMProvisioning() error {
 	pc := b.cfg.SCIM.Push
 	if !pc.Enabled {
-		return
+		return nil
+	}
+	if strings.TrimSpace(pc.BaseURL) == "" {
+		return errors.New("config: scim.push.base_url required when scim.push.enabled=true")
+	}
+	if b.recorder == nil {
+		return errors.New("config: scim.push.enabled requires audit enabled")
 	}
 	groupClientID := pc.GroupClientID
 	if groupClientID == "" {
@@ -159,4 +167,5 @@ func (b *appBuilder) wireSCIMProvisioning() {
 	sink := scimprovision.NewSink(b.userProvider, b.provider, groupClientID, provisioner, sinkOpts...)
 	b.opts = append(b.opts, sso.WithSCIMProvisioner(sink))
 	b.logger.Info("scim: outbound provisioning push enabled", "base_url", pc.BaseURL, "group_client_id", groupClientID)
+	return nil
 }

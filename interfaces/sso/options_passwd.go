@@ -60,8 +60,8 @@ func WithSelfServiceDataExport(e *compliance.Exporter) Option {
 
 // WithSelfServiceAccountErasure mounts POST /me/account/erase — the GDPR
 // Art. 17 self-service erasure of the authenticated bearer's OWN account
-// (sessions + refresh tokens + user record), assembled by the supplied
-// compliance.Eraser scoped to the caller's subject. IRREVERSIBLE and
+// (password credential, sessions + refresh tokens + user record), assembled
+// by the supplied compliance.Eraser scoped to the caller's subject. IRREVERSIBLE and
 // default-off: self-deletion is a deliberate operator choice (often undesirable
 // for org-managed accounts). The handler requires a confirmation matching the
 // subject before erasing. Nil ⇒ not mounted, byte-identical.

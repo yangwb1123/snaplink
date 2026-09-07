@@ -123,6 +123,53 @@ func TestReBACConfigValidation(t *testing.T) {
 	}
 }
 
+func TestAuditAndSCIMFeatureDependencies(t *testing.T) {
+	t.Parallel()
+	apiOff := &Config{Audit: AuditConfig{APIEnabled: true}}
+	if err := apiOff.validateFeatureConfig(); err == nil || !strings.Contains(err.Error(), "audit.api_enabled") {
+		t.Fatalf("audit API without audit recorder error = %v", err)
+	}
+	pushOff := &Config{SCIM: SCIMConfig{Push: SCIMPushConfig{Enabled: true, BaseURL: "https://scim.example"}}}
+	if err := pushOff.validateFeatureConfig(); err == nil || !strings.Contains(err.Error(), "scim.push.enabled") {
+		t.Fatalf("SCIM push without audit error = %v", err)
+	}
+	invalidURL := &Config{
+		Audit: AuditConfig{Enabled: true},
+		Admin: AdminConfig{Enabled: true},
+		SCIM:  SCIMConfig{Push: SCIMPushConfig{Enabled: true, BaseURL: "scim.example"}},
+	}
+	if err := invalidURL.validateFeatureConfig(); err == nil || !strings.Contains(err.Error(), "base_url") {
+		t.Fatalf("invalid SCIM base URL error = %v", err)
+	}
+	cleartext := &Config{
+		Audit: AuditConfig{Enabled: true},
+		SCIM:  SCIMConfig{Push: SCIMPushConfig{Enabled: true, BaseURL: "http://scim.example"}},
+	}
+	if err := cleartext.validateFeatureConfig(); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Fatalf("cleartext SCIM base URL error = %v", err)
+	}
+	negativeRetry := &Config{
+		Audit: AuditConfig{Enabled: true},
+		SCIM: SCIMConfig{Push: SCIMPushConfig{
+			Enabled: true, BaseURL: "https://scim.example",
+			Retry: SCIMPushRetryConfig{MaxAttempts: -1},
+		}},
+	}
+	if err := negativeRetry.validateFeatureConfig(); err == nil || !strings.Contains(err.Error(), "retry") {
+		t.Fatalf("negative SCIM retry error = %v", err)
+	}
+	groupsOff := &Config{SCIM: SCIMConfig{Groups: SCIMGroupsConfig{Enabled: true}}}
+	if err := groupsOff.validateFeatureConfig(); err == nil || !strings.Contains(err.Error(), "scim.groups.enabled") {
+		t.Fatalf("SCIM groups without admin error = %v", err)
+	}
+	resetWithoutPassword := &Config{SelfService: SelfServiceConfig{
+		PasswordReset: PasswordResetConfig{Backend: "memory"},
+	}}
+	if err := resetWithoutPassword.validateFeatureConfig(); err == nil || !strings.Contains(err.Error(), "password_reset.backend") {
+		t.Fatalf("password reset without credential store error = %v", err)
+	}
+}
+
 func TestExternalAuditWorkerValidationRequiresSignedLocalAdmission(t *testing.T) {
 	cfg := &Config{Audit: AuditConfig{ExternalWorker: ExternalAuditWorkerConfig{
 		Enabled: true, ModuleID: "audit-worker", Executable: "/opt/audit-worker",
