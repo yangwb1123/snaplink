@@ -43,6 +43,7 @@ func NewMemoryStore(capacity int) *MemoryStore {
 
 // Record appends e, evicting the oldest entries once over capacity.
 func (m *MemoryStore) Record(_ context.Context, e Entry) error {
+	e = cloneEntry(e)
 	if e.ID == "" {
 		e.ID = newEntryID()
 	}
@@ -79,7 +80,7 @@ func (m *MemoryStore) List(_ context.Context, f Filter) ([]Entry, error) {
 		if !f.Since.IsZero() && e.RecordedAt.Before(f.Since) {
 			continue
 		}
-		matches = append(matches, e)
+		matches = append(matches, cloneEntry(e))
 		if len(matches) >= limit {
 			break
 		}
@@ -100,6 +101,7 @@ func (m *MemoryStore) Len() int {
 // The history entry's patch is the redacted Diff of the redacted baselines
 // (the only forms ever stored), so no plaintext secret can reach history.
 func (m *MemoryStore) Apply(_ context.Context, v AppliedVersion) (AppliedVersion, error) {
+	v = cloneAppliedVersion(v)
 	if v.ID == "" {
 		v.ID = newEntryID()
 	}
@@ -109,7 +111,7 @@ func (m *MemoryStore) Apply(_ context.Context, v AppliedVersion) (AppliedVersion
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.hasCanary && m.canary.Status == CanaryObserving {
-		return v, ErrCanaryInProgress
+		return cloneAppliedVersion(v), ErrCanaryInProgress
 	}
 	var prev AppliedVersion
 	if n := len(m.applied); n > 0 {
@@ -117,7 +119,7 @@ func (m *MemoryStore) Apply(_ context.Context, v AppliedVersion) (AppliedVersion
 	}
 	v.PrevID = prev.ID
 	m.appendAppliedLocked(v, prev)
-	return v, nil
+	return cloneAppliedVersion(v), nil
 }
 
 // Applied returns the latest applied-config baseline, or ErrNoAppliedVersion
@@ -126,7 +128,7 @@ func (m *MemoryStore) Applied(_ context.Context) (AppliedVersion, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if n := len(m.applied); n > 0 {
-		return m.applied[n-1], nil
+		return cloneAppliedVersion(m.applied[n-1]), nil
 	}
 	return AppliedVersion{}, ErrNoAppliedVersion
 }
@@ -168,14 +170,15 @@ func (m *MemoryStore) rollbackLocked(expectedID, actor, reason string) (AppliedV
 		Digest:    prev.Digest,
 		Reason:    reason,
 		PrevID:    cur.ID,
-		Snapshot:  prev.Snapshot,
+		Snapshot:  cloneSnapshot(prev.Snapshot),
 	}
 	m.appendAppliedLocked(v, cur)
-	return v, nil
+	return cloneAppliedVersion(v), nil
 }
 
 // BeginCanary atomically records a candidate baseline and its observing state.
 func (m *MemoryStore) BeginCanary(_ context.Context, v AppliedVersion, state CanaryState) (AppliedVersion, CanaryState, error) {
+	v = cloneAppliedVersion(v)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.hasCanary && m.canary.Status == CanaryObserving {
@@ -195,7 +198,7 @@ func (m *MemoryStore) BeginCanary(_ context.Context, v AppliedVersion, state Can
 	state = normalizeCanaryState(state, v, prev)
 	m.appendAppliedLocked(v, prev)
 	m.canary, m.hasCanary = state, true
-	return v, state, nil
+	return cloneAppliedVersion(v), state, nil
 }
 
 // Canary returns the current lifecycle state.
@@ -234,22 +237,23 @@ func (m *MemoryStore) RollbackCanary(_ context.Context, id, actor, reason string
 	cur, prev := m.applied[n-1], m.applied[n-2]
 	v := AppliedVersion{
 		ID: newEntryID(), AppliedAt: time.Now().UTC(), Actor: actor,
-		Digest: prev.Digest, Reason: reason, PrevID: cur.ID, Snapshot: prev.Snapshot,
+		Digest: prev.Digest, Reason: reason, PrevID: cur.ID, Snapshot: cloneSnapshot(prev.Snapshot),
 	}
 	m.appendAppliedLocked(v, cur)
 	m.canary.Status = CanaryRolledBack
 	m.canary.Detail = reason
-	return v, m.canary, nil
+	return cloneAppliedVersion(v), m.canary, nil
 }
 
 func (m *MemoryStore) appendAppliedLocked(v, prev AppliedVersion) {
+	stored := cloneAppliedVersion(v)
 	entry := Entry{
-		Actor: v.Actor, Resource: resourceConfigApply, ResourceID: v.ID,
-		Patch: RedactOps(Diff(prev.Snapshot, v.Snapshot)), Reason: v.Reason,
-		RecordedAt: v.AppliedAt, ID: newEntryID(),
+		Actor: stored.Actor, Resource: resourceConfigApply, ResourceID: stored.ID,
+		Patch: RedactOps(Diff(prev.Snapshot, stored.Snapshot)), Reason: stored.Reason,
+		RecordedAt: stored.AppliedAt, ID: newEntryID(),
 	}
-	m.applied = append(m.applied, v)
-	m.entries = append(m.entries, entry)
+	m.applied = append(m.applied, stored)
+	m.entries = append(m.entries, cloneEntry(entry))
 	if over := len(m.entries) - m.capacity; over > 0 {
 		m.entries = m.entries[over:]
 	}
@@ -260,7 +264,85 @@ func (m *MemoryStore) appendAppliedLocked(v, prev AppliedVersion) {
 func (m *MemoryStore) appliedVersions() []AppliedVersion {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append([]AppliedVersion(nil), m.applied...)
+	return cloneAppliedVersions(m.applied)
+}
+
+func cloneJSONValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return cloneSnapshot(value)
+	case []any:
+		if value == nil {
+			return []any(nil)
+		}
+		out := make([]any, len(value))
+		for i, item := range value {
+			out[i] = cloneJSONValue(item)
+		}
+		return out
+	case []string:
+		if value == nil {
+			return []string(nil)
+		}
+		out := make([]string, len(value))
+		copy(out, value)
+		return out
+	case map[string]string:
+		if value == nil {
+			return map[string]string(nil)
+		}
+		out := make(map[string]string, len(value))
+		for key, item := range value {
+			out[key] = item
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func cloneSnapshot(snapshot map[string]any) map[string]any {
+	if snapshot == nil {
+		return nil
+	}
+	out := make(map[string]any, len(snapshot))
+	for key, value := range snapshot {
+		out[key] = cloneJSONValue(value)
+	}
+	return out
+}
+
+func cloneOps(ops []Op) []Op {
+	if ops == nil {
+		return nil
+	}
+	out := make([]Op, len(ops))
+	for i, op := range ops {
+		out[i] = op
+		out[i].Value = cloneJSONValue(op.Value)
+	}
+	return out
+}
+
+func cloneEntry(entry Entry) Entry {
+	entry.Patch = cloneOps(entry.Patch)
+	return entry
+}
+
+func cloneAppliedVersion(version AppliedVersion) AppliedVersion {
+	version.Snapshot = cloneSnapshot(version.Snapshot)
+	return version
+}
+
+func cloneAppliedVersions(versions []AppliedVersion) []AppliedVersion {
+	if versions == nil {
+		return nil
+	}
+	out := make([]AppliedVersion, len(versions))
+	for i, version := range versions {
+		out[i] = cloneAppliedVersion(version)
+	}
+	return out
 }
 
 func newEntryID() string {

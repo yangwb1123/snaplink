@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // TestGetMenus_NilForUnknownClientReturnsEmpty exercises the
@@ -29,21 +30,110 @@ func TestGetMenus_NilForUnknownClientReturnsEmpty(t *testing.T) {
 
 func TestGetMenus_ReturnsCopy(t *testing.T) {
 	t.Parallel()
-	// GetMenus must defensively copy so a caller mutating the returned
-	// slice can't corrupt the provider's stored tree.
+	// GetMenus must defensively copy the whole tree so a caller mutating
+	// returned nested values can't corrupt the provider's stored tree.
 	p := permissions.NewMemoryProvider()
 	_ = p.SetMenus(context.Background(), "c", permissions.MenuTree{
-		{ID: "a", Name: "A"},
+		{ID: "a", Name: "A", Children: []permissions.MenuItem{
+			{ID: "child", Name: "Child", Buttons: []permissions.Button{{Code: "button"}}},
+		}},
 	})
 	got, err := p.GetMenus(context.Background(), "c")
 	if err != nil {
 		t.Fatalf("GetMenus: %v", err)
 	}
 	got[0].ID = "tampered"
+	got[0].Children[0].ID = "tampered-child"
+	got[0].Children[0].Buttons[0].Code = "tampered-button"
 
 	again, _ := p.GetMenus(context.Background(), "c")
-	if again[0].ID != "a" {
-		t.Fatalf("provider state mutated through returned slice: %v", again)
+	if again[0].ID != "a" || again[0].Children[0].ID != "child" || again[0].Children[0].Buttons[0].Code != "button" {
+		t.Fatalf("provider state mutated through returned menu values: %v", again)
+	}
+}
+
+func TestRolePermissions_CallerMutationIsIsolated(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	p := permissions.NewMemoryProvider()
+	added := []string{"read"}
+	if err := p.AddRole(ctx, "c", permissions.Role{Code: "r", Permissions: added}); err != nil {
+		t.Fatalf("AddRole: %v", err)
+	}
+	added[0] = "caller-add"
+
+	got, err := p.ListAllRoles(ctx, "c")
+	if err != nil || len(got) != 1 || got[0].Permissions[0] != "read" {
+		t.Fatalf("AddRole retained caller permissions: %v / %v", got, err)
+	}
+
+	updated := []string{"write"}
+	if err := p.UpdateRole(ctx, "c", permissions.Role{Code: "r", Permissions: updated}); err != nil {
+		t.Fatalf("UpdateRole: %v", err)
+	}
+	updated[0] = "caller-update"
+	got, err = p.ListAllRoles(ctx, "c")
+	if err != nil || len(got) != 1 || got[0].Permissions[0] != "write" {
+		t.Fatalf("UpdateRole retained caller permissions: %v / %v", got, err)
+	}
+}
+
+func TestRolePermissions_ReturnedValuesAreIsolated(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	p := permissions.NewMemoryProvider()
+	_ = p.AddRole(ctx, "c", permissions.Role{Code: "r", Permissions: []string{"read"}})
+	_ = p.AssignRoles(ctx, "u", "c", []string{"r"})
+
+	all, err := p.ListAllRoles(ctx, "c")
+	if err != nil || len(all) != 1 {
+		t.Fatalf("ListAllRoles: %v / %v", all, err)
+	}
+	all[0].Permissions[0] = "list-mutation"
+
+	assigned, err := p.Roles(ctx, "u", "c")
+	if err != nil || len(assigned) != 1 || assigned[0].Permissions[0] != "read" {
+		t.Fatalf("ListAllRoles exposed role permissions: %v / %v", assigned, err)
+	}
+	assigned[0].Permissions[0] = "roles-mutation"
+
+	page, _, total, err := p.ListRolesPage(ctx, "c", core.PageQuery{Limit: 1})
+	if err != nil || total != 1 || len(page) != 1 || page[0].Permissions[0] != "read" {
+		t.Fatalf("Roles exposed role permissions: %v / %v", page, err)
+	}
+	page[0].Permissions[0] = "page-mutation"
+
+	stable, err := p.ListAllRoles(ctx, "c")
+	if err != nil || len(stable) != 1 || stable[0].Permissions[0] != "read" {
+		t.Fatalf("role egress exposed provider state: %v / %v", stable, err)
+	}
+}
+
+func TestSetMenus_CallerMutationIsolatedFromNestedPolicy(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	p := permissions.NewMemoryProvider()
+	_ = p.AddRole(ctx, "c", permissions.Role{Code: "viewer", Permissions: []string{"menu:read", "button:use"}})
+	_ = p.AssignRoles(ctx, "u", "c", []string{"viewer"})
+	tree := permissions.MenuTree{{ID: "parent", Children: []permissions.MenuItem{{
+		ID: "child", Permission: "menu:read",
+		Buttons: []permissions.Button{{Code: "button", Permission: "button:use"}},
+	}}}}
+	if err := p.SetMenus(ctx, "c", tree); err != nil {
+		t.Fatalf("SetMenus: %v", err)
+	}
+	tree[0].Children[0].ID = "caller-child"
+	tree[0].Children[0].Permission = "menu:denied"
+	tree[0].Children[0].Buttons[0].Code = "caller-button"
+	tree[0].Children[0].Buttons[0].Permission = "button:denied"
+
+	raw, err := p.GetMenus(ctx, "c")
+	if err != nil || len(raw) != 1 || len(raw[0].Children) != 1 || raw[0].Children[0].ID != "child" || raw[0].Children[0].Buttons[0].Code != "button" {
+		t.Fatalf("SetMenus retained caller menu values: %v / %v", raw, err)
+	}
+	filtered, err := p.Menus(ctx, "u", "c")
+	if err != nil || len(filtered) != 1 || len(filtered[0].Children) != 1 || filtered[0].Children[0].ID != "child" || len(filtered[0].Children[0].Buttons) != 1 {
+		t.Fatalf("caller menu mutation changed effective policy: %v / %v", filtered, err)
 	}
 }
 

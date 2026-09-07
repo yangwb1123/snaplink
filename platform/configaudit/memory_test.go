@@ -2,6 +2,7 @@ package configaudit
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -238,5 +239,169 @@ func TestMemoryStore_Rollback_NoPreviousReturnsErr(t *testing.T) {
 	_, _ = s.Apply(ctx, AppliedVersion{Actor: "a", Digest: "d1", Snapshot: map[string]any{"a": 1}})
 	if _, err := s.Rollback(ctx, "a", "r"); err != ErrNoAppliedVersion {
 		t.Errorf("Rollback with a single version = %v, want ErrNoAppliedVersion", err)
+	}
+}
+
+func TestMemoryStore_ClonesNestedSnapshotsOnApply(t *testing.T) {
+	s := NewMemoryStore(0)
+	input := nestedMemorySnapshot()
+	applied := mustApplySnapshot(t, s, input)
+
+	mutateNestedMemorySnapshot(input, "input mutation")
+	mutateNestedMemorySnapshot(applied.Snapshot, "return mutation")
+
+	got, err := s.Applied(context.Background())
+	if err != nil {
+		t.Fatalf("Applied: %v", err)
+	}
+	assertMemorySnapshot(t, got.Snapshot, nestedMemorySnapshot())
+	versions := s.appliedVersions()
+	if len(versions) != 1 {
+		t.Fatalf("expected one applied version, got %d", len(versions))
+	}
+	assertMemorySnapshot(t, versions[0].Snapshot, nestedMemorySnapshot())
+
+	entries, err := s.List(context.Background(), Filter{Resource: "config"})
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("List config history: entries=%d err=%v", len(entries), err)
+	}
+	patchValue, ok := entries[0].Patch[0].Value.(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested map patch value, got %T", entries[0].Patch[0].Value)
+	}
+	assertMemorySnapshot(t, patchValue, nestedMemorySnapshot()["nested"].(map[string]any))
+}
+
+func TestMemoryStore_ClonesAppliedAndRollbackReturns(t *testing.T) {
+	s := NewMemoryStore(0)
+	first := nestedMemorySnapshot()
+	mustApplySnapshot(t, s, first)
+	second := nestedMemorySnapshot()
+	mutateNestedMemorySnapshot(second, "second")
+	mustApplySnapshot(t, s, second)
+
+	rolled, err := s.Rollback(context.Background(), "rollback", "test")
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	mutateNestedMemorySnapshot(rolled.Snapshot, "rollback return")
+	got, err := s.Applied(context.Background())
+	if err != nil {
+		t.Fatalf("Applied after rollback: %v", err)
+	}
+	assertMemorySnapshot(t, got.Snapshot, first)
+
+	mutateNestedMemorySnapshot(got.Snapshot, "applied return")
+	again, err := s.Applied(context.Background())
+	if err != nil {
+		t.Fatalf("Applied after returned mutation: %v", err)
+	}
+	assertMemorySnapshot(t, again.Snapshot, first)
+}
+
+func TestMemoryStore_ClonesCanaryReturns(t *testing.T) {
+	s := NewMemoryStore(0)
+	baseline := nestedMemorySnapshot()
+	mustApplySnapshot(t, s, baseline)
+	candidate := nestedMemorySnapshot()
+	mutateNestedMemorySnapshot(candidate, "candidate")
+	wantCandidate := nestedMemorySnapshot()
+	mutateNestedMemorySnapshot(wantCandidate, "candidate")
+
+	got, state, err := s.BeginCanary(context.Background(), AppliedVersion{Snapshot: candidate}, CanaryState{})
+	if err != nil {
+		t.Fatalf("BeginCanary: %v", err)
+	}
+	mutateNestedMemorySnapshot(candidate, "input mutation")
+	mutateNestedMemorySnapshot(got.Snapshot, "return mutation")
+	stored, err := s.Applied(context.Background())
+	if err != nil {
+		t.Fatalf("Applied during canary: %v", err)
+	}
+	assertMemorySnapshot(t, stored.Snapshot, wantCandidate)
+
+	reported, err := s.Canary(context.Background())
+	if err != nil {
+		t.Fatalf("Canary: %v", err)
+	}
+	reported.Detail = "caller mutation"
+	unchanged, _ := s.Canary(context.Background())
+	if unchanged.Detail == "caller mutation" {
+		t.Fatal("Canary returned state alias")
+	}
+
+	restored, _, err := s.RollbackCanary(context.Background(), state.ID, "system", "test rollback")
+	if err != nil {
+		t.Fatalf("RollbackCanary: %v", err)
+	}
+	mutateNestedMemorySnapshot(restored.Snapshot, "rollback return")
+	latest, err := s.Applied(context.Background())
+	if err != nil {
+		t.Fatalf("Applied after canary rollback: %v", err)
+	}
+	assertMemorySnapshot(t, latest.Snapshot, baseline)
+}
+
+func TestMemoryStore_ClonesNestedRecordPatchValues(t *testing.T) {
+	s := NewMemoryStore(0)
+	value := nestedMemorySnapshot()
+	entry := Entry{Patch: []Op{{Op: "add", Path: "/nested", Value: value}}}
+	if err := s.Record(context.Background(), entry); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	mutateNestedMemorySnapshot(value, "input mutation")
+	entry.Patch[0].Value = map[string]any{"replaced": true}
+
+	entries, err := s.List(context.Background(), Filter{})
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("List: entries=%d err=%v", len(entries), err)
+	}
+	gotValue, ok := entries[0].Patch[0].Value.(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested map patch value, got %T", entries[0].Patch[0].Value)
+	}
+	assertMemorySnapshot(t, gotValue, nestedMemorySnapshot())
+	mutateNestedMemorySnapshot(gotValue, "return mutation")
+
+	again, err := s.List(context.Background(), Filter{})
+	if err != nil || len(again) != 1 {
+		t.Fatalf("List after returned mutation: entries=%d err=%v", len(again), err)
+	}
+	storedValue := again[0].Patch[0].Value.(map[string]any)
+	assertMemorySnapshot(t, storedValue, nestedMemorySnapshot())
+}
+
+func mustApplySnapshot(t *testing.T, s *MemoryStore, snapshot map[string]any) AppliedVersion {
+	t.Helper()
+	version, err := s.Apply(context.Background(), AppliedVersion{Actor: "test", Snapshot: snapshot})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	return version
+}
+
+func nestedMemorySnapshot() map[string]any {
+	return map[string]any{
+		"nested": map[string]any{
+			"object": map[string]any{"name": "stable"},
+			"items":  []any{map[string]any{"value": "stable"}},
+			"uris":   []string{"https://stable.example"},
+			"labels": map[string]string{"environment": "stable"},
+		},
+	}
+}
+
+func mutateNestedMemorySnapshot(snapshot map[string]any, value string) {
+	nested := snapshot["nested"].(map[string]any)
+	nested["object"].(map[string]any)["name"] = value
+	nested["items"].([]any)[0].(map[string]any)["value"] = value
+	nested["uris"].([]string)[0] = value
+	nested["labels"].(map[string]string)["environment"] = value
+}
+
+func assertMemorySnapshot(t *testing.T, got, want map[string]any) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("snapshot changed: got %#v, want %#v", got, want)
 	}
 }

@@ -68,7 +68,7 @@ func (m *MemoryProvider) AddRole(_ context.Context, clientID string, role Role) 
 	if _, exists := m.rolesByClient[clientID][role.Code]; exists {
 		return ErrRoleExists
 	}
-	m.rolesByClient[clientID][role.Code] = role
+	m.rolesByClient[clientID][role.Code] = cloneRole(role)
 	return nil
 }
 
@@ -80,7 +80,7 @@ func (m *MemoryProvider) UpdateRole(_ context.Context, clientID string, role Rol
 	if _, exists := m.rolesByClient[clientID][role.Code]; !exists {
 		return ErrRoleNotFound
 	}
-	m.rolesByClient[clientID][role.Code] = role
+	m.rolesByClient[clientID][role.Code] = cloneRole(role)
 	return nil
 }
 
@@ -110,7 +110,7 @@ func (m *MemoryProvider) RemoveRole(_ context.Context, clientID, roleCode string
 func (m *MemoryProvider) SetMenus(_ context.Context, clientID string, menus MenuTree) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.menusByClient[clientID] = menus
+	m.menusByClient[clientID] = cloneMenuTree(menus)
 	return nil
 }
 
@@ -124,7 +124,12 @@ func (m *MemoryProvider) GetMenus(_ context.Context, clientID string) (MenuTree,
 	if full == nil {
 		return MenuTree{}, nil
 	}
-	return append(MenuTree(nil), full...), nil
+	if len(full) == 0 {
+		// Keep the historical distinction between an absent tree and an
+		// explicitly configured empty tree returned by this method.
+		return append(MenuTree(nil), full...), nil
+	}
+	return cloneMenuTree(full), nil
 }
 
 // AssignRoles grants the user the given role codes under clientID. The set
@@ -231,7 +236,7 @@ func (m *MemoryProvider) ListAllRoles(_ context.Context, clientID string) ([]Rol
 	defs := m.rolesByClient[clientID]
 	out := make([]Role, 0, len(defs))
 	for _, r := range defs {
-		out = append(out, r)
+		out = append(out, cloneRole(r))
 	}
 	return out, nil
 }
@@ -268,7 +273,7 @@ func (m *MemoryProvider) Roles(_ context.Context, userID, clientID string) ([]Ro
 	out := make([]Role, 0, len(codes))
 	for _, code := range codes {
 		if r, ok := defs[code]; ok {
-			out = append(out, r)
+			out = append(out, cloneRole(r))
 		}
 	}
 	return out, nil
@@ -299,7 +304,7 @@ func (m *MemoryProvider) Permissions(ctx context.Context, userID, clientID strin
 // (no children, no own permission) are pruned. Buttons are filtered the same way.
 func (m *MemoryProvider) Menus(ctx context.Context, userID, clientID string) (MenuTree, error) {
 	m.mu.RLock()
-	full := m.menusByClient[clientID]
+	full := cloneMenuTree(m.menusByClient[clientID])
 	m.mu.RUnlock()
 	if full == nil {
 		return MenuTree{}, nil
@@ -316,6 +321,40 @@ func filterMenus(in MenuTree, perms []Permission) MenuTree {
 	return FilterMenuTree(in, perms)
 }
 
+// cloneRole isolates the mutable permission slice carried by a Role while
+// preserving nil versus explicitly empty slices.
+func cloneRole(in Role) Role {
+	out := in
+	if in.Permissions != nil {
+		out.Permissions = make([]string, len(in.Permissions))
+		copy(out.Permissions, in.Permissions)
+	}
+	return out
+}
+
+// cloneMenuTree returns a recursive copy so neither menu configuration inputs
+// nor query results can mutate the provider's policy state.
+func cloneMenuTree(in MenuTree) MenuTree {
+	if in == nil {
+		return nil
+	}
+	out := make(MenuTree, len(in))
+	for i := range in {
+		out[i] = cloneMenuItem(in[i])
+	}
+	return out
+}
+
+func cloneMenuItem(in MenuItem) MenuItem {
+	out := in
+	if in.Buttons != nil {
+		out.Buttons = make([]Button, len(in.Buttons))
+		copy(out.Buttons, in.Buttons)
+	}
+	out.Children = cloneMenuTree(in.Children)
+	return out
+}
+
 // ListRolesPage implements permissions.PaginatedPermissionProvider: keyset
 // pagination over a snapshot sorted by code (the fixed sort both the
 // fallback path and this page share), clientID-scoped like ListAllRoles.
@@ -325,7 +364,7 @@ func (m *MemoryProvider) ListRolesPage(_ context.Context, clientID string, q cor
 	defs := m.rolesByClient[clientID]
 	out := make([]Role, 0, len(defs))
 	for _, r := range defs {
-		out = append(out, r)
+		out = append(out, cloneRole(r))
 	}
 	m.mu.RUnlock()
 	keyID := func(r Role) (string, string) { return r.Code, r.Code }
