@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -40,7 +41,7 @@ func NewMemoryPublicKeyStore() *MemoryPublicKeyStore {
 func (s *MemoryPublicKeyStore) Register(keyID string, key ed25519.PublicKey, subject *sso.Subject) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.entries[keyID] = publicKeyEntry{key: key, subject: subject}
+	s.entries[keyID] = publicKeyEntry{key: slices.Clone(key), subject: cloneSubject(subject)}
 }
 
 func (s *MemoryPublicKeyStore) Resolve(_ context.Context, keyID string) (ed25519.PublicKey, *sso.Subject, error) {
@@ -50,7 +51,7 @@ func (s *MemoryPublicKeyStore) Resolve(_ context.Context, keyID string) (ed25519
 	if !ok {
 		return nil, nil, errors.New("keypair: unknown key_id")
 	}
-	return e.key, e.subject, nil
+	return slices.Clone(e.key), cloneSubject(e.subject), nil
 }
 
 // KeyPairAuthenticator authenticates a client by verifying an Ed25519
