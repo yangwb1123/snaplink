@@ -6,6 +6,7 @@ package memory
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/yangwb1123/snaplink/domains/tokenexchange"
@@ -28,7 +29,7 @@ type Store struct {
 // hop allowed) except for explicit Deny rules; false is a default-deny
 // allowlist model where only explicit Allow rules pass.
 func New(defaultAllow bool, rules ...tokenexchange.Rule) *Store {
-	return &Store{defaultAllow: defaultAllow, rules: rules}
+	return &Store{defaultAllow: defaultAllow, rules: slices.Clone(rules)}
 }
 
 // Allow implements [tokenexchange.Policy]. Never returns an error — the
@@ -43,11 +44,10 @@ func (s *Store) Allow(_ context.Context, hop tokenexchange.Hop) (bool, error) {
 }
 
 // Replace atomically swaps the active rule set — the dynamic-update path
-// (e.g. an admin API or config reload). The caller MUST NOT mutate rules
-// afterward.
+// (e.g. an admin API or config reload).
 func (s *Store) Replace(rules []tokenexchange.Rule) {
 	s.mu.Lock()
-	s.rules = rules
+	s.rules = slices.Clone(rules)
 	s.mu.Unlock()
 }
 
@@ -55,7 +55,7 @@ func (s *Store) Replace(rules []tokenexchange.Rule) {
 // caller).
 func (s *Store) Rules() []tokenexchange.Rule {
 	s.mu.RLock()
-	r := s.rules
+	r := slices.Clone(s.rules)
 	s.mu.RUnlock()
 	return r
 }
