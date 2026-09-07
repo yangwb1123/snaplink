@@ -14,9 +14,8 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0
 	github.com/labstack/echo/v4 v4.15.2
-	github.com/maxmind/mmdbwriter v1.0.0
-	github.com/open-policy-agent/opa v1.19.1
 	github.com/oschwald/maxminddb-golang v1.13.1
+	github.com/open-policy-agent/opa v1.19.1
 	github.com/prometheus/client_golang v1.24.0
 	github.com/redis/go-redis/v9 v9.20.0
 	github.com/tetratelabs/wazero v1.12.0
@@ -105,6 +104,7 @@ require (
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
+	github.com/maxmind/mmdbwriter v1.0.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
