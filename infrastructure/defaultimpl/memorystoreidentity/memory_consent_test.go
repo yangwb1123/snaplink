@@ -182,3 +182,120 @@ func TestMemoryConsentStore_SeparatesUserClientPairs(t *testing.T) {
 		t.Errorf("bob/app1: got %v", bobApp1.Scopes)
 	}
 }
+
+func TestMemoryConsentStore_GetConsentReturnsClone(t *testing.T) {
+	t.Parallel()
+	cs := NewMemoryConsentStore()
+	ctx := context.Background()
+	_ = cs.RecordConsent(ctx, core.ConsentGrant{
+		UserID:   "alice",
+		ClientID: "app1",
+		Scopes:   []string{"openid", "profile"},
+	})
+
+	got, err := cs.GetConsent(ctx, "alice", "app1")
+	if err != nil {
+		t.Fatalf("GetConsent: %v", err)
+	}
+	// Mutating the returned Scopes must not corrupt the stored grant.
+	if len(got.Scopes) > 0 {
+		got.Scopes[0] = "HACKED"
+	}
+
+	again, _ := cs.GetConsent(ctx, "alice", "app1")
+	if len(again.Scopes) != 2 {
+		t.Fatalf("stored scopes corrupted: %v", again.Scopes)
+	}
+	if again.Scopes[0] != "openid" || again.Scopes[1] != "profile" {
+		t.Fatalf("stored scopes corrupted: %v", again.Scopes)
+	}
+}
+
+func TestMemoryConsentStore_ListByUserReturnsClones(t *testing.T) {
+	t.Parallel()
+	cs := NewMemoryConsentStore()
+	ctx := context.Background()
+	_ = cs.RecordConsent(ctx, core.ConsentGrant{
+		UserID:   "alice",
+		ClientID: "app1",
+		Scopes:   []string{"openid", "profile"},
+	})
+	_ = cs.RecordConsent(ctx, core.ConsentGrant{
+		UserID:   "alice",
+		ClientID: "app2",
+		Scopes:   []string{"email"},
+	})
+
+	list, err := cs.ListByUser(ctx, "alice")
+	if err != nil {
+		t.Fatalf("ListByUser: %v", err)
+	}
+	// Mutating a returned element's Scopes must not corrupt the stored grant.
+	for i := range list {
+		if len(list[i].Scopes) > 0 {
+			list[i].Scopes[0] = "HACKED"
+		}
+	}
+
+	app1, err := cs.GetConsent(ctx, "alice", "app1")
+	if err != nil {
+		t.Fatalf("GetConsent(app1): %v", err)
+	}
+	if len(app1.Scopes) != 2 || app1.Scopes[0] != "openid" || app1.Scopes[1] != "profile" {
+		t.Fatalf("stored scopes for app1 corrupted: %v", app1.Scopes)
+	}
+	app2, err := cs.GetConsent(ctx, "alice", "app2")
+	if err != nil {
+		t.Fatalf("GetConsent(app2): %v", err)
+	}
+	if len(app2.Scopes) != 1 || app2.Scopes[0] != "email" {
+		t.Fatalf("stored scopes for app2 corrupted: %v", app2.Scopes)
+	}
+}
+
+func TestMemoryConsentStore_RecordConsentInputStaysIsolated(t *testing.T) {
+	t.Parallel()
+	cs := NewMemoryConsentStore()
+	ctx := context.Background()
+
+	input := []string{"profile", "openid", "openid", "email"}
+	_ = cs.RecordConsent(ctx, core.ConsentGrant{
+		UserID:   "alice",
+		ClientID: "app1",
+		Scopes:   input,
+	})
+
+	// Mutating the caller's input after RecordConsent must not affect storage.
+	input[0] = "HACKED"
+
+	got, _ := cs.GetConsent(ctx, "alice", "app1")
+	want := []string{"email", "openid", "profile"}
+	if len(got.Scopes) != len(want) {
+		t.Fatalf("scopes: got %v want %v", got.Scopes, want)
+	}
+	for i, s := range want {
+		if got.Scopes[i] != s {
+			t.Fatalf("scope[%d]: got %q want %q", i, got.Scopes[i], s)
+		}
+	}
+}
+
+func TestMemoryConsentStore_RecordConsentClonePreservesNil(t *testing.T) {
+	t.Parallel()
+	cs := NewMemoryConsentStore()
+	ctx := context.Background()
+
+	_ = cs.RecordConsent(ctx, core.ConsentGrant{UserID: "alice", ClientID: "app1"})
+	got, _ := cs.GetConsent(ctx, "alice", "app1")
+	if got.Scopes != nil {
+		t.Fatalf("expected nil scopes for empty grant, got %v", got.Scopes)
+	}
+
+	list, err := cs.ListByUser(ctx, "alice")
+	if err != nil {
+		t.Fatalf("ListByUser: %v", err)
+	}
+	if len(list) != 1 || list[0].Scopes != nil {
+		t.Fatalf("expected nil scopes in list, got %v", list)
+	}
+}

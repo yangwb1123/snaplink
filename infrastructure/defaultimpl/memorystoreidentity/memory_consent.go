@@ -2,6 +2,7 @@ package memorystoreidentity
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"sync"
 
@@ -51,7 +52,7 @@ func (m *MemoryConsentStore) GetConsent(_ context.Context, userID, clientID stri
 	if g.IsExpired() {
 		return core.ConsentGrant{}, core.ErrNoConsentGrant
 	}
-	return g, nil
+	return cloneConsentGrant(g), nil
 }
 
 // RevokeConsent removes the grant for (userID, clientID). Idempotent.
@@ -69,7 +70,7 @@ func (m *MemoryConsentStore) ListByUser(_ context.Context, userID string) ([]cor
 	var out []core.ConsentGrant
 	for _, g := range m.grants {
 		if g.UserID == userID {
-			out = append(out, g)
+			out = append(out, cloneConsentGrant(g))
 		}
 	}
 	m.mu.RUnlock()
@@ -96,6 +97,14 @@ func normalizeScopes(in []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// cloneConsentGrant returns a shallow copy of grant with a fresh Scopes
+// slice so callers cannot mutate the stored representation. slices.Clone
+// returns nil for a nil input, preserving nil-vs-empty semantics.
+func cloneConsentGrant(grant core.ConsentGrant) core.ConsentGrant {
+	grant.Scopes = slices.Clone(grant.Scopes)
+	return grant
 }
 
 var _ core.ConsentStore = (*MemoryConsentStore)(nil)
