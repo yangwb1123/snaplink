@@ -263,6 +263,33 @@ func (m *MemoryRefreshTokenStore) RecordRotation(_ context.Context, familyID str
 	return w.count, exceeded, nil
 }
 
+func cloneRefreshToken(entry *oauth.RefreshToken) *oauth.RefreshToken {
+	if entry == nil {
+		return nil
+	}
+	return &oauth.RefreshToken{
+		UserID:               entry.UserID,
+		ClientID:             entry.ClientID,
+		Provider:             entry.Provider,
+		Scopes:               append([]string(nil), entry.Scopes...),
+		Attributes:           copyMap(entry.Attributes),
+		IssuedAt:             entry.IssuedAt,
+		ExpiresAt:            entry.ExpiresAt,
+		FamilyID:             entry.FamilyID,
+		JTI:                  entry.JTI,
+		Resources:            append([]string(nil), entry.Resources...),
+		AuthorizationDetails: cloneRawBytes(entry.AuthorizationDetails),
+		SID:                  entry.SID,
+		Amr:                  append([]string(nil), entry.Amr...),
+		Acr:                  entry.Acr,
+		AuthTime:             entry.AuthTime,
+		ConfirmationJKT:      entry.ConfirmationJKT,
+		Generation:           entry.Generation,
+		FamilyCreatedAt:      entry.FamilyCreatedAt,
+		Roles:                append([]string(nil), entry.Roles...),
+	}
+}
+
 // Inspect returns the token's payload without consuming it. Required
 // by /token/introspect to answer non-destructive queries. Returns
 // oauth.ErrRefreshTokenNotFound for unknown / expired tokens (same oracle-
@@ -282,7 +309,7 @@ func (m *MemoryRefreshTokenStore) Inspect(_ context.Context, token string) (*oau
 		m.mu.Unlock()
 		return nil, oauth.ErrRefreshTokenNotFound
 	}
-	return entry, nil
+	return cloneRefreshToken(entry), nil
 }
 
 // Delete removes a token without going through Consume's rotation
