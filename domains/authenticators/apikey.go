@@ -17,7 +17,8 @@ type APIKeyResolver interface {
 	Resolve(ctx context.Context, keyID string) (secretHash []byte, subject *sso.Subject, err error)
 }
 
-// MemoryAPIKeyStore is a process-local APIKeyResolver. Hashes secrets on registration.
+// MemoryAPIKeyStore is a process-local APIKeyResolver. Hashes secrets on registration
+// and snapshots the associated identity so callers cannot mutate auth state.
 type MemoryAPIKeyStore struct {
 	mu      sync.RWMutex
 	entries map[string]apiKeyEntry
@@ -37,7 +38,10 @@ func (s *MemoryAPIKeyStore) Register(keyID, secret string, subject *sso.Subject)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	h := sha256.Sum256([]byte(secret))
-	s.entries[keyID] = apiKeyEntry{hash: h[:], subject: subject}
+	s.entries[keyID] = apiKeyEntry{
+		hash:    append([]byte(nil), h[:]...),
+		subject: cloneSubject(subject),
+	}
 }
 
 func (s *MemoryAPIKeyStore) Resolve(_ context.Context, keyID string) ([]byte, *sso.Subject, error) {
@@ -47,7 +51,7 @@ func (s *MemoryAPIKeyStore) Resolve(_ context.Context, keyID string) ([]byte, *s
 	if !ok {
 		return nil, nil, errors.New("apikey: unknown key_id")
 	}
-	return e.hash, e.subject, nil
+	return append([]byte(nil), e.hash...), cloneSubject(e.subject), nil
 }
 
 // APIKeyAuthenticator authenticates a client by a (key_id, secret) pair —
