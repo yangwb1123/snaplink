@@ -88,3 +88,58 @@ func TestMemoryHistoryStore_RecentByUser_Ordering(t *testing.T) {
 		}
 	}
 }
+
+func TestMemoryHistoryStore_RecordCopiesInput(t *testing.T) {
+	s := NewMemoryHistoryStore()
+	record := &LoginRecord{
+		ID: "record-1", UserID: "user-1", Time: time.Now(), IP: "192.0.2.1",
+		Provider: "password", Success: true, SessionID: "session-1",
+	}
+	if err := s.Record(record); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	record.UserID = "attacker"
+	record.IP = "192.0.2.99"
+	record.Success = false
+
+	got, err := s.RecentByUser("user-1", 0)
+	if err != nil {
+		t.Fatalf("RecentByUser: %v", err)
+	}
+	if len(got) != 1 || got[0].UserID != "user-1" || got[0].IP != "192.0.2.1" || !got[0].Success {
+		t.Fatalf("stored record changed through input: %+v", got)
+	}
+}
+
+func TestMemoryHistoryStore_QueriesReturnCopies(t *testing.T) {
+	s := NewMemoryHistoryStore()
+	_ = s.Record(&LoginRecord{
+		ID: "record-1", UserID: "user-1", DeviceID: "device-1", Time: time.Now(),
+		Provider: "password", Success: true, SessionID: "session-1", TrustScore: 0.8,
+	})
+
+	byUser, err := s.RecentByUser("user-1", 0)
+	if err != nil || len(byUser) != 1 {
+		t.Fatalf("RecentByUser: records=%v err=%v", byUser, err)
+	}
+	byUser[0].Provider = "tampered"
+	byUser[0].Success = false
+
+	byDevice, err := s.RecentByDevice("device-1", 0)
+	if err != nil || len(byDevice) != 1 {
+		t.Fatalf("RecentByDevice: records=%v err=%v", byDevice, err)
+	}
+	if byDevice[0].Provider != "password" || !byDevice[0].Success {
+		t.Fatalf("user query mutated stored record: %+v", byDevice[0])
+	}
+	byDevice[0].SessionID = "tampered"
+	byDevice[0].TrustScore = 0
+
+	again, err := s.RecentByUser("user-1", 0)
+	if err != nil || len(again) != 1 {
+		t.Fatalf("second RecentByUser: records=%v err=%v", again, err)
+	}
+	if again[0].SessionID != "session-1" || again[0].TrustScore != 0.8 {
+		t.Fatalf("device query mutated stored record: %+v", again[0])
+	}
+}

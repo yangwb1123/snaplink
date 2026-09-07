@@ -32,8 +32,16 @@ func (s *MemoryHistoryStore) Record(r *LoginRecord) error {
 	if r.Time.IsZero() {
 		r.Time = time.Now()
 	}
-	s.recs = append(s.recs, r)
+	s.recs = append(s.recs, cloneLoginRecord(r))
 	return nil
+}
+
+func cloneLoginRecord(record *LoginRecord) *LoginRecord {
+	if record == nil {
+		return nil
+	}
+	copy := *record
+	return &copy
 }
 
 func (s *MemoryHistoryStore) RecentByUser(userID string, limit int) ([]*LoginRecord, error) {
@@ -43,7 +51,7 @@ func (s *MemoryHistoryStore) RecentByUser(userID string, limit int) ([]*LoginRec
 	var out []*LoginRecord
 	for _, r := range s.recs {
 		if r.UserID == userID {
-			out = append(out, r)
+			out = append(out, cloneLoginRecord(r))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -65,7 +73,7 @@ func (s *MemoryHistoryStore) RecentByDevice(deviceID string, limit int) ([]*Logi
 	var out []*LoginRecord
 	for _, r := range s.recs {
 		if r.DeviceID == deviceID {
-			out = append(out, r)
+			out = append(out, cloneLoginRecord(r))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
