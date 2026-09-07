@@ -36,7 +36,7 @@ func (m *MemoryUserStore) GetByName(_ context.Context, name string) (*User, erro
 	if !ok {
 		return nil, ErrUserUnknown
 	}
-	return u, nil
+	return cloneUser(u), nil
 }
 
 // GetByHandle returns the user with the given WebAuthn handle. Used
@@ -47,7 +47,7 @@ func (m *MemoryUserStore) GetByHandle(_ context.Context, handle []byte) (*User, 
 	defer m.mu.RUnlock()
 	for _, u := range m.byName {
 		if bytesEqual(u.Handle, handle) {
-			return u, nil
+			return cloneUser(u), nil
 		}
 	}
 	return nil, ErrUserUnknown
@@ -75,7 +75,7 @@ func (m *MemoryUserStore) CreateUserWithHandle(_ context.Context, name, displayN
 
 func (m *MemoryUserStore) createUser(name, displayName string, handle []byte) (*User, error) {
 	u := &User{
-		Handle:      handle,
+		Handle:      append([]byte(nil), handle...),
 		Name:        name,
 		DisplayName: displayName,
 	}
@@ -85,7 +85,7 @@ func (m *MemoryUserStore) createUser(name, displayName string, handle []byte) (*
 		return nil, errors.New("webauthn: user already exists")
 	}
 	m.byName[name] = u
-	return u, nil
+	return cloneUser(u), nil
 }
 
 // AddCredential implements [UserStore].
@@ -96,7 +96,7 @@ func (m *MemoryUserStore) AddCredential(_ context.Context, name string, cred *gw
 	if !ok {
 		return ErrUserUnknown
 	}
-	u.Credentials = append(u.Credentials, *cred)
+	u.Credentials = append(u.Credentials, cloneCredential(*cred))
 	return nil
 }
 
@@ -110,7 +110,7 @@ func (m *MemoryUserStore) UpdateCredential(_ context.Context, name string, cred 
 	}
 	for i, c := range u.Credentials {
 		if bytesEqual(c.ID, cred.ID) {
-			u.Credentials[i] = *cred
+			u.Credentials[i] = cloneCredential(*cred)
 			return nil
 		}
 	}
@@ -152,7 +152,7 @@ func (m *MemoryUserStore) SetCredentialExtensions(_ context.Context, name string
 	if u.CredentialExtensions == nil {
 		u.CredentialExtensions = make(map[string]CredentialExtensions)
 	}
-	u.CredentialExtensions[base64.RawURLEncoding.EncodeToString(credentialID)] = ext
+	u.CredentialExtensions[base64.RawURLEncoding.EncodeToString(credentialID)] = cloneExtensions(ext)
 	return nil
 }
 
@@ -190,6 +190,7 @@ func cloneCredential(c gw.Credential) gw.Credential {
 	out.ID = append([]byte(nil), c.ID...)
 	out.PublicKey = append([]byte(nil), c.PublicKey...)
 	out.Transport = append([]protocol.AuthenticatorTransport(nil), c.Transport...)
+	out.Authenticator.AAGUID = append([]byte(nil), c.Authenticator.AAGUID...)
 	out.Attestation = cloneAttestation(c.Attestation)
 	return out
 }
@@ -217,6 +218,27 @@ func cloneExtensions(ext CredentialExtensions) CredentialExtensions {
 		ext.LargeBlobSupported = &v
 	}
 	return ext
+}
+
+func cloneUser(u *User) *User {
+	if u == nil {
+		return nil
+	}
+	out := *u
+	out.Handle = append([]byte(nil), u.Handle...)
+	if u.Credentials != nil {
+		out.Credentials = make([]gw.Credential, len(u.Credentials))
+		for i, credential := range u.Credentials {
+			out.Credentials[i] = cloneCredential(credential)
+		}
+	}
+	if u.CredentialExtensions != nil {
+		out.CredentialExtensions = make(map[string]CredentialExtensions, len(u.CredentialExtensions))
+		for key, ext := range u.CredentialExtensions {
+			out.CredentialExtensions[key] = cloneExtensions(ext)
+		}
+	}
+	return &out
 }
 
 var _ CredentialExtensionSetter = (*MemoryUserStore)(nil)

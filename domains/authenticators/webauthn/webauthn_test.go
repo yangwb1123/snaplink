@@ -194,16 +194,16 @@ func TestMemoryUserStore_CreateGetByNameAndHandle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByName: %v", err)
 	}
-	if got != user {
-		t.Fatal("GetByName did not return the created user")
+	if got == user || got.Name != user.Name || got.DisplayName != user.DisplayName || !bytes.Equal(got.Handle, user.Handle) {
+		t.Fatal("GetByName did not return an equivalent defensive copy")
 	}
 
 	gotByHandle, err := store.GetByHandle(ctx, user.Handle)
 	if err != nil {
 		t.Fatalf("GetByHandle: %v", err)
 	}
-	if gotByHandle != user {
-		t.Fatal("GetByHandle did not return the created user")
+	if gotByHandle == user || gotByHandle.Name != user.Name || !bytes.Equal(gotByHandle.Handle, user.Handle) {
+		t.Fatal("GetByHandle did not return an equivalent defensive copy")
 	}
 }
 
