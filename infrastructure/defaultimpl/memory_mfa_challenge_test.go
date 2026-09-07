@@ -38,6 +38,29 @@ func TestMemoryMFAChallengeStore_PutConsume(t *testing.T) {
 	}
 }
 
+func TestMemoryMFAChallengeStore_PutCopiesRequestState(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := defaultimpl.NewMemoryMFAChallengeStore()
+	state := []byte(`{"resume":true,"subject":"user-1"}`)
+	if err := s.Put(ctx, &spi.MFAChallenge{
+		ID: "ch-state", ExpiresAt: time.Now().Add(time.Minute), RequestState: state,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	state[0] = '['
+	state[len(state)-2] = 'X'
+
+	got, err := s.Consume(ctx, "ch-state")
+	if err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	want := `{"resume":true,"subject":"user-1"}`
+	if string(got.RequestState) != want {
+		t.Fatalf("RequestState changed through input alias: got %q want %q", got.RequestState, want)
+	}
+}
+
 func TestMemoryMFAChallengeStore_SingleUse(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

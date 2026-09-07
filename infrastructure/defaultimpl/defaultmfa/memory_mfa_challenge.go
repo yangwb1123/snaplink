@@ -2,6 +2,7 @@ package defaultmfa
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,13 +46,19 @@ func (m *MemoryMFAChallengeStore) Put(_ context.Context, c *spi.MFAChallenge) er
 			return entry.ExpiresAt
 		})
 	}
-	// Defensive copy so the caller mutating the supplied struct after
-	// Put doesn't poison the stored entry. Cheap: MFAChallenge is a
-	// small struct of values + one []byte (shared by reference but
-	// callers don't mutate state bytes).
-	cp := *c
-	m.entries[c.ID] = &cp
+	// Copy the opaque resume blob as well as the struct. It contains the
+	// authentication state resumed after MFA and must not remain caller-owned.
+	m.entries[c.ID] = cloneMFAChallenge(c)
 	return nil
+}
+
+func cloneMFAChallenge(challenge *spi.MFAChallenge) *spi.MFAChallenge {
+	if challenge == nil {
+		return nil
+	}
+	copy := *challenge
+	copy.RequestState = slices.Clone(challenge.RequestState)
+	return &copy
 }
 
 // Consume atomically deletes + returns the matching challenge.
