@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,8 +48,36 @@ func (m *MemoryTempTokenStore) Issue(_ context.Context, token string, subject *s
 	defer m.mu.Unlock()
 	now := time.Now()
 	m.maybeSweepLocked(now)
-	m.entries[token] = tempEntry{subject: subject, expiresAt: now.Add(ttl)}
+	m.entries[token] = tempEntry{subject: cloneTempSubject(subject), expiresAt: now.Add(ttl)}
 	return nil
+}
+
+func cloneTempSubject(subject *sso.Subject) *sso.Subject {
+	if subject == nil {
+		return nil
+	}
+	clone := *subject
+	clone.Claims = maps.Clone(subject.Claims)
+	clone.Resources = slices.Clone(subject.Resources)
+	clone.AMR = slices.Clone(subject.AMR)
+	clone.AuthorizationDetails = slices.Clone(subject.AuthorizationDetails)
+	clone.Roles = slices.Clone(subject.Roles)
+	clone.RequestedClaims = slices.Clone(subject.RequestedClaims)
+	clone.Actor = cloneTempActor(subject.Actor, make(map[*sso.ActorClaim]*sso.ActorClaim))
+	return &clone
+}
+
+func cloneTempActor(actor *sso.ActorClaim, seen map[*sso.ActorClaim]*sso.ActorClaim) *sso.ActorClaim {
+	if actor == nil {
+		return nil
+	}
+	if clone, ok := seen[actor]; ok {
+		return clone
+	}
+	clone := &sso.ActorClaim{Subject: actor.Subject}
+	seen[actor] = clone
+	clone.Actor = cloneTempActor(actor.Actor, seen)
+	return clone
 }
 
 func (m *MemoryTempTokenStore) Consume(_ context.Context, token string) (*sso.Subject, error) {
