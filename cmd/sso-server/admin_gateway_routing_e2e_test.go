@@ -106,6 +106,15 @@ func buildAdminGatewayE2EServer(t *testing.T) (*httptest.Server, string) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
+	// Keep the literal id used by this route inside ListExpiring's default
+	// 30-day window. The exact gateway-path ownership is pinned separately;
+	// this makes the full-composition request a stable non-404/200 signal.
+	if err := a.clientStore.Add(context.Background(), &sso.Client{
+		ID: "expiring", Secret: "route-test-secret", Active: true,
+		SecretExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seed expiring client: %v", err)
+	}
 	t.Cleanup(func() { shutdownApp(t, a) })
 	h, err := buildHTTPHandler(cfg, a, quietLogger())
 	if err != nil {
@@ -154,6 +163,7 @@ func TestAdminGatewayE2E_GatewayFamiliesReachRealGateway(t *testing.T) {
 
 	getCases := []string{
 		"/api/v1/admin/clients",                            // clients
+		"/api/v1/admin/clients/expiring",                   // clients ListExpiring
 		"/api/v1/admin/domains",                            // domains
 		"/api/v1/admin/keys",                               // keys
 		"/api/v1/admin/permissions/web-app/roles",          // permissions

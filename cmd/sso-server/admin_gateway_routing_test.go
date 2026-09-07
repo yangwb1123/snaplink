@@ -95,6 +95,19 @@ func TestAdminGatewayExactPaths_ValidServeMuxSyntax(t *testing.T) {
 	}()
 }
 
+// TestAdminGatewayExactPaths_PinClientsExpiring keeps the generated
+// ListExpiring literal in the hand-maintained outer-mux ownership table.
+func TestAdminGatewayExactPaths_PinClientsExpiring(t *testing.T) {
+	t.Parallel()
+	const want = "/api/v1/admin/clients/expiring"
+	for _, path := range adminGatewayExactPaths() {
+		if path == want {
+			return
+		}
+	}
+	t.Fatalf("adminGatewayExactPaths() is missing %q", want)
+}
+
 // TestAdminOuterMux_GatewayOwnedPathsReachGateway dispatches a concrete
 // request for every pattern adminGatewayExactPaths declares and confirms
 // newAdminOuterMux routes it to the gateway handler — the routing table's

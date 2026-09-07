@@ -16,19 +16,21 @@ import (
 )
 
 type fakeHandlerStore struct {
-	reservation checkoutReservation
-	reserveErr  error
-	saveErr     error
-	inboxErr    error
-	inboxCalls  int
-	lastFact    providerFact
-	backlog     backlogState
-	deadlineSet bool
+	reservation  checkoutReservation
+	reserveErr   error
+	saveErr      error
+	inboxErr     error
+	reserveCalls int
+	inboxCalls   int
+	lastFact     providerFact
+	backlog      backlogState
+	deadlineSet  bool
 }
 
 func (s *fakeHandlerStore) ReserveCheckout(
 	ctx context.Context, order paymentOrder, request checkoutRequest,
 ) (checkoutReservation, error) {
+	s.reserveCalls++
 	_, s.deadlineSet = ctx.Deadline()
 	if s.reservation.TenantID == "" {
 		s.reservation = checkoutReservation{
@@ -71,12 +73,14 @@ type fakeBillingGateway struct {
 	deliverErr  error
 	lastBinding *tenantBinding
 	lastOrderID string
+	calls       int
 	deliveries  []trustedDelivery
 }
 
 func (b *fakeBillingGateway) GetOrder(
 	_ context.Context, binding *tenantBinding, orderID string,
 ) (paymentOrder, error) {
+	b.calls++
 	b.lastBinding, b.lastOrderID = binding, orderID
 	return b.order, b.err
 }
@@ -103,6 +107,26 @@ func (s *fakeStripeGateway) CreateCheckout(
 	s.calls++
 	s.order, s.request, s.key = order, request, key
 	return s.session, s.err
+}
+
+func TestCheckoutProbeGETReturns405WithoutProviderInteractions(t *testing.T) {
+	store := &fakeHandlerStore{}
+	billing := &fakeBillingGateway{}
+	stripe := &fakeStripeGateway{}
+	handler, token := testAdapterHandler(t, store, billing, stripe, "checkout-client", scopeCheckoutCreate)
+
+	request := httptest.NewRequest(http.MethodGet, pathCheckout, nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET %s status=%d body=%s, want 405", pathCheckout, response.Code, response.Body.String())
+	}
+	if store.reserveCalls != 0 || store.inboxCalls != 0 || billing.calls != 0 || stripe.calls != 0 {
+		t.Fatalf("GET probe triggered provider interactions: reserve=%d inbox=%d billing=%d stripe=%d",
+			store.reserveCalls, store.inboxCalls, billing.calls, stripe.calls)
+	}
 }
 
 func TestCheckoutUsesBoundTenantAndBillingAmount(t *testing.T) {
