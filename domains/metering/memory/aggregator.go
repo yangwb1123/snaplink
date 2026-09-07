@@ -27,8 +27,9 @@ func (a *Aggregator) Record(u *metering.TenantUsage) {
 	if u == nil {
 		return
 	}
+	record := *u
 	a.mu.Lock()
-	a.records = append(a.records, u)
+	a.records = append(a.records, &record)
 	a.mu.Unlock()
 }
 

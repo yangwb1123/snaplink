@@ -46,6 +46,53 @@ func TestUsage_hit(t *testing.T) {
 	}
 }
 
+func TestRecord_copiesInput(t *testing.T) {
+	t.Parallel()
+	a := NewAggregator()
+	start := dayOf(2026, time.January, 15)
+	want := metering.TenantUsage{
+		TenantID:      "copy-me",
+		Period:        metering.PeriodDay,
+		PeriodStart:   start,
+		Logins:        42,
+		TokensIssued:  100,
+		ActiveUsers:   20,
+		MFAChallenges: 5,
+		ActiveClients: 7,
+	}
+	input := want
+	a.Record(&input)
+	input = metering.TenantUsage{
+		TenantID:      "mutated",
+		Period:        metering.PeriodMonth,
+		PeriodStart:   dayOf(2026, time.February, 1),
+		Logins:        999,
+		TokensIssued:  888,
+		ActiveUsers:   777,
+		MFAChallenges: 666,
+		ActiveClients: 555,
+	}
+
+	got, err := a.Usage(ctx, want.TenantID, want.Period, start)
+	if err != nil {
+		t.Fatalf("Usage: %v", err)
+	}
+	if *got != want {
+		t.Errorf("Usage = %+v, want %+v", *got, want)
+	}
+
+	tops, err := a.TopTenants(ctx, want.Period, start, 10)
+	if err != nil {
+		t.Fatalf("TopTenants: %v", err)
+	}
+	if len(tops) != 1 {
+		t.Fatalf("len(TopTenants) = %d, want 1", len(tops))
+	}
+	if *tops[0] != want {
+		t.Errorf("TopTenants[0] = %+v, want %+v", *tops[0], want)
+	}
+}
+
 func TestUsage_miss_returns_zeros(t *testing.T) {
 	t.Parallel()
 	a := NewAggregator()
