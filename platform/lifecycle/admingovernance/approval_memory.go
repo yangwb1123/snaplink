@@ -23,6 +23,16 @@ func NewMemoryApprovalStore() *MemoryApprovalStore {
 	return &MemoryApprovalStore{changes: make(map[string]ChangeRequest)}
 }
 
+func cloneChangeRequest(c ChangeRequest) ChangeRequest {
+	if c.Payload == nil {
+		return c
+	}
+	payload := make([]byte, len(c.Payload))
+	copy(payload, c.Payload)
+	c.Payload = payload
+	return c
+}
+
 func (m *MemoryApprovalStore) Propose(_ context.Context, c ChangeRequest) (ChangeRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -30,8 +40,9 @@ func (m *MemoryApprovalStore) Propose(_ context.Context, c ChangeRequest) (Chang
 		c.CreatedAt = time.Now()
 	}
 	c.Status = ChangeStatusPending
-	m.changes[c.ID] = c
-	return c, nil
+	stored := cloneChangeRequest(c)
+	m.changes[c.ID] = stored
+	return cloneChangeRequest(stored), nil
 }
 
 func (m *MemoryApprovalStore) Get(_ context.Context, id string) (ChangeRequest, error) {
@@ -41,7 +52,7 @@ func (m *MemoryApprovalStore) Get(_ context.Context, id string) (ChangeRequest, 
 	if !ok {
 		return ChangeRequest{}, ErrChangeNotFound
 	}
-	return c, nil
+	return cloneChangeRequest(c), nil
 }
 
 func (m *MemoryApprovalStore) List(_ context.Context) ([]ChangeRequest, error) {
@@ -49,7 +60,7 @@ func (m *MemoryApprovalStore) List(_ context.Context) ([]ChangeRequest, error) {
 	defer m.mu.RUnlock()
 	out := make([]ChangeRequest, 0, len(m.changes))
 	for _, c := range m.changes {
-		out = append(out, c)
+		out = append(out, cloneChangeRequest(c))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
@@ -75,7 +86,7 @@ func (m *MemoryApprovalStore) Approve(_ context.Context, id, approverID string) 
 	c.ApprovedBy = approverID
 	c.DecidedAt = time.Now()
 	m.changes[id] = c
-	return c, nil
+	return cloneChangeRequest(c), nil
 }
 
 func (m *MemoryApprovalStore) Reject(_ context.Context, id, approverID string) (ChangeRequest, error) {
@@ -92,7 +103,7 @@ func (m *MemoryApprovalStore) Reject(_ context.Context, id, approverID string) (
 	c.ApprovedBy = approverID
 	c.DecidedAt = time.Now()
 	m.changes[id] = c
-	return c, nil
+	return cloneChangeRequest(c), nil
 }
 
 func (m *MemoryApprovalStore) MarkApplied(_ context.Context, id string) (ChangeRequest, error) {
@@ -100,11 +111,11 @@ func (m *MemoryApprovalStore) MarkApplied(_ context.Context, id string) (ChangeR
 	defer m.mu.Unlock()
 	c, ok := m.changes[id]
 	if !ok || c.Status != ChangeStatusApproved {
-		return c, nil
+		return cloneChangeRequest(c), nil
 	}
 	c.Status = ChangeStatusApplied
 	m.changes[id] = c
-	return c, nil
+	return cloneChangeRequest(c), nil
 }
 
 func (m *MemoryApprovalStore) MarkFailed(_ context.Context, id, note string) (ChangeRequest, error) {
@@ -112,10 +123,10 @@ func (m *MemoryApprovalStore) MarkFailed(_ context.Context, id, note string) (Ch
 	defer m.mu.Unlock()
 	c, ok := m.changes[id]
 	if !ok || c.Status != ChangeStatusApproved {
-		return c, nil
+		return cloneChangeRequest(c), nil
 	}
 	c.Status = ChangeStatusFailed
 	c.FailureNote = note
 	m.changes[id] = c
-	return c, nil
+	return cloneChangeRequest(c), nil
 }
