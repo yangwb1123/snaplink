@@ -1404,6 +1404,14 @@ export class SSOClient {
     async changeMyPassword(body) {
         return this.request("POST", `/me/password`, { body, auth: true });
     }
+    /** Get the authenticated user's allowlisted preferences. */
+    async getMyPreferences() {
+        return this.request("GET", `/me/preferences`, { auth: true });
+    }
+    /** Update the authenticated user's allowlisted preferences. */
+    async putMyPreferences(body) {
+        return this.request("PUT", `/me/preferences`, { body, auth: true });
+    }
     /** List the authenticated user's security activity. */
     async getMySecurityActivity() {
         return this.request("GET", `/me/security/activity`, { auth: true });

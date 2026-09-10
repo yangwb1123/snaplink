@@ -905,6 +905,8 @@ export interface LoginDiscoveryResponse {
     authorization_request_passthrough_supported?: boolean;
     /** Authenticator names this client may use. */
     providers: string[];
+    /** Optional home-realm login-discovery marker. Present as `true` when */
+    unavailable?: boolean;
 }
 export interface LoginRequest {
     /** RFC 9396 Rich Authorization Requests. Each element MUST */
@@ -1022,6 +1024,22 @@ export type MenuTree = MenuItem[];
 export interface MenuTreeResponse {
     client_id: string;
     menus: MenuTree;
+}
+/** The only profile attributes exposed by the self-service preferences */
+export interface MyPreferences {
+    /** BCP 47 language tag. An empty string on PUT deletes it. */
+    locale?: string;
+    /** Wire key is `sverp:theme_mode`; theme preference. An empty string on PUT deletes it. */
+    "sverp:theme_mode"?: "light" | "dark" | "auto";
+    /** Printable ASCII IANA time-zone name. An empty string on PUT deletes it. */
+    zoneinfo?: string;
+}
+/** Partial allowlisted update. A property may contain its valid value or */
+export interface MyPreferencesUpdateRequest {
+    locale?: string;
+    /** Wire key is `sverp:theme_mode`; empty string deletes it. */
+    "sverp:theme_mode"?: "" | "light" | "dark" | "auto";
+    zoneinfo?: string;
 }
 export interface NetPolicy {
     advertised_base_url?: string;
@@ -1159,6 +1177,10 @@ export interface PinReport {
     /** Empty when nothing was pinned beforehand. */
     previous_id?: string;
     release_id?: string;
+}
+export interface PreferenceUpdateResponse {
+    /** Preferences were merged; this is also returned for an empty no-op update. */
+    status: "ok";
 }
 export interface ReBACBatchItemResult {
     error?: string;
@@ -2619,6 +2641,7 @@ export declare class SSOClient {
         found?: boolean;
         tenant_id?: string;
         type?: "oidc" | "saml";
+        unavailable?: boolean;
     }>;
     /** Start a browser-based federated login. */
     getLogin(query?: {
@@ -3076,6 +3099,10 @@ export declare class SSOClient {
         current_password: string;
         new_password: string;
     }): Promise<void>;
+    /** Get the authenticated user's allowlisted preferences. */
+    getMyPreferences(): Promise<MyPreferences>;
+    /** Update the authenticated user's allowlisted preferences. */
+    putMyPreferences(body: MyPreferencesUpdateRequest): Promise<PreferenceUpdateResponse>;
     /** List the authenticated user's security activity. */
     getMySecurityActivity(): Promise<void>;
     /** List the authenticated user's active sessions. */
