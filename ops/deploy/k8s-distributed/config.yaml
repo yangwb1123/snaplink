@@ -283,6 +283,7 @@ clients:
   - S256
   grant_types:
   - urn:ietf:params:oauth:grant-type:device_code
+  - refresh_token
   active: true
 - id: aero-vault
   name: Aero Vault

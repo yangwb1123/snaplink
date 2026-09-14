@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -76,6 +77,34 @@ func TestClientConfigYAMLDecodesGrantTypesAndPreservesUnrestrictedClient(t *test
 	}
 	if err := validateConfiguredClients(&cfg); err != nil {
 		t.Fatalf("validateConfiguredClients() error = %v", err)
+	}
+}
+
+func TestDistributedForgeClientGrantProfiles(t *testing.T) {
+	cfg, err := Load("../ops/deploy/k8s-distributed/config.yaml")
+	if err != nil {
+		t.Fatalf("Load distributed profile: %v", err)
+	}
+
+	clients := make(map[string]ClientConfig, 2)
+	for _, client := range cfg.Clients {
+		if client.ID == "forge-cli" || client.ID == "forge-console" {
+			clients[client.ID] = client
+		}
+	}
+	cli, ok := clients["forge-cli"]
+	if !ok {
+		t.Fatal("distributed profile is missing forge-cli")
+	}
+	console, ok := clients["forge-console"]
+	if !ok {
+		t.Fatal("distributed profile is missing forge-console")
+	}
+	if want := []string{"urn:ietf:params:oauth:grant-type:device_code", "refresh_token"}; !slices.Equal(cli.GrantTypes, want) {
+		t.Errorf("forge-cli grant_types = %v, want %v", cli.GrantTypes, want)
+	}
+	if want := []string{"authorization_code", "refresh_token"}; !slices.Equal(console.GrantTypes, want) {
+		t.Errorf("forge-console grant_types = %v, want unchanged %v", console.GrantTypes, want)
 	}
 }
 
