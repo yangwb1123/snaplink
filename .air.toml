@@ -17,7 +17,7 @@ tmp_dir = "tmp"
   # cmd/sso-server's `-config` flag defaults to "config.yaml" (resolved
   # against the process's cwd, not the binary's location) — pass the
   # in-repo dev config explicitly so `make dev` works from the repo root.
-  full_bin = "./tmp/sso-server -config ./cmd/sso-server/config.yaml"
+  full_bin = "./tmp/sso-server -config ./cmd/sso-server/config.yaml -grpc-insecure"
   include_ext = ["go", "yaml", "yml"]
   exclude_dir = ["tmp", "bin", "docs", "ops", "gen", "test", ".git", ".devcontainer"]
   exclude_regex = ["_test\\.go$"]

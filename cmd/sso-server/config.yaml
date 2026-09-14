@@ -16,7 +16,7 @@ server:
   # keeps the literal sentinel — a wire-contract divergence that
   # breaks every RFC 9068 access-token validator. Config validation
   # refuses it.
-  issuer: sso-server
+  issuer: http://localhost:8080
   # Deployment contract: startup and --validate-only fail when the configured
   # binary was built without any listed capability.
   required_capabilities: [core.runtime.v1, server.stock.v1]
@@ -326,6 +326,153 @@ permissions:
     dsn: ""
   embed_in_login: true    # attach roles/permissions/menus to /auth/login response
   apps:
+    - client_id: sverp-web-local
+      roles:
+        - code: admin
+          name: Administrator
+          permissions:
+            - aps:schedule:read
+            - aps:schedule:write
+            - aps:schedule:settings:read
+            - aps:schedule:settings:write
+            - erp:bs:pricing:read
+            - erp:bs:pricing:write
+            - erp:bs:pricing:delete
+            - erp:bs:ship:read
+            - system:settings:read
+            - system:status:read
+            - admin:read
+            - admin:write
+            - quality:inspection:read
+            - content:read
+            - media:read
+      menus:
+        - id: dashboard
+          name: 工作台
+          path: /dashboard
+          icon: grid
+        - id: my/resources
+          name: 我的资源
+          path: /my/resources
+          icon: folder
+          permission: quality:inspection:read
+        - id: integrations
+          name: 平台集成
+          path: /integrations
+          icon: puzzle
+          permission: system:settings:read
+          children:
+            - id: integrations/status
+              name: 集成状态
+              path: /integrations/status
+              icon: puzzle
+              permission: system:settings:read
+            - id: integrations/vault
+              name: 文件存储
+              path: /integrations/vault
+              icon: archive
+              permission: system:settings:read
+            - id: integrations/im
+              name: 消息集成
+              path: /integrations/im
+              icon: chat
+              permission: system:settings:read
+            - id: integrations/audit
+              name: 审计账本
+              path: /integrations/audit
+              icon: shield
+              permission: system:settings:read
+        - id: aps
+          name: APS 生产排程
+          path: /aps
+          icon: calendar
+          children:
+            - id: aps/view
+              name: 生产排程看板
+              path: /prod/schedule/view
+              icon: grid
+              permission: aps:schedule:read
+            - id: aps/plan
+              name: 生产排程计划
+              path: /prod/schedule/plan
+              icon: calendar
+              permission: aps:schedule:read
+            - id: aps/statistics
+              name: 排程统计分析
+              path: /prod/schedule/statistics
+              icon: list
+              permission: aps:schedule:read
+        - id: erp
+          name: ERP
+          path: /erp
+          icon: grid
+          children:
+            - id: erp/bs
+              name: 业务 BS
+              path: /bs
+              icon: tag
+              children:
+                - id: erp/bs/pricing
+                  name: 精准报价
+                  path: /business/standard-pricing
+                  icon: tag
+                  permission: erp:bs:pricing:read
+                - id: erp/bs/ship
+                  name: 订单出库追踪
+                  path: /order-ship-tracing
+                  icon: inbox
+                  permission: erp:bs:ship:read
+        - id: system-status
+          name: 系统状态
+          path: /system/status
+          icon: settings
+          permission: system:status:read
+        - id: system
+          name: 系统管理
+          path: /system
+          icon: settings
+          permission: system:settings:read
+          children:
+            - id: system/settings
+              name: 系统设置
+              path: /system/settings
+              icon: settings
+              permission: system:settings:read
+            - id: system/roles
+              name: 角色管理
+              path: /system/roles
+              icon: shield
+              permission: admin:read
+            - id: system/users
+              name: 用户管理
+              path: /system/users
+              icon: users
+              permission: admin:read
+            - id: system/routes
+              name: 路由管理
+              path: /system/routes
+              icon: list
+              permission: admin:read
+        - id: contents
+          name: 内容管理
+          path: /contents
+          icon: file
+          permission: content:read
+        - id: media
+          name: 媒体库
+          path: /media
+          icon: image
+          permission: media:read
+        - id: quality
+          name: 质量管理
+          icon: shield-check
+          permission: quality:inspection:read
+          children:
+            - id: quality/inspection
+              name: 一品一单
+              path: /quality/inspection
+              icon: check-circle
+              permission: quality:inspection:read
     - client_id: web-app
       roles:
         - code: admin
@@ -392,6 +539,7 @@ permissions:
     - { user_id: user-bob,   client_id: web-app,    roles: [viewer] }
     - { user_id: user-alice, client_id: mobile-app, roles: [user] }
     - { user_id: user-alice, client_id: "",         roles: [items-reader] }
+    - { user_id: admin,      client_id: sverp-web-local, roles: [admin] }
 
 # Zanzibar-style relationship tuples and object-level checks. The stock
 # /authz/check route is generation-managed and contributes rebac-check to
@@ -474,6 +622,19 @@ clients:
     allowed_scopes: [openid, profile, email]
     allowed_authenticators: [password, phone, email]
     token_strategy: session
+    active: true
+
+  # sverp-web-local: sverpweb-stable 本机开发（dev .env 对接）
+  - id: sverp-web-local
+    secret: Lp_vrDmfwGdOyAMC-cJ7EE8OitX96kaMZSLGuk7TNUI
+    name: SVERP Web Local Dev
+    redirect_uris:
+      - http://localhost:13114/api/auth/callback
+    allowed_scopes: [openid, profile, email, offline_access]
+    allowed_authenticators: [password, email, phone]
+    token_strategy: jwt
+    require_pkce: true
+    skip_consent: true
     active: true
 
   # mobile-app: SPA / native — short-lived JWT, password + phone code
