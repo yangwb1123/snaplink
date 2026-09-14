@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/yangwb1123/snaplink/domains/tenant"
@@ -20,6 +21,7 @@ type RevokeDeps interface {
 	RefreshTokenStore() RefreshTokenStore
 	ResolveIssuer(ctx core.HandlerContext) string
 	ValidateAnyToken(ctx context.Context, token string) (*core.TokenClaims, string, error)
+	ValidateAnyTokenForRevocation(ctx context.Context, token string) (*core.TokenClaims, string, error)
 	VerifyJWTClientAssertion(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
 	AuthenticateClientCreds(ctx core.HandlerContext, id, secret string) error
 	ResolveLocalSubject(ctx context.Context, sub string) (string, error)
@@ -52,69 +54,111 @@ type RevokeDeps interface {
 // revokeRequest is the parsed body/form for HandleRevoke (RFC 7009),
 // including the RFC 7521/7523 JWT client-assertion fields.
 type revokeRequest struct {
-	Token               string `json:"token"`
-	TokenTypeHint       string `json:"token_type_hint"`
-	ClientID            string `json:"client_id"`
-	ClientSecret        string `json:"client_secret"`
-	ClientAssertion     string `json:"client_assertion"`      // RFC 7521 + 7523
-	ClientAssertionType string `json:"client_assertion_type"` // RFC 7521 + 7523
+	Token                string `json:"token"`
+	TokenTypeHint        string `json:"token_type_hint"`
+	ClientID             string `json:"client_id"`
+	ClientSecret         string `json:"client_secret"`
+	ClientAssertion      string `json:"client_assertion"`      // RFC 7521 + 7523
+	ClientAssertionType  string `json:"client_assertion_type"` // RFC 7521 + 7523
+	authorizationPresent bool
+	basicAuthUsed        bool
+	bodySecretPresent    bool
+}
+
+func (r *revokeRequest) UnmarshalJSON(data []byte) error {
+	type plain revokeRequest
+	var decoded plain
+	secretPresent, err := unmarshalCredentialJSON(data, &decoded)
+	if err != nil {
+		return err
+	}
+	*r = revokeRequest(decoded)
+	r.bodySecretPresent = secretPresent
+	return nil
 }
 
 // HandleRevoke implements RFC 7009 OAuth 2.0 Token Revocation.
 //
-// Any registered active client may revoke — but the server MUST NOT
-// distinguish revocation of an unknown token from a successful
-// revocation (§2.2), so the wire response is always 200 OK with an
-// empty body when the credentials are valid, regardless of whether
-// the token existed.
+// A client may revoke only tokens issued to its own client_id. Unknown
+// and other-client tokens share the RFC 7009 success response. A public
+// client using auth method "none" can authenticate with client_id alone.
 //
 // token_type_hint is honored as an optimization (try the named tier
 // first) but the server still attempts the other tier on miss, so a
 // wrong hint doesn't leave the token alive.
 func HandleRevoke(d RevokeDeps, ctx core.HandlerContext) {
 	middleware.TokenNoStoreHeaders(ctx)
-	if d.ClientStoreAccessor() == nil {
+	clientStore := d.ClientStoreAccessor()
+	if clientStore == nil {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrServerMisconfigured))
 		return
 	}
-
 	var req revokeRequest
-	if bindCredentialRequest(d, ctx, &req) {
+	if !parseRevokeRequest(d, ctx, &req) {
 		return
 	}
-	if id, secret, ok := BasicClientCreds(ctx.Request()); ok {
-		req.ClientID = id
-		req.ClientSecret = secret
-	}
-
-	if !authenticateRevokeClient(d, d.ClientStoreAccessor(), ctx, &req) {
+	if !authenticateRevokeClient(d, clientStore, ctx, &req) {
 		return
 	}
-
 	if req.Token == "" {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
-
-	// Best-effort across both tiers. Errors are intentionally ignored
-	// per §2.2 — the response is always 200 OK on valid credentials.
-	if req.TokenTypeHint == "refresh_token" {
-		revokeRefresh(d, ctx, req.Token)
-		revokeAccess(d, ctx, req.Token)
-	} else {
-		revokeAccess(d, ctx, req.Token)
-		revokeRefresh(d, ctx, req.Token)
+	binding, owned, err := inspectRevokeTokenBinding(d, ctx, req.Token, req.ClientID)
+	if err != nil {
+		writeRevokeUnavailable(ctx)
+		return
 	}
-
-	// Best-effort: evict any cached /token/introspect result for this exact
-	// presented token — whichever tier it turned out to be (access or
-	// refresh; the cache is keyed by the raw token regardless of type) — so
-	// a subsequent introspect doesn't serve a stale active:true out of the
-	// TTL window. No-op when caching is unwired or the backend doesn't
-	// support point-eviction. See InvalidateIntrospectionCache.
-	InvalidateIntrospectionCache(d.IntrospectionCache(), req.Token)
-
+	if !owned {
+		ctx.JSON(http.StatusOK, map[string]any{})
+		return
+	}
+	if !revokeBoundToken(d, ctx, req, binding) {
+		writeRevokeUnavailable(ctx)
+		return
+	}
 	ctx.JSON(http.StatusOK, map[string]any{})
+}
+
+func parseRevokeRequest(d RevokeDeps, ctx core.HandlerContext, req *revokeRequest) bool {
+	if bindCredentialRequest(d, ctx, req) {
+		return false
+	}
+	req.bodySecretPresent = req.bodySecretPresent || ctx.Request().PostForm.Has("client_secret")
+	req.authorizationPresent = len(ctx.Request().Header.Values("Authorization")) > 0
+	if id, secret, ok := BasicClientCreds(ctx.Request()); ok {
+		req.ClientID, req.ClientSecret = id, secret
+		req.basicAuthUsed = true
+	}
+	return true
+}
+
+// revokeBoundToken revokes recognized tiers for the authenticated client.
+// The hint only chooses order; cache eviction runs after each accepted token.
+func revokeBoundToken(d RevokeDeps, ctx core.HandlerContext, req revokeRequest, binding revokeTokenBinding) bool {
+	accessOK, refreshOK := true, true
+	if req.TokenTypeHint == "refresh_token" {
+		if binding.refresh != nil {
+			refreshOK = revokeRefresh(d, ctx, req.Token, binding.refresh)
+		}
+		if binding.access {
+			accessOK = revokeAccess(d, ctx, req.Token)
+		}
+	} else {
+		if binding.access {
+			accessOK = revokeAccess(d, ctx, req.Token)
+		}
+		if binding.refresh != nil {
+			refreshOK = revokeRefresh(d, ctx, req.Token, binding.refresh)
+		}
+	}
+	InvalidateIntrospectionCache(d.IntrospectionCache(), req.Token)
+	return accessOK && refreshOK
+}
+
+func writeRevokeUnavailable(ctx core.HandlerContext) {
+	ctx.ResponseWriter().Header().Set(core.HeaderRetryAfter, "1")
+	ctx.JSON(http.StatusServiceUnavailable, core.ErrorBody(core.ErrServiceDegraded))
 }
 
 // authenticateRevokeClient performs RFC 7009 client authentication for
@@ -127,51 +171,125 @@ func HandleRevoke(d RevokeDeps, ctx core.HandlerContext) {
 func authenticateRevokeClient(d RevokeDeps, clientStore core.ClientStore, ctx core.HandlerContext, req *revokeRequest) bool {
 	// RFC 7521/7523 JWT bearer client auth on /token/revoke.
 	if req.ClientAssertion != "" || req.ClientAssertionType != "" {
-		if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
-			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
-			return false
+		if req.ClientSecret != "" || req.authorizationPresent || req.bodySecretPresent {
+			return rejectRevokeClient(ctx)
 		}
-		assertedID, err := d.VerifyJWTClientAssertion(
-			ctx.Request().Context(),
-			req.ClientAssertion,
-			req.ClientID,
-			d.ResolveIssuer(ctx),
-		)
-		if err != nil {
-			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
-			return false
-		}
-		req.ClientID = assertedID
-		c, err := clientStore.Get(ctx.Request().Context(), req.ClientID)
-		if err != nil || c == nil || !c.Active || !tenant.ClientOK(ctx, c) {
-			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
-			return false
-		}
-	} else if err := d.AuthenticateClientCreds(ctx, req.ClientID, req.ClientSecret); err != nil {
-		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
-		return false
+		return authenticateRevokeAssertion(d, clientStore, ctx, req)
+	}
+	client, err := clientStore.Get(ctx.Request().Context(), req.ClientID)
+	if err != nil || client == nil || !client.Active || !tenant.ClientOK(ctx, client) {
+		return rejectRevokeClient(ctx)
+	}
+	if !revokeAuthMethodMatches(req, client.TokenEndpointAuthMethod) {
+		return rejectRevokeClient(ctx)
+	}
+	if client.TokenEndpointAuthMethod == "none" {
+		return true
+	}
+	if err := d.AuthenticateClientCreds(ctx, req.ClientID, req.ClientSecret); err != nil {
+		return rejectRevokeClient(ctx)
 	}
 	return true
 }
 
+func revokeAuthMethodMatches(req *revokeRequest, method string) bool {
+	if req.basicAuthUsed && req.bodySecretPresent {
+		return false
+	}
+	switch method {
+	case "none":
+		return !req.basicAuthUsed && !req.authorizationPresent && !req.bodySecretPresent
+	case "", "client_secret_basic":
+		return req.basicAuthUsed && !req.bodySecretPresent
+	case "client_secret_post":
+		return !req.basicAuthUsed && !req.authorizationPresent && req.ClientSecret != ""
+	default:
+		// Certificate and other methods have no verifier on this handler.
+		return false
+	}
+}
+
+func rejectRevokeClient(ctx core.HandlerContext) bool {
+	ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
+	return false
+}
+
+func authenticateRevokeAssertion(d RevokeDeps, clientStore core.ClientStore, ctx core.HandlerContext, req *revokeRequest) bool {
+	if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return false
+	}
+	assertedID, err := d.VerifyJWTClientAssertion(ctx.Request().Context(), req.ClientAssertion, req.ClientID, d.ResolveIssuer(ctx))
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
+		return false
+	}
+	req.ClientID = assertedID
+	c, err := clientStore.Get(ctx.Request().Context(), req.ClientID)
+	if err != nil || c == nil || !c.Active || c.TokenEndpointAuthMethod == "none" || !tenant.ClientOK(ctx, c) {
+		return rejectRevokeClient(ctx)
+	}
+	if c.TokenEndpointAuthMethod != "private_key_jwt" {
+		return rejectRevokeClient(ctx)
+	}
+	return true
+}
+
+type revokeTokenBinding struct {
+	access  bool
+	refresh *RefreshToken
+}
+
+func inspectRevokeTokenBinding(d RevokeDeps, ctx core.HandlerContext, token, clientID string) (revokeTokenBinding, bool, error) {
+	var binding revokeTokenBinding
+	claims, _, err := d.ValidateAnyTokenForRevocation(ctx.Request().Context(), token)
+	if err != nil && !errors.Is(err, core.ErrTokenValidationRejected) {
+		return revokeTokenBinding{}, false, err
+	}
+	if err == nil && core.IsAccessTokenClaims(claims) {
+		if claims.ClientID != clientID {
+			return revokeTokenBinding{}, false, nil
+		}
+		binding.access = true
+	}
+	if inspector, ok := d.RefreshTokenStore().(RefreshTokenInspector); ok {
+		refresh, err := inspector.Inspect(ctx.Request().Context(), token)
+		if err != nil && !errors.Is(err, ErrRefreshTokenNotFound) {
+			return revokeTokenBinding{}, false, err
+		}
+		if err == nil && refresh != nil {
+			if refresh.ClientID != clientID {
+				return revokeTokenBinding{}, false, nil
+			}
+			binding.refresh = refresh
+		}
+	}
+	return binding, binding.access || binding.refresh != nil, nil
+}
+
 // revokeAccess delegates to the existing per-issuer revocation chain.
-func revokeAccess(d RevokeDeps, ctx core.HandlerContext, token string) {
+func revokeAccess(d RevokeDeps, ctx core.HandlerContext, token string) bool {
 	if len(d.TokenIssuers()) == 0 {
-		return
+		return false
 	}
 	revoked, failed := d.RevokeAcrossIssuers(ctx.Request().Context(), token)
 	d.AuditPartialRevokeFailure(ctx, revoked, failed)
+	return len(failed) == 0
 }
 
-// revokeRefresh deletes via the optional RefreshTokenInspector.Delete
-// extension. No-op when the store doesn't implement the extension —
-// callers in that situation must rely on TTL expiry.
-func revokeRefresh(d RevokeDeps, ctx core.HandlerContext, token string) {
+// revokeRefresh prefers family deletion so rotated descendants cannot survive.
+func revokeRefresh(d RevokeDeps, ctx core.HandlerContext, token string, info *RefreshToken) bool {
 	insp, ok := d.RefreshTokenStore().(RefreshTokenInspector)
 	if !ok {
-		return
+		return false
 	}
-	_ = insp.Delete(ctx.Request().Context(), token)
+	if info.FamilyID != "" {
+		if tracker, ok := d.RefreshTokenStore().(RefreshTokenFamilyTracker); ok {
+			_, err := tracker.DeleteFamily(ctx.Request().Context(), info.FamilyID)
+			return err == nil
+		}
+	}
+	return insp.Delete(ctx.Request().Context(), token) == nil
 }
 
 // HandleRevokeAll implements the "logout everywhere" endpoint. The

@@ -5,19 +5,27 @@ import (
 	"encoding/base64"
 	"errors"
 	"testing"
+
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // fakeJWTIssuer is a minimal in-test TokenIssuer that accepts any
 // 3-segment token and returns fixed claims — enough to prove the
 // Server-level alg gate fires BEFORE the issuer runs. No mocks of
 // storage are involved (AGENTS.md §8); this is a test-local SPI stub.
-type fakeJWTIssuer struct{ validated bool }
+type fakeJWTIssuer struct {
+	validated bool
+	err       error
+}
 
 func (f *fakeJWTIssuer) Issue(context.Context, *Subject, []string) (*Token, error) {
 	return nil, errors.New("unused")
 }
 func (f *fakeJWTIssuer) Validate(_ context.Context, _ string) (*TokenClaims, error) {
 	f.validated = true
+	if f.err != nil {
+		return nil, f.err
+	}
 	return &TokenClaims{Subject: "ok"}, nil
 }
 func (f *fakeJWTIssuer) Revoke(context.Context, string) error { return nil }
@@ -114,5 +122,16 @@ func TestSupportedSigningAlgsGate_RSA(t *testing.T) {
 	}
 	if fake.validated {
 		t.Error("issuer.Validate ran for a disallowed alg")
+	}
+}
+
+func TestValidateAnyTokenPreservesOperationalIssuerErrors(t *testing.T) {
+	outage := errors.New("issuer storage unavailable")
+	s := NewServer(
+		WithTokenIssuer("rejected", &fakeJWTIssuer{err: core.ErrTokenValidationRejected}),
+		WithTokenIssuer("outage", &fakeJWTIssuer{err: outage}),
+	)
+	if _, _, err := s.validateAnyToken(context.Background(), "token"); !errors.Is(err, outage) {
+		t.Fatalf("validation error=%v, want underlying issuer outage", err)
 	}
 }

@@ -2,6 +2,7 @@ package defaulttoken
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -121,7 +122,7 @@ func subjectN(i int) string {
 func TestJWTIssuer_ValidateUnknown(t *testing.T) {
 	t.Parallel()
 	j := NewJWTIssuer()
-	if _, err := j.Validate(context.Background(), "no-such-token"); err == nil {
+	if _, err := j.Validate(context.Background(), "no-such-token"); !errors.Is(err, core.ErrTokenValidationRejected) {
 		t.Error("expected error on unknown token")
 	}
 }
@@ -131,7 +132,7 @@ func TestJWTIssuer_ValidateExpired(t *testing.T) {
 	j := NewJWTIssuer(WithJWTTokenTTL(time.Nanosecond))
 	tok, _ := j.Issue(context.Background(), &core.Subject{ID: "u"}, nil)
 	time.Sleep(2 * time.Millisecond)
-	if _, err := j.Validate(context.Background(), tok.AccessToken); err == nil || !strings.Contains(err.Error(), "expired") {
+	if _, err := j.Validate(context.Background(), tok.AccessToken); !errors.Is(err, core.ErrTokenValidationRejected) || !strings.Contains(err.Error(), "expired") {
 		t.Errorf("err = %v, want expired", err)
 	}
 	if _, ok := j.tokens.Load(tok.AccessToken); ok {

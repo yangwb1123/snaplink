@@ -68,13 +68,26 @@ func TestUserLifecycle_BlocksExistingAccessAndRefreshTokens(t *testing.T) {
 	s := rcovNewServer(t, sso.WithUserLifecycle(store))
 	access, refresh := rcovDirectLogin(t, s)
 	suspendLifecycleUser(t, store)
+	if _, _, err := s.srv.ValidateAnyToken(context.Background(), access); err == nil {
+		t.Fatal("normal validation accepted a suspended user's token")
+	}
+	claims, _, err := s.srv.ValidateAnyTokenForRevocation(context.Background(), access)
+	if err != nil || claims == nil || claims.ClientID != rcovClient {
+		t.Fatalf("revocation validation claims=%+v err=%v; want cryptographically verified owner claims", claims, err)
+	}
+	status, out := rcovPostJSONBasic(t, s.http.URL+"/token/revoke", rcovClient, rcovSecret, map[string]any{
+		"token": access,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("revoke suspended user's own token status=%d body=%v, want 200", status, out)
+	}
 
-	status, out := rcovDo(t, http.MethodGet, s.http.URL+"/userinfo", access, nil)
+	status, out = rcovDo(t, http.MethodGet, s.http.URL+"/userinfo", access, nil)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("userinfo after suspend status=%d body=%v, want 401", status, out)
 	}
-	status, out = rcovPostJSON(t, s.http.URL+"/token/introspect", "", map[string]any{
-		"token": access, "client_id": rcovClient, "client_secret": rcovSecret,
+	status, out = rcovPostJSONBasic(t, s.http.URL+"/token/introspect", rcovClient, rcovSecret, map[string]any{
+		"token": access,
 	})
 	if status != http.StatusOK || out["active"] != false {
 		t.Fatalf("introspection after suspend status=%d body=%v, want 200 active=false", status, out)
@@ -85,6 +98,14 @@ func TestUserLifecycle_BlocksExistingAccessAndRefreshTokens(t *testing.T) {
 	})
 	if status != http.StatusBadRequest || out["error"] != "invalid_grant" {
 		t.Fatalf("refresh after suspend status=%d body=%v, want 400 invalid_grant", status, out)
+	}
+	if err := store.Append(context.Background(), rcovUser, userlifecycle.Transition{
+		From: userlifecycle.StateSuspended, To: userlifecycle.StateActive, At: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("reactivate lifecycle user: %v", err)
+	}
+	if _, _, err := s.srv.ValidateAnyToken(context.Background(), access); err == nil {
+		t.Fatal("revoked suspended-user token became valid after user reactivation")
 	}
 }
 
@@ -137,8 +158,8 @@ func TestUserLifecycle_BlocksDelegationMintAndActorChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue delegated token: %v", err)
 	}
-	status, out := rcovPostJSON(t, s.http.URL+"/token/introspect", "", map[string]any{
-		"token": token.AccessToken, "client_id": rcovClient, "client_secret": rcovSecret,
+	status, out := rcovPostJSONBasic(t, s.http.URL+"/token/introspect", rcovClient, rcovSecret, map[string]any{
+		"token": token.AccessToken,
 	})
 	if status != http.StatusOK || out["active"] != true {
 		t.Fatalf("delegated token initial introspection status=%d body=%v", status, out)
@@ -152,8 +173,8 @@ func TestUserLifecycle_BlocksDelegationMintAndActorChain(t *testing.T) {
 	if status != http.StatusBadRequest || out["error"] != core.ErrInvalidGrant {
 		t.Fatalf("delegation mint after suspend status=%d body=%v, want 400 invalid_grant", status, out)
 	}
-	status, out = rcovPostJSON(t, s.http.URL+"/token/introspect", "", map[string]any{
-		"token": token.AccessToken, "client_id": rcovClient, "client_secret": rcovSecret,
+	status, out = rcovPostJSONBasic(t, s.http.URL+"/token/introspect", rcovClient, rcovSecret, map[string]any{
+		"token": token.AccessToken,
 	})
 	if status != http.StatusOK || out["active"] != false {
 		t.Fatalf("cached delegated introspection after suspend status=%d body=%v, want inactive", status, out)

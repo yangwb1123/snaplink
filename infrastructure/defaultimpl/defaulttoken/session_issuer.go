@@ -85,7 +85,12 @@ func (s *SessionTokenIssuer) Issue(_ context.Context, subject *core.Subject, sco
 	}, nil
 }
 
-func (s *SessionTokenIssuer) Validate(_ context.Context, token string) (*core.TokenClaims, error) {
+func (s *SessionTokenIssuer) Validate(_ context.Context, token string) (_ *core.TokenClaims, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			resultErr = fmt.Errorf("%w: %v", core.ErrTokenValidationRejected, resultErr)
+		}
+	}()
 	v, ok := s.tokens.Load(token)
 	if !ok {
 		return nil, errors.New("session_issuer: invalid token")

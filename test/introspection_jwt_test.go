@@ -60,14 +60,13 @@ func newIntrospectionJWTServer(t *testing.T, wireSigner bool) (*httptest.Server,
 // JSON helper).
 func postIntrospectAccept(t *testing.T, srv *httptest.Server, token, accept string) *http.Response {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{
-		"token": token, "client_id": introClient, "client_secret": introSecret,
-	})
+	body, _ := json.Marshal(map[string]any{"token": token})
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/token/introspect", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(introClient, introSecret)
 	if accept != "" {
 		req.Header.Set("Accept", accept)
 	}

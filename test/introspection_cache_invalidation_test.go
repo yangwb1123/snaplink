@@ -46,7 +46,8 @@ func newIntrospectionCacheServer(t *testing.T, cache *handler.MemoryIntrospectio
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
 		ID: icaClient, Secret: icaSecret,
-		AllowedAuthenticators: []string{"password"}, TokenStrategy: "jwt", Active: true,
+		TokenEndpointAuthMethod: "client_secret_post",
+		AllowedAuthenticators:   []string{"password"}, TokenStrategy: "jwt", Active: true,
 	})
 	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
 		func(_ context.Context, _, _ string) (*sso.AuthResult, error) {

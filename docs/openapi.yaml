@@ -1410,10 +1410,19 @@ paths:
         the access token's complete `act` chain and runs even on an introspection
         cache hit, so a cached `active: true` cannot bypass account suspension.
 
-        Client authentication follows the same rules as /token:
-        Basic > body > private_key_jwt. Caller MUST be a registered
-        client; anonymous introspection is intentionally not
-        supported.
+        Caller MUST be an active confidential client using its
+        registered client secret or private-key assertion;
+        public `token_endpoint_auth_method=none` clients cannot
+        introspect. The response's optional `tenant_id` is projected
+        only from the verified access-token claim, never from request
+        parameters.
+
+        Credentials must match the registered client method: HTTP Basic
+        for `client_secret_basic`, a form secret for `client_secret_post`,
+        or an RFC 7521/7523 assertion for `private_key_jwt`. Mixed or
+        mismatched credentials are rejected with `invalid_client`; this
+        endpoint does not downgrade certificate-authenticated clients to
+        a secret.
 
         Optional response caching (`oauth.introspection.cache_ttl` /
         `WithIntrospectionCache`) is transparent — same response shape,
@@ -1536,13 +1545,37 @@ paths:
         regardless of whether the token existed (RFC 7009 §2.2 —
         prevents an attacker from probing which tokens are valid by
         observing the 200/404 split). The optional `token_type_hint`
-        lets the server short-circuit the lookup (`access_token` →
-        the JWT/session store; `refresh_token` → the refresh store).
+        prioritizes access-token (`access_token`) or refresh-token
+        (`refresh_token`) handling; both types are still checked.
 
-        Revoking a refresh token also kills its rotation family
-        when `RefreshTokenFamilyTracker` is wired (OAuth Security
-        BCP §4.14): every prior + future refresh derived from the
-        same auth event is invalidated atomically.
+        Every authenticated caller is bound to its `client_id`: unknown
+        tokens and tokens issued to another client remain unchanged and
+        receive the same 200 response. A public client registered with
+        `token_endpoint_auth_method=none` may omit client credentials but
+        must send its `client_id`. Introspection remains confidential-client-only.
+
+        Revocation authentication must match the client's registered method:
+        `client_secret_basic`, `client_secret_post`, or `private_key_jwt`; a
+        client registered with no method uses the RFC 6749 default
+        `client_secret_basic`. Public `none` authentication is accepted only
+        on revocation. Certificate methods are not supported on these two
+        endpoints and cannot be downgraded to a client secret.
+
+        Revoking an active, recognized refresh token also kills its rotation
+        family when `RefreshTokenFamilyTracker` is wired (OAuth Security
+        BCP §4.14): every prior + future refresh derived from the same auth
+        event is invalidated. Unknown, expired, or already-consumed tokens
+        retain the same oracle-safe 200 response and do not trigger a family
+        lookup. Redis commits a family tombstone
+        before physical member cleanup, so a cleanup failure returns 503
+        while every sibling remains unusable. Remaining physical keys expire
+        under their original TTL unless storage cleanup is explicitly retried;
+        an HTTP retry may return 200 after it observes the token as revoked.
+        This is a logical family commit, not a cross-key Redis transaction.
+
+        If a recognized token cannot be revoked because the issuer or
+        refresh store is temporarily unavailable, the server returns
+        `503 service_degraded` with `Retry-After: 1` so the caller can retry.
 
         **Content-Type strictness (opt-in)** — with
         `server.require_form_content_type: true` (`sso.WithCredentialFormOnly(true)`),
@@ -1575,6 +1608,19 @@ paths:
               schema: { type: string, example: no-store }
         "401":
           description: Client authentication failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Token inspection or revocation is temporarily unavailable; retry after the indicated delay.
+          headers:
+            Retry-After:
+              schema: { type: string, example: "1" }
+            Cache-Control:
+              schema: { type: string, example: no-store }
+            Pragma:
+              schema: { type: string, example: no-cache }
           content:
             application/json:
               schema:
@@ -15831,6 +15877,9 @@ components:
           type: string
         client_id:
           type: string
+        tenant_id:
+          type: string
+          description: Verified tenant claim from an active access token; absent when the token has no tenant binding.
         username:
           type: string
         token_type:

@@ -2,8 +2,13 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 )
+
+// ErrTokenValidationRejected marks malformed, unknown, expired, revoked, or
+// otherwise invalid tokens; unmarked validation errors indicate failures.
+var ErrTokenValidationRejected = errors.New("token validation rejected")
 
 // Token represents an issued access token.
 type Token struct {
@@ -77,6 +82,9 @@ type TokenClaims struct {
 	// / it resolved none -> the issuer omits the claim (byte-identical to
 	// pre-region builds).
 	ServingRegion string `json:"serving_region,omitempty"`
+	// TenantID is the signed mint-time client tenant binding. It is
+	// projected to introspection only after token signature validation.
+	TenantID string `json:"tenant_id,omitempty"`
 
 	// ConfirmationJKT is the RFC 9449 DPoP JWK thumbprint when
 	// the token was issued bound to a DPoP key. Empty for

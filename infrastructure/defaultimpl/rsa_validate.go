@@ -13,9 +13,15 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
-func (j *RSAJWTIssuer) Validate(_ context.Context, token string) (*sso.TokenClaims, error) {
+func (j *RSAJWTIssuer) Validate(_ context.Context, token string) (_ *sso.TokenClaims, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			resultErr = fmt.Errorf("%w: %v", core.ErrTokenValidationRejected, resultErr)
+		}
+	}()
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil, errors.New("rsa: malformed token")

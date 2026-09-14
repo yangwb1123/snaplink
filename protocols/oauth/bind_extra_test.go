@@ -191,10 +191,10 @@ func TestAuthenticateIntrospectionClientMissingCreds(t *testing.T) {
 	t.Parallel()
 	cs := newMemClientStore()
 	ctx, _ := newCtx("POST", core.ContentTypeJSON, `{}`)
-	if err := authenticateIntrospectionClient(cs, ctx, "", "secret"); err == nil {
+	if err := authenticateIntrospectionClient(cs, ctx, &introspectRequest{ClientSecret: "secret"}); err == nil {
 		t.Error("empty id should error before store lookup")
 	}
-	if err := authenticateIntrospectionClient(cs, ctx, "id", ""); err == nil {
+	if err := authenticateIntrospectionClient(cs, ctx, &introspectRequest{ClientID: "id"}); err == nil {
 		t.Error("empty secret should error before store lookup")
 	}
 }

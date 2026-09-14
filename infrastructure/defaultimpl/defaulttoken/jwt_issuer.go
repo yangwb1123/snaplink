@@ -101,7 +101,12 @@ func (j *JWTIssuer) Issue(ctx context.Context, subject *core.Subject, scopes []s
 	}, nil
 }
 
-func (j *JWTIssuer) Validate(ctx context.Context, token string) (*core.TokenClaims, error) {
+func (j *JWTIssuer) Validate(ctx context.Context, token string) (_ *core.TokenClaims, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			resultErr = fmt.Errorf("%w: %v", core.ErrTokenValidationRejected, resultErr)
+		}
+	}()
 	claims, ok := j.tokens.Load(token)
 	if !ok {
 		return nil, fmt.Errorf("jwt: invalid token")

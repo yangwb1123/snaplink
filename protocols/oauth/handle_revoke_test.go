@@ -34,6 +34,9 @@ func (d *revokeDeps) JTIReplayStore() security.JTIReplayStore   { return nil }
 func (d *revokeDeps) TokenIssuers() map[string]core.TokenIssuer { return d.issuers }
 func (d *revokeDeps) RefreshTokenStore() RefreshTokenStore      { return d.refresh }
 func (d *revokeDeps) ResolveIssuer(core.HandlerContext) string  { return "https://issuer.test" }
+func (d *revokeDeps) ValidateAnyTokenForRevocation(ctx context.Context, t string) (*core.TokenClaims, string, error) {
+	return d.validate(ctx, t)
+}
 func (d *revokeDeps) ValidateAnyToken(ctx context.Context, t string) (*core.TokenClaims, string, error) {
 	return d.validate(ctx, t)
 }
@@ -74,13 +77,19 @@ func validateClientSecret(cs core.ClientStore) func(core.HandlerContext, string,
 	}
 }
 
+func activePostClient(id string) *core.Client {
+	client := activeClient(id)
+	client.TokenEndpointAuthMethod = "client_secret_post"
+	return client
+}
+
 func newRevokeDeps(cs core.ClientStore, rs RefreshTokenStore) *revokeDeps {
 	return &revokeDeps{
 		clients: cs,
 		refresh: rs,
 		issuers: map[string]core.TokenIssuer{"jwt": dummyIssuer{}},
 		validate: func(context.Context, string) (*core.TokenClaims, string, error) {
-			return nil, "", errTestInvalidToken
+			return nil, "", core.ErrTokenValidationRejected
 		},
 		verifyCA: func(context.Context, string, string, string) (string, error) {
 			return "", errTestInvalidClient
@@ -114,7 +123,7 @@ func TestHandleRevoke(t *testing.T) {
 
 	t.Run("bad client creds invalid_client", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "right")
+		cs.put(activePostClient("rp"), "right")
 		d := newRevokeDeps(cs, newMemRefreshStore())
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"token=t&client_id=rp&client_secret=wrong")
@@ -126,7 +135,7 @@ func TestHandleRevoke(t *testing.T) {
 
 	t.Run("empty token after auth invalid_request", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newRevokeDeps(cs, newMemRefreshStore())
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"client_id=rp&client_secret=s")
@@ -138,7 +147,7 @@ func TestHandleRevoke(t *testing.T) {
 
 	t.Run("valid creds unknown token still 200 (RFC 7009 §2.2)", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newRevokeDeps(cs, newMemRefreshStore())
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"token=does-not-exist&client_id=rp&client_secret=s")
@@ -150,7 +159,7 @@ func TestHandleRevoke(t *testing.T) {
 
 	t.Run("refresh token deleted via inspector", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		rs := newMemRefreshStore()
 		_ = rs.Issue(context.Background(), "rtok", &RefreshToken{
 			UserID: "u", ClientID: "rp", ExpiresAt: time.Now().Add(time.Hour),
@@ -169,7 +178,7 @@ func TestHandleRevoke(t *testing.T) {
 
 	t.Run("refresh hint reverses tier order", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		rs := newMemRefreshStore()
 		_ = rs.Issue(context.Background(), "rtok", &RefreshToken{
 			UserID: "u", ClientID: "rp", ExpiresAt: time.Now().Add(time.Hour),
@@ -185,7 +194,7 @@ func TestHandleRevoke(t *testing.T) {
 
 	t.Run("bare refresh store revoke is a no-op (no inspector)", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newRevokeDeps(cs, newBareRefresh())
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"token=anything&client_id=rp&client_secret=s")
@@ -195,22 +204,38 @@ func TestHandleRevoke(t *testing.T) {
 		}
 	})
 
-	t.Run("HTTP Basic beats body creds", func(t *testing.T) {
+	t.Run("HTTP Basic rejects mixed body credentials", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "basic-secret")
+		basicClient := activeClient("rp")
+		basicClient.TokenEndpointAuthMethod = "client_secret_basic"
+		cs.put(basicClient, "basic-secret")
 		d := newRevokeDeps(cs, newMemRefreshStore())
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"token=t&client_id=rp&client_secret=wrong")
 		ctx.Request().SetBasicAuth("rp", "basic-secret")
 		HandleRevoke(d, ctx)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401 for mixed Basic + body secret", rec.Code)
+		}
+	})
+
+	t.Run("HTTP Basic accepts Basic credentials only", func(t *testing.T) {
+		cs := newMemClientStore()
+		basicClient := activeClient("rp")
+		basicClient.TokenEndpointAuthMethod = "client_secret_basic"
+		cs.put(basicClient, "basic-secret")
+		d := newRevokeDeps(cs, newMemRefreshStore())
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=t")
+		ctx.Request().SetBasicAuth("rp", "basic-secret")
+		HandleRevoke(d, ctx)
 		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200 (basic should win)", rec.Code)
+			t.Fatalf("status = %d, want 200 for Basic-only credentials", rec.Code)
 		}
 	})
 
 	t.Run("client assertion wrong type bad request", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newRevokeDeps(cs, newMemRefreshStore())
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"token=t&client_assertion=x&client_assertion_type=urn:wrong")
@@ -222,7 +247,7 @@ func TestHandleRevoke(t *testing.T) {
 
 	t.Run("client assertion verify failure invalid_client", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newRevokeDeps(cs, newMemRefreshStore())
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"token=t&client_assertion=bad&client_assertion_type="+ClientAssertionTypeJWTBearer)
@@ -234,7 +259,9 @@ func TestHandleRevoke(t *testing.T) {
 
 	t.Run("client assertion success revokes", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		assertionClient := activeClient("rp")
+		assertionClient.TokenEndpointAuthMethod = "private_key_jwt"
+		cs.put(assertionClient, "s")
 		d := newRevokeDeps(cs, newMemRefreshStore())
 		d.verifyCA = func(context.Context, string, string, string) (string, error) {
 			return "rp", nil

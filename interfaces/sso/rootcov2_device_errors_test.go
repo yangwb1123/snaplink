@@ -116,6 +116,112 @@ func TestRcov2DE_DeviceTokenGrantErrors(t *testing.T) {
 	}
 }
 
+// TestRcov2DE_ForgeClientOwnerParity exercises the deployment contract used by
+// Forge: a browser token and an RFC 8628 CLI token from separate public clients
+// must resolve to the same verified Hub owner tuple.
+func TestRcov2DE_ForgeClientOwnerParity(t *testing.T) {
+	t.Parallel()
+	const tenantID = "acme"
+	const forgeResource = "forge-api"
+	forgeScopes := []string{"forge:conversations:read", "forge:conversations:write"}
+	consoleScopes := []string{"openid", "profile", "forge:conversations:read", "forge:conversations:write"}
+	s := rcovNewServer(t, sso.WithDeviceCodeStore(
+		defaultimpl.NewMemoryDeviceCodeStore(), 5*time.Minute, time.Nanosecond, rcov2DeviceVerifyURI))
+	for _, clientID := range []string{"forge-console", "forge-cli"} {
+		grantTypes := []string{"authorization_code", "refresh_token"}
+		allowedScopes := consoleScopes
+		if clientID == "forge-cli" {
+			grantTypes = []string{"urn:ietf:params:oauth:grant-type:device_code"}
+			allowedScopes = forgeScopes
+		}
+		s.clients.AddSeed(&sso.Client{
+			ID: clientID, Name: clientID, TenantID: tenantID, SubjectType: "public",
+			AllowedScopes: allowedScopes, AllowedResources: []string{forgeResource},
+			AllowedAuthenticators: []string{"password"}, TokenStrategy: "jwt", Active: true,
+			TokenEndpointAuthMethod: "none", RequirePKCE: true, SkipConsent: true,
+			GrantTypes: grantTypes,
+		})
+	}
+
+	status, consoleLogin := rcovPostJSON(t, s.http.URL+"/auth/login", "", map[string]any{
+		"provider": "password", "client_id": "forge-console",
+		"credential": map[string]string{"username": rcovUsername, "password": rcovPassword},
+		"scope":      consoleScopes,
+		"resource":   []string{forgeResource},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("Forge Console login = %d body=%v", status, consoleLogin)
+	}
+	consoleToken, _ := consoleLogin["access_token"].(string)
+	if consoleToken == "" {
+		t.Fatalf("Forge Console login returned no access token: %v", consoleLogin)
+	}
+
+	status, deviceStart := rcovPostJSON(t, s.http.URL+"/device/code", "", map[string]any{
+		"client_id": "forge-cli", "scope": "forge:conversations:read forge:conversations:write",
+		"resource": []string{forgeResource},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("Forge CLI device start = %d body=%v", status, deviceStart)
+	}
+	deviceCode, _ := deviceStart["device_code"].(string)
+	userCode, _ := deviceStart["user_code"].(string)
+	if deviceCode == "" || userCode == "" {
+		t.Fatalf("Forge CLI device start omitted codes: %v", deviceStart)
+	}
+	status, _ = rcovPostJSON(t, s.http.URL+"/device/verify", consoleToken, map[string]any{
+		"user_code": userCode, "approve": true,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("Forge Console approval = %d", status)
+	}
+	status, cliPoll := rcovPostJSON(t, s.http.URL+"/token", "", map[string]any{
+		"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
+		"device_code": deviceCode, "client_id": "forge-cli",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("Forge CLI device poll = %d body=%v", status, cliPoll)
+	}
+	cliToken, _ := cliPoll["access_token"].(string)
+	if cliToken == "" {
+		t.Fatalf("Forge CLI poll returned no access token: %v", cliPoll)
+	}
+
+	consoleClaims := trrDecodePayload(t, consoleToken)
+	cliClaims := trrDecodePayload(t, cliToken)
+	for _, claim := range []string{"iss", "sub", "tenant_id"} {
+		if consoleClaims[claim] == nil || consoleClaims[claim] != cliClaims[claim] {
+			t.Errorf("owner claim %s differs: Console=%v CLI=%v", claim, consoleClaims[claim], cliClaims[claim])
+		}
+	}
+	if consoleClaims["tenant_id"] != tenantID {
+		t.Errorf("tenant_id = %v, want %s", consoleClaims["tenant_id"], tenantID)
+	}
+	if consoleClaims["client_id"] != "forge-console" || cliClaims["client_id"] != "forge-cli" {
+		t.Errorf("client IDs = Console:%v CLI:%v, want forge-console and forge-cli", consoleClaims["client_id"], cliClaims["client_id"])
+	}
+	for clientID, claims := range map[string]map[string]any{
+		"forge-console": consoleClaims,
+		"forge-cli":     cliClaims,
+	} {
+		audienceOK := claims["aud"] == forgeResource
+		if audiences, ok := claims["aud"].([]any); ok && len(audiences) == 1 {
+			audienceOK = audiences[0] == forgeResource
+		}
+		if !audienceOK {
+			t.Errorf("%s audience = %v, want %s", clientID, claims["aud"], forgeResource)
+		}
+	}
+	for _, grantType := range []string{"authorization_code", "refresh_token"} {
+		status, disallowed := rcovPostJSON(t, s.http.URL+"/token", "", map[string]any{
+			"grant_type": grantType, "client_id": "forge-cli", "code": "unused",
+		})
+		if status != http.StatusBadRequest || disallowed["error"] != "unauthorized_client" {
+			t.Errorf("Forge CLI disallowed %s grant = %d %v", grantType, status, disallowed)
+		}
+	}
+}
+
 // TestRcov2DE_CIBATokenGrantErrors covers handleCIBATokenGrant rejection
 // branches: missing auth_req_id, unknown auth_req_id, and slow_down throttling.
 func TestRcov2DE_CIBATokenGrantErrors(t *testing.T) {

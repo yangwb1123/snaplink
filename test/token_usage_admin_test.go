@@ -37,7 +37,8 @@ func newTokenUsageHarness(t *testing.T) *tokenUsageHarness {
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
 		ID: tokUsageClient, Secret: tokUsageSecret, Active: true,
-		TokenStrategy: "jwt",
+		TokenEndpointAuthMethod: "client_secret_post",
+		TokenStrategy:           "jwt",
 	})
 	rec := metering.NewRecorder(tokenusagememory.New())
 	rec.Start()

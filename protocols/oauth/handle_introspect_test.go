@@ -151,7 +151,7 @@ func TestHandleIntrospect(t *testing.T) {
 
 	t.Run("bad secret invalid_client", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "right")
+		cs.put(activePostClient("rp"), "right")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"token=abc&client_id=rp&client_secret=wrong")
@@ -177,7 +177,7 @@ func TestHandleIntrospect(t *testing.T) {
 
 	t.Run("empty token invalid_request after auth", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"client_id=rp&client_secret=s")
@@ -189,7 +189,7 @@ func TestHandleIntrospect(t *testing.T) {
 
 	t.Run("unknown token inactive false", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"token=nope&client_id=rp&client_secret=s")
@@ -204,7 +204,7 @@ func TestHandleIntrospect(t *testing.T) {
 
 	t.Run("active access token metadata", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		now := time.Now()
 		d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
@@ -246,7 +246,7 @@ func TestHandleIntrospect(t *testing.T) {
 
 	t.Run("active access falls back to first aud when no client_id", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
 			return &core.TokenClaims{Subject: "u", Audience: []string{"aud-rp"}}, "jwt", nil
@@ -261,7 +261,7 @@ func TestHandleIntrospect(t *testing.T) {
 
 	t.Run("refresh token via inspector with hint", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		rs := newMemRefreshStore()
 		now := time.Now()
 		_ = rs.Issue(context.Background(), "rtok", &RefreshToken{
@@ -286,7 +286,7 @@ func TestHandleIntrospect(t *testing.T) {
 
 	t.Run("bare store refresh hint falls through to inactive", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newIntrospectDeps(cs, newBareRefresh())
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"token=x&token_type_hint=refresh_token&client_id=rp&client_secret=s")
@@ -296,23 +296,38 @@ func TestHandleIntrospect(t *testing.T) {
 		}
 	})
 
-	t.Run("HTTP Basic beats body credentials", func(t *testing.T) {
+	t.Run("HTTP Basic rejects mixed body credentials", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "basic-secret")
+		basicClient := activeClient("rp")
+		basicClient.TokenEndpointAuthMethod = "client_secret_basic"
+		cs.put(basicClient, "basic-secret")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
-		// Body carries a WRONG secret; Basic carries the right one and must win.
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"token=x&client_id=rp&client_secret=wrong")
 		ctx.Request().SetBasicAuth("rp", "basic-secret")
 		HandleIntrospect(d, ctx)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401 for mixed Basic + body secret", rec.Code)
+		}
+	})
+
+	t.Run("HTTP Basic accepts Basic credentials only", func(t *testing.T) {
+		cs := newMemClientStore()
+		basicClient := activeClient("rp")
+		basicClient.TokenEndpointAuthMethod = "client_secret_basic"
+		cs.put(basicClient, "basic-secret")
+		d := newIntrospectDeps(cs, newMemRefreshStore())
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=x")
+		ctx.Request().SetBasicAuth("rp", "basic-secret")
+		HandleIntrospect(d, ctx)
 		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200 (basic creds should win)", rec.Code)
+			t.Fatalf("status = %d, want 200 for Basic-only credentials", rec.Code)
 		}
 	})
 
 	t.Run("client assertion wrong type bad request", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"token=x&client_assertion=jwt&client_assertion_type=urn:wrong")
@@ -324,7 +339,7 @@ func TestHandleIntrospect(t *testing.T) {
 
 	t.Run("client assertion verify failure invalid_client", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
 			"token=x&client_assertion=bad&client_assertion_type="+ClientAssertionTypeJWTBearer)
@@ -336,7 +351,9 @@ func TestHandleIntrospect(t *testing.T) {
 
 	t.Run("client assertion success authenticates and introspects", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		assertionClient := activeClient("rp")
+		assertionClient.TokenEndpointAuthMethod = "private_key_jwt"
+		cs.put(assertionClient, "s")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		d.verifyCA = func(context.Context, string, string, string) (string, error) {
 			return "rp", nil
@@ -397,7 +414,7 @@ func TestHandleIntrospect_SessionLiveness(t *testing.T) {
 
 	t.Run("live session reports active", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		sm := newMemSessionManager()
 		sess, err := sm.Create(context.Background(), "user-1")
 		if err != nil {
@@ -415,7 +432,7 @@ func TestHandleIntrospect_SessionLiveness(t *testing.T) {
 
 	t.Run("destroyed session reports inactive", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		sm := newMemSessionManager()
 		sess, _ := sm.Create(context.Background(), "user-1")
 		_ = sm.Destroy(context.Background(), sess.ID)
@@ -431,7 +448,7 @@ func TestHandleIntrospect_SessionLiveness(t *testing.T) {
 
 	t.Run("revoked session reports inactive", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		sm := newMemSessionManager()
 		sess, _ := sm.Create(context.Background(), "user-1")
 		sm.revoke(sess.ID)
@@ -452,7 +469,7 @@ func TestHandleIntrospect_SessionLiveness(t *testing.T) {
 		// revoked/expired into the same error, so there is no reliable way
 		// to tell a genuine outage apart from a legitimately dead session.
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		d.sessionMgr = &erroringSessionManager{}
 		d.validate = validatingClaims("some-sid")
@@ -465,7 +482,7 @@ func TestHandleIntrospect_SessionLiveness(t *testing.T) {
 
 	t.Run("no sid claim skips the check even when wired", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		sm := newMemSessionManager()
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		d.sessionMgr = sm
@@ -497,7 +514,7 @@ func TestHandleIntrospect_RFC9701JWTResponse(t *testing.T) {
 
 	newActiveDeps := func(signer IntrospectionSigner) *introspectDeps {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		d.signer = signer
 		d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
@@ -576,7 +593,7 @@ func TestHandleIntrospect_RFC9701JWTResponse(t *testing.T) {
 	t.Run("inactive token is also wrapped when requested", func(t *testing.T) {
 		signer := &fakeIntrospectionSigner{}
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		d.signer = signer
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=nope&client_id=rp&client_secret=s")
@@ -612,7 +629,7 @@ func TestHandleIntrospect_RequireRenew(t *testing.T) {
 	}
 	newDeps := func() *introspectDeps {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		d.validate = func(context.Context, string) (*core.TokenClaims, string, error) { return claims() }
 		return d
@@ -749,7 +766,7 @@ func TestIntrospectionTokenTypeReflectsDPoPBinding(t *testing.T) {
 
 	t.Run("access token", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
 			return &core.TokenClaims{Subject: "u", ClientID: "rp", ConfirmationJKT: "jkt-abc"}, "jwt", nil
@@ -765,7 +782,7 @@ func TestIntrospectionTokenTypeReflectsDPoPBinding(t *testing.T) {
 
 	t.Run("access token without binding stays Bearer", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		d := newIntrospectDeps(cs, newMemRefreshStore())
 		d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
 			return &core.TokenClaims{Subject: "u", ClientID: "rp"}, "jwt", nil
@@ -781,7 +798,7 @@ func TestIntrospectionTokenTypeReflectsDPoPBinding(t *testing.T) {
 
 	t.Run("refresh token", func(t *testing.T) {
 		cs := newMemClientStore()
-		cs.put(activeClient("rp"), "s")
+		cs.put(activePostClient("rp"), "s")
 		rs := newMemRefreshStore()
 		now := time.Now()
 		_ = rs.Issue(context.Background(), "rtok", &RefreshToken{

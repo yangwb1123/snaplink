@@ -87,7 +87,8 @@ func newWebhookRevokeServer(t *testing.T, eng *webhook.Engine, sink *audit.Memor
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
 		ID: webhookRevokeClientID, Secret: webhookRevokeClientSecret,
-		Active: true, TokenStrategy: "jwt",
+		TokenEndpointAuthMethod: "client_secret_post",
+		Active:                  true, TokenStrategy: "jwt",
 	})
 	jwtIssuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
 	rec := audit.New(sink)

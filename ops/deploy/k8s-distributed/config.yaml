@@ -71,6 +71,11 @@ oauth:
   refresh_token:
     enabled: true
     ttl: 720h
+  device_code:
+    enabled: true       # shared across replicas through oauth.backend=redis
+    ttl: 10m
+    reap_interval: 1m
+    poll_interval: 5s
   scope_registry:
     enabled: true
     extra_scopes:
@@ -78,6 +83,8 @@ oauth:
     - account:write
     - operation:read
     - source:sync
+    - forge:conversations:read
+    - forge:conversations:write
 security:
   jti_replay:
     backend: redis
@@ -224,6 +231,58 @@ clients:
   - github
   token_strategy: jwt
   require_pkce: true
+  active: true
+# Forge clients use separate OAuth client IDs but intentionally share tenant,
+# public subject projection, Forge resource, and least-privilege scopes so
+# Console and CLI resolve to the same verified owner tuple.
+- id: forge-console
+  name: Forge Console
+  tenant_id: acme
+  subject_type: public
+  redirect_uris: []
+  allowed_scopes:
+  - openid
+  - profile
+  - forge:conversations:read
+  - forge:conversations:write
+  allowed_resources:
+  - forge-api
+  allowed_authenticators:
+  - password
+  - google
+  - github
+  token_strategy: jwt
+  token_endpoint_auth_method: none
+  require_pkce: true
+  allowed_pkce_methods:
+  - S256
+  grant_types:
+  - authorization_code
+  - refresh_token
+  active: true
+- id: forge-cli
+  name: Forge CLI
+  tenant_id: acme
+  subject_type: public
+  redirect_uris: []
+  allowed_scopes:
+  - openid
+  - profile
+  - forge:conversations:read
+  - forge:conversations:write
+  allowed_resources:
+  - forge-api
+  allowed_authenticators:
+  - password
+  - google
+  - github
+  token_strategy: jwt
+  token_endpoint_auth_method: none
+  require_pkce: true
+  allowed_pkce_methods:
+  - S256
+  grant_types:
+  - urn:ietf:params:oauth:grant-type:device_code
   active: true
 - id: aero-vault
   name: Aero Vault

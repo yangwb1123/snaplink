@@ -355,6 +355,9 @@ func TestSteps_SeedsAdminConsoleClient(t *testing.T) {
 	if !c.Active {
 		t.Error("Active = false, want true")
 	}
+	if c.GrantTypes != nil {
+		t.Errorf("GrantTypes = %v, want nil to preserve unrestricted legacy behavior", c.GrantTypes)
+	}
 	// Public PKCE client — no secret.
 	if c.Secret != "" {
 		t.Errorf("Secret should be empty for a public PKCE client, got %q", c.Secret)

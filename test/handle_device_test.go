@@ -28,6 +28,14 @@ const (
 )
 
 func newDeviceServer(t *testing.T, ttl, interval time.Duration) *httptest.Server {
+	return newDeviceServerWithOptions(t, ttl, interval, nil, false)
+}
+
+func newDeviceServerWithGrantTypes(t *testing.T, ttl, interval time.Duration, grantTypes []string) *httptest.Server {
+	return newDeviceServerWithOptions(t, ttl, interval, grantTypes, true)
+}
+
+func newDeviceServerWithOptions(t *testing.T, ttl, interval time.Duration, grantTypes []string, withRefreshStore bool) *httptest.Server {
 	t.Helper()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: devUser})
@@ -35,6 +43,7 @@ func newDeviceServer(t *testing.T, ttl, interval time.Duration) *httptest.Server
 	clients.AddSeed(&sso.Client{
 		ID: devClient, Name: "Device Console", Secret: devSecret,
 		AllowedAuthenticators: []string{"password"}, TokenStrategy: "jwt", Active: true,
+		GrantTypes: grantTypes,
 	})
 	clients.AddSeed(&sso.Client{
 		ID: devOtherClient, Secret: devOtherSecret,
@@ -45,7 +54,7 @@ func newDeviceServer(t *testing.T, ttl, interval time.Duration) *httptest.Server
 			return &sso.AuthResult{UserID: devUser, Provider: "password"}, nil
 		},
 	))
-	srv := sso.NewServer(
+	options := []sso.Option{
 		sso.WithUserProvider(users),
 		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
 		sso.WithClientStore(clients),
@@ -53,7 +62,11 @@ func newDeviceServer(t *testing.T, ttl, interval time.Duration) *httptest.Server
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))),
 		sso.WithDefaultTokenStrategy("jwt"),
 		sso.WithDeviceCodeStore(defaultimpl.NewMemoryDeviceCodeStore(), ttl, interval, ""),
-	)
+	}
+	if withRefreshStore {
+		options = append(options, sso.WithRefreshTokenStore(defaultimpl.NewMemoryRefreshTokenStore(), time.Hour))
+	}
+	srv := sso.NewServer(options...)
 	httpSrv := httptest.NewServer(srv.Handler())
 	t.Cleanup(httpSrv.Close)
 	return httpSrv
@@ -239,6 +252,62 @@ func TestDevice_FullApprovalRoundTripMintsTokens(t *testing.T) {
 	status, body = pollToken(t, srv, dc)
 	if status != http.StatusBadRequest || body["error"] != "invalid_grant" {
 		t.Errorf("consumed device_code replay = %d %v, want 400 invalid_grant", status, body)
+	}
+}
+
+func TestDevice_RefreshTokenRequiresExplicitlyAllowedGrant(t *testing.T) {
+	srv := newDeviceServerWithGrantTypes(t, time.Minute, time.Millisecond, []string{sso.GrantDeviceCode})
+	dc, uc, _ := requestDeviceCode(t, srv)
+	bearer := userBearerToken(t, srv)
+	if status := verifyUserCode(t, srv, bearer, uc, true); status != http.StatusOK {
+		t.Fatalf("verify status = %d", status)
+	}
+	status, body := pollToken(t, srv, dc)
+	if status != http.StatusOK {
+		t.Fatalf("poll status = %d body=%v", status, body)
+	}
+	if refresh, ok := body["refresh_token"].(string); ok && refresh != "" {
+		t.Fatalf("device-only client received a refresh token: %v", body)
+	}
+
+	status, body = refreshExchange(t, srv, "unused-refresh-token", "", devClient, devSecret)
+	if status != http.StatusBadRequest || body["error"] != "unauthorized_client" {
+		t.Fatalf("disallowed refresh grant = %d %v, want 400 unauthorized_client", status, body)
+	}
+}
+
+func TestDevice_RefreshTokenRemainsAvailableToAllowedAndUnrestrictedClients(t *testing.T) {
+	tests := []struct {
+		name       string
+		grantTypes []string
+	}{
+		{name: "unrestricted legacy client"},
+		{name: "explicitly allowed client", grantTypes: []string{sso.GrantDeviceCode, sso.GrantRefreshToken}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newDeviceServerWithGrantTypes(t, time.Minute, time.Millisecond, tt.grantTypes)
+			dc, uc, _ := requestDeviceCode(t, srv)
+			bearer := userBearerToken(t, srv)
+			if status := verifyUserCode(t, srv, bearer, uc, true); status != http.StatusOK {
+				t.Fatalf("verify status = %d", status)
+			}
+			status, body := pollToken(t, srv, dc)
+			if status != http.StatusOK {
+				t.Fatalf("poll status = %d body=%v", status, body)
+			}
+			refresh, _ := body["refresh_token"].(string)
+			if refresh == "" {
+				t.Fatalf("refresh token missing for %s: %v", tt.name, body)
+			}
+			status, body = refreshExchange(t, srv, refresh, "", devClient, devSecret)
+			if status != http.StatusOK {
+				t.Fatalf("allowed refresh grant = %d %v", status, body)
+			}
+			if rotated, _ := body["refresh_token"].(string); rotated == "" || rotated == refresh {
+				t.Fatalf("refresh token was not rotated: %v", body)
+			}
+		})
 	}
 }
 

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
@@ -34,6 +35,11 @@ type ClientConfig struct {
 	// client). When set, login + token endpoints reject requests
 	// whose resolved tenant doesn't match this id.
 	TenantID string `yaml:"tenant_id"`
+	// GrantTypes optionally restricts which OAuth grant types this client may
+	// use. Empty preserves the SDK's backward-compatible unrestricted policy;
+	// custom grant handlers may define extension values, so validation checks
+	// shape and duplicates without enforcing a closed registry.
+	GrantTypes []string `yaml:"grant_types,omitempty"`
 
 	// Below fields mirror the SDK Client struct exactly — the cmd's
 	// YAML→Client seeding used to drop them silently, leaving SDK
@@ -114,6 +120,20 @@ func validateClientTokenEndpointAuthMethod(client *ClientConfig) error {
 	}
 }
 
+func validateClientGrantTypes(client *ClientConfig) error {
+	seen := make(map[string]struct{}, len(client.GrantTypes))
+	for index, grantType := range client.GrantTypes {
+		if trimmed := strings.TrimSpace(grantType); trimmed == "" || trimmed != grantType {
+			return fmt.Errorf("config: client %q grant_types[%d] must be non-empty and trimmed", client.ID, index)
+		}
+		if _, exists := seen[grantType]; exists {
+			return fmt.Errorf("config: client %q grant_types contains duplicate %q", client.ID, grantType)
+		}
+		seen[grantType] = struct{}{}
+	}
+	return nil
+}
+
 func validateConfiguredClients(c *Config) error {
 	// The JWS name the server's own signing issuer produces for keys.signing.alg
 	// (same mapping serverbuildsign.BuildSigningIssuer uses);
@@ -129,6 +149,9 @@ func validateConfiguredClients(c *Config) error {
 			return err
 		}
 		if err := validateClientTokenEndpointAuthMethod(&client); err != nil {
+			return err
+		}
+		if err := validateClientGrantTypes(&client); err != nil {
 			return err
 		}
 		if client.LoginPageURI != "" && !sso.IsFederatedLoginPageURIValid(client.LoginPageURI) {

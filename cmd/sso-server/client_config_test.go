@@ -33,6 +33,7 @@ func TestBuildApp_ClientYAMLPropagatesAllFields(t *testing.T) {
 			TokenStrategy:                    "jwt",
 			Active:                           true,
 			TenantID:                         "acme",
+			GrantTypes:                       []string{"urn:ietf:params:oauth:grant-type:device_code", "urn:example:grant-type:custom"},
 			RequirePKCE:                      true,
 			TokenEndpointAuthMethod:          "none",
 			AllowedResources:                 []string{"https://api.example/v1"},
@@ -76,6 +77,7 @@ func TestBuildApp_ClientYAMLPropagatesAllFields(t *testing.T) {
 		ok   bool
 	}{
 		{"RequirePKCE", got.RequirePKCE == true},
+		{"GrantTypes", len(got.GrantTypes) == 2 && got.GrantTypes[0] == "urn:ietf:params:oauth:grant-type:device_code" && got.GrantTypes[1] == "urn:example:grant-type:custom"},
 		{"TokenEndpointAuthMethod", got.TokenEndpointAuthMethod == "none"},
 		{"LoginPageURI", got.LoginPageURI == "https://login.example/authorize"},
 		{"AllowedResources len", len(got.AllowedResources) == 1 && got.AllowedResources[0] == "https://api.example/v1"},

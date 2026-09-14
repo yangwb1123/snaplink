@@ -139,7 +139,8 @@ func TestIntrospectRefresh_OfferCarriesThumbprintAndGeo(t *testing.T) {
 			d.refresh = rs
 
 			ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
-				"token=rtok&token_type_hint=refresh_token&client_id=rp&client_secret=s")
+				"token=rtok&token_type_hint=refresh_token")
+			ctx.Request().SetBasicAuth("rp", "s")
 			ctx.Set(geo.HandlerContextKey, &core.GeoInfo{CountryCode: tc.country})
 			HandleIntrospect(d, ctx)
 			body := decodeBody(t, rec)

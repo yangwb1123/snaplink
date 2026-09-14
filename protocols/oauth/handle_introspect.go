@@ -107,12 +107,15 @@ func bindCredentialRequest(d interface{ RequireFormContentType() bool }, ctx cor
 
 // introspectRequest is the bound form/JSON body for /token/introspect.
 type introspectRequest struct {
-	Token               string `json:"token"`
-	TokenTypeHint       string `json:"token_type_hint"` // "access_token" | "refresh_token"
-	ClientID            string `json:"client_id"`
-	ClientSecret        string `json:"client_secret"`
-	ClientAssertion     string `json:"client_assertion"`      // RFC 7521 + 7523
-	ClientAssertionType string `json:"client_assertion_type"` // RFC 7521 + 7523
+	Token                string `json:"token"`
+	TokenTypeHint        string `json:"token_type_hint"` // "access_token" | "refresh_token"
+	ClientID             string `json:"client_id"`
+	ClientSecret         string `json:"client_secret"`
+	ClientAssertion      string `json:"client_assertion"`      // RFC 7521 + 7523
+	ClientAssertionType  string `json:"client_assertion_type"` // RFC 7521 + 7523
+	authorizationPresent bool
+	basicAuthUsed        bool
+	bodySecretPresent    bool
 	// Tokens opts into a batch request: introspect every listed token in one
 	// call. Honored ONLY when the operator enabled the capability
 	// (IntrospectionBatchMaxSize > 0); otherwise ignored entirely, so an
@@ -137,11 +140,10 @@ type introspectRequest struct {
 // meshes — see the security considerations on the option doc for the
 // deliberate eventual-consistency window.
 //
-// Auth: the introspecting client authenticates with client_id +
-// client_secret (Basic auth or form body). Per §2.1 any registered
-// active client may introspect — production deployments that want
-// stronger isolation should layer an authorization middleware that
-// checks a custom "introspect" scope or role on the client.
+// Auth is confidential-client-only and must match the registered method:
+// client_secret_basic, client_secret_post, or private_key_jwt. Public "none"
+// clients cannot introspect; TLS methods are rejected until certificate
+// verification is wired into this handler.
 func HandleIntrospect(d IntrospectDeps, ctx core.HandlerContext) {
 	middleware.TokenNoStoreHeaders(ctx)
 	clientStore := d.ClientStoreAccessor()
@@ -154,11 +156,14 @@ func HandleIntrospect(d IntrospectDeps, ctx core.HandlerContext) {
 	if bindCredentialRequest(d, ctx, &req) {
 		return
 	}
+	req.bodySecretPresent = req.bodySecretPresent || ctx.Request().PostForm.Has("client_secret")
+	req.authorizationPresent = len(ctx.Request().Header.Values("Authorization")) > 0
 	if id, secret, ok := BasicClientCreds(ctx.Request()); ok {
 		// HTTP Basic auth takes precedence over body fields when
 		// present — matches the RFC 6749 §2.3.1 recommendation.
 		req.ClientID = id
 		req.ClientSecret = secret
+		req.basicAuthUsed = true
 	}
 
 	// Client auth: the assertion branch and the secret-creds branch both
@@ -235,34 +240,32 @@ func writeIntrospectionResponse(d IntrospectDeps, ctx core.HandlerContext, body 
 func authenticateIntrospectClient(d IntrospectDeps, clientStore core.ClientStore, ctx core.HandlerContext, req *introspectRequest) (handled bool) {
 	// RFC 7521/7523 JWT bearer client auth on /token/introspect.
 	if req.ClientAssertion != "" || req.ClientAssertionType != "" {
-		if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
-			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
-			return true
-		}
-		assertedID, err := d.VerifyJWTClientAssertion(
-			ctx.Request().Context(),
-			req.ClientAssertion,
-			req.ClientID,
-			d.ResolveIssuer(ctx),
-		)
-		if err != nil {
-			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
-			return true
-		}
-		req.ClientID = assertedID
-		// Bypass the secret-based authenticate path entirely: JWT
-		// assertion stands in for the secret per RFC 7521 §4.2.
-		// Still validate the tenant + active gates below via a
-		// minimal client lookup so a deactivated client can't
-		// introspect.
-		c, err := clientStore.Get(ctx.Request().Context(), req.ClientID)
-		if err != nil || c == nil || !c.Active || !tenant.ClientOK(ctx, c) {
-			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
-			return true
-		}
-		return false
+		return authenticateIntrospectAssertion(d, clientStore, ctx, req)
 	}
-	if err := authenticateIntrospectionClient(clientStore, ctx, req.ClientID, req.ClientSecret); err != nil {
+	if err := authenticateIntrospectionClient(clientStore, ctx, req); err != nil {
+		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
+		return true
+	}
+	return false
+}
+
+func authenticateIntrospectAssertion(d IntrospectDeps, clients core.ClientStore, ctx core.HandlerContext, req *introspectRequest) bool {
+	if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return true
+	}
+	if req.bodySecretPresent || req.authorizationPresent {
+		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
+		return true
+	}
+	id, err := d.VerifyJWTClientAssertion(ctx.Request().Context(), req.ClientAssertion, req.ClientID, d.ResolveIssuer(ctx))
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
+		return true
+	}
+	req.ClientID = id
+	client, err := clients.Get(ctx.Request().Context(), id)
+	if err != nil || client == nil || !client.Active || client.TokenEndpointAuthMethod != "private_key_jwt" || !tenant.ClientOK(ctx, client) {
 		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
 		return true
 	}
@@ -419,21 +422,32 @@ func introspectionLifecycleActive(deps any, ctx context.Context, subject string)
 
 // authenticateIntrospectionClient verifies the introspecting client's
 // credentials via the existing client store. Returns nil on success.
-func authenticateIntrospectionClient(clientStore core.ClientStore, ctx core.HandlerContext, id, secret string) error {
-	if id == "" || secret == "" {
+func authenticateIntrospectionClient(clientStore core.ClientStore, ctx core.HandlerContext, req *introspectRequest) error {
+	if req.ClientID == "" || req.ClientSecret == "" {
 		return errors.New("missing client credentials")
 	}
-	client, err := clientStore.Get(ctx.Request().Context(), id)
-	if err != nil {
-		return err
+	client, err := clientStore.Get(ctx.Request().Context(), req.ClientID)
+	if err != nil || client == nil {
+		return errors.New("unknown client")
 	}
-	if !client.Active {
+	if !client.Active || !tenant.ClientOK(ctx, client) || !introspectionSecretMethodMatches(req, client.TokenEndpointAuthMethod) {
 		return errors.New("inactive client")
 	}
-	if !tenant.ClientOK(ctx, client) {
-		return errors.New("tenant mismatch")
+	return clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret)
+}
+
+func introspectionSecretMethodMatches(req *introspectRequest, method string) bool {
+	if req.basicAuthUsed && req.bodySecretPresent {
+		return false
 	}
-	return clientStore.ValidateSecret(ctx.Request().Context(), id, secret)
+	switch method {
+	case "", "client_secret_basic":
+		return req.basicAuthUsed && !req.bodySecretPresent
+	case "client_secret_post":
+		return !req.basicAuthUsed && !req.authorizationPresent && req.ClientSecret != ""
+	default:
+		return false
+	}
 }
 
 // tokenHash returns the hex-encoded SHA-256 digest of token. The hash

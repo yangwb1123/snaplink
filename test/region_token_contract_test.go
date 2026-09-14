@@ -39,14 +39,15 @@ func newRegionTokenServer(t *testing.T) *httptest.Server {
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: regionTokenUser})
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
-		ID:                    regionTokenClient,
-		Secret:                "region-token-secret",
-		Name:                  "Region Token App",
-		RedirectURIs:          []string{regionTokenRedirect},
-		AllowedScopes:         []string{"openid", "profile", "offline_access"},
-		AllowedAuthenticators: []string{"password"},
-		TokenStrategy:         "jwt",
-		Active:                true,
+		ID:                      regionTokenClient,
+		Secret:                  "region-token-secret",
+		TokenEndpointAuthMethod: "client_secret_post",
+		Name:                    "Region Token App",
+		RedirectURIs:            []string{regionTokenRedirect},
+		AllowedScopes:           []string{"openid", "profile", "offline_access"},
+		AllowedAuthenticators:   []string{"password"},
+		TokenStrategy:           "jwt",
+		Active:                  true,
 	})
 	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
 		func(_ context.Context, u, p string) (*sso.AuthResult, error) {

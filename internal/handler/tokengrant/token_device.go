@@ -164,7 +164,7 @@ func devicePollGate(d DeviceGrantDeps, ctx core.HandlerContext, store oauth.Devi
 // deviceIssueRefresh mints a refresh token (fail-open: a failure is logged and
 // the access token is still returned). Adds the token + records issuance on resp.
 func deviceIssueRefresh(d DeviceGrantDeps, ctx core.HandlerContext, client *core.Client, dc *oauth.DeviceCode, resp map[string]any, dpopJKT string) {
-	if d.RefreshTokenStore() == nil {
+	if d.RefreshTokenStore() == nil || !deviceClientAllowsRefresh(client) {
 		return
 	}
 	// Device grant doesn't accept authorization_details today; pass nil so
@@ -182,6 +182,13 @@ func deviceIssueRefresh(d DeviceGrantDeps, ctx core.HandlerContext, client *core
 	}
 	resp[core.KeyRefreshToken] = rt
 	d.RecordRefreshTokenIssued(ctx, client.ID, dc.UserID, false)
+}
+
+// deviceClientAllowsRefresh preserves the legacy unrestricted behavior when a
+// client omits GrantTypes, but an explicit grant allowlist must opt in to
+// refresh_token before device authorization returns a refresh credential.
+func deviceClientAllowsRefresh(client *core.Client) bool {
+	return len(client.GrantTypes) == 0 || slices.Contains(client.GrantTypes, core.GrantRefreshToken)
 }
 
 // deviceIssueIDToken mints an id_token when openid was granted (fail-open:

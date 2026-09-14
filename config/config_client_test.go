@@ -53,6 +53,64 @@ func TestClientConfigYAMLDecodesPublicAuthMethod(t *testing.T) {
 	}
 }
 
+func TestClientConfigYAMLDecodesGrantTypesAndPreservesUnrestrictedClient(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(`clients:
+  - id: forge-cli
+    grant_types:
+      - urn:ietf:params:oauth:grant-type:device_code
+      - urn:example:grant-type:custom
+  - id: sso-admin-console
+`), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	if len(cfg.Clients) != 2 {
+		t.Fatalf("decoded %d clients, want 2", len(cfg.Clients))
+	}
+	got := cfg.Clients[0].GrantTypes
+	if len(got) != 2 || got[0] != "urn:ietf:params:oauth:grant-type:device_code" || got[1] != "urn:example:grant-type:custom" {
+		t.Fatalf("forge-cli grant types = %v", got)
+	}
+	if cfg.Clients[1].ID != "sso-admin-console" || cfg.Clients[1].GrantTypes != nil {
+		t.Fatalf("unconfigured admin client = %+v, want nil grant_types", cfg.Clients[1])
+	}
+	if err := validateConfiguredClients(&cfg); err != nil {
+		t.Fatalf("validateConfiguredClients() error = %v", err)
+	}
+}
+
+func TestValidateConfiguredClientGrantTypes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		grantType []string
+		wantErr   bool
+	}{
+		{name: "unset remains unrestricted"},
+		{name: "custom extension accepted", grantType: []string{"urn:example:grant-type:custom"}},
+		{name: "empty item rejected", grantType: []string{"authorization_code", ""}, wantErr: true},
+		{name: "whitespace item rejected", grantType: []string{"   "}, wantErr: true},
+		{name: "padded item rejected", grantType: []string{" authorization_code "}, wantErr: true},
+		{name: "duplicate rejected", grantType: []string{"urn:example:grant-type:custom", "urn:example:grant-type:custom"}, wantErr: true},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateConfiguredClients(&Config{Clients: []ClientConfig{{ID: "client", GrantTypes: test.grantType}}})
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "grant_types") {
+					t.Fatalf("err=%v, want grant_types validation error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validateConfiguredClients() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateConfiguredPublicClientRequiresSecretlessPKCE(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

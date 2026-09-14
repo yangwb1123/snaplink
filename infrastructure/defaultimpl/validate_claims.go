@@ -29,6 +29,7 @@ func claimsFromPayload(p ed25519Payload, typ string) *sso.TokenClaims {
 		ACR:       p.ACR,
 		AMR:       append([]string(nil), p.AMR...),
 		SID:       p.SID,
+		TenantID:  p.TenantID,
 		// Mint-region evidence round-trips into the validated view; the
 		// introspector echoes it onto the RFC 7662 body.
 		ServingRegion: p.ServingRegion,

@@ -83,10 +83,16 @@ func postIntrospect(t *testing.T, srv *httptest.Server, token, hint, id, secret 
 	body, _ := json.Marshal(map[string]any{
 		"token":           token,
 		"token_type_hint": hint,
-		"client_id":       id,
-		"client_secret":   secret,
 	})
-	resp, err := http.Post(srv.URL+"/token/introspect", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/token/introspect", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build introspect request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if id != "" || secret != "" {
+		req.SetBasicAuth(id, secret)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("introspect: %v", err)
 	}
@@ -231,10 +237,16 @@ func postRevoke(t *testing.T, srv *httptest.Server, token, hint, id, secret stri
 	body, _ := json.Marshal(map[string]any{
 		"token":           token,
 		"token_type_hint": hint,
-		"client_id":       id,
-		"client_secret":   secret,
 	})
-	resp, err := http.Post(srv.URL+"/token/revoke", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/token/revoke", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build revoke request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if id != "" || secret != "" {
+		req.SetBasicAuth(id, secret)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("revoke: %v", err)
 	}

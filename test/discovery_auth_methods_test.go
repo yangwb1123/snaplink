@@ -35,28 +35,19 @@ func TestDiscovery_IntrospectionRevocationAuthMethods(t *testing.T) {
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 
-	want := []string{"client_secret_basic", "client_secret_post", "private_key_jwt",
-		"tls_client_auth", "self_signed_tls"}
-	sort.Strings(want)
-
-	// token_endpoint_auth_methods_supported additionally advertises "none":
-	// RFC 6749 §2.1 / OIDC Core §9 public clients (SPAs, native apps)
-	// authenticate only by client_id + PKCE (see
-	// server_discovery_config.go:193-199). Introspection/revocation/PAR
-	// share the same client-auth pipeline and correctly omit it.
-	wantToken := append(append([]string{}, want...), "none")
-	sort.Strings(wantToken)
-
-	for _, field := range []string{
-		"introspection_endpoint_auth_methods_supported",
-		"revocation_endpoint_auth_methods_supported",
-		"pushed_authorization_request_endpoint_auth_methods_supported",
-		"token_endpoint_auth_methods_supported",
-	} {
-		fieldWant := want
-		if field == "token_endpoint_auth_methods_supported" {
-			fieldWant = wantToken
-		}
+	confidential := []string{"client_secret_basic", "client_secret_post", "private_key_jwt"}
+	introspectWant := append([]string{}, confidential...)
+	revokeWant := append(append([]string{}, confidential...), "none")
+	parWant := append(append([]string{}, confidential...), "tls_client_auth", "self_signed_tls")
+	tokenWant := append(append([]string{}, parWant...), "none")
+	wants := map[string][]string{
+		"introspection_endpoint_auth_methods_supported":                introspectWant,
+		"revocation_endpoint_auth_methods_supported":                   revokeWant,
+		"pushed_authorization_request_endpoint_auth_methods_supported": parWant,
+		"token_endpoint_auth_methods_supported":                        tokenWant,
+	}
+	for field, fieldWant := range wants {
+		sort.Strings(fieldWant)
 		raw, ok := doc[field].([]any)
 		if !ok {
 			t.Errorf("%s missing from discovery: %v", field, doc[field])

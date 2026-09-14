@@ -156,6 +156,31 @@ func rcovPostJSON(t *testing.T, url, bearer string, body any) (int, map[string]a
 	return rcovDo(t, http.MethodPost, url, bearer, body)
 }
 
+func rcovPostJSONBasic(t *testing.T, url, clientID, secret string, body any) (int, map[string]any) {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(clientID, secret)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(resp.Body)
+	result := map[string]any{}
+	if len(bytes.TrimSpace(respBody)) != 0 {
+		_ = json.Unmarshal(respBody, &result)
+	}
+	return resp.StatusCode, result
+}
+
 func rcovDo(t *testing.T, method, url, bearer string, body any) (int, map[string]any) {
 	t.Helper()
 	var r io.Reader
@@ -438,10 +463,8 @@ func TestRcov_IntrospectAndRevoke(t *testing.T) {
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
-	status, out := rcovPostJSON(t, s.http.URL+"/token/introspect", "", map[string]any{
-		"token":         access,
-		"client_id":     rcovClient,
-		"client_secret": rcovSecret,
+	status, out := rcovPostJSONBasic(t, s.http.URL+"/token/introspect", rcovClient, rcovSecret, map[string]any{
+		"token": access,
 	})
 	if status != http.StatusOK {
 		t.Fatalf("introspect status=%d body=%v", status, out)
@@ -451,28 +474,22 @@ func TestRcov_IntrospectAndRevoke(t *testing.T) {
 	}
 
 	// Anti-enumeration: revoke returns 200 regardless of token existence.
-	status, _ = rcovPostJSON(t, s.http.URL+"/token/revoke", "", map[string]any{
-		"token":         access,
-		"client_id":     rcovClient,
-		"client_secret": rcovSecret,
+	status, _ = rcovPostJSONBasic(t, s.http.URL+"/token/revoke", rcovClient, rcovSecret, map[string]any{
+		"token": access,
 	})
 	if status != http.StatusOK {
 		t.Errorf("revoke = %d, want 200", status)
 	}
-	status, _ = rcovPostJSON(t, s.http.URL+"/token/revoke", "", map[string]any{
-		"token":         "totally-unknown-token",
-		"client_id":     rcovClient,
-		"client_secret": rcovSecret,
+	status, _ = rcovPostJSONBasic(t, s.http.URL+"/token/revoke", rcovClient, rcovSecret, map[string]any{
+		"token": "totally-unknown-token",
 	})
 	if status != http.StatusOK {
 		t.Errorf("revoke-unknown = %d, want 200 (anti-enumeration)", status)
 	}
 
 	// Introspecting an inactive/garbage token returns {"active":false}.
-	status, out = rcovPostJSON(t, s.http.URL+"/token/introspect", "", map[string]any{
-		"token":         "garbage",
-		"client_id":     rcovClient,
-		"client_secret": rcovSecret,
+	status, out = rcovPostJSONBasic(t, s.http.URL+"/token/introspect", rcovClient, rcovSecret, map[string]any{
+		"token": "garbage",
 	})
 	if status != http.StatusOK || out["active"] != false {
 		t.Errorf("inactive introspect = %d %v, want 200 active:false", status, out)

@@ -50,6 +50,7 @@ func newSeededClient(c *config.ClientConfig) *sso.Client {
 		TokenStrategy:                    c.TokenStrategy,
 		Active:                           c.Active,
 		TenantID:                         c.TenantID,
+		GrantTypes:                       c.GrantTypes,
 		RequirePKCE:                      c.RequirePKCE,
 		TokenEndpointAuthMethod:          c.TokenEndpointAuthMethod,
 		AllowedResources:                 c.AllowedResources,

@@ -9,6 +9,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
 
@@ -361,7 +362,7 @@ func (s *Server) ValidateToken(ctx context.Context, token string) (*TokenClaims,
 	return claims, err
 }
 
-// validateTokenPreChecks applies size and JWS algorithm bounds before an
+// validateTokenPreChecks applies size and signing-algorithm bounds before an
 // issuer performs expensive token parsing or signature verification.
 func (s *Server) validateTokenPreChecks(token string) error {
 	if s.maxTokenBytes > 0 && len(token) > s.maxTokenBytes {
@@ -375,55 +376,56 @@ func (s *Server) validateTokenPreChecks(token string) error {
 	return nil
 }
 
-// validateAnyToken tries each registered issuer until one accepts the token.
-// Returned issuerName lets callers correlate revocations or audit logs.
+// validateAnyToken tries each registered issuer; unclassified errors fail
+// closed even if another issuer rejects the token.
 func (s *Server) validateAnyToken(ctx context.Context, token string) (*TokenClaims, string, error) {
+	return s.validateAnyTokenMode(ctx, token, true)
+}
+
+// ValidateAnyTokenForRevocation verifies token authenticity without applying
+// current tenant/user eligibility gates, so blocked users can still log out.
+func (s *Server) ValidateAnyTokenForRevocation(ctx context.Context, token string) (*TokenClaims, string, error) {
+	return s.validateAnyTokenMode(ctx, token, false)
+}
+
+func (s *Server) validateAnyTokenMode(ctx context.Context, token string, checkEligibility bool) (*TokenClaims, string, error) {
 	if err := s.validateTokenPreChecks(token); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("%w: %v", core.ErrTokenValidationRejected, err)
 	}
-	var lastErr error
-	for name, ti := range s.tokenIssuers {
-		// Skip issuers that explicitly opt out of this token's shape.
-		// Saves an expensive base64 + signature attempt when a session
-		// token reaches the JWT issuer or vice versa. Issuers without
-		// a TokenFormatHinter are always tried (legacy behavior).
-		if h, ok := ti.(TokenFormatHinter); ok && !h.AcceptsTokenFormat(token) {
+	var rejectedErr, operationalErr error
+	for name, issuer := range s.tokenIssuers {
+		if hinter, ok := issuer.(TokenFormatHinter); ok && !hinter.AcceptsTokenFormat(token) {
 			continue
 		}
-		claims, err := ti.Validate(ctx, token)
-		if err == nil {
-			// Post-validation tenant suspension gate.
-			// No-op when WithTenantSuspensionCheck wasn't passed; otherwise
-			// hard-fails tokens whose owning client belongs to a now-
-			// suspended tenant so an admin's Suspended flip cuts off
-			// already-issued bearers, not just future issuance.
-			if tsErr := s.checkTenantNotSuspended(ctx, claims); tsErr != nil {
-				return nil, "", tsErr
+		claims, err := issuer.Validate(ctx, token)
+		if err != nil {
+			if errors.Is(err, core.ErrTokenValidationRejected) {
+				rejectedErr = err
+			} else {
+				operationalErr = err
 			}
-			if lifecycleErr := s.lifecycleClaimsError(ctx, claims); lifecycleErr != nil {
-				return nil, "", lifecycleErr
-			}
-			// NOTE(region): this bare-context validate has no serving region
-			// (stashed on HandlerContext, out of scope here) — but the read
-			// gate isn't missing: residencyDeniedForAccess
-			// (server_tenant_residency.go) is a SEPARATE post-validation gate
-			// each HandlerContext-having caller invokes directly, covering
-			// /userinfo, mesh ext_authz, and GET /me[/data-export]
-			// (ResidencyGateAccess). /token/introspect is deliberately
-			// excluded (see WithTenantResidencyCheck's doc). The admin plane
-			// and token-exchange's inbound subject_token read do NOT call
-			// this gate yet — a product/security decision for a follow-up,
-			// not a mechanical fix (admin already has its own admin:read/
-			// admin:write boundary). The login (write/mint) gate in
-			// handler.go remains the primary residency control regardless.
-			return claims, name, nil
+			continue
 		}
-		lastErr = err
+		if checkEligibility {
+			if err := s.checkTenantNotSuspended(ctx, claims); err != nil {
+				return nil, "", err
+			}
+			if err := s.lifecycleClaimsError(ctx, claims); err != nil {
+				return nil, "", err
+			}
+		}
+		return claims, name, nil
 	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("no token issuers registered")
+	if operationalErr != nil {
+		return nil, "", operationalErr
 	}
-	return nil, "", lastErr
+	if rejectedErr != nil {
+		return nil, "", rejectedErr
+	}
+	if len(s.tokenIssuers) > 0 {
+		return nil, "", core.ErrTokenValidationRejected
+	}
+	return nil, "", fmt.Errorf("no token issuers registered")
 }
 
 // revokeAcrossIssuers asks every registered issuer to revoke the token.
@@ -490,6 +492,8 @@ func (s *Server) revokeAcrossIssuers(ctx context.Context, token string) (revoked
 // When an issuer adopts a typed sentinel (e.g. ErrUnknownToken), add
 // it here.
 
-func isUnknownTokenErr(err error) bool           { return handler.IsUnknownTokenErr(err) }
+func isUnknownTokenErr(err error) bool {
+	return errors.Is(err, core.ErrTokenValidationRejected) || handler.IsUnknownTokenErr(err)
+}
 func jwsHeaderAlg(token string) (string, bool)   { return handler.JWSHeaderAlg(token) }
 func algAllowed(alg string, allow []string) bool { return handler.AlgAllowed(alg, allow) }

@@ -33,7 +33,8 @@ func newIntrospectBatchSignedHarness(t *testing.T, signIntrospection bool, batch
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
 		ID: ibsClient, Secret: ibsSecret, Active: true,
-		AllowedAuthenticators: []string{"password"}, TokenStrategy: "jwt",
+		TokenEndpointAuthMethod: "client_secret_post",
+		AllowedAuthenticators:   []string{"password"}, TokenStrategy: "jwt",
 	})
 	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
 		func(_ context.Context, _, _ string) (*sso.AuthResult, error) {

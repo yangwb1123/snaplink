@@ -4,12 +4,68 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
+
+type failSecondFamilyDelete struct {
+	goredis.Cmdable
+	activeDeletes int
+	failed        bool
+}
+
+func (c *failSecondFamilyDelete) Del(ctx context.Context, keys ...string) *goredis.IntCmd {
+	for _, key := range keys {
+		if strings.HasPrefix(key, rtKeyPrefix) && !strings.HasPrefix(key, rtFamilyMemPrefix) {
+			if c.activeDeletes == 1 && !c.failed {
+				c.failed = true
+				return goredis.NewIntResult(0, errors.New("injected family cleanup failure"))
+			}
+			c.activeDeletes++
+		}
+	}
+	return c.Cmdable.Del(ctx, keys...)
+}
+
+func assertFamilyTokensInactive(t *testing.T, s *RefreshTokenStore, tokens ...string) {
+	t.Helper()
+	for _, token := range tokens {
+		if _, err := s.Inspect(context.Background(), token); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
+			t.Errorf("Inspect(%q) after family tombstone = %v, want not-found", token, err)
+		}
+		if _, err := s.Consume(context.Background(), token); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
+			t.Errorf("Consume(%q) after family tombstone = %v, want not-found", token, err)
+		}
+	}
+}
+
+func TestDeleteFamilyPartialCleanupKeepsRetryableTombstone(t *testing.T) {
+	_, rdb := newTestClient(t)
+	wrapped := &failSecondFamilyDelete{Cmdable: rdb}
+	s := NewRefreshTokenStore(wrapped)
+	ctx := context.Background()
+	for _, token := range []string{"presented", "sibling"} {
+		if err := s.Issue(ctx, token, newRTInfo("alice", "app", "family")); err != nil {
+			t.Fatalf("Issue(%q): %v", token, err)
+		}
+	}
+	if _, err := s.DeleteFamily(ctx, "family"); err == nil {
+		t.Fatal("DeleteFamily succeeded despite injected partial cleanup failure")
+	}
+	assertFamilyTokensInactive(t, s, "presented", "sibling")
+	if err := s.Issue(ctx, "descendant", newRTInfo("alice", "app", "family")); err == nil {
+		t.Fatal("Issue succeeded after family tombstone")
+	}
+	if n, err := s.DeleteFamily(ctx, "family"); err != nil || n != 1 {
+		t.Fatalf("retry DeleteFamily = (%d, %v), want one remaining token cleaned", n, err)
+	}
+	assertFamilyTokensInactive(t, s, "presented", "sibling")
+}
 
 // TestRefreshConsumedReplayAfterExpiryIsReuse is the BCP §4.13 regression guard:
 // a token CONSUMED (rotated) and then replayed AFTER its own expiry must STILL be

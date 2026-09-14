@@ -140,6 +140,9 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 		return nil
 	}
 	lookup := opaqueLookupKey(firstLookupKey(s.lookupHMACKeys), "refresh_token", token)
+	if info.FamilyID != "" && lookup == rtFamilyRevokedMember {
+		return errors.New("redis: reserved refresh family index member")
+	}
 	if err := s.rdb.Set(ctx, rtKey(lookup), blob, ttl).Err(); err != nil {
 		return fmt.Errorf("redis: insert refresh_token: %w", err)
 	}
@@ -156,7 +159,12 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 		// reuse-detection marker is deliberately NOT written here — it is written
 		// at Consume, so a never-consumed token leaves no marker and its post-expiry
 		// replay reads as not-found rather than a spurious family-kill (see Consume).
-		s.indexAdd(ctx, rtFamilyKey(info.FamilyID), lookup, s.familyTTL)
+		if err := s.addFamilyMember(ctx, info.FamilyID, lookup, idxTTL); err != nil {
+			_ = s.rdb.Del(ctx, rtKey(lookup)).Err()
+			_ = s.rdb.SRem(ctx, rtSubjectKey(info.UserID, info.ClientID), lookup).Err()
+			_ = s.rdb.SRem(ctx, rtClientKey(info.ClientID), lookup).Err()
+			return err
+		}
 	}
 	return nil
 }
@@ -224,42 +232,6 @@ func (s *RefreshTokenStore) consumedFamily(ctx context.Context, token string) (s
 	return "", goredis.Nil
 }
 
-// Consume keeps GETDEL as the atomic single-use gate while trying current,
-// previous, then legacy lookup identifiers.
-func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.RefreshToken, error) {
-	blob, lookup, err := s.activeBlob(ctx, token, true)
-	if errors.Is(err, goredis.Nil) {
-		fid, ferr := s.consumedFamily(ctx, token)
-		if errors.Is(ferr, goredis.Nil) {
-			return nil, oauth.ErrRefreshTokenNotFound
-		}
-		if ferr != nil {
-			return nil, fmt.Errorf("redis: family lookup: %w", ferr)
-		}
-		return &oauth.RefreshToken{FamilyID: fid}, oauth.ErrRefreshTokenReused
-	}
-	if err != nil {
-		return nil, fmt.Errorf("redis: consume refresh_token: %w", err)
-	}
-	var out oauth.RefreshToken
-	if err := json.Unmarshal(blob, &out); err != nil {
-		return nil, fmt.Errorf("redis: unmarshal refresh_token: %w", err)
-	}
-	if out.IsExpired() {
-		// Expired token was never successfully rotated; do NOT stamp a reuse marker.
-		return nil, oauth.ErrRefreshTokenNotFound
-	}
-	// Successful rotation: record that THIS token was consumed so its later replay
-	// is detected as reuse, outliving the token's own TTL by familyTTL. Best-effort
-	// (a crash before this Set degrades a later replay to not-found, never to a
-	// false single-use win — GETDEL already deleted the key). Empty FamilyID opts
-	// out of family tracking.
-	if out.FamilyID != "" {
-		_ = s.rdb.Set(ctx, rtFamilyMemKey(lookup), out.FamilyID, s.familyTTL).Err()
-	}
-	return &out, nil
-}
-
 // Inspect implements [oauth.RefreshTokenInspector] — non-destructive read.
 func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.RefreshToken, error) {
 	blob, lookup, err := s.activeBlob(ctx, token, false)
@@ -282,6 +254,13 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.R
 		// slots; the cleanup needs no cross-key atomicity (both are idempotent).
 		_ = s.rdb.Del(ctx, rtKey(lookup)).Err()
 		_ = s.rdb.Del(ctx, rtFamilyMemKey(lookup)).Err()
+		return nil, oauth.ErrRefreshTokenNotFound
+	}
+	revoked, err := s.familyRevoked(ctx, out.FamilyID)
+	if err != nil {
+		return nil, err
+	}
+	if revoked {
 		return nil, oauth.ErrRefreshTokenNotFound
 	}
 	return &out, nil
@@ -459,32 +438,6 @@ func (s *RefreshTokenStore) DeleteAllForClient(ctx context.Context, clientID str
 		return 0, nil
 	}
 	return s.deleteTokensInIndex(ctx, rtClientKey(clientID))
-}
-
-// DeleteFamily implements [oauth.RefreshTokenFamilyTracker] — kills every
-// active token sharing the FamilyID and wipes its reuse-detection
-// bookkeeping. Returns the count of ACTIVE tokens removed; already-rotated
-// tokens (membership marker present, active key gone) are bookkeeping and
-// don't add to the count. Idempotent.
-func (s *RefreshTokenStore) DeleteFamily(ctx context.Context, familyID string) (int, error) {
-	if familyID == "" {
-		return 0, nil
-	}
-	tokens, err := s.rdb.SMembers(ctx, rtFamilyKey(familyID)).Result()
-	if err != nil {
-		return 0, fmt.Errorf("redis: read family: %w", err)
-	}
-	deleted := 0
-	for _, t := range tokens {
-		n, err := s.rdb.Del(ctx, rtKey(t)).Result()
-		if err != nil {
-			return deleted, fmt.Errorf("redis: delete family token: %w", err)
-		}
-		deleted += int(n)
-		_ = s.rdb.Del(ctx, rtFamilyMemKey(t)).Err()
-	}
-	_ = s.rdb.Del(ctx, rtFamilyKey(familyID)).Err()
-	return deleted, nil
 }
 
 var (

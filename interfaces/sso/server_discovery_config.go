@@ -191,15 +191,15 @@ func (s *Server) applyClientAuthAndRequestParams(cfg *oidc.ProviderMetadata) {
 		// metadata validation.
 		"none",
 	}
-	// Introspection + revocation share the same client-auth
-	// pipeline as /token, so advertise the same list.
+	// Introspection is confidential-client-only; revocation also accepts
+	// public `none` clients. These handlers support secrets/assertions but
+	// do not verify mTLS evidence, so do not advertise certificate methods.
 	cfg.IntrospectionEndpointAuthMethodsSupported = []string{
 		"client_secret_basic", "client_secret_post", "private_key_jwt",
-		"tls_client_auth", "self_signed_tls",
 	}
 	cfg.RevocationEndpointAuthMethodsSupported = []string{
 		"client_secret_basic", "client_secret_post", "private_key_jwt",
-		"tls_client_auth", "self_signed_tls",
+		"none",
 	}
 	// RFC 9207 §3: this server always includes `iss` in
 	// authorization responses (see handleLogin + resolveIssuer).

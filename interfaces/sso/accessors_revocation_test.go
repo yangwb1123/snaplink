@@ -115,3 +115,21 @@ func TestRevokeToken_NoAuditOnCleanRevoke(t *testing.T) {
 		}
 	}
 }
+
+func TestRevokeToken_MultiAlgorithmIgnoresTypedNonOwner(t *testing.T) {
+	ed := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))
+	srv := sso.NewServer(
+		sso.WithTokenIssuer("eddsa", ed),
+		sso.WithTokenIssuer("ecdsa", defaultimpl.NewECDSAJWTIssuer()),
+		sso.WithTokenIssuer("rsa", defaultimpl.NewRSAJWTIssuer()),
+		sso.WithDefaultTokenStrategy("eddsa"),
+	)
+	tok, err := ed.Issue(context.Background(), &sso.Subject{ID: "multi-alg-user"}, nil)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	_, failed := srv.RevokeAcrossIssuers(context.Background(), tok.AccessToken)
+	if len(failed) != 0 {
+		t.Fatalf("non-owning alg validators counted as revoke failures: %v", failed)
+	}
+}

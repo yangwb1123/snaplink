@@ -320,7 +320,8 @@ type Client struct {
 	GrantTypes []string `json:"grant_types,omitempty" yaml:"grant_types,omitempty"`
 
 	// TokenEndpointAuthMethod names the RFC 7591 §2 client authentication
-	// method this client uses at /token (and /introspect, /revoke, /par).
+	// method registered for this client. Each endpoint accepts only methods
+	// it advertises in its discovery metadata.
 	// Set from DCR registration's token_endpoint_auth_method; empty means
 	// client_secret_basic (the OAuth 2.0 default). The list of accepted
 	// values mirrors the discovery doc:

@@ -2,6 +2,7 @@ package defaulttoken
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -123,7 +124,7 @@ func TestSessionTokenIssuer_IssueRequiresSubject(t *testing.T) {
 func TestSessionTokenIssuer_ValidateUnknown(t *testing.T) {
 	t.Parallel()
 	s := NewSessionTokenIssuer()
-	if _, err := s.Validate(context.Background(), "not-a-real-token"); err == nil {
+	if _, err := s.Validate(context.Background(), "not-a-real-token"); !errors.Is(err, core.ErrTokenValidationRejected) {
 		t.Error("expected error on unknown token")
 	}
 }
@@ -134,7 +135,7 @@ func TestSessionTokenIssuer_ExpiredTokenDeleted(t *testing.T) {
 	s := NewSessionTokenIssuer(WithSessionTokenTTL(time.Nanosecond))
 	tok, _ := s.Issue(context.Background(), &core.Subject{ID: "u"}, nil)
 	time.Sleep(2 * time.Millisecond)
-	if _, err := s.Validate(context.Background(), tok.AccessToken); err == nil || !strings.Contains(err.Error(), "expired") {
+	if _, err := s.Validate(context.Background(), tok.AccessToken); !errors.Is(err, core.ErrTokenValidationRejected) || !strings.Contains(err.Error(), "expired") {
 		t.Errorf("err = %v, want expired", err)
 	}
 	// Expired-token Validate also deletes — second Validate must say "invalid".

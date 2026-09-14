@@ -244,7 +244,11 @@ type SessionTenantLister interface {
 // TokenIssuer handles token lifecycle: issuance, validation, and revocation.
 type TokenIssuer interface {
 	Issue(ctx context.Context, subject *Subject, scopes []string) (*Token, error)
+	// Validate wraps ErrTokenValidationRejected for malformed, unknown,
+	// expired, or revoked tokens; backend/configuration failures stay unmarked.
 	Validate(ctx context.Context, token string) (*TokenClaims, error)
+	// Revoke may return ErrTokenValidationRejected when this issuer did not own
+	// the token; cross-issuer revocation treats that outcome as a no-op.
 	Revoke(ctx context.Context, token string) error
 }
 

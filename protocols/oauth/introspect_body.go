@@ -1,12 +1,37 @@
 package oauth
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/platform/geo"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
+
+func unmarshalCredentialJSON(data []byte, target any) (bool, error) {
+	if err := json.Unmarshal(data, target); err != nil {
+		return false, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return false, err
+	}
+	_, secretPresent := fields["client_secret"]
+	return secretPresent, nil
+}
+
+func (r *introspectRequest) UnmarshalJSON(data []byte) error {
+	type plain introspectRequest
+	var decoded plain
+	secretPresent, err := unmarshalCredentialJSON(data, &decoded)
+	if err != nil {
+		return err
+	}
+	*r = introspectRequest(decoded)
+	r.bodySecretPresent = secretPresent
+	return nil
+}
 
 // recordIntrospectionUsage Offers a token-usage telemetry event for an
 // ACTIVE access-token introspection. Off the request hot path: Offer never
@@ -48,11 +73,12 @@ func populateIntrospectionConfirmation(body map[string]any, claims *core.TokenCl
 	}
 }
 
-// populateIntrospectionServingRegion echoes the token's mint region (RFC
-// 7662 extension, same discipline as client_id/jti/sid). Provenance of the
-// token, NOT the calling RS's region — deliberately ungated, like the rest
-// of introspection.
-func populateIntrospectionServingRegion(body map[string]any, claims *core.TokenClaims) {
+// populateIntrospectionProvenance echoes tenant and region claims from the
+// verified token, never from the introspecting resource server's request.
+func populateIntrospectionProvenance(body map[string]any, claims *core.TokenClaims) {
+	if claims.TenantID != "" {
+		body[core.KeyTenantID] = claims.TenantID
+	}
 	if claims.ServingRegion != "" {
 		body[core.KeyServingRegion] = claims.ServingRegion
 	}
@@ -107,10 +133,7 @@ func populateAccessIntrospectionBody(body map[string]any, claims *core.TokenClai
 	populateIntrospectionSID(body, claims)
 	// RFC 7662 §2.2: echo the sender-constraint confirmation.
 	populateIntrospectionConfirmation(body, claims)
-	// Mint-region provenance: the region that ISSUED the token (not the
-	// calling RS's) — the RS gate reads it for region-constrained
-	// deployments.
-	populateIntrospectionServingRegion(body, claims)
+	populateIntrospectionProvenance(body, claims)
 }
 
 // introspectSessionActive checks whether the session identified by claims.SID

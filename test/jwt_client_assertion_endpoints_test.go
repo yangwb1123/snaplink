@@ -44,9 +44,10 @@ func newJCAEPHarness(t *testing.T) *jcaEPHarness {
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
 		ID: jcaEPClientID, Active: true,
-		AllowedAuthenticators: []string{"password"},
-		TokenStrategy:         "jwt",
-		RedirectURIs:          []string{jcaEPRedirect},
+		TokenEndpointAuthMethod: "private_key_jwt",
+		AllowedAuthenticators:   []string{"password"},
+		TokenStrategy:           "jwt",
+		RedirectURIs:            []string{jcaEPRedirect},
 		JWKS: []sso.JWK{{
 			Kty: "OKP", Crv: "Ed25519",
 			Kid: jcaEPKid, Alg: "EdDSA", Use: "sig",
