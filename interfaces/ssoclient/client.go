@@ -25,6 +25,17 @@ type AuthClient interface {
 	Logout(ctx context.Context, req *LogoutRequest) error
 }
 
+// TokenClient acquires OAuth tokens without making each App reimplement
+// PKCE generation and token-endpoint wire handling. Browser redirects and
+// PKCE verifier storage remain owned by the App.
+type TokenClient interface {
+	GeneratePKCE() (verifier, challenge string, err error)
+	AuthorizationCodeURL(state string, scopes ...string) (target, verifier string, err error)
+	ExchangeCode(ctx context.Context, code, verifier string) (*TokenResponse, error)
+	Refresh(ctx context.Context, refreshToken string) (*TokenResponse, error)
+	ClientCredentials(ctx context.Context, scopes ...string) (*TokenResponse, error)
+}
+
 // AuthzClient answers authorization questions. Each method takes a
 // subjectID + clientID pair so the same user can see different surfaces in
 // different Apps — matching the per-App policy already in the SDK.

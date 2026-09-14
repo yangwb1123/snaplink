@@ -44,7 +44,12 @@ def run() -> int:
     )
     for line in result.stdout.strip().split("\n"):
         parts = line.strip().split()
-        if len(parts) == 2 and parts[0].isdigit() and int(parts[0]) > 2000:
+        if (
+            len(parts) == 2
+            and parts[1] != "total"
+            and parts[0].isdigit()
+            and int(parts[0]) > 2000
+        ):
             pc(f"Files >2000 lines: {parts[1]}")
 
     print("\n--- 2. Test Coverage ---")

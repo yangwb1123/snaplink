@@ -9,7 +9,6 @@ import (
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/protocols/oauth/txntoken"
-	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
@@ -199,7 +198,10 @@ func TestHandleGrant_InvalidSubjectTokenIsInvalidGrant(t *testing.T) {
 func TestHandleGrant_IDTokenDeclaredAsAccessTokenIsInvalidGrant(t *testing.T) {
 	signer, iss := newTestIssuer(t)
 	deps := newTestDeps(signer)
-	idToken, err := signer.IssueIDToken(context.Background(), &oidc.IDTokenRequest{Subject: "alice", Audience: "svc"})
+	idToken, err := signer.SignJWT(context.Background(), "JWT", map[string]any{
+		"sub": "alice",
+		"aud": "svc",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

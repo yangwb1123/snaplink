@@ -43,40 +43,45 @@ var (
 // surfaces Version="(devel)" without VCS fields, which operators
 // can still read as a meaningful "this is a dev build" signal.
 func ReadBuildInfo() BuildInfo {
-	buildInfoOnce.Do(func() {
-		buildInfoVal = BuildInfo{
-			Version:     BuildVersion,
-			VCSRevision: GitHash,
-			BuildTime:   BuildTime,
-			VCSModified: BuildModified == "true",
-		}
-		info, ok := debug.ReadBuildInfo()
-		if !ok {
-			if buildInfoVal.Version == "" {
-				buildInfoVal.Version = "(unknown)"
-			}
-			return
-		}
-		if buildInfoVal.Version == "" {
-			buildInfoVal.Version = info.Main.Version
-		}
-		if buildInfoVal.Version == "" {
-			buildInfoVal.Version = "(devel)"
-		}
-		for _, s := range info.Settings {
-			switch s.Key {
-			case "vcs.revision":
-				if buildInfoVal.VCSRevision == "" {
-					buildInfoVal.VCSRevision = s.Value
-				}
-			case "vcs.time":
-				buildInfoVal.VCSTime = s.Value
-			case "vcs.modified":
-				if BuildModified == "" {
-					buildInfoVal.VCSModified = s.Value == "true"
-				}
-			}
-		}
-	})
+	buildInfoOnce.Do(func() { buildInfoVal = loadBuildInfo() })
 	return buildInfoVal
+}
+
+func loadBuildInfo() BuildInfo {
+	result := BuildInfo{
+		Version: BuildVersion, VCSRevision: GitHash,
+		BuildTime: BuildTime, VCSModified: BuildModified == "true",
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		if result.Version == "" {
+			result.Version = "(unknown)"
+		}
+		return result
+	}
+	if result.Version == "" {
+		result.Version = info.Main.Version
+	}
+	if result.Version == "" {
+		result.Version = "(devel)"
+	}
+	for _, setting := range info.Settings {
+		applyBuildSetting(&result, setting)
+	}
+	return result
+}
+
+func applyBuildSetting(info *BuildInfo, setting debug.BuildSetting) {
+	switch setting.Key {
+	case "vcs.revision":
+		if info.VCSRevision == "" {
+			info.VCSRevision = setting.Value
+		}
+	case "vcs.time":
+		info.VCSTime = setting.Value
+	case "vcs.modified":
+		if BuildModified == "" {
+			info.VCSModified = setting.Value == "true"
+		}
+	}
 }
