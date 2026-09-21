@@ -648,6 +648,29 @@ clients:
     token_strategy: jwt
     active: true
 
+  # sverp-vault-dev: 本机开发 — sverpweb-stable 以 client_credentials 访问 aero-vault
+  # （仅限本机 dev 环境；生产必须走正式注册与密钥轮换）
+  - id: sverp-vault-dev
+    secret: hpEs3TGyIn5DzpQrkfyHoAKQJPsIZnCMljGHNQcm
+    name: SVERP Vault Local Dev
+    redirect_uris: []
+    allowed_scopes: [read, write, admin]
+    token_strategy: jwt
+    active: true
+
+  # sverp-audit-dev: 本机开发 — sverpweb-stable 以 client_credentials 投递审计事件
+  - id: sverp-audit-dev
+    secret: 8xMaDkgrLY47LUdnOvMwD9NYvoq8tIEubc5bSsLn
+    name: SVERP Audit Local Dev
+    redirect_uris: []
+    # RFC 8707: audit-governance 校验 aud，稳定值由 resource 指示器携带
+    allowed_resources: [sverp-audit]
+    allowed_scopes: [audit:event:read, audit:event:write, audit:policy:write, audit:platform:cross_tenant]
+    # 审计读取需要租户上下文；dev 客户端绑定到本机单租户
+    tenant_id: sverpweb-stable
+    token_strategy: jwt
+    active: true
+
   # service-app: machine-to-machine — JWT, only key-based auth
   - id: service-app
     secret: service-secret
