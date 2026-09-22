@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-yaml"
 )
@@ -105,6 +106,12 @@ func TestDistributedForgeClientGrantProfiles(t *testing.T) {
 	}
 	if want := []string{"authorization_code", "refresh_token"}; !slices.Equal(console.GrantTypes, want) {
 		t.Errorf("forge-console grant_types = %v, want unchanged %v", console.GrantTypes, want)
+	}
+	if got := cfg.OAuth.RefreshToken.RotationGraceWindow; got != 5*time.Second {
+		t.Errorf("distributed refresh rotation grace window = %s, want 5s", got)
+	}
+	if got := cfg.OAuth.RefreshToken.RotationGraceBackend; got != "redis" {
+		t.Errorf("distributed refresh rotation grace backend = %q, want redis", got)
 	}
 }
 

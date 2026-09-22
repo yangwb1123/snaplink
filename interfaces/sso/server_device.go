@@ -293,8 +293,14 @@ func (s *Server) applyDeviceDecision(ctx HandlerContext, dc *oauth.DeviceCode, c
 		provider = attrProvider
 	}
 	if approve {
+		// Store the local subject so token issuance applies the target sector once.
+		localSub, err := s.resolveLocalSubject(ctx.Request().Context(), claims.Subject)
+		if err != nil || localSub == "" {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidToken))
+			return false
+		}
 		if err := s.deviceCodeStore.Approve(ctx.Request().Context(),
-			dc.UserCode, claims.Subject, provider, claims.Extra); err != nil {
+			dc.UserCode, localSub, provider, claims.Extra); err != nil {
 			ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidGrant))
 			return false
 		}

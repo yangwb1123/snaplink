@@ -71,6 +71,8 @@ oauth:
   refresh_token:
     enabled: true
     ttl: 720h
+    rotation_grace_window: 5s # make immediate double-submit idempotent after a lost response
+    rotation_grace_backend: redis # shared across replicas because oauth.backend=redis
   device_code:
     enabled: true       # shared across replicas through oauth.backend=redis
     ttl: 10m
