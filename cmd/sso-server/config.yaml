@@ -402,6 +402,16 @@ permissions:
               path: /prod/schedule/statistics
               icon: list
               permission: aps:schedule:read
+            - id: aps/setting
+              name: 生产排程设置
+              path: /prod/schedule/setting
+              icon: settings
+              permission: aps:schedule:settings:read
+            - id: aps/feasibility
+              name: 生产可行性看板
+              path: /prod/schedule/feasibility
+              icon: alert
+              permission: aps:schedule:read
         - id: erp
           name: ERP
           path: /erp
