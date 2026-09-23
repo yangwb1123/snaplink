@@ -27,10 +27,15 @@ type Request struct {
 	ResponseMode         string            `json:"response_mode"`
 	ACRValues            string            `json:"acr_values"`
 	UILocales            string            `json:"ui_locales"`
-	Claims               json.RawMessage   `json:"claims,omitempty"`
-	ConsentChallengeID   string            `json:"consent_challenge_id"`
-	ConsentDecision      string            `json:"consent_decision"`
-	LoginTransactionID   string            `json:"login_transaction_id"`
+	// Presentation preferences are optional, low-risk hints emitted by the
+	// hosted login UI after an explicit user selection. They are persisted only
+	// after authentication and are never authorization or tenant-context inputs.
+	PresentationLocale    string          `json:"presentation_locale,omitempty"`
+	PresentationThemeMode string          `json:"presentation_theme_mode,omitempty"`
+	Claims                json.RawMessage `json:"claims,omitempty"`
+	ConsentChallengeID    string          `json:"consent_challenge_id"`
+	ConsentDecision       string          `json:"consent_decision"`
+	LoginTransactionID    string          `json:"login_transaction_id"`
 
 	// DeviceToken is the opaque "remember this device" grant minted by a
 	// prior POST /me/trusted-devices/trust (core.TrustedDeviceStore). When the

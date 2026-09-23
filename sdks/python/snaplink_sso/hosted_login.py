@@ -355,6 +355,7 @@ def _build_login_url(
         "client_id", "redirect_uri", "response_type", "response_mode", "scope", "state",
         "code_challenge", "code_challenge_method", "resource", "prompt", "max_age",
         "login_hint", "acr_values", "ui_locales",
+        "presentation_locale", "presentation_theme_mode",
     }
     query = [(key, value) for key, value in query if key not in managed]
     scopes = options.get("scope") or ["openid", "profile", "email"]
@@ -374,7 +375,9 @@ def _build_login_url(
     ])
     for key, value in (("prompt", options.get("prompt")), ("login_hint", options.get("login_hint")),
                        ("max_age", options.get("max_age")), ("acr_values", options.get("acr_values")),
-                       ("ui_locales", options.get("ui_locales"))):
+                       ("ui_locales", options.get("ui_locales")),
+                       ("presentation_locale", options.get("presentation_locale")),
+                       ("presentation_theme_mode", options.get("presentation_theme_mode"))):
         if value is not None:
             query.append((key, _space_values(value, key)))
     resources = options.get("resource") or []

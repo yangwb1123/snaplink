@@ -32,9 +32,11 @@ func bindLoginRequestFromQuery(r *http.Request) (login.Request, error) {
 		Prompt: q.Get("prompt"), IDTokenHint: q.Get("id_token_hint"),
 		LoginHint: q.Get("login_hint"), ResponseMode: q.Get("response_mode"),
 		ACRValues: q.Get("acr_values"), UILocales: q.Get("ui_locales"),
-		AuthorizationDetails: rawQueryJSON(q.Get("authorization_details")),
-		Claims:               rawQueryJSON(q.Get("claims")),
-		Scope:                strings.Fields(q.Get("scope")), Resource: queryFieldValues(q["resource"]),
+		PresentationLocale:    q.Get("presentation_locale"),
+		PresentationThemeMode: q.Get("presentation_theme_mode"),
+		AuthorizationDetails:  rawQueryJSON(q.Get("authorization_details")),
+		Claims:                rawQueryJSON(q.Get("claims")),
+		Scope:                 strings.Fields(q.Get("scope")), Resource: queryFieldValues(q["resource"]),
 	}
 	maxAge, err := parseLoginMaxAge(q.Get("max_age"))
 	req.MaxAge = maxAge

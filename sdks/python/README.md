@@ -47,3 +47,18 @@ and limits; credentials are never placed in URLs or OAuth state.
 For trusted local-network development only, set
 `allow_insecure_http_for_development: True`; production integrations must use
 HTTPS.
+
+For shared presentation settings, wrap the generated client with
+`SnaplinkUserPreferencesClient`. It exposes `locale` and `theme_mode`, keeps
+`sverp:theme_mode` inside the SDK, and does not own application storage:
+
+```python
+from snaplink_sso import (
+    PresentationPreferencesPatch,
+    SnaplinkUserPreferencesClient,
+)
+
+preferences = SnaplinkUserPreferencesClient(client)
+current = preferences.get_my_preferences()
+preferences.update_my_preferences(PresentationPreferencesPatch(theme_mode="dark"))
+```

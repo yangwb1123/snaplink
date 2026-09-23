@@ -940,6 +940,8 @@ export interface IntrospectResponse {
   renew_after?: number;
   scope?: string;
   sub?: string;
+  /** Verified tenant claim from an active access token; absent when the token has no tenant binding. */
+  tenant_id?: string;
   token_type?: string;
   username?: string;
 }
@@ -1069,6 +1071,10 @@ export interface LoginRequest {
   device_token?: string;
   /** OIDC nonce bound to a subsequently issued ID token. */
   nonce?: string;
+  /** Optional hosted-login UI hint. It is persisted as the authenticated */
+  presentation_locale?: string;
+  /** Optional hosted-login UI hint persisted as */
+  presentation_theme_mode?: "light" | "dark" | "auto";
   /** Authenticator name; omit for discovery. */
   provider?: string;
   /** Registered redirect URI bound to the authorization code. */

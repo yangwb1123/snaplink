@@ -45,6 +45,11 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.R
 	// member, so federated users appear in their org without manual invitation.
 	// Fail-open + best-effort — never blocks login.
 	s.ensureJITMembership(ctx, client, result.UserID)
+	// Apply only the explicitly changed, allowlisted values from the hosted
+	// login page. This is deliberately after authentication and consent, so an
+	// unauthenticated caller cannot write a user preference and a denied OAuth
+	// request does not create a preference side effect.
+	s.applyLoginPresentationPreferences(ctx, result, req, client.ID)
 	s.finishLoginDispatch(ctx, result, &req, client, state)
 }
 

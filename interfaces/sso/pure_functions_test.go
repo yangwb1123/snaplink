@@ -129,6 +129,56 @@ func TestLoginUsedPAR(t *testing.T) {
 	}
 }
 
+func TestStoredPresentationPreferencesSurviveFederatedProfileMerge(t *testing.T) {
+	t.Parallel()
+	got := mergeStoredPresentationPreferences(
+		map[string]string{"email": "alice@example.com", "locale": "en-US"},
+		map[string]string{
+			"locale":           "zh-CN",
+			"sverp:theme_mode": "dark",
+			"password_hash":    "must-not-be-merged",
+		},
+	)
+	if got["locale"] != "zh-CN" || got["sverp:theme_mode"] != "dark" {
+		t.Fatalf("stored presentation preferences not preserved: %v", got)
+	}
+	if _, leaked := got["password_hash"]; leaked {
+		t.Fatalf("credential attribute was merged: %v", got)
+	}
+}
+
+func TestLoginPresentationPreferencesAreAllowlisted(t *testing.T) {
+	t.Parallel()
+	got := validLoginPresentationPreferences(login.Request{
+		PresentationLocale:    "en-US",
+		PresentationThemeMode: "light",
+	})
+	if got["locale"] != "en-US" || got["sverp:theme_mode"] != "light" {
+		t.Fatalf("valid presentation preferences = %v", got)
+	}
+	for _, tc := range []login.Request{
+		{PresentationLocale: "not a locale"},
+		{PresentationLocale: "en--US"},
+		{PresentationThemeMode: "system"},
+	} {
+		if got := validLoginPresentationPreferences(tc); len(got) != 0 {
+			t.Errorf("invalid presentation request %v was accepted as %v", tc, got)
+		}
+	}
+}
+
+func TestBindLoginRequestFromQueryCarriesPresentationHints(t *testing.T) {
+	t.Parallel()
+	req, err := bindLoginRequestFromQuery(httptest.NewRequest(http.MethodGet,
+		"/auth/login?client_id=app&presentation_locale=en-US&presentation_theme_mode=light", nil))
+	if err != nil {
+		t.Fatalf("bindLoginRequestFromQuery: %v", err)
+	}
+	if req.PresentationLocale != "en-US" || req.PresentationThemeMode != "light" {
+		t.Fatalf("presentation hints = %#v", req)
+	}
+}
+
 func TestIsSecureRedirectURI(t *testing.T) {
 	t.Parallel()
 
