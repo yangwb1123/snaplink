@@ -4,9 +4,9 @@ export type PresentationThemeMode = "light" | "dark" | "auto";
 /**
  * Application-facing presentation preferences.
  *
- * The wire key `sverp:theme_mode` deliberately does not appear here. Keep
- * protocol naming and application naming separate; the adapter below owns
- * that compatibility mapping.
+ * Wire keys deliberately do not appear here. The adapter owns the
+ * application-neutral `theme_mode` mapping and its legacy
+ * `sverp:theme_mode` fallback.
  */
 export interface PresentationPreferences {
     locale?: string;

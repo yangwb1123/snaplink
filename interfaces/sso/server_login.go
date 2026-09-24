@@ -4,15 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/yangwb1123/snaplink/internal/auth/login"
 	"github.com/yangwb1123/snaplink/internal/handler"
-	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -490,99 +487,10 @@ func (s *Server) upsertLoginUser(ctx HandlerContext, result *AuthResult, state s
 	return false
 }
 
-// applyLoginPresentationPreferences persists only the two presentation hints
-// emitted by the hosted login page. The values are intentionally validated
-// here, after the user has authenticated and any consent gate has passed: the
-// fields are UX state, not OAuth authorization inputs, and must never become a
-// way to mutate an arbitrary account.
-func (s *Server) applyLoginPresentationPreferences(
-	ctx HandlerContext,
-	result *AuthResult,
-	req login.Request,
-	clientID string,
-) {
-	if s.userProvider == nil {
-		return
-	}
-	preferences := validLoginPresentationPreferences(req)
-	if len(preferences) == 0 {
-		return
-	}
-	user, err := s.userProvider.GetByID(ctx.Request().Context(), result.UserID)
-	if err != nil || user == nil {
-		s.logger.Error("failed to load user presentation preferences", "user", result.UserID, "error", err)
-		return
-	}
-	if user.Attributes == nil {
-		user.Attributes = make(map[string]string, len(preferences))
-	}
-	changed := make([]string, 0, len(preferences))
-	for key, value := range preferences {
-		if user.Attributes[key] == value {
-			continue
-		}
-		user.Attributes[key] = value
-		changed = append(changed, key)
-	}
-	if len(changed) == 0 {
-		return
-	}
-	sort.Strings(changed)
-	if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
-		s.logger.Error("failed to persist user presentation preferences", "user", result.UserID, "error", err)
-		return
-	}
-	// These values are persisted user presentation state only; they do not
-	// grant authorization or alter tenant context. Any ordinary profile claim
-	// projection remains governed by the existing OIDC scope/claims rules.
-	if s.auditor != nil {
-		event := &audit.Event{
-			Type:     audit.EventUserPrefsUpdated,
-			Outcome:  audit.OutcomeSuccess,
-			ActorID:  result.UserID,
-			ClientID: clientID,
-			ActorIP:  audit.ClientIP(ctx.Request()),
-		}
-		audit.SetMeta(event, "source", "hosted_login")
-		audit.SetMeta(event, "changed_fields", strings.Join(changed, ","))
-		s.auditor.Record(ctx.Request().Context(), event)
-	}
-}
-
-func mergeStoredPresentationPreferences(
-	current, stored map[string]string,
-) map[string]string {
-	if current == nil {
-		return stored
-	}
-	merged := make(map[string]string, len(current)+2)
-	for key, value := range current {
-		merged[key] = value
-	}
-	if locale := strings.TrimSpace(stored["locale"]); validPresentationLocale(locale) {
-		merged["locale"] = locale
-	}
-	if theme := strings.TrimSpace(stored["sverp:theme_mode"]); theme == "light" || theme == "dark" || theme == "auto" {
-		merged["sverp:theme_mode"] = theme
-	}
-	return merged
-}
-
-func validLoginPresentationPreferences(req login.Request) map[string]string {
-	preferences := make(map[string]string, 2)
-	if locale := strings.TrimSpace(req.PresentationLocale); validPresentationLocale(locale) {
-		preferences["locale"] = locale
-	}
-	if theme := strings.TrimSpace(req.PresentationThemeMode); theme == "light" || theme == "dark" || theme == "auto" {
-		preferences["sverp:theme_mode"] = theme
-	}
-	return preferences
-}
-
-var loginPresentationLocalePattern = regexp.MustCompile(
-	`^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$`,
-)
-
-func validPresentationLocale(value string) bool {
-	return len(value) <= 32 && loginPresentationLocalePattern.MatchString(value)
+// recordCodeFlowSuccess persists the login-success audit row (with the
+// canonical session ID when the login carried one) and renders the code
+// response. The code-flow branch mints no token until a later /token exchange.
+func (s *Server) recordCodeFlowSuccess(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, code, sessionID string) {
+	s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, sessionID, nil)
+	s.renderAuthCodeResponse(ctx, req, client, code, sessionID)
 }

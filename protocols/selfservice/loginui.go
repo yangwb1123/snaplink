@@ -42,6 +42,14 @@ func HandleLoginUIMetadata(d Deps, ctx core.HandlerContext) {
 	ctx.JSON(http.StatusOK, meta)
 }
 
+const (
+	// ThemeModePreferenceKey is the application-neutral wire key for the
+	// shared presentation theme. The legacy SVERP key remains accepted and
+	// mirrored below so existing clients keep working during migration.
+	ThemeModePreferenceKey       = core.PreferenceThemeModeKey
+	legacyThemeModePreferenceKey = core.LegacyThemeModePreferenceKey
+)
+
 // preferenceValidators allowlists the keys a bearer may read/write via
 // /me/preferences. DEFAULT-DENY: User.Attributes is a shared bag that also
 // carries credential material (password_hash*, seeded_password, scim:* and
@@ -69,22 +77,29 @@ var preferenceValidators = map[string]func(string) bool{
 		}
 		return true
 	},
-	"sverp:theme_mode": func(v string) bool {
-		switch v {
-		case "light", "dark", "auto":
-			return true
-		}
-		return false
-	},
+	ThemeModePreferenceKey:       validThemeMode,
+	legacyThemeModePreferenceKey: validThemeMode,
 }
 
-// preferenceOrder keeps GET responses deterministic.
-var preferenceOrder = []string{"locale", "zoneinfo", "sverp:theme_mode"}
+func validThemeMode(value string) bool {
+	switch value {
+	case "light", "dark", "auto":
+		return true
+	default:
+		return false
+	}
+}
+
+// preferenceOrder keeps GET responses deterministic. Both theme keys are
+// emitted with the same resolved value for wire compatibility; SDK callers
+// should use the application-facing themeMode field instead of either key.
+var preferenceOrder = []string{"locale", "zoneinfo", ThemeModePreferenceKey, legacyThemeModePreferenceKey}
 
 // HandleMyPreferencesGet serves GET /me/preferences — the bearer's
-// allowlisted preferences (locale / zoneinfo / sverp:theme_mode) from
-// User.Attributes. Absent keys are omitted; unknown/unreleasable keys are
-// never returned (default-deny, see preferenceValidators).
+// allowlisted preferences (locale / zoneinfo / theme_mode) from
+// User.Attributes. The legacy sverp:theme_mode alias is mirrored for old
+// clients. Absent keys are omitted; unknown/unreleasable keys are never
+// returned (default-deny, see preferenceValidators).
 func HandleMyPreferencesGet(d Deps, ctx core.HandlerContext, userID string) {
 	middleware.TokenNoStoreHeaders(ctx)
 	rctx := ctx.Request().Context()
@@ -96,12 +111,18 @@ func HandleMyPreferencesGet(d Deps, ctx core.HandlerContext, userID string) {
 	}
 	out := make(map[string]string, len(preferenceOrder))
 	for _, key := range preferenceOrder {
-		if _, release := preferenceValidators[key]; !release {
+		if key == ThemeModePreferenceKey || key == legacyThemeModePreferenceKey {
 			continue
 		}
 		if v := user.Attributes[key]; v != "" && preferenceValidators[key](v) {
 			out[key] = v
 		}
+	}
+	if theme := resolvedThemeMode(user.Attributes); theme != "" {
+		// Return both aliases during the compatibility window. New SDKs read
+		// theme_mode; old SVERP clients still read sverp:theme_mode.
+		out[ThemeModePreferenceKey] = theme
+		out[legacyThemeModePreferenceKey] = theme
 	}
 	ctx.JSON(http.StatusOK, out)
 }
@@ -109,11 +130,12 @@ func HandleMyPreferencesGet(d Deps, ctx core.HandlerContext, userID string) {
 // HandleMyPreferencesPut serves PUT /me/preferences — merges allowlisted
 // preference keys into the bearer's attributes. Body:
 //
-//	{"locale": "zh-CN", "sverp:theme_mode": "dark"}
+//	{"locale": "zh-CN", "theme_mode": "dark"}
 //
-// Unknown keys are rejected with 400 (fail-closed: a typo must not silently
+// The legacy `sverp:theme_mode` alias is accepted for older callers. Unknown
+// keys are rejected with 400 (fail-closed: a typo must not silently
 // write a stray attribute). Values are validated per-key. A key explicitly
-// set to "" is removed.
+// set to "" is removed. The two theme aliases are updated atomically.
 func HandleMyPreferencesPut(d Deps, ctx core.HandlerContext, userID string) {
 	middleware.TokenNoStoreHeaders(ctx)
 	req, ok := bindPreferenceRequest(ctx)
@@ -178,6 +200,12 @@ func validPreferenceRequest(req map[string]string) bool {
 			return false
 		}
 	}
+	if generic, ok := req[ThemeModePreferenceKey]; ok {
+		if legacy, legacyOK := req[legacyThemeModePreferenceKey]; legacyOK &&
+			strings.TrimSpace(generic) != strings.TrimSpace(legacy) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -188,6 +216,12 @@ func mergePreferences(user *core.User, req map[string]string) bool {
 	changed := false
 	for key, value := range req {
 		value = strings.TrimSpace(value)
+		if key == ThemeModePreferenceKey || key == legacyThemeModePreferenceKey {
+			if mergeThemeMode(user.Attributes, value) {
+				changed = true
+			}
+			continue
+		}
 		current := user.Attributes[key]
 		if value == "" {
 			if current != "" {
@@ -202,4 +236,39 @@ func mergePreferences(user *core.User, req map[string]string) bool {
 		}
 	}
 	return changed
+}
+
+func mergeThemeMode(attributes map[string]string, value string) bool {
+	changed := false
+	for _, key := range []string{ThemeModePreferenceKey, legacyThemeModePreferenceKey} {
+		if value == "" {
+			if _, exists := attributes[key]; exists {
+				delete(attributes, key)
+				changed = true
+			}
+			continue
+		}
+		if attributes[key] != value {
+			attributes[key] = value
+			changed = true
+		}
+	}
+	return changed
+}
+
+func resolvedThemeMode(attributes map[string]string) string {
+	generic := strings.TrimSpace(attributes[ThemeModePreferenceKey])
+	legacy := strings.TrimSpace(attributes[legacyThemeModePreferenceKey])
+	genericValid := validThemeMode(generic)
+	legacyValid := validThemeMode(legacy)
+	if genericValid && legacyValid && generic != legacy {
+		return ""
+	}
+	if genericValid {
+		return generic
+	}
+	if legacyValid {
+		return legacy
+	}
+	return ""
 }

@@ -139,7 +139,7 @@ func TestStoredPresentationPreferencesSurviveFederatedProfileMerge(t *testing.T)
 			"password_hash":    "must-not-be-merged",
 		},
 	)
-	if got["locale"] != "zh-CN" || got["sverp:theme_mode"] != "dark" {
+	if got["locale"] != "zh-CN" || got["theme_mode"] != "dark" || got["sverp:theme_mode"] != "dark" {
 		t.Fatalf("stored presentation preferences not preserved: %v", got)
 	}
 	if _, leaked := got["password_hash"]; leaked {
@@ -164,6 +164,23 @@ func TestLoginPresentationPreferencesAreAllowlisted(t *testing.T) {
 		if got := validLoginPresentationPreferences(tc); len(got) != 0 {
 			t.Errorf("invalid presentation request %v was accepted as %v", tc, got)
 		}
+	}
+}
+
+func TestStoredPresentationPreferencesRejectConflictingThemeAliases(t *testing.T) {
+	t.Parallel()
+	got := mergeStoredPresentationPreferences(
+		map[string]string{"email": "alice@example.com"},
+		map[string]string{
+			core.PreferenceThemeModeKey:       "dark",
+			core.LegacyThemeModePreferenceKey: "light",
+		},
+	)
+	if _, ok := got[core.PreferenceThemeModeKey]; ok {
+		t.Fatalf("conflicting generic theme was merged: %v", got)
+	}
+	if _, ok := got[core.LegacyThemeModePreferenceKey]; ok {
+		t.Fatalf("conflicting legacy theme was merged: %v", got)
 	}
 }
 

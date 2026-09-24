@@ -11,7 +11,7 @@ class FakeClient:
         self.body = None
 
     def get_my_preferences(self):
-        return {"locale": "zh-CN", "sverp:theme_mode": "dark"}
+        return {"locale": "zh-CN", "theme_mode": "dark"}
 
     def put_my_preferences(self, body):
         self.body = body
@@ -27,7 +27,29 @@ def test_preferences_facade_maps_wire_keys():
     assert client.update_my_preferences(
         PresentationPreferencesPatch(locale="en-US", theme_mode="light")
     ) == {"status": "ok"}
-    assert raw.body == {"locale": "en-US", "sverp:theme_mode": "light"}
+    assert raw.body == {"locale": "en-US", "theme_mode": "light"}
+
+
+def test_preferences_facade_reads_legacy_theme_key():
+    raw = FakeClient()
+    raw.get_my_preferences = lambda: {"sverp:theme_mode": "auto"}
+    client = SnaplinkUserPreferencesClient(raw)
+    assert client.get_my_preferences().theme_mode == "auto"
+
+
+def test_preferences_facade_rejects_conflicting_theme_aliases():
+    raw = FakeClient()
+    raw.get_my_preferences = lambda: {
+        "theme_mode": "dark",
+        "sverp:theme_mode": "light",
+    }
+    client = SnaplinkUserPreferencesClient(raw)
+    try:
+        client.get_my_preferences()
+    except ValueError as exc:
+        assert str(exc) == "conflicting theme preference aliases"
+    else:
+        raise AssertionError("conflicting theme aliases must be rejected")
 
 
 def test_login_handoff_only_contains_explicit_values():

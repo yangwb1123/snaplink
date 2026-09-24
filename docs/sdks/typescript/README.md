@@ -149,9 +149,12 @@ The authorization transaction expires after ten minutes by default.
 ### Shared presentation preferences
 
 `SnaplinkUserPreferencesClient` exposes application-facing `locale` and
-`themeMode` fields while keeping the server compatibility key
-`sverp:theme_mode` inside the SDK. Applications own UI state and local storage;
-the SDK only validates and serializes protocol calls.
+`themeMode` fields while keeping the server wire keys inside the SDK. New
+clients use the application-neutral `theme_mode` key; responses containing the
+legacy `sverp:theme_mode` key remain readable during migration. The server still
+accepts the alias for older callers. Applications
+own UI state and local storage; the SDK only validates and serializes protocol
+calls.
 
 ```ts
 import {

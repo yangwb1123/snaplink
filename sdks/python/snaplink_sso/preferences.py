@@ -53,11 +53,24 @@ def from_my_preferences(value: Mapping[str, Any]) -> PresentationPreferences:
             raise ValueError("locale must be a string")
         _validate_locale(locale, allow_empty=False)
 
-    theme_mode = value.get("sverp:theme_mode")
-    if theme_mode is not None:
-        if not isinstance(theme_mode, str):
-            raise ValueError("theme_mode must be a string")
-        _validate_theme(theme_mode, allow_empty=False)
+    generic_theme_mode = value.get("theme_mode")
+    legacy_theme_mode = value.get("sverp:theme_mode")
+    for theme_value in (generic_theme_mode, legacy_theme_mode):
+        if theme_value is not None:
+            if not isinstance(theme_value, str):
+                raise ValueError("theme_mode must be a string")
+            _validate_theme(theme_value, allow_empty=False)
+    if (
+        generic_theme_mode is not None
+        and legacy_theme_mode is not None
+        and generic_theme_mode != legacy_theme_mode
+    ):
+        raise ValueError("conflicting theme preference aliases")
+    theme_mode = (
+        generic_theme_mode
+        if generic_theme_mode is not None
+        else legacy_theme_mode
+    )
 
     return PresentationPreferences(locale=locale, theme_mode=theme_mode)
 
@@ -73,7 +86,7 @@ def to_my_preferences_update_request(
         result["locale"] = value.locale
     if value.theme_mode is not None:
         _validate_theme(value.theme_mode, allow_empty=True)
-        result["sverp:theme_mode"] = value.theme_mode
+        result["theme_mode"] = value.theme_mode
     return result
 
 

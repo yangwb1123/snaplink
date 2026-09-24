@@ -63,7 +63,8 @@ func TestRcovMe_Preferences(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET /me/preferences status=%d body=%v", status, out)
 	}
-	if out["locale"] != "zh-CN" || out["zoneinfo"] != "Asia/Shanghai" || out["sverp:theme_mode"] != "dark" {
+	if out["locale"] != "zh-CN" || out["zoneinfo"] != "Asia/Shanghai" ||
+		out["theme_mode"] != "dark" || out["sverp:theme_mode"] != "dark" {
 		t.Fatalf("preferences = %v, want persisted allowlisted values", out)
 	}
 

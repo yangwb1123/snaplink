@@ -10,6 +10,13 @@ const MTLSCertNotAfterContextKey = "mtls:cert_not_after"
 // endpoint-constant file below its hard line budget.
 const PathMyPreferences = "/me/preferences"
 
+// Shared presentation preference wire keys. The legacy SVERP key remains
+// accepted while clients migrate to the application-neutral theme_mode key.
+const (
+	PreferenceThemeModeKey       = "theme_mode"
+	LegacyThemeModePreferenceKey = "sverp:theme_mode"
+)
+
 // OIDC Core §3.1.2.1 prompt values. Space-separated combinations are
 // allowed by the spec EXCEPT for "none" which MUST appear alone.
 const (

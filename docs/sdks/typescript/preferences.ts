@@ -12,9 +12,9 @@ export type PresentationThemeMode = "light" | "dark" | "auto";
 /**
  * Application-facing presentation preferences.
  *
- * The wire key `sverp:theme_mode` deliberately does not appear here. Keep
- * protocol naming and application naming separate; the adapter below owns
- * that compatibility mapping.
+ * Wire keys deliberately do not appear here. The adapter owns the
+ * application-neutral `theme_mode` mapping and its legacy
+ * `sverp:theme_mode` fallback.
  */
 export interface PresentationPreferences {
   locale?: string;
@@ -62,9 +62,23 @@ export function fromMyPreferences(
     assertLocale(value.locale, false);
     result.locale = value.locale;
   }
-  const themeMode = value["sverp:theme_mode"];
+  const genericThemeMode = value.theme_mode;
+  const legacyThemeMode = value["sverp:theme_mode"];
+  if (genericThemeMode !== undefined) {
+    assertThemeMode(genericThemeMode, false);
+  }
+  if (legacyThemeMode !== undefined) {
+    assertThemeMode(legacyThemeMode, false);
+  }
+  if (
+    genericThemeMode !== undefined &&
+    legacyThemeMode !== undefined &&
+    genericThemeMode !== legacyThemeMode
+  ) {
+    throw new TypeError("conflicting theme preference aliases");
+  }
+  const themeMode = genericThemeMode ?? legacyThemeMode;
   if (themeMode !== undefined) {
-    assertThemeMode(themeMode, false);
     result.themeMode = themeMode;
   }
   return result;
@@ -81,7 +95,7 @@ export function toMyPreferencesUpdateRequest(
   }
   if (value.themeMode !== undefined) {
     assertThemeMode(value.themeMode, true);
-    result["sverp:theme_mode"] = value.themeMode;
+    result.theme_mode = value.themeMode;
   }
   return result;
 }

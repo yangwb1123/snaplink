@@ -49,8 +49,9 @@ For trusted local-network development only, set
 HTTPS.
 
 For shared presentation settings, wrap the generated client with
-`SnaplinkUserPreferencesClient`. It exposes `locale` and `theme_mode`, keeps
-`sverp:theme_mode` inside the SDK, and does not own application storage:
+`SnaplinkUserPreferencesClient`. It exposes `locale` and `theme_mode`, writes the application-neutral
+`theme_mode` wire key, reads the legacy `sverp:theme_mode` alias during
+migration, and does not own application storage:
 
 ```python
 from snaplink_sso import (

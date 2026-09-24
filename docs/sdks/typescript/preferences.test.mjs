@@ -22,7 +22,7 @@ test("preference facade maps application fields to the Snaplink wire contract", 
     fetch: async (input, init) => {
       calls.push({ url: String(input), init });
       if (init.method === "PUT") return response({ status: "ok" });
-      return response({ locale: "zh-CN", "sverp:theme_mode": "dark" });
+      return response({ locale: "zh-CN", theme_mode: "dark" });
     },
   });
   const preferences = new SnaplinkUserPreferencesClient(client);
@@ -36,8 +36,31 @@ test("preference facade maps application fields to the Snaplink wire contract", 
   assert.equal(calls[0].init.headers.Authorization, "Bearer access-token");
   assert.deepEqual(JSON.parse(calls[1].init.body), {
     locale: "en-US",
-    "sverp:theme_mode": "light",
+    theme_mode: "light",
   });
+});
+
+test("legacy theme wire keys remain readable during migration", async () => {
+  const client = new SSOClient({
+    baseUrl: "https://sso.example.test",
+    getAccessToken: () => "access-token",
+    fetch: async () => response({ "sverp:theme_mode": "auto" }),
+  });
+  const preferences = new SnaplinkUserPreferencesClient(client);
+  assert.deepEqual(await preferences.getMyPreferences(), { themeMode: "auto" });
+});
+
+test("conflicting theme wire aliases are rejected", () => {
+  const client = new SSOClient({
+    baseUrl: "https://sso.example.test",
+    getAccessToken: () => "access-token",
+    fetch: async () => response({ theme_mode: "dark", "sverp:theme_mode": "light" }),
+  });
+  const preferences = new SnaplinkUserPreferencesClient(client);
+  assert.rejects(
+    () => preferences.getMyPreferences(),
+    /conflicting theme preference aliases/,
+  );
 });
 
 test("login handoff contains only explicitly supplied presentation changes", () => {

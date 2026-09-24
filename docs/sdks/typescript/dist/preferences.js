@@ -21,9 +21,21 @@ export function fromMyPreferences(value) {
         assertLocale(value.locale, false);
         result.locale = value.locale;
     }
-    const themeMode = value["sverp:theme_mode"];
+    const genericThemeMode = value.theme_mode;
+    const legacyThemeMode = value["sverp:theme_mode"];
+    if (genericThemeMode !== undefined) {
+        assertThemeMode(genericThemeMode, false);
+    }
+    if (legacyThemeMode !== undefined) {
+        assertThemeMode(legacyThemeMode, false);
+    }
+    if (genericThemeMode !== undefined &&
+        legacyThemeMode !== undefined &&
+        genericThemeMode !== legacyThemeMode) {
+        throw new TypeError("conflicting theme preference aliases");
+    }
+    const themeMode = genericThemeMode ?? legacyThemeMode;
     if (themeMode !== undefined) {
-        assertThemeMode(themeMode, false);
         result.themeMode = themeMode;
     }
     return result;
@@ -37,7 +49,7 @@ export function toMyPreferencesUpdateRequest(value) {
     }
     if (value.themeMode !== undefined) {
         assertThemeMode(value.themeMode, true);
-        result["sverp:theme_mode"] = value.themeMode;
+        result.theme_mode = value.themeMode;
     }
     return result;
 }

@@ -428,19 +428,6 @@ func (s *Server) finishLoginCodeFlow(ctx HandlerContext, result *AuthResult, req
 	s.recordCodeFlowSuccess(ctx, result, req, client, code, sessionID)
 }
 
-// recordCodeFlowSuccess persists the login-success audit row (with the
-// canonical session ID when the login carried one) and renders the code
-// response. WithTrustScoreSerialization is NOT wired here (meta=nil): this
-// branch persists a code and mints no token until a LATER, separate /token
-// exchange — there is no synchronous login-success session/token pair to
-// attach a trust score to. Only the direct-mint branch serializes one.
-// The session ID IS persisted: codeFlowSession created/resumed it, and the
-// /token exchange propagates it into the id_token sid claim.
-func (s *Server) recordCodeFlowSuccess(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, code, sessionID string) {
-	s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, sessionID, nil)
-	s.renderAuthCodeResponse(ctx, req, client, code, sessionID)
-}
-
 // renderAuthCodeResponse writes the authorization_code result in the negotiated
 // response mode: OIDC form_post (auto-POST HTML), JARM (signed JWT response), or
 // the default JSON body. The caller has already issued the code and recorded
