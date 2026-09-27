@@ -87,6 +87,9 @@ oauth:
     - source:sync
     - forge:conversations:read
     - forge:conversations:write
+    # Registered for the explicitly optional, read-only device observer
+    # below. Registration does not grant it to forge-cli/forge-console.
+    - forge:devices:read
 security:
   jti_replay:
     backend: redis
@@ -287,6 +290,34 @@ clients:
   - urn:ietf:params:oauth:grant-type:device_code
   - refresh_token
   active: true
+# Optional owner-scoped session/resource observer. It is intentionally
+# provisioned inactive: enabling it requires a separate device-observation
+# decision and does not enable Forge device routes or execution authority.
+- id: forge-device-observer
+  name: Forge Device Observer (opt-in)
+  tenant_id: acme
+  subject_type: public
+  redirect_uris: []
+  allowed_scopes:
+  - openid
+  - profile
+  - forge:conversations:read
+  - forge:devices:read
+  allowed_resources:
+  - forge-api
+  allowed_authenticators:
+  - password
+  - google
+  - github
+  token_strategy: jwt
+  token_endpoint_auth_method: none
+  require_pkce: true
+  allowed_pkce_methods:
+  - S256
+  grant_types:
+  - authorization_code
+  - refresh_token
+  active: false
 - id: aero-vault
   name: Aero Vault
   redirect_uris:

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,6 +138,56 @@ func TestRcov2DE_ForgeClientOwnerParity(t *testing.T) {
 	rcovAssertForgeCLIAuthorizationCodeDenied(t, s)
 }
 
+// TestRcov2DE_ForgeDeviceObservationScopeIsOptIn proves that the default
+// Conversation clients cannot silently mint the device-observation scope. A
+// test-only active observer then demonstrates the separately provisioned
+// profile preserves the same issuer, subject, tenant, and Forge audience.
+// The production distributed seed keeps that observer inactive.
+func TestRcov2DE_ForgeDeviceObservationScopeIsOptIn(t *testing.T) {
+	t.Parallel()
+	s := rcovNewServer(t)
+	rcovSeedForgeClients(s)
+	consoleToken := rcovForgeConsoleLogin(t, s)
+
+	status, denied := rcovPostJSON(t, s.http.URL+"/auth/login", "", map[string]any{
+		"provider": "password", "client_id": "forge-console",
+		"credential": map[string]string{"username": rcovUsername, "password": rcovPassword},
+		"scope":      []string{"openid", "profile", "forge:conversations:read", "forge:devices:read"},
+		"resource":   []string{"forge-api"},
+	})
+	if status != http.StatusBadRequest || denied["error"] != sso.ErrInvalidScope {
+		t.Fatalf("default Forge client device scope = %d %v, want 400 invalid_scope", status, denied)
+	}
+
+	rcovSeedForgeObservationClient(s)
+	status, granted := rcovPostJSON(t, s.http.URL+"/auth/login", "", map[string]any{
+		"provider": "password", "client_id": "forge-device-observer",
+		"credential": map[string]string{"username": rcovUsername, "password": rcovPassword},
+		"scope":      []string{"openid", "profile", "forge:conversations:read", "forge:devices:read"},
+		"resource":   []string{"forge-api"},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("optional Forge observer login = %d body=%v", status, granted)
+	}
+	observerToken, _ := granted["access_token"].(string)
+	if observerToken == "" {
+		t.Fatalf("optional Forge observer login returned no access token: %v", granted)
+	}
+	claims := trrDecodePayload(t, observerToken)
+	consoleClaims := trrDecodePayload(t, consoleToken)
+	for _, claim := range []string{"iss", "sub", "tenant_id"} {
+		if claims[claim] == nil || claims[claim] != consoleClaims[claim] {
+			t.Errorf("observer owner claim %s = %v, Console = %v", claim, claims[claim], consoleClaims[claim])
+		}
+	}
+	if !rcovIsForgeAudience(claims["aud"]) {
+		t.Errorf("observer audience = %v, want forge-api", claims["aud"])
+	}
+	if got, _ := claims["scope"].(string); !strings.Contains(got, "forge:devices:read") || strings.Contains(got, "forge:conversations:write") {
+		t.Errorf("observer scope = %q, want device observation plus Conversation read without write", got)
+	}
+}
+
 func rcovSeedForgeClients(s *rcovServer) {
 	forgeScopes := []string{"forge:conversations:read", "forge:conversations:write"}
 	consoleScopes := append([]string{"openid", "profile"}, forgeScopes...)
@@ -156,6 +207,16 @@ func rcovSeedForgeClients(s *rcovServer) {
 			GrantTypes: client.grantTypes,
 		})
 	}
+}
+
+func rcovSeedForgeObservationClient(s *rcovServer) {
+	s.clients.AddSeed(&sso.Client{
+		ID: "forge-device-observer", Name: "Forge Device Observer", TenantID: "acme", SubjectType: "public",
+		AllowedScopes:    []string{"openid", "profile", "forge:conversations:read", "forge:devices:read"},
+		AllowedResources: []string{"forge-api"}, AllowedAuthenticators: []string{"password"},
+		TokenStrategy: "jwt", Active: true, TokenEndpointAuthMethod: "none", RequirePKCE: true,
+		SkipConsent: true, GrantTypes: []string{sso.GrantAuthorizationCode, sso.GrantRefreshToken},
+	})
 }
 
 func rcovForgeConsoleLogin(t *testing.T, s *rcovServer) string {
