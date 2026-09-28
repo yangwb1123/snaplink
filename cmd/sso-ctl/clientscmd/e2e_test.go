@@ -66,7 +66,8 @@ func adminPermsProvider(t *testing.T) permissions.Provider {
 // its listener address, plus the admin gRPC-gateway behind the
 // AdminMiddleware. client-1 is bound to tenant-acme and is cc-mintable
 // (T-C: GrantTypes includes client_credentials; AllowedScopes non-empty so
-// the sweep's T-8d probe scope is never granted).
+// the sweep's T-8d probe scope is never granted). client_secret_post matches
+// the checker's body-credential probe transport.
 func newCLIDeployment(t *testing.T) *httptest.Server {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -78,8 +79,9 @@ func newCLIDeployment(t *testing.T) *httptest.Server {
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
 		ID: "client-1", Secret: "s", Active: true, TokenStrategy: "jwt",
-		Name:          "Tenant Acme App",
-		AllowedScopes: []string{"openid", "profile"},
+		Name:                    "Tenant Acme App",
+		AllowedScopes:           []string{"openid", "profile"},
+		TokenEndpointAuthMethod: "client_secret_post",
 		// T-C: client_credentials is mandatory for the sweep mint leg.
 		GrantTypes: []string{"client_credentials", "authorization_code", "refresh_token"},
 		TenantID:   "tenant-acme",

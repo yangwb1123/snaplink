@@ -66,7 +66,8 @@ func runCheck(t *testing.T, args ...string) (int, string, string) {
 
 // newLiveServer builds a real sso.NewServer bound to an httptest listener
 // whose URL is the configured issuer, so the advertised endpoints resolve to
-// the live server itself. Seeded restricted client demo/s with
+// the live server itself. The seeded client uses client_secret_post because
+// the checker deliberately sends credentials in the request body. Its
 // AllowedScopes ["read","write"] doubles as T-8d's precondition. The
 // Ed25519 token issuer is configured with the same issuer value
 // (cmd/sso-server's WithEd25519Issuer wiring): the sweep asserts
@@ -82,7 +83,7 @@ func newLiveServer(t *testing.T) *httptest.Server {
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
 		ID: "demo", Secret: "s", Active: true,
-		AllowedScopes: []string{"read", "write"},
+		AllowedScopes: []string{"read", "write"}, TokenEndpointAuthMethod: "client_secret_post",
 	})
 	srv := sso.NewServer(
 		sso.WithIssuer(addr),
