@@ -50,16 +50,17 @@ func (d *discoveryDoc) endpoint(field string) string {
 
 // checker carries the sweep state across the four probe groups.
 type checker struct {
-	base           string
-	client         *Client // sweep client: discovery + on-base T-2 rows
-	clientID       string
-	clientSecret   string
-	scope          string
-	resources      []string
-	expectTenantID string
-	expectRoles    []string
-	expectRolesSet bool
-	expectNoRoles  bool
+	base             string
+	client           *Client // sweep client: discovery + on-base T-2 rows
+	clientID         string
+	clientSecret     string
+	clientAuthMethod string
+	scope            string
+	resources        []string
+	expectTenantID   string
+	expectRoles      []string
+	expectRolesSet   bool
+	expectNoRoles    bool
 
 	doc     *discoveryDoc
 	header  map[string]any

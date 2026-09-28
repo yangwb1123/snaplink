@@ -28,8 +28,8 @@ package apiclient
 //     307/308 POST bodies and same-host Authorization);
 //   - the mint/T-8d/T-9 probes never carry a bearer (a non-Basic
 //     Authorization header makes /token reject the request outright);
-//   - credential-bearing probes go through apiclient with body credentials,
-//     targeted at the *advertised* endpoints only;
+//   - credential-bearing probes use the selected OAuth client-auth method,
+//     targeted at the *advertised* endpoints only, without mixing methods;
 //   - no diagnostic ever echoes a credential, the minted token, or the probe
 //     scope; declared/observed claim values (tenant_id, scope, roles) may be
 //     named, and redactURL/sanitizeBody are the only URL/body printers.
@@ -48,7 +48,9 @@ import (
 )
 
 const (
-	checkProg = "sso-ctl check"
+	checkProg             = "sso-ctl check"
+	clientAuthMethodBasic = "client_secret_basic"
+	clientAuthMethodPost  = "client_secret_post"
 	// oidcDiscoveryPath mirrors interfaces/sso PathOIDCDiscovery; apiclient
 	// must not import interfaces/sso (the value is a wire contract).
 	oidcDiscoveryPath = "/.well-known/openid-configuration"
@@ -103,15 +105,15 @@ func CheckRun(args []string) int {
 // parseCheckConfig parses and validates the check invocation, returning the
 // wired checker or a nonzero exit code on misuse (diagnostics and usage
 // already printed; flag-package errors print their own diagnostic). The
-// roles declarations are validated together: both flags are contradictory
-// misuse — the two assertions cannot both be true of one mint — and the
-// check precedes the credentials check so flag errors always win.
+// client-auth and role flags are validated before credentials so malformed
+// flag input always wins the misuse diagnostic.
 func parseCheckConfig(args []string) (*checker, int) {
 	fs := flag.NewFlagSet(checkProg, flag.ContinueOnError)
 	fs.Usage = usage
 	addrFlag := fs.String("addr", DefaultAddr, "base URL (SSO_ADMIN_ADDR env wins)")
 	clientID := fs.String("client-id", "", "OAuth client ID (required with --client-secret)")
 	clientSecret := fs.String("client-secret", "", "OAuth client secret (required with --client-id)")
+	clientAuthMethod := fs.String("client-auth-method", clientAuthMethodPost, "OAuth client authentication: client_secret_post or client_secret_basic")
 	scopeFlag := fs.String("scope", "", "space-separated scopes to request at mint")
 	var resources stringList
 	fs.Var(&resources, "resource", "RFC 8707 resource indicator (repeatable)")
@@ -127,9 +129,7 @@ func parseCheckConfig(args []string) (*checker, int) {
 		}
 		return nil, 2 // flag package printed the error + usage to stderr
 	}
-	if expectRoles.present && *expectNoRoles {
-		fmt.Fprintln(os.Stderr, checkProg+": --expect-roles and --expect-no-roles are mutually exclusive")
-		usage()
+	if !validateClientAuthMethod(*clientAuthMethod) || !validateRoleExpectations(expectRoles, *expectNoRoles) {
 		return nil, 2
 	}
 	if *clientID == "" || *clientSecret == "" {
@@ -144,17 +144,36 @@ func parseCheckConfig(args []string) (*checker, int) {
 		return nil, 2
 	}
 	return &checker{
-		base:           strings.TrimSuffix(base, "/"),
-		client:         New(WithAddr(base), WithNoRedirect()),
-		clientID:       *clientID,
-		clientSecret:   *clientSecret,
-		scope:          *scopeFlag,
-		resources:      []string(resources),
-		expectTenantID: *expectTenantID,
-		expectRoles:    []string(expectRoles.set),
-		expectRolesSet: expectRoles.present,
-		expectNoRoles:  *expectNoRoles,
+		base:             strings.TrimSuffix(base, "/"),
+		client:           New(WithAddr(base), WithNoRedirect()),
+		clientID:         *clientID,
+		clientSecret:     *clientSecret,
+		clientAuthMethod: *clientAuthMethod,
+		scope:            *scopeFlag,
+		resources:        []string(resources),
+		expectTenantID:   *expectTenantID,
+		expectRoles:      []string(expectRoles.set),
+		expectRolesSet:   expectRoles.present,
+		expectNoRoles:    *expectNoRoles,
 	}, 0
+}
+
+func validateClientAuthMethod(method string) bool {
+	if method == clientAuthMethodPost || method == clientAuthMethodBasic {
+		return true
+	}
+	fmt.Fprintln(os.Stderr, checkProg+": unsupported --client-auth-method (want client_secret_post or client_secret_basic)")
+	usage()
+	return false
+}
+
+func validateRoleExpectations(roles expectRolesFlag, noRoles bool) bool {
+	if !roles.present || !noRoles {
+		return true
+	}
+	fmt.Fprintln(os.Stderr, checkProg+": --expect-roles and --expect-no-roles are mutually exclusive")
+	usage()
+	return false
 }
 
 // usage prints the check subcommand banner to stderr (the tree convention:
@@ -182,12 +201,13 @@ Probe groups:
 Exit codes:
   0  all probe groups executed and passed
   1  any executed check failed, or a group was skipped (check INCOMPLETE)
-  2  CLI misuse (missing credentials, invalid --addr, unknown flag)
+  2  CLI misuse (missing credentials, invalid --addr/auth method, unknown flag)
 
 Flags:
   --addr string              base URL (default "http://127.0.0.1:8443"; SSO_ADMIN_ADDR env wins)
   --client-id string         OAuth client ID (required with --client-secret)
   --client-secret string     OAuth client secret (required with --client-id)
+  --client-auth-method string client_secret_post (default) or client_secret_basic
   --scope string             space-separated scopes to request at mint (optional)
   --resource string          RFC 8707 resource indicator (repeatable; optional)
   --expect-tenant-id string  declare the minted token MUST carry this tenant_id (optional)
@@ -315,10 +335,9 @@ func probeScope() (string, error) {
 }
 
 // probeClient builds a token-less apiclient bound to an exact advertised
-// URL. Credential-bearing probes use body credentials only; New's env
-// fallbacks must never apply (SSO_ADMIN_TOKEN would make /token reject the
-// request outright — a non-Basic Authorization header fails client auth —
-// and SSO_ADMIN_ADDR would override the target).
+// URL. New's env fallbacks must never apply (SSO_ADMIN_TOKEN would make
+// credential-less probes fail client auth, and SSO_ADMIN_ADDR would override
+// the target).
 func probeClient(target string) *Client {
 	return &Client{
 		baseURL: target,

@@ -64,16 +64,17 @@ func runCheck(t *testing.T, args ...string) (int, string, string) {
 
 // --- fixture: real in-process server (testkit shape) ---
 
-// newLiveServer builds a real sso.NewServer bound to an httptest listener
-// whose URL is the configured issuer, so the advertised endpoints resolve to
-// the live server itself. The seeded client uses client_secret_post because
-// the checker deliberately sends credentials in the request body. Its
-// AllowedScopes ["read","write"] doubles as T-8d's precondition. The
-// Ed25519 token issuer is configured with the same issuer value
-// (cmd/sso-server's WithEd25519Issuer wiring): the sweep asserts
-// iss == discovery issuer, and the issuer's default value is a non-URL
-// placeholder.
+// newLiveServer builds the default client_secret_post fixture.
 func newLiveServer(t *testing.T) *httptest.Server {
+	return newLiveServerWithAuth(t, clientAuthMethodPost)
+}
+
+// newLiveServerWithAuth binds a real server to an httptest listener whose URL
+// is the configured issuer, so advertised endpoints resolve to the server.
+// AllowedScopes ["read","write"] doubles as T-8d's precondition. The
+// Ed25519 token issuer uses the same issuer value because the sweep asserts
+// iss == discovery issuer.
+func newLiveServerWithAuth(t *testing.T, authMethod string) *httptest.Server {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -83,7 +84,7 @@ func newLiveServer(t *testing.T) *httptest.Server {
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
 		ID: "demo", Secret: "s", Active: true,
-		AllowedScopes: []string{"read", "write"}, TokenEndpointAuthMethod: "client_secret_post",
+		AllowedScopes: []string{"read", "write"}, TokenEndpointAuthMethod: authMethod,
 	})
 	srv := sso.NewServer(
 		sso.WithIssuer(addr),
@@ -337,6 +338,8 @@ func TestUsage_RolesContract(t *testing.T) {
 	for _, want := range []string{
 		"--expect-roles",
 		"--expect-no-roles",
+		"--client-auth-method",
+		"client_secret_basic",
 		"absence is tolerated",
 		"infrastructure/defaultimpl",
 		"TestTenantRoles_ClaimsPerIssuer",
@@ -384,6 +387,7 @@ func TestExitCodes(t *testing.T) {
 		{"expect-roles-no-value", []string{"--client-id", "demo", "--client-secret", "s", "--expect-roles"}},
 		{"expect-no-roles-without-creds", []string{"--expect-no-roles"}},
 		{"both-roles-flags", []string{"--client-id", "demo", "--client-secret", "s", "--expect-roles", "admin", "--expect-no-roles"}},
+		{"invalid-client-auth-method", []string{"--client-id", "demo", "--client-secret", "s", "--client-auth-method", "private_key_jwt"}},
 		{"scope-without-creds", []string{"--scope", "read"}},
 		{"expect-tenant-without-creds", []string{"--expect-tenant-id", "t1"}},
 		{"unknown-flag", []string{"--nope"}},
@@ -514,6 +518,21 @@ func TestSweep_GreenPath(t *testing.T) {
 	}
 	if errOut != "" {
 		t.Errorf("stderr = %q, want empty on a green run", errOut)
+	}
+}
+
+func TestSweep_BasicClientAuth(t *testing.T) {
+	cleanSweepEnv(t)
+	srv := newLiveServerWithAuth(t, clientAuthMethodBasic)
+	code, out, errOut := runCheck(t, checkArgs(srv.URL, "--client-auth-method", clientAuthMethodBasic)...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stdout:\n%s\nstderr:\n%s", code, out, errOut)
+	}
+	if out != goldenGreenStdout {
+		t.Errorf("stdout = %q, want %q", out, goldenGreenStdout)
+	}
+	if errOut != "" {
+		t.Errorf("stderr = %q, want empty on a green Basic-auth run", errOut)
 	}
 }
 
@@ -850,8 +869,8 @@ func TestSweep_3xxContentRowFails(t *testing.T) {
 }
 
 // TestSweep_RedirectNotFollowed pins the blocking security amendment: a
-// 302/307 Location target receives zero requests — the 307 POST body
-// (carrying client_secret) is never forwarded.
+// 302/307 Location target receives zero requests — neither a POST body nor
+// a Basic Authorization header is forwarded.
 func TestSweep_RedirectNotFollowed(t *testing.T) {
 	cleanSweepEnv(t)
 	var mu sync.Mutex
@@ -879,6 +898,27 @@ func TestSweep_RedirectNotFollowed(t *testing.T) {
 		mu.Unlock()
 		if hits != 0 {
 			t.Fatalf("307 target received %d requests — mint body would have been forwarded", hits)
+		}
+		if !strings.Contains(errOut, "mint: status 307") {
+			t.Errorf("stderr = %q, want mint 307 diagnostic", errOut)
+		}
+	})
+	t.Run("mint-307-basic-header-not-forwarded", func(t *testing.T) {
+		stub := newStubCheck(t)
+		stub.healthy()
+		stub.handle("/token", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+		})
+		args := checkArgs(stub.srv.URL, "--client-auth-method", clientAuthMethodBasic)
+		code, _, errOut := runCheck(t, args...)
+		if code != 1 {
+			t.Fatalf("exit = %d, want 1", code)
+		}
+		mu.Lock()
+		hits := targetHits
+		mu.Unlock()
+		if hits != 0 {
+			t.Fatalf("307 target received %d requests — Basic credentials must not be forwarded", hits)
 		}
 		if !strings.Contains(errOut, "mint: status 307") {
 			t.Errorf("stderr = %q, want mint 307 diagnostic", errOut)

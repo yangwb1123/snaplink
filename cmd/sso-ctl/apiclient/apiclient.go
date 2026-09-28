@@ -2,8 +2,8 @@
 // (gRPC gateway JSON REST endpoints). Used by sso-ctl subcommands to talk to
 // a running server's admin bindings.
 //
-// Authentication is via the `Authorization: Bearer <token>` header. The caller
-// sets the token via [WithToken] on construction or by setting an env var.
+// Admin API authentication is via the `Authorization: Bearer <token>` header.
+// The check sweep also uses OAuth Basic authentication for credential probes.
 //
 // All methods return the full HTTP response; the caller inspects the status
 // code and decodes the body.
@@ -31,9 +31,15 @@ const EnvToken = "SSO_ADMIN_TOKEN"
 
 // Client is a lightweight admin API client.
 type Client struct {
-	baseURL string
-	token   string
-	http    *http.Client
+	baseURL   string
+	token     string
+	basicAuth *basicAuthCredentials
+	http      *http.Client
+}
+
+type basicAuthCredentials struct {
+	username string
+	password string
 }
 
 // New returns a new admin API client. The token is loaded from:
@@ -96,6 +102,11 @@ func RejectRedirect(*http.Request, []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
+func (c *Client) withBasicAuth(username, password string) *Client {
+	c.basicAuth = &basicAuthCredentials{username: username, password: password}
+	return c
+}
+
 // Do sends an authenticated HTTP request and returns the response.
 // The caller must close resp.Body.
 func (c *Client) Do(method, path string, body any) (*http.Response, error) {
@@ -115,7 +126,9 @@ func (c *Client) Do(method, path string, body any) (*http.Response, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	if c.token != "" {
+	if c.basicAuth != nil {
+		req.SetBasicAuth(c.basicAuth.username, c.basicAuth.password)
+	} else if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	if body != nil {

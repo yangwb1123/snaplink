@@ -2,9 +2,8 @@ package apiclient
 
 // T-8a mint/claims/revoke round trip, T-8d unregistered-scope probe, T-9
 // credential-less introspection probe. The claims matrix lives in
-// claims.go; the shared redaction helpers in sweep.go. All
-// credential-bearing probes go through apiclient (probeClient) with
-// body credentials, targeted at the advertised endpoints only.
+// claims.go; the shared redaction helpers in sweep.go. Credential-bearing
+// probes use exactly one selected auth method at advertised endpoints.
 
 import (
 	"encoding/json"
@@ -58,22 +57,28 @@ func (ck *checker) runT8a() (ok, skipped bool) {
 // returned for the revoke leg; it is never echoed in any diagnostic. The
 // advertised URL is preflighted first (row-2 rule): a malformed value must
 // fail without any request and without the HTTP layer echoing it raw.
+func (ck *checker) credentialProbeClient(target string, body map[string]any) *Client {
+	client := probeClient(target)
+	if ck.clientAuthMethod == clientAuthMethodBasic {
+		return client.withBasicAuth(ck.clientID, ck.clientSecret)
+	}
+	body["client_id"] = ck.clientID
+	body["client_secret"] = ck.clientSecret
+	return client
+}
+
 func (ck *checker) mint() (string, []string) {
 	if err := validateAdvertisedURL(ck.doc.TokenEndpoint); err != nil {
 		return "", []string{fmt.Sprintf("mint: token_endpoint %s: %s; row failed", redactURL(ck.doc.TokenEndpoint), err.Error())}
 	}
-	body := map[string]any{
-		"grant_type":    "client_credentials",
-		"client_id":     ck.clientID,
-		"client_secret": ck.clientSecret,
-	}
+	body := map[string]any{"grant_type": "client_credentials"}
 	if ck.scope != "" {
 		body["scope"] = ck.scope
 	}
 	if len(ck.resources) > 0 {
 		body["resource"] = ck.resources
 	}
-	client := probeClient(ck.doc.TokenEndpoint)
+	client := ck.credentialProbeClient(ck.doc.TokenEndpoint, body)
 	resp, err := client.Post("", body)
 	if err != nil {
 		return "", []string{"mint: " + redactURL(err.Error())}
@@ -123,10 +128,9 @@ func (ck *checker) revoke(token string) []string {
 	if err := validateAdvertisedURL(ck.doc.RevocationEndpoint); err != nil {
 		return []string{"revoke: revocation_endpoint " + redactURL(ck.doc.RevocationEndpoint) + ": " + err.Error() + "; row failed"}
 	}
-	client := probeClient(ck.doc.RevocationEndpoint)
-	resp, err := client.Post("", map[string]any{
-		"token": token, "client_id": ck.clientID, "client_secret": ck.clientSecret,
-	})
+	body := map[string]any{"token": token}
+	client := ck.credentialProbeClient(ck.doc.RevocationEndpoint, body)
+	resp, err := client.Post("", body)
 	if err != nil {
 		return []string{"revoke: " + redactURL(err.Error())}
 	}
@@ -149,9 +153,9 @@ func (ck *checker) postRevokeIntrospect(token string) []string {
 	if err := validateAdvertisedURL(ck.doc.IntrospectionEndpoint); err != nil {
 		return []string{"revoke: introspection_endpoint " + redactURL(ck.doc.IntrospectionEndpoint) + ": " + err.Error() + "; row failed"}
 	}
-	iresp, err := probeClient(ck.doc.IntrospectionEndpoint).Post("", map[string]any{
-		"token": token, "client_id": ck.clientID, "client_secret": ck.clientSecret,
-	})
+	body := map[string]any{"token": token}
+	client := ck.credentialProbeClient(ck.doc.IntrospectionEndpoint, body)
+	iresp, err := client.Post("", body)
 	if err != nil {
 		return []string{"revoke: " + redactURL(err.Error())}
 	}
@@ -189,13 +193,12 @@ func (ck *checker) runT8d(probeScope string) (ok, skipped bool) {
 	if err := validateAdvertisedURL(ck.doc.TokenEndpoint); err != nil {
 		return fail(fmt.Sprintf("invalid_scope probe: token_endpoint %s: %s; row failed", redactURL(ck.doc.TokenEndpoint), err.Error())), false
 	}
-	client := probeClient(ck.doc.TokenEndpoint)
-	resp, err := client.Post("", map[string]any{
-		"grant_type":    "client_credentials",
-		"client_id":     ck.clientID,
-		"client_secret": ck.clientSecret,
-		"scope":         probeScope,
-	})
+	body := map[string]any{
+		"grant_type": "client_credentials",
+		"scope":      probeScope,
+	}
+	client := ck.credentialProbeClient(ck.doc.TokenEndpoint, body)
+	resp, err := client.Post("", body)
 	if err != nil {
 		return fail("invalid_scope probe: " + redactURL(err.Error())), false
 	}
