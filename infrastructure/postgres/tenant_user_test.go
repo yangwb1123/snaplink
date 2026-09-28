@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -72,5 +73,39 @@ func TestTenantUserStorePostgresBehavior(t *testing.T) {
 	}
 	if _, err := store.Get(ctx, first.TenantID, first.UserID); !errors.Is(err, core.ErrNoMembership) {
 		t.Fatalf("Get after removal error = %v, want ErrNoMembership", err)
+	}
+}
+
+func TestTenantUserStorePostgresIntegration(t *testing.T) {
+	cfg := testConfig(t)
+	db, err := Open(cfg)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	store, err := NewTenantUserStoreWithDB(ctx, db, cfg.Dialect)
+	if err != nil {
+		t.Fatalf("NewTenantUserStoreWithDB: %v", err)
+	}
+	if err := store.Ping(ctx); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+	tenantID := fmt.Sprintf("membership-test-%d", time.Now().UnixNano())
+	userID := tenantID + "-user"
+	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM tenant_memberships WHERE tenant_id = $1`, tenantID) })
+	member := &core.TenantMembership{TenantID: tenantID, UserID: userID, Role: core.TenantRoleMember, CreatedAt: time.Now().UTC()}
+	if err := store.Add(ctx, member); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	got, err := store.Get(ctx, tenantID, userID)
+	if err != nil || got.Role != member.Role || !got.CreatedAt.Equal(member.CreatedAt) {
+		t.Fatalf("Get = %+v, err=%v", got, err)
+	}
+	if roster, err := store.ListByTenant(ctx, tenantID); err != nil || len(roster) != 1 {
+		t.Fatalf("ListByTenant = %+v, err=%v", roster, err)
+	}
+	if memberships, err := store.ListByUser(ctx, userID); err != nil || len(memberships) != 1 {
+		t.Fatalf("ListByUser = %+v, err=%v", memberships, err)
 	}
 }

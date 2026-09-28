@@ -43,7 +43,8 @@ type TenantMembership struct {
 // TenantUserStore persists explicit org membership independently of SCIM groups
 // (which are client-scoped role membership, NOT org membership). When nil (not
 // wired), B2B org membership is disabled — byte-identical to a build without it.
-// memory + sqlite peers ship in defaultimpl + defaultimpl/sqlite.
+// memory, SQLite, and Postgres peers ship in defaultimpl, defaultimpl/sqlite,
+// and infrastructure/postgres respectively.
 //
 // The store is the single source of truth for "is this user in this org" and is
 // what tenant-scoping / residency gates consult. Add upserts on (tenant, user)

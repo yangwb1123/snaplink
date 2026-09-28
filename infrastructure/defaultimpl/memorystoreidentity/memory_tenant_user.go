@@ -8,7 +8,8 @@ import (
 )
 
 // MemoryTenantUserStore is an in-memory core.TenantUserStore for B2B org
-// membership. Single-process only; multi-replica needs the sqlite peer. The map
+// membership. Single-process only; multi-replica deployments need a durable
+// SQLite or Postgres peer. The map
 // is keyed by tenantID+"\x00"+userID so the (tenant, user) pair is the edge
 // identity and Add naturally upserts (NUL separator can't appear in either id).
 type MemoryTenantUserStore struct {
