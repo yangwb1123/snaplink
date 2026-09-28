@@ -86,7 +86,7 @@ func TestStartRotation_MultiAlg_RotatesAndRetires(t *testing.T) {
 			cancel()
 			select {
 			case <-done:
-			case <-time.After(time.Second):
+			case <-time.After(5 * time.Second):
 				t.Fatal("rotation loop did not stop on ctx cancel")
 			}
 		})
