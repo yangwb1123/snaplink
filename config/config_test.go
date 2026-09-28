@@ -38,10 +38,12 @@ func TestTenantMembershipValidation(t *testing.T) {
 	}{
 		{name: "disabled by default"},
 		{name: "requires tenants", cfg: Config{Tenant: TenantConfig{Memberships: TenantMembershipConfig{Backend: "memory"}}}, want: "tenant.enabled=true"},
-		{name: "unsupported backend", cfg: Config{Tenant: TenantConfig{Enabled: true, Memberships: TenantMembershipConfig{Backend: "redis"}}}, want: "backend must be disabled, memory, or sqlite"},
+		{name: "unsupported backend", cfg: Config{Tenant: TenantConfig{Enabled: true, Memberships: TenantMembershipConfig{Backend: "redis"}}}, want: "backend must be disabled, memory, sqlite, or postgres"},
 		{name: "sqlite requires dsn", cfg: Config{Tenant: TenantConfig{Enabled: true, Memberships: TenantMembershipConfig{Backend: "sqlite"}}}, want: "sqlite.dsn required"},
+		{name: "postgres requires dsn", cfg: Config{Tenant: TenantConfig{Enabled: true, Memberships: TenantMembershipConfig{Backend: "postgres"}}}, want: "postgres.dsn required"},
 		{name: "memory cannot span replicas", cfg: Config{Server: ServerConfig{Topology: TopologyConfig{Mode: TopologyModeMulti}}, Tenant: TenantConfig{Enabled: true, Memberships: TenantMembershipConfig{Backend: "memory"}}}, want: "unsafe with server.topology.mode=multi"},
 		{name: "sqlite supports replicas", cfg: Config{Server: ServerConfig{Topology: TopologyConfig{Mode: TopologyModeMulti}}, Tenant: TenantConfig{Enabled: true, Memberships: TenantMembershipConfig{Backend: "sqlite", SQLite: TenantSQLiteConfig{DSN: "file:memberships.db"}}}}},
+		{name: "postgres supports replicas", cfg: Config{Server: ServerConfig{Topology: TopologyConfig{Mode: TopologyModeMulti}}, Postgres: PostgresConfig{DSN: "postgres://db"}, Tenant: TenantConfig{Enabled: true, Memberships: TenantMembershipConfig{Backend: "postgres"}}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

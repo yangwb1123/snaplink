@@ -476,7 +476,7 @@
       "feature_gate": null,
       "required_stores": ["TenantStore", "TenantUserStore (B2B membership, optional)"],
       "module_capabilities": ["platform.tenant.v1"],
-      "config_keys": ["tenant", "tenant.memberships.backend", "tenant.memberships.sqlite.dsn", "region", "residency"],
+      "config_keys": ["tenant", "tenant.memberships.backend", "tenant.memberships.sqlite.dsn", "postgres.dsn", "region", "residency"],
       "surfaces": ["/api/v1/admin/tenants/*", "tenant middleware"],
       "sources": ["domains/tenant", "cmd/sso-server/build_app_oauth.go", "cmd/sso-server/serverbuildstore/build_stores_helpers.go"]
     },

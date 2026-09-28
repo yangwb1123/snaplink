@@ -132,9 +132,9 @@ type TenantConfig struct {
 // TenantMembershipConfig opts into the explicit B2B tenant-user roster used
 // by tenant administration, role projection, and tenant-scoped CAEP delivery.
 // Empty backend leaves those surfaces disabled; memory is single-replica and
-// sqlite is durable across replicas sharing the configured database.
+// sqlite/postgres are durable across replicas sharing their configured database.
 type TenantMembershipConfig struct {
-	Backend string             `yaml:"backend"` // "" / disabled | memory | sqlite
+	Backend string             `yaml:"backend"` // "" / disabled | memory | sqlite | postgres
 	SQLite  TenantSQLiteConfig `yaml:"sqlite"`
 }
 
@@ -144,9 +144,9 @@ func (c *Config) validateTenantMemberships() error {
 	switch backend {
 	case "", "disabled":
 		return nil
-	case "memory", "sqlite":
+	case "memory", "sqlite", "postgres":
 	default:
-		return fmt.Errorf("config: tenant.memberships.backend must be disabled, memory, or sqlite, got %q", cfg.Backend)
+		return fmt.Errorf("config: tenant.memberships.backend must be disabled, memory, sqlite, or postgres, got %q", cfg.Backend)
 	}
 	if !c.Tenant.Enabled {
 		return fmt.Errorf("config: tenant.memberships.backend=%s requires tenant.enabled=true", backend)
@@ -154,8 +154,11 @@ func (c *Config) validateTenantMemberships() error {
 	if backend == "sqlite" && strings.TrimSpace(cfg.SQLite.DSN) == "" {
 		return fmt.Errorf("config: tenant.memberships.sqlite.dsn required when backend=sqlite")
 	}
+	if backend == "postgres" && !c.Postgres.Configured() {
+		return fmt.Errorf("config: postgres.dsn required when tenant.memberships.backend=postgres")
+	}
 	if backend == "memory" && c.Server.Topology.Mode == TopologyModeMulti && !c.Server.Topology.AllowPerPodState {
-		return fmt.Errorf("config: tenant.memberships.backend=memory is unsafe with server.topology.mode=multi; use sqlite")
+		return fmt.Errorf("config: tenant.memberships.backend=memory is unsafe with server.topology.mode=multi; use sqlite or postgres")
 	}
 	return nil
 }

@@ -229,7 +229,7 @@ func buildTenantStoreBackend(cfg config.TenantConfig, logger spi.Logger, pg *sql
 
 // BuildTenantMembershipStore selects the explicit B2B tenant-user roster store.
 // An empty or disabled backend leaves the membership-dependent surfaces off.
-func BuildTenantMembershipStore(cfg config.TenantMembershipConfig) (core.TenantUserStore, error) {
+func BuildTenantMembershipStore(ctx context.Context, cfg config.TenantMembershipConfig, pg *sql.DB, dialect postgresbackend.Dialect) (core.TenantUserStore, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "disabled":
 		return nil, nil
@@ -244,8 +244,17 @@ func BuildTenantMembershipStore(cfg config.TenantMembershipConfig) (core.TenantU
 			return nil, fmt.Errorf("tenant memberships sqlite: %w", err)
 		}
 		return store, nil
+	case "postgres":
+		if pg == nil {
+			return nil, errPostgresNotConfigured("tenant.memberships")
+		}
+		store, err := postgresbackend.NewTenantUserStoreWithDB(ctx, pg, dialect)
+		if err != nil {
+			return nil, fmt.Errorf("tenant memberships postgres: %w", err)
+		}
+		return store, nil
 	default:
-		return nil, fmt.Errorf("unknown tenant.memberships.backend %q (supported: memory, sqlite)", cfg.Backend)
+		return nil, fmt.Errorf("unknown tenant.memberships.backend %q (supported: memory, sqlite, postgres)", cfg.Backend)
 	}
 }
 
@@ -291,8 +300,8 @@ type TenantMembershipWiring struct {
 
 // BuildTenantMembershipWiring keeps the roster store, server options,
 // readiness probe, and storage-health view bound to the same backend.
-func BuildTenantMembershipWiring(ctx context.Context, cfg config.TenantMembershipConfig) (TenantMembershipWiring, error) {
-	store, err := BuildTenantMembershipStore(cfg)
+func BuildTenantMembershipWiring(ctx context.Context, cfg config.TenantMembershipConfig, pg *sql.DB, dialect postgresbackend.Dialect) (TenantMembershipWiring, error) {
+	store, err := BuildTenantMembershipStore(ctx, cfg, pg, dialect)
 	if err != nil || store == nil {
 		return TenantMembershipWiring{}, err
 	}
@@ -308,6 +317,15 @@ func BuildTenantMembershipWiring(ctx context.Context, cfg config.TenantMembershi
 	if p, ok := store.(interface{ Ping(context.Context) error }); ok {
 		wiring.Options = append(wiring.Options, sso.WithReadyCheck("tenant-memberships", p.Ping))
 		source := sso.StorageHealthSource{Name: "tenant-memberships", Ping: p.Ping}
+		if strings.EqualFold(strings.TrimSpace(cfg.Backend), "postgres") && pg != nil {
+			source.SchemaVersions = func(ctx context.Context) (map[string]int, error) {
+				version, err := postgresbackend.TenantUserStoreSchemaVersion(ctx, pg)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]int{"tenant_memberships": version}, nil
+			}
+		}
 		if db, ok := store.(interface{ DB() *sql.DB }); ok && db.DB() != nil {
 			database := db.DB()
 			source.SchemaVersions = func(ctx context.Context) (map[string]int, error) {

@@ -1686,9 +1686,10 @@ tenant:
     cache_ttl: 30s
   # Explicit B2B tenant-user membership. This separate store backs the admin
   # roster, role projection, and tenant-scoped CAEP/SSF lifecycle delivery.
-  # memory is single-replica only; sqlite is shared/durable across replicas.
+  # memory is single-replica only; sqlite and postgres are shared/durable.
+  # postgres reuses the top-level postgres.dsn connection pool.
   memberships:
-    backend: ""             # "" / disabled | memory | sqlite
+    backend: ""             # "" / disabled | memory | sqlite | postgres
     sqlite:
       dsn: ""               # required when backend=sqlite
   # Commercial resource limits. disabled/omitted preserves the historical

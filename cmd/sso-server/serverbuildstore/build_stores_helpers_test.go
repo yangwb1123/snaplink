@@ -2,6 +2,7 @@ package serverbuildstore
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	tenantmemory "github.com/yangwb1123/snaplink/domains/tenant/memory"
 	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
 	"github.com/yangwb1123/snaplink/shared/core"
+	_ "modernc.org/sqlite"
 )
 
 // These unexported helpers back BuildMFA / BuildSnapshotSubsystem /
@@ -21,13 +23,17 @@ import (
 
 func TestBuildTenantMembershipStore_Backends(t *testing.T) {
 	t.Parallel()
-	if store, err := BuildTenantMembershipStore(config.TenantMembershipConfig{}); err != nil || store != nil {
+	ctx := context.Background()
+	if store, err := BuildTenantMembershipStore(ctx, config.TenantMembershipConfig{}, nil, postgresbackend.DialectPostgres); err != nil || store != nil {
 		t.Fatalf("disabled backend: store=%v err=%v, want nil store", store, err)
 	}
-	if _, err := BuildTenantMembershipStore(config.TenantMembershipConfig{Backend: "sqlite"}); err == nil {
+	if _, err := BuildTenantMembershipStore(ctx, config.TenantMembershipConfig{Backend: "sqlite"}, nil, postgresbackend.DialectPostgres); err == nil {
 		t.Fatal("expected sqlite backend without dsn to fail")
 	}
-	if _, err := BuildTenantMembershipStore(config.TenantMembershipConfig{Backend: "unknown"}); err == nil {
+	if _, err := BuildTenantMembershipStore(ctx, config.TenantMembershipConfig{Backend: "postgres"}, nil, postgresbackend.DialectPostgres); err == nil {
+		t.Fatal("expected postgres backend without shared pool to fail")
+	}
+	if _, err := BuildTenantMembershipStore(ctx, config.TenantMembershipConfig{Backend: "unknown"}, nil, postgresbackend.DialectPostgres); err == nil {
 		t.Fatal("expected unknown backend to fail")
 	}
 
@@ -37,7 +43,7 @@ func TestBuildTenantMembershipStore_Backends(t *testing.T) {
 			if backend == "sqlite" {
 				cfg.SQLite.DSN = "file:" + filepath.Join(t.TempDir(), "memberships.db") + "?_journal=WAL"
 			}
-			store, err := BuildTenantMembershipStore(cfg)
+			store, err := BuildTenantMembershipStore(context.Background(), cfg, nil, postgresbackend.DialectPostgres)
 			if err != nil || store == nil {
 				t.Fatalf("BuildTenantMembershipStore: store=%v err=%v", store, err)
 			}
@@ -60,7 +66,7 @@ func TestBuildTenantMembershipStore_Backends(t *testing.T) {
 
 func TestBuildTenantMembershipWiringReadinessAndStorageHealth(t *testing.T) {
 	t.Parallel()
-	memory, err := BuildTenantMembershipWiring(context.Background(), config.TenantMembershipConfig{Backend: "memory"})
+	memory, err := BuildTenantMembershipWiring(context.Background(), config.TenantMembershipConfig{Backend: "memory"}, nil, postgresbackend.DialectPostgres)
 	if err != nil || memory.Store == nil || len(memory.Options) != 1 || len(memory.HealthSources) != 0 {
 		t.Fatalf("memory wiring = %+v, err=%v", memory, err)
 	}
@@ -68,7 +74,7 @@ func TestBuildTenantMembershipWiringReadinessAndStorageHealth(t *testing.T) {
 	sqlite, err := BuildTenantMembershipWiring(context.Background(), config.TenantMembershipConfig{
 		Backend: "sqlite",
 		SQLite:  config.TenantSQLiteConfig{DSN: "file:" + filepath.Join(t.TempDir(), "tenant-memberships.db") + "?_journal=WAL"},
-	})
+	}, nil, postgresbackend.DialectPostgres)
 	if err != nil || sqlite.Store == nil || len(sqlite.Options) != 2 || len(sqlite.HealthSources) != 1 {
 		t.Fatalf("sqlite wiring = %+v, err=%v", sqlite, err)
 	}
@@ -78,6 +84,31 @@ func TestBuildTenantMembershipWiringReadinessAndStorageHealth(t *testing.T) {
 		t.Fatalf("membership readiness ping: %v", err)
 	}
 	versions, err := sqlite.HealthSources[0].SchemaVersions(ctx)
+	if err != nil || versions["tenant_memberships"] != 1 {
+		t.Fatalf("membership schema versions = %v, err=%v", versions, err)
+	}
+}
+
+func TestBuildTenantMembershipPostgresWiringUsesSharedPool(t *testing.T) {
+	dsn := "file:" + filepath.Join(t.TempDir(), "membership-pg-wiring.db")
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	defer func() { _ = db.Close() }()
+	wiring, err := BuildTenantMembershipWiring(context.Background(), config.TenantMembershipConfig{Backend: "postgres"}, db, postgresbackend.DialectCockroach)
+	if err != nil || wiring.Store == nil || len(wiring.Options) != 2 || len(wiring.HealthSources) != 1 {
+		t.Fatalf("postgres wiring = %+v, err=%v", wiring, err)
+	}
+	if _, ok := wiring.Store.(interface{ Close() error }); ok {
+		t.Fatal("membership wrapper must not close the shared pool")
+	}
+	ctx := context.Background()
+	if err := wiring.HealthSources[0].Ping(ctx); err != nil {
+		t.Fatalf("membership readiness ping: %v", err)
+	}
+	versions, err := wiring.HealthSources[0].SchemaVersions(ctx)
 	if err != nil || versions["tenant_memberships"] != 1 {
 		t.Fatalf("membership schema versions = %v, err=%v", versions, err)
 	}

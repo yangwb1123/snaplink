@@ -24,7 +24,7 @@ import (
 func (b *appBuilder) wireTenant() error {
 	cfg, logger := b.cfg, b.logger
 	if cfg.Server.Topology.Mode == config.TopologyModeMulti && strings.EqualFold(strings.TrimSpace(cfg.Tenant.Memberships.Backend), "memory") && !cfg.Server.Topology.AllowPerPodState {
-		return fmt.Errorf("tenant.memberships.backend=memory is unsafe with server.topology.mode=multi; use sqlite")
+		return fmt.Errorf("tenant.memberships.backend=memory is unsafe with server.topology.mode=multi; use sqlite or postgres")
 	}
 	tenantStore, err := serverbuildstore.BuildTenantStore(cfg, logger, b.pgDB, b.pgDialect)
 	if err != nil {
@@ -44,7 +44,7 @@ func (b *appBuilder) wireTenant() error {
 			return fmt.Errorf("schema check tenant: %w", err)
 		}
 	}
-	membership, err := serverbuildstore.BuildTenantMembershipWiring(b.schemaCtx, cfg.Tenant.Memberships)
+	membership, err := serverbuildstore.BuildTenantMembershipWiring(b.schemaCtx, cfg.Tenant.Memberships, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("tenant membership store: %w", err)
 	}
