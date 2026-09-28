@@ -2,10 +2,14 @@ package sso
 
 import (
 	"net/http"
+	"regexp"
 	"slices"
+	"sort"
+	"strings"
 
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -160,4 +164,140 @@ func (s *Server) handleMeshExtAuthz(ctx HandlerContext) {
 		TLS:    r.TLS,
 	})
 	s.writeMeshAuthzResponse(ctx, res)
+}
+
+// Login profile synchronization is kept beside the user/profile access seams so
+// the login orchestrator remains within its file budget.
+//
+// applyLoginPresentationPreferences persists only the two presentation hints
+// emitted by the hosted login page. The values are intentionally validated
+// here, after the user has authenticated and any consent gate has passed: the
+// fields are UX state, not OAuth authorization inputs, and must never become a
+// way to mutate an arbitrary account.
+func (s *Server) applyLoginPresentationPreferences(
+	ctx HandlerContext,
+	result *AuthResult,
+	req login.Request,
+	clientID string,
+) {
+	if s.userProvider == nil {
+		return
+	}
+	preferences := validLoginPresentationPreferences(req)
+	if len(preferences) == 0 {
+		return
+	}
+	user, err := s.userProvider.GetByID(ctx.Request().Context(), result.UserID)
+	if err != nil || user == nil {
+		s.logger.Error("failed to load user presentation preferences", "user", result.UserID, "error", err)
+		return
+	}
+	if user.Attributes == nil {
+		user.Attributes = make(map[string]string, len(preferences))
+	}
+	changed := mergeLoginPresentationPreferences(user.Attributes, preferences)
+	if len(changed) == 0 {
+		return
+	}
+	sort.Strings(changed)
+	if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
+		s.logger.Error("failed to persist user presentation preferences", "user", result.UserID, "error", err)
+		return
+	}
+	// These values are persisted user presentation state only; they do not
+	// grant authorization or alter tenant context. Any ordinary profile claim
+	// projection remains governed by the existing OIDC scope/claims rules.
+	if s.auditor != nil {
+		event := &audit.Event{
+			Type:     audit.EventUserPrefsUpdated,
+			Outcome:  audit.OutcomeSuccess,
+			ActorID:  result.UserID,
+			ClientID: clientID,
+			ActorIP:  audit.ClientIP(ctx.Request()),
+		}
+		audit.SetMeta(event, "source", "hosted_login")
+		audit.SetMeta(event, "changed_fields", strings.Join(changed, ","))
+		s.auditor.Record(ctx.Request().Context(), event)
+	}
+}
+
+func mergeLoginPresentationPreferences(
+	attributes, preferences map[string]string,
+) []string {
+	changed := make([]string, 0, len(preferences)+1)
+	for key, value := range preferences {
+		if key == core.LegacyThemeModePreferenceKey &&
+			attributes[core.PreferenceThemeModeKey] != value {
+			attributes[core.PreferenceThemeModeKey] = value
+			changed = append(changed, core.PreferenceThemeModeKey)
+		}
+		if attributes[key] == value {
+			continue
+		}
+		attributes[key] = value
+		changed = append(changed, key)
+	}
+	return changed
+}
+
+func mergeStoredPresentationPreferences(
+	current, stored map[string]string,
+) map[string]string {
+	if current == nil {
+		return stored
+	}
+	merged := make(map[string]string, len(current)+2)
+	for key, value := range current {
+		merged[key] = value
+	}
+	if locale := strings.TrimSpace(stored["locale"]); validPresentationLocale(locale) {
+		merged["locale"] = locale
+	}
+	if theme := storedThemeMode(stored); theme != "" {
+		merged[core.PreferenceThemeModeKey] = theme
+		merged[core.LegacyThemeModePreferenceKey] = theme
+	}
+	return merged
+}
+
+func validLoginPresentationPreferences(req login.Request) map[string]string {
+	preferences := make(map[string]string, 2)
+	if locale := strings.TrimSpace(req.PresentationLocale); validPresentationLocale(locale) {
+		preferences["locale"] = locale
+	}
+	if theme := strings.TrimSpace(req.PresentationThemeMode); theme == "light" || theme == "dark" || theme == "auto" {
+		// Keep the legacy key in this map so existing audit and compatibility
+		// expectations remain stable; applyLogin mirrors it to the generic key.
+		preferences[core.LegacyThemeModePreferenceKey] = theme
+	}
+	return preferences
+}
+
+func storedThemeMode(attributes map[string]string) string {
+	generic := strings.TrimSpace(attributes[core.PreferenceThemeModeKey])
+	legacy := strings.TrimSpace(attributes[core.LegacyThemeModePreferenceKey])
+	genericValid := validStoredThemeMode(generic)
+	legacyValid := validStoredThemeMode(legacy)
+	if genericValid && legacyValid && generic != legacy {
+		return ""
+	}
+	if genericValid {
+		return generic
+	}
+	if legacyValid {
+		return legacy
+	}
+	return ""
+}
+
+func validStoredThemeMode(value string) bool {
+	return value == "light" || value == "dark" || value == "auto"
+}
+
+var loginPresentationLocalePattern = regexp.MustCompile(
+	`^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$`,
+)
+
+func validPresentationLocale(value string) bool {
+	return len(value) <= 32 && loginPresentationLocalePattern.MatchString(value)
 }

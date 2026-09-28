@@ -2311,8 +2311,9 @@ paths:
       description: |
         Returns the caller's stored presentation preferences from the
         authenticated user's profile. This is a DEFAULT-DENY projection of
-        the shared attribute bag: only `locale`, `zoneinfo`, and
-        `sverp:theme_mode` can be returned, and absent or invalid values are
+        the shared attribute bag: only `locale`, `zoneinfo`, and the
+        application-neutral `theme_mode` (plus its legacy
+        `sverp:theme_mode` alias) can be returned, and absent or invalid values are
         omitted. Credential, SCIM, backend-internal, and other unknown
         attributes are never exposed. Mounted only when a `UserProvider` is
         wired and the self-service surface is enabled. This is an API-only
@@ -2366,7 +2367,8 @@ paths:
       description: |
         Merges the supplied JSON object into the caller's profile. The
         request is DEFAULT-DENY: the only accepted keys are `locale`,
-        `zoneinfo`, and `sverp:theme_mode`; unknown keys, non-string values,
+        `zoneinfo`, and `theme_mode` (the legacy `sverp:theme_mode` alias is
+        also accepted); unknown keys, non-string values,
         and values outside the per-key bounds return `400 invalid_request`.
         The operation does not replace or expose the rest of the profile.
         Setting an allowlisted key to the empty string deletes that key.
@@ -2390,7 +2392,7 @@ paths:
                 value:
                   locale: zh-CN
                   zoneinfo: Asia/Shanghai
-                  sverp:theme_mode: dark
+                  theme_mode: dark
               removePreference:
                 value:
                   locale: ""
@@ -15184,6 +15186,22 @@ components:
             otherwise demand step-up MFA, a live grant for the SAME
             (user, client) skips the challenge. Omit on an untrusted or
             first-time device — the ordinary MFA gate applies unchanged.
+        presentation_locale:
+          type: string
+          maxLength: 32
+          pattern: '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$'
+          description: |
+            Optional hosted-login UI hint. It is persisted as the authenticated
+            user's allowlisted `locale` preference only after successful
+            authentication; it is not an authorization or tenant parameter.
+        presentation_theme_mode:
+          type: string
+          enum: [light, dark, auto]
+          description: |
+            Optional hosted-login UI hint persisted as the shared
+            `theme_mode` preference (with a legacy compatibility alias) only
+            after successful authentication. It is not an authorization or
+            tenant parameter.
 
     LoginResponse:
       type: object
@@ -17560,10 +17578,15 @@ components:
           maxLength: 64
           pattern: '^[\x20-\x7E]+$'
           description: Printable ASCII IANA time-zone name. An empty string on PUT deletes it.
+        theme_mode:
+          type: string
+          enum: [light, dark, auto]
+          description: Application-neutral shared theme preference. An empty string on PUT deletes it.
         'sverp:theme_mode':
           type: string
           enum: [light, dark, auto]
-          description: Wire key is `sverp:theme_mode`; theme preference. An empty string on PUT deletes it.
+          deprecated: true
+          description: Legacy compatibility alias for theme_mode.
 
     MyPreferencesUpdateRequest:
       type: object
@@ -17581,10 +17604,15 @@ components:
           type: string
           maxLength: 64
           pattern: '^(?:[\x20-\x7E]+)?$'
+        theme_mode:
+          type: string
+          enum: ["", light, dark, auto]
+          description: Application-neutral shared theme preference; empty string deletes it.
         'sverp:theme_mode':
           type: string
           enum: ["", light, dark, auto]
-          description: Wire key is `sverp:theme_mode`; empty string deletes it.
+          deprecated: true
+          description: Legacy compatibility alias for theme_mode.
 
     PreferenceUpdateResponse:
       type: object

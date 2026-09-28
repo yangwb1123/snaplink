@@ -146,6 +146,38 @@ route, the SDK uses a one-time `sessionStorage` handoff to return there; the
 access token is then held in memory and is not written to `localStorage`.
 The authorization transaction expires after ten minutes by default.
 
+### Shared presentation preferences
+
+`SnaplinkUserPreferencesClient` exposes application-facing `locale` and
+`themeMode` fields while keeping the server wire keys inside the SDK. New
+clients use the application-neutral `theme_mode` key; responses containing the
+legacy `sverp:theme_mode` key remain readable during migration. The server still
+accepts the alias for older callers. Applications
+own UI state and local storage; the SDK only validates and serializes protocol
+calls.
+
+```ts
+import {
+  SSOClient,
+  SnaplinkUserPreferencesClient,
+  buildLoginPreferenceHandoff,
+} from "@snaplink/sso-client";
+
+const api = new SSOClient({
+  baseUrl: "https://sso.example.com",
+  getAccessToken: () => accessToken,
+});
+const preferences = new SnaplinkUserPreferencesClient(api);
+const current = await preferences.getMyPreferences();
+await preferences.updateMyPreferences({ themeMode: "dark" });
+
+const handoff = buildLoginPreferenceHandoff({ locale: "en-US" });
+```
+
+Pass `...handoff` to `buildHostedLoginURL` when the value was explicitly
+changed during the current login-page session. Omitted values are not sent and
+do not overwrite stored preferences.
+
 ### Hosted login: redirect without collecting credentials in the RP
 
 For an application that must use a separately deployed Snaplink login page,

@@ -1,5 +1,6 @@
+import type { LoginPreferenceHandoff } from "./preferences.js";
 /** Parameters for a Snaplink hosted-login authorization-code redirect. */
-export interface HostedLoginURLParams {
+export interface HostedLoginURLParams extends LoginPreferenceHandoff {
     /** Absolute URL of the separately deployed Snaplink login page. */
     loginPageUrl: string | URL;
     /** Registered Snaplink OAuth client identifier. */

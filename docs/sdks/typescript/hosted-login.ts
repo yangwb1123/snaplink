@@ -1,5 +1,7 @@
+import type { LoginPreferenceHandoff } from "./preferences.js";
+
 /** Parameters for a Snaplink hosted-login authorization-code redirect. */
-export interface HostedLoginURLParams {
+export interface HostedLoginURLParams extends LoginPreferenceHandoff {
   /** Absolute URL of the separately deployed Snaplink login page. */
   loginPageUrl: string | URL;
   /** Registered Snaplink OAuth client identifier. */
@@ -96,6 +98,8 @@ function setOptionalParameters(url: URL, params: HostedLoginURLParams): void {
   setOptional(url, "authorization_details", encodeJSONParameter(params.authorizationDetails));
   setOptional(url, "claims", encodeJSONParameter(params.claims));
   setOptional(url, "id_token_hint", params.idTokenHint);
+  setOptional(url, "presentation_locale", params.presentation_locale);
+  setOptional(url, "presentation_theme_mode", params.presentation_theme_mode);
   setMaxAge(url, params.maxAge);
   setResources(url, params.resource);
 }
@@ -115,6 +119,8 @@ function clearManagedOptionalParameters(url: URL): void {
     "authorization_details",
     "claims",
     "id_token_hint",
+    "presentation_locale",
+    "presentation_theme_mode",
   ]) {
     url.searchParams.delete(name);
   }

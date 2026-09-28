@@ -940,6 +940,8 @@ export interface IntrospectResponse {
   renew_after?: number;
   scope?: string;
   sub?: string;
+  /** Verified tenant claim from an active access token; absent when the token has no tenant binding. */
+  tenant_id?: string;
   token_type?: string;
   username?: string;
 }
@@ -1069,6 +1071,10 @@ export interface LoginRequest {
   device_token?: string;
   /** OIDC nonce bound to a subsequently issued ID token. */
   nonce?: string;
+  /** Optional hosted-login UI hint. It is persisted as the authenticated */
+  presentation_locale?: string;
+  /** Optional hosted-login UI hint persisted as the shared */
+  presentation_theme_mode?: "light" | "dark" | "auto";
   /** Authenticator name; omit for discovery. */
   provider?: string;
   /** Registered redirect URI bound to the authorization code. */
@@ -1183,8 +1189,10 @@ export interface MenuTreeResponse {
 export interface MyPreferences {
   /** BCP 47 language tag. An empty string on PUT deletes it. */
   locale?: string;
-  /** Wire key is `sverp:theme_mode`; theme preference. An empty string on PUT deletes it. */
+  /** Legacy compatibility alias for theme_mode. */
   "sverp:theme_mode"?: "light" | "dark" | "auto";
+  /** Application-neutral shared theme preference. An empty string on PUT deletes it. */
+  theme_mode?: "light" | "dark" | "auto";
   /** Printable ASCII IANA time-zone name. An empty string on PUT deletes it. */
   zoneinfo?: string;
 }
@@ -1192,8 +1200,10 @@ export interface MyPreferences {
 /** Partial allowlisted update. A property may contain its valid value or */
 export interface MyPreferencesUpdateRequest {
   locale?: string;
-  /** Wire key is `sverp:theme_mode`; empty string deletes it. */
+  /** Legacy compatibility alias for theme_mode. */
   "sverp:theme_mode"?: "" | "light" | "dark" | "auto";
+  /** Application-neutral shared theme preference; empty string deletes it. */
+  theme_mode?: "" | "light" | "dark" | "auto";
   zoneinfo?: string;
 }
 

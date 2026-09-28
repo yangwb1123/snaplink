@@ -48,8 +48,8 @@ func TestHandleMyPreferencesGet_AllowlistOnly(t *testing.T) {
 	if body["locale"] != "zh-CN" {
 		t.Errorf("locale = %v, want zh-CN", body["locale"])
 	}
-	if body["sverp:theme_mode"] != "dark" {
-		t.Errorf("theme_mode = %v, want dark", body["sverp:theme_mode"])
+	if body["theme_mode"] != "dark" || body["sverp:theme_mode"] != "dark" {
+		t.Errorf("theme_mode aliases = %v, want dark", body)
 	}
 	if _, leaked := body["password_hash"]; leaked {
 		t.Errorf("credential attribute leaked: %v", body["password_hash"])
@@ -117,11 +117,41 @@ func TestHandleMyPreferencesPut_MergesAndPersists(t *testing.T) {
 	if got.Attributes["locale"] != "zh-CN" {
 		t.Errorf("locale = %q, want zh-CN", got.Attributes["locale"])
 	}
-	if got.Attributes["sverp:theme_mode"] != "dark" {
-		t.Errorf("theme_mode = %q, want dark", got.Attributes["sverp:theme_mode"])
+	if got.Attributes["theme_mode"] != "dark" || got.Attributes["sverp:theme_mode"] != "dark" {
+		t.Errorf("theme_mode aliases = %v, want dark", got.Attributes)
 	}
 	if got.Attributes["zoneinfo"] != "Asia/Shanghai" {
 		t.Errorf("zoneinfo = %q, want Asia/Shanghai", got.Attributes["zoneinfo"])
+	}
+}
+
+func TestHandleMyPreferencesPut_GenericThemeKeyMirrorsLegacy(t *testing.T) {
+	t.Parallel()
+	d := newTestDeps()
+	seedUser(t, d, "alice", nil)
+	ctx, rec := newCtx(http.MethodPut, core.ContentTypeJSON, `{"theme_mode":"auto"}`)
+	HandleMyPreferencesPut(d, ctx, "alice")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	got, err := d.users.GetByID(t.Context(), "alice")
+	if err != nil {
+		t.Fatalf("reload alice: %v", err)
+	}
+	if got.Attributes["theme_mode"] != "auto" || got.Attributes["sverp:theme_mode"] != "auto" {
+		t.Fatalf("theme_mode aliases = %v, want auto", got.Attributes)
+	}
+}
+
+func TestHandleMyPreferencesPut_RejectsConflictingThemeAliases(t *testing.T) {
+	t.Parallel()
+	d := newTestDeps()
+	seedUser(t, d, "alice", nil)
+	ctx, rec := newCtx(http.MethodPut, core.ContentTypeJSON,
+		`{"theme_mode":"dark","sverp:theme_mode":"light"}`)
+	HandleMyPreferencesPut(d, ctx, "alice")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }
 

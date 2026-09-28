@@ -460,10 +460,17 @@ func (s *Server) upsertLoginUser(ctx HandlerContext, result *AuthResult, state s
 	}
 	// Preserve profile attributes when the authenticator returned none: a
 	// login must not wipe claims another flow (signup, self-service, SCIM)
-	// stored on the user record — the login is a refresh, not a reset.
-	if result.Attributes == nil {
-		if existing, err := s.userProvider.GetByID(ctx.Request().Context(), result.UserID); err == nil && existing != nil {
+	// stored on the user record — the login is a refresh, not a reset. The
+	// allowlisted presentation preferences remain authoritative even when a
+	// federated authenticator returns a non-empty profile map.
+	if existing, err := s.userProvider.GetByID(ctx.Request().Context(), result.UserID); err == nil && existing != nil {
+		if result.Attributes == nil {
 			result.Attributes = existing.Attributes
+		} else {
+			result.Attributes = mergeStoredPresentationPreferences(
+				result.Attributes,
+				existing.Attributes,
+			)
 		}
 	}
 	user := &User{
@@ -478,4 +485,12 @@ func (s *Server) upsertLoginUser(ctx HandlerContext, result *AuthResult, state s
 		return true
 	}
 	return false
+}
+
+// recordCodeFlowSuccess persists the login-success audit row (with the
+// canonical session ID when the login carried one) and renders the code
+// response. The code-flow branch mints no token until a later /token exchange.
+func (s *Server) recordCodeFlowSuccess(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, code, sessionID string) {
+	s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, sessionID, nil)
+	s.renderAuthCodeResponse(ctx, req, client, code, sessionID)
 }

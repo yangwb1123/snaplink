@@ -748,6 +748,7 @@ class IntrospectResponse(TypedDict, total=False):
     renew_after: int  # Unix time this still-active token needs renewal, an early
     scope: str
     sub: str
+    tenant_id: str  # Verified tenant claim from an active access token; absent when the token has no tenant binding.
     token_type: str
     username: str
 
@@ -858,6 +859,8 @@ class LoginRequest(TypedDict, total=False):
     credential: Dict[str, str]  # Provider-specific credential map. Standard keys:
     device_token: str  # Opaque "remember this device" grant minted by a prior
     nonce: str  # OIDC nonce bound to a subsequently issued ID token.
+    presentation_locale: str  # Optional hosted-login UI hint. It is persisted as the authenticated
+    presentation_theme_mode: str  # Optional hosted-login UI hint persisted as the shared
     provider: str  # Authenticator name; omit for discovery.
     redirect_uri: str  # Registered redirect URI bound to the authorization code.
     resource: List[str]  # RFC 8707 resource indicators. Each value MUST be in the
@@ -935,14 +938,16 @@ class MenuTreeResponse(TypedDict, total=False):
 class MyPreferences(TypedDict, total=False):
     """The only profile attributes exposed by the self-service preferences"""
     locale: str  # BCP 47 language tag. An empty string on PUT deletes it.
-    sverp_theme_mode: str  # Wire key is `sverp:theme_mode`; theme preference. An empty string on PUT deletes it.
+    sverp_theme_mode: str  # Legacy compatibility alias for theme_mode.
+    theme_mode: str  # Application-neutral shared theme preference. An empty string on PUT deletes it.
     zoneinfo: str  # Printable ASCII IANA time-zone name. An empty string on PUT deletes it.
 
 
 class MyPreferencesUpdateRequest(TypedDict, total=False):
     """Partial allowlisted update. A property may contain its valid value or"""
     locale: str
-    sverp_theme_mode: str  # Wire key is `sverp:theme_mode`; empty string deletes it.
+    sverp_theme_mode: str  # Legacy compatibility alias for theme_mode.
+    theme_mode: str  # Application-neutral shared theme preference; empty string deletes it.
     zoneinfo: str
 
 

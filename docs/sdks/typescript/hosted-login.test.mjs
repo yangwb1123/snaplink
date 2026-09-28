@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildHostedLoginURL, SSOClient } from "./index.ts";
+import {
+  buildHostedLoginURL,
+  buildLoginPreferenceHandoff,
+  SSOClient,
+} from "./index.ts";
 
 const challenge = "A".repeat(43);
 
@@ -36,6 +40,7 @@ test("builds a code + S256 hosted-login URL and preserves presentation query", (
     resource: ["https://api.example.com/a", "https://api.example.com/b"],
     claims: { userinfo: { email: { essential: true } } },
     authorizationDetails: [{ type: "payment" }],
+    ...buildLoginPreferenceHandoff({ locale: "en-US", themeMode: "dark" }),
   })));
 
   assert.equal(built.origin, "https://login.example.com");
@@ -64,6 +69,8 @@ test("builds a code + S256 hosted-login URL and preserves presentation query", (
     userinfo: { email: { essential: true } },
   });
   assert.deepEqual(JSON.parse(built.searchParams.get("authorization_details")), [{ type: "payment" }]);
+  assert.equal(built.searchParams.get("presentation_locale"), "en-US");
+  assert.equal(built.searchParams.get("presentation_theme_mode"), "dark");
 });
 
 test("does not inherit security-sensitive optional OIDC parameters from the login-page URL", () => {
