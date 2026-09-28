@@ -11,7 +11,6 @@ import (
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
 	"github.com/yangwb1123/snaplink/config"
 	connectionssqlite "github.com/yangwb1123/snaplink/domains/connections/sqlite"
-	"github.com/yangwb1123/snaplink/domains/tenant"
 	tenantsqlite "github.com/yangwb1123/snaplink/domains/tenant/sqlite"
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
 	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
@@ -24,11 +23,18 @@ import (
 // wireTenant builds tenant storage, policy, quotas, and usage metering.
 func (b *appBuilder) wireTenant() error {
 	cfg, logger := b.cfg, b.logger
+	if cfg.Server.Topology.Mode == config.TopologyModeMulti && strings.EqualFold(strings.TrimSpace(cfg.Tenant.Memberships.Backend), "memory") && !cfg.Server.Topology.AllowPerPodState {
+		return fmt.Errorf("tenant.memberships.backend=memory is unsafe with server.topology.mode=multi; use sqlite")
+	}
 	tenantStore, err := serverbuildstore.BuildTenantStore(cfg, logger, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("tenant store: %w", err)
 	}
 	b.tenantStore = tenantStore
+	backend := strings.TrimSpace(cfg.Tenant.Memberships.Backend)
+	if tenantStore == nil && backend != "" && !strings.EqualFold(backend, "disabled") {
+		return fmt.Errorf("tenant.memberships.backend=%s requires tenant.enabled=true", backend)
+	}
 	if tenantStore == nil {
 		return nil
 	}
@@ -38,85 +44,54 @@ func (b *appBuilder) wireTenant() error {
 			return fmt.Errorf("schema check tenant: %w", err)
 		}
 	}
-	b.wireTenantStoreOptions(tenantStore)
+	membership, err := serverbuildstore.BuildTenantMembershipWiring(b.schemaCtx, cfg.Tenant.Memberships)
+	if err != nil {
+		return fmt.Errorf("tenant membership store: %w", err)
+	}
+	b.tenantUserStore = membership.Store
+	b.opts = append(b.opts, membership.Options...)
+	b.storageHealthSources = append(b.storageHealthSources, membership.HealthSources...)
+	tenantWiring := serverbuildstore.BuildTenantStoreWiring(cfg.Tenant, tenantStore, logger)
+	b.opts = append(b.opts, tenantWiring.Options...)
+	b.storageHealthSources = append(b.storageHealthSources, tenantWiring.HealthSources...)
+	if err := b.wireTenantQuotaRuntime(cfg.Tenant); err != nil {
+		return err
+	}
+	tokenOptions, err := serverbuildstore.BuildTenantTokenStrategyOptions(cfg.Tenant.Tenants, logger)
+	if err != nil {
+		return err
+	}
+	b.opts = append(b.opts, tokenOptions...)
+	usageOptions, err := serverbuildstore.BuildTenantUsageOptions(cfg.Tenant.UsageMetering, logger)
+	if err != nil {
+		return fmt.Errorf("tenant usage metering: %w", err)
+	}
+	b.opts = append(b.opts, usageOptions...)
+	return nil
+}
+
+func (b *appBuilder) wireTenantQuotaRuntime(cfg config.TenantConfig) error {
+	logger := b.logger
 	quotaRT, err := serverbuildstore.BuildTenantQuotaRuntime(
-		b.schemaCtx, cfg.Tenant.ResourceQuota, b.pgDB, b.pgDialect, b.clientStore,
+		b.schemaCtx, cfg.ResourceQuota, b.pgDB, b.pgDialect, b.clientStore,
 	)
 	if err != nil {
 		return fmt.Errorf("tenant resource quota: %w", err)
 	}
 	b.tenantQuotaRuntime = quotaRT
-	if quotaRT != nil {
-		b.opts = append(b.opts, sso.WithTenantQuotaStore(quotaRT.Store))
-		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "tenant-resource-quota", quotaRT.Store)
-		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "tenant-resource-quota", quotaRT.Store)
-		b.sessionMgr, err = serverbuildstore.WrapSessionManagerWithTenantQuota(b.schemaCtx, b.sessionMgr, quotaRT.Store, logger)
-		if err != nil {
-			return fmt.Errorf("reconcile tenant session quota: %w", err)
-		}
-		b.opts = append(b.opts, sso.WithSessionManager(b.sessionMgr))
-		b.rebindQuotaSessionConsumers()
-		logger.Info("tenant resource quota enabled", "backend", cfg.Tenant.ResourceQuota.Backend)
+	if quotaRT == nil {
+		return nil
 	}
-	if err := b.wireTenantTokenStrategies(); err != nil {
-		return err
-	}
-	// Per-tenant usage report reads the audit_events table.
-	agg, err := serverbuildstore.BuildTenantUsageAggregator(cfg.Tenant.UsageMetering)
+	b.opts = append(b.opts, sso.WithTenantQuotaStore(quotaRT.Store))
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "tenant-resource-quota", quotaRT.Store)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "tenant-resource-quota", quotaRT.Store)
+	b.sessionMgr, err = serverbuildstore.WrapSessionManagerWithTenantQuota(b.schemaCtx, b.sessionMgr, quotaRT.Store, logger)
 	if err != nil {
-		return fmt.Errorf("tenant usage metering: %w", err)
+		return fmt.Errorf("reconcile tenant session quota: %w", err)
 	}
-	if agg != nil {
-		b.opts = append(b.opts, sso.WithTenantUsageAggregator(agg))
-		logger.Info("tenant usage metering enabled", "backend", cfg.Tenant.UsageMetering.Backend)
-	}
-	return nil
-}
-
-// wireTenantStoreOptions wires tenant health, resolution, and suspension.
-func (b *appBuilder) wireTenantStoreOptions(tenantStore tenant.Store) {
-	cfg, logger := b.cfg, b.logger
-	b.opts = append(b.opts, sso.WithTenantStore(tenantStore))
-	// SQLite-backed tenant store implements Ping → /readyz. Memory-backed
-	// silently no-ops (Ping isn't on the interface; serverbuildsign.AppendReadyCheck only
-	// registers when the concrete type satisfies it).
-	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-tenant", tenantStore)
-	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-tenant", tenantStore)
-	// Always wired (not gated on LookupTimeout/IncludeSuspended being set) so
-	// OnError reaches the operator's logger regardless of those other
-	// knobs — a tenant-store outage during resolution is fail-open by
-	// design (the request still continues with no tenant set), but should
-	// never be silent to the operator. Timeout/IncludeSuspended keep their
-	// exact prior zero-value defaults when the corresponding config field
-	// is unset.
-	b.opts = append(b.opts, sso.WithTenantMiddlewareOptions(sso.TenantMiddlewareOptions{
-		Timeout:          cfg.Tenant.LookupTimeout,
-		IncludeSuspended: cfg.Tenant.IncludeSuspended,
-		OnError: func(err error) {
-			logger.Error("tenant resolution failed", "error", err)
-		},
-	}))
-	if cfg.Tenant.SuspensionCheck.Enabled {
-		b.opts = append(b.opts, sso.WithTenantSuspensionCheck(cfg.Tenant.SuspensionCheck.CacheTTL))
-	}
-}
-
-// wireTenantTokenStrategies binds per-tenant token strategies. A seed tenant may
-// pin a registered strategy ("jwt"|"session") so its tokens differ from the
-// server default; an unregistered name would break login for that tenant at
-// runtime, so fail loud at boot instead.
-func (b *appBuilder) wireTenantTokenStrategies() error {
-	for _, tn := range b.cfg.Tenant.Tenants {
-		if tn.TokenStrategy == "" {
-			continue
-		}
-		if tn.TokenStrategy != sso.TokenStrategyJWT && tn.TokenStrategy != sso.TokenStrategySession {
-			return fmt.Errorf("tenant %q token_strategy %q is not a registered strategy (want %q or %q)",
-				tn.ID, tn.TokenStrategy, sso.TokenStrategyJWT, sso.TokenStrategySession)
-		}
-		b.opts = append(b.opts, sso.WithTenantTokenIssuer(tn.ID, tn.TokenStrategy))
-		b.logger.Info("tenant token strategy bound", "tenant", tn.ID, "strategy", tn.TokenStrategy)
-	}
+	b.opts = append(b.opts, sso.WithSessionManager(b.sessionMgr))
+	b.rebindQuotaSessionConsumers()
+	logger.Info("tenant resource quota enabled", "backend", cfg.ResourceQuota.Backend)
 	return nil
 }
 

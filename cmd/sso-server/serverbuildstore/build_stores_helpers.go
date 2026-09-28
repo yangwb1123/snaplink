@@ -20,6 +20,9 @@ import (
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
 	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/migrate"
+	"github.com/yangwb1123/snaplink/shared/core"
 
 	encryptionaes "github.com/yangwb1123/snaplink/interfaces/snapshot/encryptionaesgcm"
 
@@ -224,8 +227,142 @@ func buildTenantStoreBackend(cfg config.TenantConfig, logger spi.Logger, pg *sql
 	}
 }
 
-// seedTenantStore writes the declared tenants + domains into store. The caller
-// owns store.Close on error (the partial seed is discarded with the store).
+// BuildTenantMembershipStore selects the explicit B2B tenant-user roster store.
+// An empty or disabled backend leaves the membership-dependent surfaces off.
+func BuildTenantMembershipStore(cfg config.TenantMembershipConfig) (core.TenantUserStore, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
+	case "", "disabled":
+		return nil, nil
+	case "memory":
+		return defaultimpl.NewMemoryTenantUserStore(), nil
+	case "sqlite":
+		if strings.TrimSpace(cfg.SQLite.DSN) == "" {
+			return nil, errors.New("tenant.memberships.sqlite.dsn required when backend=sqlite")
+		}
+		store, err := sqlitestores.NewTenantUserStore(cfg.SQLite.DSN)
+		if err != nil {
+			return nil, fmt.Errorf("tenant memberships sqlite: %w", err)
+		}
+		return store, nil
+	default:
+		return nil, fmt.Errorf("unknown tenant.memberships.backend %q (supported: memory, sqlite)", cfg.Backend)
+	}
+}
+
+// TenantStoreWiring carries the options and health probe for the tenant domain.
+type TenantStoreWiring struct {
+	Options       []sso.Option
+	HealthSources []sso.StorageHealthSource
+}
+
+// BuildTenantStoreWiring binds tenant resolution, health, and suspension policy.
+func BuildTenantStoreWiring(cfg config.TenantConfig, store tenant.Store, logger spi.Logger) TenantStoreWiring {
+	wiring := TenantStoreWiring{Options: []sso.Option{sso.WithTenantStore(store)}}
+	if p, ok := store.(interface{ Ping(context.Context) error }); ok {
+		wiring.Options = append(wiring.Options, sso.WithReadyCheck("sqlite-tenant", p.Ping))
+		source := sso.StorageHealthSource{Name: "sqlite-tenant", Ping: p.Ping}
+		if db, ok := store.(interface{ DB() *sql.DB }); ok && db.DB() != nil {
+			database := db.DB()
+			source.SchemaVersions = func(ctx context.Context) (map[string]int, error) {
+				return sqliteSchemaVersions(ctx, database)
+			}
+		}
+		wiring.HealthSources = append(wiring.HealthSources, source)
+	}
+	wiring.Options = append(wiring.Options, sso.WithTenantMiddlewareOptions(sso.TenantMiddlewareOptions{
+		Timeout:          cfg.LookupTimeout,
+		IncludeSuspended: cfg.IncludeSuspended,
+		OnError: func(err error) {
+			logger.Error("tenant resolution failed", "error", err)
+		},
+	}))
+	if cfg.SuspensionCheck.Enabled {
+		wiring.Options = append(wiring.Options, sso.WithTenantSuspensionCheck(cfg.SuspensionCheck.CacheTTL))
+	}
+	return wiring
+}
+
+// TenantMembershipWiring carries the roster store and its server health wiring.
+type TenantMembershipWiring struct {
+	Store         core.TenantUserStore
+	Options       []sso.Option
+	HealthSources []sso.StorageHealthSource
+}
+
+// BuildTenantMembershipWiring keeps the roster store, server options,
+// readiness probe, and storage-health view bound to the same backend.
+func BuildTenantMembershipWiring(ctx context.Context, cfg config.TenantMembershipConfig) (TenantMembershipWiring, error) {
+	store, err := BuildTenantMembershipStore(cfg)
+	if err != nil || store == nil {
+		return TenantMembershipWiring{}, err
+	}
+	if db, ok := store.(interface{ DB() *sql.DB }); ok && db.DB() != nil {
+		if err := migrate.CheckSchema(ctx, db.DB(), "tenant_memberships", sqlitestores.TenantMembershipsMaxVersion()); err != nil {
+			if closer, ok := store.(interface{ Close() error }); ok {
+				_ = closer.Close()
+			}
+			return TenantMembershipWiring{}, fmt.Errorf("schema check tenant_memberships: %w", err)
+		}
+	}
+	wiring := TenantMembershipWiring{Store: store, Options: []sso.Option{sso.WithTenantUserStore(store)}}
+	if p, ok := store.(interface{ Ping(context.Context) error }); ok {
+		wiring.Options = append(wiring.Options, sso.WithReadyCheck("tenant-memberships", p.Ping))
+		source := sso.StorageHealthSource{Name: "tenant-memberships", Ping: p.Ping}
+		if db, ok := store.(interface{ DB() *sql.DB }); ok && db.DB() != nil {
+			database := db.DB()
+			source.SchemaVersions = func(ctx context.Context) (map[string]int, error) {
+				return sqliteSchemaVersions(ctx, database)
+			}
+		}
+		wiring.HealthSources = append(wiring.HealthSources, source)
+	}
+	return wiring, nil
+}
+
+func sqliteSchemaVersions(ctx context.Context, db *sql.DB) (map[string]int, error) {
+	statuses, err := migrate.Status(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	versions := make(map[string]int, len(statuses))
+	for _, status := range statuses {
+		versions[status.Namespace] = status.Version
+	}
+	return versions, nil
+}
+
+// BuildTenantTokenStrategyOptions validates each tenant-pinned token strategy
+// and returns the matching server options before any request is served.
+func BuildTenantTokenStrategyOptions(tenants []config.TenantSeedConfig, logger spi.Logger) ([]sso.Option, error) {
+	var options []sso.Option
+	for _, tn := range tenants {
+		if tn.TokenStrategy == "" {
+			continue
+		}
+		if tn.TokenStrategy != sso.TokenStrategyJWT && tn.TokenStrategy != sso.TokenStrategySession {
+			return nil, fmt.Errorf("tenant %q token_strategy %q is not a registered strategy (want %q or %q)",
+				tn.ID, tn.TokenStrategy, sso.TokenStrategyJWT, sso.TokenStrategySession)
+		}
+		options = append(options, sso.WithTenantTokenIssuer(tn.ID, tn.TokenStrategy))
+		logger.Info("tenant token strategy bound", "tenant", tn.ID, "strategy", tn.TokenStrategy)
+	}
+	return options, nil
+}
+
+// BuildTenantUsageOptions keeps the usage endpoint absent when metering is off.
+func BuildTenantUsageOptions(cfg config.TenantUsageMeteringConfig, logger spi.Logger) ([]sso.Option, error) {
+	aggregator, err := BuildTenantUsageAggregator(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if aggregator == nil {
+		return nil, nil
+	}
+	logger.Info("tenant usage metering enabled", "backend", cfg.Backend)
+	return []sso.Option{sso.WithTenantUsageAggregator(aggregator)}, nil
+}
+
+// seedTenantStore writes declared tenants + domains. The caller owns Close on error.
 func seedTenantStore(store tenant.Store, cfg config.TenantConfig) error {
 	ctx := context.Background()
 	for _, t := range cfg.Tenants {

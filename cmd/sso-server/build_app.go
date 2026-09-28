@@ -164,6 +164,7 @@ type appBuilder struct {
 	anomalyRT                                *anomalyRuntime
 
 	tenantStore        tenant.Store
+	tenantUserStore    core.TenantUserStore
 	tenantQuotaRuntime *serverbuildstore.TenantQuotaRuntime
 	connectionStore    connections.Store
 	// OAuth refresh-token store (consumed by self-service erase + CAEP recv).

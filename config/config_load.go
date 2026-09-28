@@ -154,19 +154,7 @@ func (c *Config) validate() error {
 		slog.Warn("config: hosted_login is deprecated and has no effect — sso-server serves no " +
 			"frontend; deploy the login UI as a separate project (see docs/frontend-contract.md)")
 	}
-	if err := c.validateTopology(); err != nil {
-		return err
-	}
-	if err := c.validateTenantResourceQuota(); err != nil {
-		return err
-	}
-	if err := c.validateRegionPolicyStore(); err != nil {
-		return err
-	}
-	if err := c.validateFeatureConfig(); err != nil {
-		return err
-	}
-	if err := c.validateLogging(); err != nil {
+	if err := c.validateConfigSurfaces(); err != nil {
 		return err
 	}
 	// Reject the SDK's internal sentinel. resolveIssuer + the OIDC
@@ -187,6 +175,23 @@ func (c *Config) validate() error {
 	}
 	if c.Backup.Keep < 0 {
 		return fmt.Errorf("config: backup.keep must be >= 0 (0 disables retention), got %d", c.Backup.Keep)
+	}
+	return nil
+}
+
+func (c *Config) validateConfigSurfaces() error {
+	checks := []func() error{
+		c.validateTopology,
+		c.validateTenantResourceQuota,
+		c.validateTenantMemberships,
+		c.validateRegionPolicyStore,
+		c.validateFeatureConfig,
+		c.validateLogging,
+	}
+	for _, check := range checks {
+		if err := check(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

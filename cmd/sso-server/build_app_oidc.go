@@ -137,6 +137,9 @@ func (b *appBuilder) wireCAEPTransmitter() {
 		caep.WithLogger(logger),
 		caep.WithFailureRecorder(b.recorder),
 	}
+	if b.tenantUserStore != nil {
+		caepOpts = append(caepOpts, caep.WithTenantUserStore(b.tenantUserStore))
+	}
 	if b.metricsRegistry != nil {
 		caepOpts = append(caepOpts, caep.WithMetric(func(outcome string) {
 			b.metricsRegistry.CAEPSetsTotal.WithLabelValues(outcome).Inc()
@@ -228,16 +231,6 @@ func (b *appBuilder) wireExternalAuditWorker() error {
 	b.opts = append(b.opts, sso.WithReadyCheck("external-audit-worker", runtime.Ready))
 	b.addAuditCloser(runtime.Close)
 	return nil
-}
-
-func (b *appBuilder) closeBuildFailure() {
-	if b.netCancel != nil {
-		b.netCancel()
-	}
-	stopScheduler(context.Background(), b.logger, b.auditRetentionCancel, b.auditRetentionDone, "audit retention scheduler did not exit cleanly")
-	if b.externalAuditClose != nil {
-		_ = b.externalAuditClose(context.Background())
-	}
 }
 
 // wireFederation wires OpenID Federation 1.0 entity config, trust-chain

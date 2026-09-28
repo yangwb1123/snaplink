@@ -73,6 +73,17 @@ func applyReload(logger spi.Logger, reloader *configreload.Reloader) {
 	)
 }
 
+func (b *appBuilder) closeBuildFailure() {
+	closeIfCloser(b.tenantUserStore)
+	if b.netCancel != nil {
+		b.netCancel()
+	}
+	stopScheduler(context.Background(), b.logger, b.auditRetentionCancel, b.auditRetentionDone, "audit retention scheduler did not exit cleanly")
+	if b.externalAuditClose != nil {
+		_ = b.externalAuditClose(context.Background())
+	}
+}
+
 // closeAppStores releases the long-lived backing stores at process exit. Order
 // mirrors the original LIFO defer chain (connections → tenant → netpolicy →
 // registry): connections + tenant + netpolicy stores depend on nothing the
@@ -87,6 +98,9 @@ func closeAppStores(a *app) {
 	// before this deferred close), so no writer races the connection close.
 	if c, ok := a.configAuditStore.(io.Closer); ok {
 		_ = c.Close()
+	}
+	if a.server != nil {
+		closeIfCloser(a.server.TenantUserStore())
 	}
 	if a.tenantStore != nil {
 		_ = a.tenantStore.Close()

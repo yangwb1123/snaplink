@@ -10,6 +10,7 @@ import (
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	tenantmemory "github.com/yangwb1123/snaplink/domains/tenant/memory"
 	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // These unexported helpers back BuildMFA / BuildSnapshotSubsystem /
@@ -17,6 +18,70 @@ import (
 // package's black-box tests (an unexported identifier can only be called
 // from inside this package) — a regression in one of these branches would
 // only be pinpointed here, not by any *_test.go in cmd/sso-server itself.
+
+func TestBuildTenantMembershipStore_Backends(t *testing.T) {
+	t.Parallel()
+	if store, err := BuildTenantMembershipStore(config.TenantMembershipConfig{}); err != nil || store != nil {
+		t.Fatalf("disabled backend: store=%v err=%v, want nil store", store, err)
+	}
+	if _, err := BuildTenantMembershipStore(config.TenantMembershipConfig{Backend: "sqlite"}); err == nil {
+		t.Fatal("expected sqlite backend without dsn to fail")
+	}
+	if _, err := BuildTenantMembershipStore(config.TenantMembershipConfig{Backend: "unknown"}); err == nil {
+		t.Fatal("expected unknown backend to fail")
+	}
+
+	for _, backend := range []string{"memory", "sqlite"} {
+		t.Run(backend, func(t *testing.T) {
+			cfg := config.TenantMembershipConfig{Backend: backend}
+			if backend == "sqlite" {
+				cfg.SQLite.DSN = "file:" + filepath.Join(t.TempDir(), "memberships.db") + "?_journal=WAL"
+			}
+			store, err := BuildTenantMembershipStore(cfg)
+			if err != nil || store == nil {
+				t.Fatalf("BuildTenantMembershipStore: store=%v err=%v", store, err)
+			}
+			defer func() {
+				if closer, ok := store.(interface{ Close() error }); ok {
+					_ = closer.Close()
+				}
+			}()
+			member := &core.TenantMembership{TenantID: "tenant-a", UserID: "user-a", Role: core.TenantRoleMember}
+			if err := store.Add(context.Background(), member); err != nil {
+				t.Fatalf("Add: %v", err)
+			}
+			got, err := store.Get(context.Background(), member.TenantID, member.UserID)
+			if err != nil || got.Role != member.Role {
+				t.Fatalf("Get: got=%+v err=%v", got, err)
+			}
+		})
+	}
+}
+
+func TestBuildTenantMembershipWiringReadinessAndStorageHealth(t *testing.T) {
+	t.Parallel()
+	memory, err := BuildTenantMembershipWiring(context.Background(), config.TenantMembershipConfig{Backend: "memory"})
+	if err != nil || memory.Store == nil || len(memory.Options) != 1 || len(memory.HealthSources) != 0 {
+		t.Fatalf("memory wiring = %+v, err=%v", memory, err)
+	}
+
+	sqlite, err := BuildTenantMembershipWiring(context.Background(), config.TenantMembershipConfig{
+		Backend: "sqlite",
+		SQLite:  config.TenantSQLiteConfig{DSN: "file:" + filepath.Join(t.TempDir(), "tenant-memberships.db") + "?_journal=WAL"},
+	})
+	if err != nil || sqlite.Store == nil || len(sqlite.Options) != 2 || len(sqlite.HealthSources) != 1 {
+		t.Fatalf("sqlite wiring = %+v, err=%v", sqlite, err)
+	}
+	defer func() { _ = sqlite.Store.(interface{ Close() error }).Close() }()
+	ctx := context.Background()
+	if err := sqlite.HealthSources[0].Ping(ctx); err != nil {
+		t.Fatalf("membership readiness ping: %v", err)
+	}
+	versions, err := sqlite.HealthSources[0].SchemaVersions(ctx)
+	if err != nil || versions["tenant_memberships"] != 1 {
+		t.Fatalf("membership schema versions = %v, err=%v", versions, err)
+	}
+}
 
 func TestBuildMFAChallengeStore_MemorySqliteRedisUnknown(t *testing.T) {
 	t.Parallel()

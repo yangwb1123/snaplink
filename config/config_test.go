@@ -30,6 +30,35 @@ func TestValidateVersion(t *testing.T) {
 	})
 }
 
+func TestTenantMembershipValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{name: "disabled by default"},
+		{name: "requires tenants", cfg: Config{Tenant: TenantConfig{Memberships: TenantMembershipConfig{Backend: "memory"}}}, want: "tenant.enabled=true"},
+		{name: "unsupported backend", cfg: Config{Tenant: TenantConfig{Enabled: true, Memberships: TenantMembershipConfig{Backend: "redis"}}}, want: "backend must be disabled, memory, or sqlite"},
+		{name: "sqlite requires dsn", cfg: Config{Tenant: TenantConfig{Enabled: true, Memberships: TenantMembershipConfig{Backend: "sqlite"}}}, want: "sqlite.dsn required"},
+		{name: "memory cannot span replicas", cfg: Config{Server: ServerConfig{Topology: TopologyConfig{Mode: TopologyModeMulti}}, Tenant: TenantConfig{Enabled: true, Memberships: TenantMembershipConfig{Backend: "memory"}}}, want: "unsafe with server.topology.mode=multi"},
+		{name: "sqlite supports replicas", cfg: Config{Server: ServerConfig{Topology: TopologyConfig{Mode: TopologyModeMulti}}, Tenant: TenantConfig{Enabled: true, Memberships: TenantMembershipConfig{Backend: "sqlite", SQLite: TenantSQLiteConfig{DSN: "file:memberships.db"}}}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.validateTenantMemberships()
+			if tt.want == "" {
+				if err != nil {
+					t.Fatalf("unexpected validation error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("validateTenantMemberships() error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestCurrentSchemaVersion(t *testing.T) {
 	if CurrentSchemaVersion != 1 {
 		t.Errorf("expected 1, got %d", CurrentSchemaVersion)

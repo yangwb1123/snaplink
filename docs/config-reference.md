@@ -134,6 +134,7 @@ Values below are exactly what the binary's boot-time dispatch accepts
 | Verified email-change tokens | `self_service.email_change.backend` | off · `memory` · `sqlite` |
 | Password reset tokens | `self_service.password_reset.backend` | off · `memory` · `sqlite` · `redis` (requires `self_service.password.backend`) |
 | Tenants + Domains | `tenant.backend` | `memory` · `sqlite` · `postgres` |
+| B2B tenant-user membership roster | `tenant.memberships.backend` | off (`""`/`disabled`) · `memory` (single replica) · `sqlite` (shared/durable) |
 | Tenant resource quotas | `tenant.resource_quota.backend` | off (`disabled`/empty) · `memory` (single replica) · `postgres` (shared pool) |
 | Tenant usage metering | `tenant.usage_metering.backend` | off · `memory` · `sqlite` (reads the audit DB) |
 | B2B connections | `connections.backend` | `memory` · `sqlite` |
@@ -166,6 +167,16 @@ Production Redis ACLs and network policy MUST limit the application identity to
 its `snaplink:cluster:bus` channel and `sso:jwt:revocations` key (plus the other
 explicitly configured Snaplink keyspaces), and TLS MUST protect traffic outside
 a trusted private network.
+
+The B2B roster is an explicit user-to-tenant edge store, independent of the
+`tenant`/domain store. Setting `tenant.memberships.backend` mounts the existing
+admin roster and self-service organization surfaces, enables tenant-role
+projection, and supplies CAEP/SSF with membership data for tenant-only user
+lifecycle fan-out. The default empty backend preserves the current route and
+delivery posture; `memory` is single-replica only, while `sqlite` requires
+`tenant.memberships.sqlite.dsn` and is safe for replicas sharing that database.
+Membership is created through the authenticated admin roster API or invitation
+flow; it is never inferred from a tenant record or client `tenant_id`.
 
 ### B2B connection email-domain verification
 

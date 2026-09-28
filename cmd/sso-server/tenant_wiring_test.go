@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -32,6 +33,84 @@ func TestBuildApp_RefreshRotationGrace_BuildsCleanly(t *testing.T) {
 		t.Fatalf("buildApp with refresh rotation grace: %v", err)
 	}
 	defer func() { _ = a.registry.Close() }()
+}
+
+func TestWireTenant_RejectsLocalMembershipInMultiReplica(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Server.Topology.Mode = config.TopologyModeMulti
+	cfg.Tenant.Enabled = true
+	cfg.Tenant.Memberships.Backend = "memory"
+	builder := &appBuilder{cfg: cfg, logger: quietLogger()}
+	if err := builder.wireTenant(); err == nil {
+		t.Fatal("multi-replica topology accepted a process-local tenant membership store")
+	}
+}
+
+func TestBuildApp_TenantMembershipStoreWiresRosterAndCAEP(t *testing.T) {
+	t.Parallel()
+	cfg := adminGatewayE2EConfig(t)
+	cfg.Tenant.Memberships = config.TenantMembershipConfig{
+		Backend: "sqlite",
+		SQLite:  config.TenantSQLiteConfig{DSN: "file:" + filepath.Join(t.TempDir(), "tenant-memberships.db") + "?_journal=WAL"},
+	}
+	cfg.CAEP.Enabled = true
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer shutdownApp(t, a)
+	store := a.server.TenantUserStore()
+	if store == nil {
+		t.Fatal("tenant membership store was not injected into the server")
+	}
+	defer func() {
+		if closer, ok := store.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+	}()
+	for _, member := range []*core.TenantMembership{
+		{TenantID: "tenant-a", UserID: "alice", Role: core.TenantRoleMember},
+		{TenantID: "tenant-b", UserID: "bob", Role: core.TenantRoleGuest},
+	} {
+		if err := store.Add(context.Background(), member); err != nil {
+			t.Fatalf("Add(%s/%s): %v", member.TenantID, member.UserID, err)
+		}
+	}
+	members, err := store.ListByTenant(context.Background(), "tenant-a")
+	if err != nil || len(members) != 1 || members[0].UserID != "alice" {
+		t.Fatalf("tenant-a roster = %+v, err=%v; want alice only", members, err)
+	}
+	if a.server.CAEPTransmitter() == nil {
+		t.Fatal("CAEP transmitter was not enabled")
+	}
+
+	handler, err := buildHTTPHandler(cfg, a, quietLogger())
+	if err != nil {
+		t.Fatalf("buildHTTPHandler: %v", err)
+	}
+	httpServer := httptest.NewServer(handler)
+	defer httpServer.Close()
+	const rosterPath = "/api/v1/admin/tenants/tenant-a/members"
+	if status, _ := adminAuthedRequest(t, httpServer, http.MethodGet, rosterPath, "", "", ""); status != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated roster request status=%d, want 401", status)
+	}
+	bearer := mintAdminBearer(t, a)
+	status, body := adminAuthedRequest(t, httpServer, http.MethodGet, rosterPath, bearer, "", "")
+	if status != http.StatusOK {
+		t.Fatalf("authenticated roster request status=%d, want 200", status)
+	}
+	var roster struct {
+		Members []struct {
+			UserID string `json:"user_id"`
+		} `json:"members"`
+	}
+	if err := json.Unmarshal([]byte(body), &roster); err != nil {
+		t.Fatalf("decode roster response: %v", err)
+	}
+	if len(roster.Members) != 1 || roster.Members[0].UserID != "alice" {
+		t.Fatalf("roster endpoint leaked cross-tenant members: %+v", roster.Members)
+	}
 }
 
 func TestBuildTenantUsageAggregator_DisabledByDefault(t *testing.T) {

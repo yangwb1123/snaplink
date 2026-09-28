@@ -470,15 +470,15 @@
     {
       "id": "tenant.platform",
       "name": "Tenant platform",
-      "summary": "Tenant isolation, branding, residency, B2B and usage governance.",
+      "summary": "Tenant isolation, branding, residency, explicit B2B memberships and usage governance.",
       "availability": ["sdk", "stock-binary"],
       "default_state": "conditional",
       "feature_gate": null,
-      "required_stores": ["TenantStore"],
+      "required_stores": ["TenantStore", "TenantUserStore (B2B membership, optional)"],
       "module_capabilities": ["platform.tenant.v1"],
-      "config_keys": ["tenant", "region", "residency"],
+      "config_keys": ["tenant", "tenant.memberships.backend", "tenant.memberships.sqlite.dsn", "region", "residency"],
       "surfaces": ["/api/v1/admin/tenants/*", "tenant middleware"],
-      "sources": ["domains/tenant"]
+      "sources": ["domains/tenant", "cmd/sso-server/build_app_oauth.go", "cmd/sso-server/serverbuildstore/build_stores_helpers.go"]
     },
     {
       "id": "tenant.quota-projection",

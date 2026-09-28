@@ -124,8 +124,40 @@ type TenantConfig struct {
 	Tenants          []TenantSeedConfig          `yaml:"tenants"`
 	Domains          []TenantDomainConfig        `yaml:"domains"`
 	SuspensionCheck  TenantSuspensionCheckConfig `yaml:"suspension_check"`
+	Memberships      TenantMembershipConfig      `yaml:"memberships"`
 	UsageMetering    TenantUsageMeteringConfig   `yaml:"usage_metering"`
 	ResourceQuota    TenantResourceQuotaConfig   `yaml:"resource_quota"`
+}
+
+// TenantMembershipConfig opts into the explicit B2B tenant-user roster used
+// by tenant administration, role projection, and tenant-scoped CAEP delivery.
+// Empty backend leaves those surfaces disabled; memory is single-replica and
+// sqlite is durable across replicas sharing the configured database.
+type TenantMembershipConfig struct {
+	Backend string             `yaml:"backend"` // "" / disabled | memory | sqlite
+	SQLite  TenantSQLiteConfig `yaml:"sqlite"`
+}
+
+func (c *Config) validateTenantMemberships() error {
+	cfg := c.Tenant.Memberships
+	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
+	switch backend {
+	case "", "disabled":
+		return nil
+	case "memory", "sqlite":
+	default:
+		return fmt.Errorf("config: tenant.memberships.backend must be disabled, memory, or sqlite, got %q", cfg.Backend)
+	}
+	if !c.Tenant.Enabled {
+		return fmt.Errorf("config: tenant.memberships.backend=%s requires tenant.enabled=true", backend)
+	}
+	if backend == "sqlite" && strings.TrimSpace(cfg.SQLite.DSN) == "" {
+		return fmt.Errorf("config: tenant.memberships.sqlite.dsn required when backend=sqlite")
+	}
+	if backend == "memory" && c.Server.Topology.Mode == TopologyModeMulti && !c.Server.Topology.AllowPerPodState {
+		return fmt.Errorf("config: tenant.memberships.backend=memory is unsafe with server.topology.mode=multi; use sqlite")
+	}
+	return nil
 }
 
 // TenantResourceQuotaConfig selects the per-tenant resource quota backend and
