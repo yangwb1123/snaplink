@@ -131,5 +131,10 @@ internal object OAuthProtocol {
     }
 
     private fun encode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.name())
-    private fun decode(value: String): String = URLDecoder.decode(value, StandardCharsets.UTF_8.name())
+
+    private fun decode(value: String): String = try {
+        URLDecoder.decode(value, StandardCharsets.UTF_8.name())
+    } catch (error: IllegalArgumentException) {
+        throw SnaplinkAuthException("invalid_request", "authorization callback has malformed query encoding", cause = error)
+    }
 }

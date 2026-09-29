@@ -42,6 +42,7 @@ final class HTTPTransportTests: XCTestCase {
         XCTAssertEqual(fields["code_verifier"], "verifier+with space")
         XCTAssertFalse(body.contains("client_secret"))
     }
+
     func testRefreshRequestOmitsPKCEAndPreservesOAuthError() async throws {
         let capturedRequest = RequestCapture()
         StubURLProtocol.setHandler { request in

@@ -68,6 +68,23 @@ final class SnaplinkAuthClientTests: XCTestCase {
         XCTAssertEqual(exchangeCountAfterRedirect, 0)
     }
 
+    func testCallbackErrorUsesFormDecodingAndBoundedDiagnostics() async throws {
+        let setup = try fixture()
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        let callback = URL(string: "com.example.sverp:/oauth/callback?error=\(String(repeating: "e", count: 80))&error_description=login+cancelled%2Bhere\(String(repeating: "x", count: 600))&state=\(state)&iss=https%3A%2F%2Fsso.example.test")!
+        do {
+            _ = try await setup.client.handleAuthorizationCallback(callback)
+            XCTFail("OAuth error callback must not exchange a code")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.code.count, 64)
+            XCTAssertEqual(error.message.count, 512)
+            XCTAssertTrue(error.message.hasPrefix("login cancelled+here"))
+        }
+        let exchangeCount = await setup.transport.exchangeCount
+        XCTAssertEqual(exchangeCount, 0)
+    }
+
     func testCallbackExchangesCodeAndPersistsBearerToken() async throws {
         let setup = try fixture()
         let authURL = try await setup.client.beginAuthorization()

@@ -89,13 +89,13 @@ enum OAuthProtocol {
               let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) else {
             throw SnaplinkAuthError(code: "invalid_request", message: "callback URL does not match the registered redirectURI")
         }
-        let items = components.queryItems ?? []
+        let items = try decodeQuery(components.percentEncodedQuery)
         func one(_ name: String) throws -> String? {
-            let values = items.filter { $0.name == name }
+            let values = items.filter { $0.0 == name }.map { $0.1 }
             guard values.count <= 1 else {
                 throw SnaplinkAuthError(code: "invalid_request", message: "authorization callback has duplicate \(name) values")
             }
-            return values.first?.value
+            return values.first
         }
         return AuthorizationCallback(
             code: try one("code"),
@@ -143,6 +143,22 @@ enum OAuthProtocol {
             authority = ""
         }
         return "\(scheme):\(authority)\(components.percentEncodedPath)"
+    }
+
+    private static func decodeQuery(_ raw: String?) throws -> [(String, String)] {
+        guard let raw, !raw.isEmpty else { return [] }
+        return try raw.split(separator: "&", omittingEmptySubsequences: false).map { field in
+            let parts = field.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            func decode(_ component: Substring?) throws -> String {
+                guard let component else { return "" }
+                let formDecoded = String(component).replacingOccurrences(of: "+", with: " ")
+                guard let value = formDecoded.removingPercentEncoding else {
+                    throw SnaplinkAuthError(code: "invalid_request", message: "authorization callback has malformed query encoding")
+                }
+                return value
+            }
+            return (try decode(parts.first), try decode(parts.count > 1 ? parts[1] : nil))
+        }
     }
 
     private static func base64URL(_ data: Data) -> String {

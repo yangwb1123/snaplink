@@ -94,7 +94,8 @@ public class SnaplinkAuthClient internal constructor(
             throw SnaplinkAuthException("invalid_request", "authorization issuer did not match Snaplink")
         }
         callback.error?.takeIf(String::isNotBlank)?.let { code ->
-            throw SnaplinkAuthException(code, callback.errorDescription ?: "authorization was not completed")
+            val description = (callback.errorDescription ?: "authorization was not completed").take(MAX_OAUTH_ERROR_TEXT)
+            throw SnaplinkAuthException(code.take(MAX_OAUTH_ERROR_CODE), description)
         }
         val code = callback.code?.takeIf(String::isNotBlank)
             ?: throw SnaplinkAuthException("invalid_request", "authorization response did not contain a code")
@@ -332,5 +333,7 @@ public class SnaplinkAuthClient internal constructor(
         private const val STORAGE_VERSION = 1
         private const val REFRESH_SKEW_SECONDS = 60
         private const val MAX_TOKEN_LIFETIME_SECONDS = 31_536_000L
+        private const val MAX_OAUTH_ERROR_CODE = 64
+        private const val MAX_OAUTH_ERROR_TEXT = 512
     }
 }

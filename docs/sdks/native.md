@@ -16,7 +16,9 @@ Their shared authorization configuration follows the Go SDK's `LoginOptions`
 for scopes, resources, `prompt`, `max_age`, `login_hint`, `acr_values`, and
 `ui_locales`. Server-flow orchestration options such as `ReturnTo` and `Setup`
 are intentionally not native login options; the host application owns its
-post-login navigation.
+post-login navigation. Both SDKs parse callback query values using form-style
+`+`/percent decoding, reject duplicate OAuth response fields, and bound
+callback error codes/descriptions to 64/512 characters before exposing them.
 
 These packages currently target Android API 23+ / iOS 17+; the Swift package
 also builds for macOS 14+. They are not published or production-approved. The

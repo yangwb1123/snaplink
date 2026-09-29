@@ -69,6 +69,21 @@ public class SnaplinkAuthClientTest {
     }
 
     @Test
+    public fun callbackErrorUsesFormDecodingAndBoundedDiagnostics(): Unit = runBlocking {
+        val setup = fixture()
+        val authorizationUrl = setup.client.beginAuthorization()
+        val state = query(authorizationUrl.toString()).getValue("state")
+        val callback = URI(
+            "com.example.sverp:/oauth/callback?error=${"e".repeat(80)}&error_description=login+cancelled%2Bhere${"x".repeat(600)}&state=$state&iss=https%3A%2F%2Fsso.example.test",
+        )
+        val error = runCatching { setup.client.handleAuthorizationCallback(callback) }.exceptionOrNull() as SnaplinkAuthException
+        assertEquals(64, error.errorCode.length)
+        assertEquals(512, error.message?.length)
+        assertTrue(error.message.orEmpty().startsWith("login cancelled+here"))
+        assertEquals(0, setup.transport.exchangeCount.get())
+    }
+
+    @Test
     public fun callbackExchangesCodeAndPersistsAccessToken(): Unit = runBlocking {
         val setup = fixture()
         val authorizationUrl = setup.client.beginAuthorization()
