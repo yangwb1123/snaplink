@@ -1,0 +1,542 @@
+{
+  "$schema": "./sdk-paradigm.schema.json",
+  "schema_version": 1,
+  "compatibility": {
+    "policy": "This registry is the single source of truth for the hand-written SDK layers (transport, session, entitlement, preferences, runtime). It covers what ops/build/sdk-surface.json deliberately does not: the operationId surface is generated for TypeScript and Python only, so the hosted-login and commercial-entitlement behaviour of every published SDK is reconciled here instead. The checker never infers a capability from source; every present entry names the exact file and symbol that provides it, and every missing entry names the wave that will add it. A capability declared as parity must be present in every language, so closing a gap means flipping an entry from missing to present with a real symbol, not relaxing the declaration. Capability entries are append-only in id; changing the file or symbol behind a present entry is a deliberate edit the diff gate can review, and dropping an id or downgrading parity from parity to divergent is a breaking change for the cross-language contract and requires a minor version bump plus a CHANGELOG entry. Adding a language id is allowed and must declare every existing capability for it.",
+    "languages": [
+      {
+        "id": "typescript",
+        "package": true,
+        "notes": "sdks/typescript; npm @snaplink/sso-client, version gated by sdk-surface versions"
+      },
+      {
+        "id": "python",
+        "package": true,
+        "notes": "sdks/python; PyPI snaplink-sso, version gated by sdk-surface versions"
+      },
+      {
+        "id": "rust",
+        "package": true,
+        "notes": "sdks/rust; crates.io snaplink-sso, version gated by sdk-surface versions"
+      },
+      {
+        "id": "php",
+        "package": true,
+        "notes": "sdks/php; Packagist snaplink/sso-client, version gated by sdk-surface versions"
+      },
+      {
+        "id": "go",
+        "package": false,
+        "notes": "sdks/go plus interfaces/ssoclient; versioned by the root Go module, so it carries no package manifest"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "id": "transport.injection",
+      "layer": "transport",
+      "summary": "The HTTP transport is an injectable seam so a caller can supply retries, proxies, timeouts, or a test double.",
+      "parity": "divergent",
+      "languages": {
+        "go": {
+          "status": "present",
+          "file": "sdks/go/login.go",
+          "symbol": "func NewClient(store StateStore, httpClient *http.Client)"
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/browser-login.ts",
+          "symbol": "fetchImpl?: FetchLike"
+        },
+        "php": {
+          "status": "present",
+          "file": "sdks/php/src/SnaplinkClient.php",
+          "symbol": "?callable $transport = null"
+        },
+        "python": {
+          "status": "missing",
+          "note": "SSOClient calls urllib.request.urlopen directly; hosted_login has no seam either.",
+          "plan": "W4 Transport: introduce a Transport Protocol mirroring FetchLike and route both modules through it."
+        },
+        "rust": {
+          "status": "missing",
+          "note": "with_http_client takes the concrete reqwest::blocking::Client, so a caller cannot supply an async client.",
+          "plan": "W4 Transport: replace the HttpClient type alias with an async trait and keep a blocking adapter behind a feature flag."
+        }
+      }
+    },
+    {
+      "id": "session.start",
+      "layer": "session",
+      "summary": "Hosted login starts an authorization redirect and completes the callback exchange in one call pair.",
+      "parity": "parity",
+      "languages": {
+        "go": {
+          "status": "present",
+          "file": "sdks/go/login.go",
+          "symbol": "func (c *Client) Login(ctx context.Context, options LoginOptions) (LoginResult, error)"
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/browser-login.ts",
+          "symbol": "async login(options: SnaplinkLoginOptions): Promise<TokenIssuance>"
+        },
+        "python": {
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/hosted_login.py",
+          "symbol": "def login(self, options: Mapping[str, Any]) -> LoginResult:"
+        },
+        "php": {
+          "status": "present",
+          "file": "sdks/php/src/SnaplinkClient.php",
+          "symbol": "public function login(array $options): LoginResult"
+        },
+        "rust": {
+          "status": "present",
+          "file": "sdks/rust/src/lib.rs",
+          "symbol": "pub fn login(&mut self, options: &LoginOptions) -> Result<LoginResult, SnaplinkError>"
+        }
+      }
+    },
+    {
+      "id": "session.state_store",
+      "layer": "session",
+      "summary": "The short-lived login transaction is persisted through a caller-suppliable store so multi-worker deployments are possible.",
+      "parity": "parity",
+      "languages": {
+        "go": {
+          "status": "present",
+          "file": "sdks/go/login.go",
+          "symbol": "type StateStore interface"
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/browser-login.ts",
+          "symbol": "interface SnaplinkStorage"
+        },
+        "python": {
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/hosted_login.py",
+          "symbol": "class StateStore(Protocol):"
+        },
+        "php": {
+          "status": "present",
+          "file": "sdks/php/src/SnaplinkClient.php",
+          "symbol": "interface StateStore"
+        },
+        "rust": {
+          "status": "present",
+          "file": "sdks/rust/src/lib.rs",
+          "symbol": "pub trait StateStore: Send + Sync"
+        }
+      }
+    },
+    {
+      "id": "session.memory_state_store",
+      "layer": "session",
+      "summary": "An in-process state store ships for development and single-process examples.",
+      "parity": "parity",
+      "languages": {
+        "go": {
+          "status": "present",
+          "file": "sdks/go/login.go",
+          "symbol": "type MemoryStateStore struct"
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/browser-login.ts",
+          "symbol": "export interface SnaplinkStorage"
+        },
+        "python": {
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/hosted_login.py",
+          "symbol": "class MemoryStateStore:"
+        },
+        "php": {
+          "status": "present",
+          "file": "sdks/php/src/SnaplinkClient.php",
+          "symbol": "final class MemoryStateStore implements StateStore"
+        },
+        "rust": {
+          "status": "present",
+          "file": "sdks/rust/src/lib.rs",
+          "symbol": "pub struct MemoryStateStore"
+        }
+      }
+    },
+    {
+      "id": "session.access_token",
+      "layer": "session",
+      "summary": "The current access token is readable without a round trip.",
+      "parity": "parity",
+      "languages": {
+        "go": {
+          "status": "present",
+          "file": "sdks/go/login.go",
+          "symbol": "func (c *Client) AccessToken() string"
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/browser-login.ts",
+          "symbol": "get accessToken(): string | undefined"
+        },
+        "python": {
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/hosted_login.py",
+          "symbol": "def access_token(self) -> Optional[str]:"
+        },
+        "php": {
+          "status": "present",
+          "file": "sdks/php/src/SnaplinkClient.php",
+          "symbol": "public function accessToken(): ?string"
+        },
+        "rust": {
+          "status": "present",
+          "file": "sdks/rust/src/lib.rs",
+          "symbol": "pub fn access_token(&self) -> Option<&str>"
+        }
+      }
+    },
+    {
+      "id": "session.is_logged_in",
+      "layer": "session",
+      "summary": "Callers can branch on a usable session without issuing a request.",
+      "parity": "divergent",
+      "languages": {
+        "go": {
+          "status": "missing",
+          "note": "Callers compare AccessToken() against the empty string instead.",
+          "plan": "W3 Session: add IsLoggedIn so every language exposes the same predicate."
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/browser-login.ts",
+          "symbol": "get isLoggedIn(): boolean"
+        },
+        "python": {
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/hosted_login.py",
+          "symbol": "def is_logged_in(self) -> bool:"
+        },
+        "php": {
+          "status": "present",
+          "file": "sdks/php/src/SnaplinkClient.php",
+          "symbol": "public function isLoggedIn(): bool"
+        },
+        "rust": {
+          "status": "present",
+          "file": "sdks/rust/src/lib.rs",
+          "symbol": "pub fn is_logged_in(&self) -> bool"
+        }
+      }
+    },
+    {
+      "id": "session.clear",
+      "layer": "session",
+      "summary": "Local token state is dropped without notifying the authorization server.",
+      "parity": "divergent",
+      "languages": {
+        "go": {
+          "status": "present",
+          "file": "sdks/go/login.go",
+          "symbol": "func (c *Client) Clear()"
+        },
+        "typescript": {
+          "status": "missing",
+          "note": "clearTokens exists but is private and only reached from logout and refresh failure.",
+          "plan": "W3 Session: make the local reset reachable, mirroring clear() elsewhere."
+        },
+        "python": {
+          "status": "missing",
+          "note": "logout() is the only path that drops token state.",
+          "plan": "W3 Session: add clear() so logout and local reset are separable."
+        },
+        "php": {
+          "status": "present",
+          "file": "sdks/php/src/SnaplinkClient.php",
+          "symbol": "public function clear(): void"
+        },
+        "rust": {
+          "status": "present",
+          "file": "sdks/rust/src/lib.rs",
+          "symbol": "pub fn clear(&mut self)"
+        }
+      }
+    },
+    {
+      "id": "session.logout",
+      "layer": "session",
+      "summary": "Ending a session notifies the authorization server so refresh tokens and server-side sessions are revoked, not merely forgotten.",
+      "parity": "divergent",
+      "languages": {
+        "go": {
+          "status": "missing",
+          "note": "Only Clear() exists, so a Go caller cannot revoke server-side state.",
+          "plan": "W3 Session: add Logout(ctx) that posts /logout before clearing."
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/browser-login.ts",
+          "symbol": "async logout(): Promise<void>"
+        },
+        "python": {
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/hosted_login.py",
+          "symbol": "def logout(self) -> None:"
+        },
+        "php": {
+          "status": "present",
+          "file": "sdks/php/src/SnaplinkClient.php",
+          "symbol": "public function logout(): void"
+        },
+        "rust": {
+          "status": "missing",
+          "note": "clear() drops local state but never revokes; the Rust crate is the only SDK with no server-side logout path.",
+          "plan": "W3 Session: add logout() posting /logout, keeping clear() for local reset."
+        }
+      }
+    },
+    {
+      "id": "session.refresh",
+      "layer": "session",
+      "summary": "An expired access token is renewed with the refresh token so a session survives token expiry.",
+      "parity": "divergent",
+      "languages": {
+        "go": {
+          "status": "missing",
+          "note": "access expiry forces a full re-login.",
+          "plan": "W3 Session: add Refresh(ctx) performing the refresh_token grant."
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/browser-login.ts",
+          "symbol": "private async tryRefresh(options: ResolvedLoginOptions): Promise<TokenIssuance | undefined>"
+        },
+        "python": {
+          "status": "missing",
+          "note": "access expiry forces a full re-login.",
+          "plan": "W3 Session: add refresh() and keep automatic renewal as an opt-in decorator."
+        },
+        "php": {
+          "status": "missing",
+          "note": "access expiry forces a full re-login.",
+          "plan": "W3 Session: add refresh() performing the refresh_token grant."
+        },
+        "rust": {
+          "status": "missing",
+          "note": "access expiry forces a full re-login.",
+          "plan": "W3 Session: add refresh() performing the refresh_token grant."
+        }
+      }
+    },
+    {
+      "id": "entitlement.setup",
+      "layer": "entitlement",
+      "summary": "A license key or invitation code is exchanged for a short-lived activation ticket before login.",
+      "parity": "parity",
+      "languages": {
+        "go": {
+          "status": "present",
+          "file": "sdks/go/activation.go",
+          "symbol": "func (c *Client) Setup(ctx context.Context, options SetupOptions) (ActivationPreparation, error)"
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/browser-login.ts",
+          "symbol": "async setup(options: SnaplinkSetupOptions): Promise<ActivationPreparation>"
+        },
+        "python": {
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/hosted_login.py",
+          "symbol": "def setup(self, options: Mapping[str, Any]) -> Dict[str, Any]:"
+        },
+        "php": {
+          "status": "present",
+          "file": "sdks/php/src/SnaplinkClient.php",
+          "symbol": "public function setup(array $options): array"
+        },
+        "rust": {
+          "status": "present",
+          "file": "sdks/rust/src/lib.rs",
+          "symbol": "pub fn setup("
+        }
+      }
+    },
+    {
+      "id": "entitlement.account_context",
+      "layer": "entitlement",
+      "summary": "The server-derived product, tenant and entitlement projection is readable for the current subject.",
+      "parity": "parity",
+      "languages": {
+        "go": {
+          "status": "present",
+          "file": "sdks/go/activation.go",
+          "symbol": "func (c *Client) GetAccountContext(ctx context.Context, productID string) (AccountContext, error)"
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/browser-login.ts",
+          "symbol": "async getAccountContext(productId?: string): Promise<AccountContext>"
+        },
+        "python": {
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/hosted_login.py",
+          "symbol": "def get_account_context(self, product_id: Optional[str] = None) -> Dict[str, Any]:"
+        },
+        "php": {
+          "status": "present",
+          "file": "sdks/php/src/SnaplinkClient.php",
+          "symbol": "public function getAccountContext(?string $productId = null): array"
+        },
+        "rust": {
+          "status": "present",
+          "file": "sdks/rust/src/lib.rs",
+          "symbol": "pub fn get_account_context("
+        }
+      }
+    },
+    {
+      "id": "entitlement.typed_keys",
+      "layer": "entitlement",
+      "summary": "FeatureKey and LimitKey are typed constants in the SDK so a caller never compares raw strings, mirroring commerce.FeatureKey and commerce.LimitKey.",
+      "parity": "divergent",
+      "languages": {
+        "go": {
+          "status": "present",
+          "file": "sdks/go/entitlement.go",
+          "symbol": "type Feature string",
+          "note": "W2: AccountContext.Entitlement stays map[string]any for wire compatibility; License and HasFeature add the typed view. Has and Limit reject a key this build does not define, because a string-typed constant alone would still let Feature(\"anything\") be granted."
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/entitlement.ts",
+          "symbol": "export function stateAt(",
+          "note": "W2: typed view added alongside the unchanged raw account-context response. hasFeature and limitOf reject a key ALL_FEATURES/ALL_LIMITS does not list, because a plain string parameter would otherwise grant anything the server sent."
+        },
+        "python": {
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/entitlement.py",
+          "symbol": "class LicenseState:",
+          "note": "W2: typed view added alongside the unchanged raw account-context dict, so the PyPI surface stays backward compatible."
+        },
+        "php": {
+          "status": "present",
+          "file": "sdks/php/src/Entitlement.php",
+          "symbol": "final class Entitlement",
+          "note": "W2: typed view added alongside the unchanged raw account-context array. has() and limit() reject a key outside Entitlement::FEATURES/LIMITS, because PHP cannot stop a caller passing an arbitrary string."
+        },
+        "rust": {
+          "status": "present",
+          "file": "sdks/rust/src/entitlement.rs",
+          "symbol": "pub enum Feature",
+          "note": "W2: entitlement is no longer Option<Value>; Feature and Limit are typed and effective() semantics ship with the SDK."
+        }
+      }
+    },
+    {
+      "id": "entitlement.license_file",
+      "layer": "entitlement",
+      "summary": "A signed commercial entitlement file is verified locally so an air-gapped deployment can gate paid features without a vendor call on the login path.",
+      "parity": "divergent",
+      "languages": {
+        "go": {
+          "status": "present",
+          "file": "sdks/go/license_file.go",
+          "symbol": "func VerifyLicenseFile(",
+          "note": "W2: crypto/ed25519 is stdlib, so verification is direct rather than injected. A structurally incomplete envelope reports license_malformed, not a zero-valued version, to match the other SDKs."
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/license-file.ts",
+          "symbol": "export async function verifyLicenseFile(",
+          "note": "W2: verification is async so a WebCrypto or @noble/curves verifier can be injected without this package taking a dependency; WebCrypto Ed25519 is still unevenly deployed."
+        },
+        "python": {
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/license_file.py",
+          "symbol": "def verify_license_file(",
+          "note": "W2: the package is stdlib-only by design and the stdlib has no Ed25519, so a LicenseVerifier callable is injected (cryptography, PyNaCl, or equivalent) rather than adding a dependency or hand-rolling a signature check."
+        },
+        "php": {
+          "status": "present",
+          "file": "sdks/php/src/LicenseFile.php",
+          "symbol": "final class LicenseFile",
+          "note": "W2: a callable verifier is supplied; sodiumVerifier() uses ext-sodium when loaded so the package declares no hard extension requirement."
+        },
+        "rust": {
+          "status": "present",
+          "file": "sdks/rust/src/license_file.rs",
+          "symbol": "pub struct EntitlementFile",
+          "note": "W2: local Ed25519 verification. LicenseTrust::vendor_pinned() reports TrustUnconfigured until a release supplies the vendor root, so no placeholder key ships."
+        }
+      }
+    },
+    {
+      "id": "preferences.handoff",
+      "layer": "preferences",
+      "summary": "Presentation preferences such as locale and theme survive a handoff into and out of hosted login.",
+      "parity": "divergent",
+      "languages": {
+        "go": {
+          "status": "missing",
+          "note": "No preference handoff helper.",
+          "plan": "W2 Entitlement: port preferences.py and preferences.ts to the remaining SDKs."
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/preferences.ts",
+          "symbol": "export type LoginPreferenceHandoff"
+        },
+        "python": {
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/preferences.py",
+          "symbol": "def build_login_preference_handoff("
+        },
+        "php": {
+          "status": "missing",
+          "note": "No preference handoff helper.",
+          "plan": "W2 Entitlement: port preferences.py and preferences.ts to the remaining SDKs."
+        },
+        "rust": {
+          "status": "present",
+          "file": "sdks/rust/src/preferences.rs",
+          "symbol": "pub fn build_login_preference_handoff(",
+          "note": "W2: includes the legacy sverp:theme_mode alias, matching the Python and TypeScript behaviour."
+        }
+      }
+    },
+    {
+      "id": "runtime.native_async",
+      "layer": "runtime",
+      "summary": "The SDK composes with the host runtime's concurrency model instead of blocking a worker thread.",
+      "parity": "divergent",
+      "languages": {
+        "go": {
+          "status": "present",
+          "file": "sdks/go/login.go",
+          "symbol": "func (c *Client) Login(ctx context.Context, options LoginOptions) (LoginResult, error)"
+        },
+        "typescript": {
+          "status": "present",
+          "file": "sdks/typescript/browser-login.ts",
+          "symbol": "async login(options: SnaplinkLoginOptions): Promise<TokenIssuance>"
+        },
+        "python": {
+          "status": "missing",
+          "note": "Synchronous urllib calls; usable in a worker but not in an event loop.",
+          "plan": "W4 Transport: offer an asyncio transport alongside the synchronous default."
+        },
+        "php": {
+          "status": "missing",
+          "note": "Synchronous callables; usable in a worker but not in an event loop.",
+          "plan": "W4 Transport: offer an event-loop-friendly transport alongside the synchronous default."
+        },
+        "rust": {
+          "status": "missing",
+          "note": "reqwest::blocking blocks a tokio worker, so the crate cannot be called from an async handler.",
+          "plan": "W4 Transport: async by default with a blocking adapter behind a feature flag."
+        }
+      }
+    }
+  ]
+}

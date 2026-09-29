@@ -1,0 +1,69 @@
+{
+  "$comment": "Shared entitlement-file verification fixture. commercial-model.md requires that offline and private deployments gate paid features from a signed file, and that authentication never calls a vendor licensing service on a login path. These cases pin the verification contract every SDK must implement identically in W2 Entitlement. Bytes are placeholders; the W2 implementation replaces them with real signed fixtures and a pinned vendor public key.",
+  "schema_version": 1,
+  "algorithm": "Ed25519",
+  "cases": [
+    {
+      "id": "valid_signature",
+      "why": "The ordinary offline path: no network call at all.",
+      "signature": "valid",
+      "expect": "active"
+    },
+    {
+      "id": "tampered_payload",
+      "why": "A flipped byte in the payload must not verify. This is the case a naive 'decode the JSON and trust it' reader would pass.",
+      "signature": "valid",
+      "payload_mutation": "flip_one_byte",
+      "expect": "error",
+      "expect_error": "license_signature_invalid",
+      "expect_never": "active"
+    },
+    {
+      "id": "signature_from_wrong_key",
+      "why": "A correctly shaped signature made by a key that is not the pinned vendor key must not verify.",
+      "signature": "valid",
+      "signing_key": "untrusted",
+      "expect": "error",
+      "expect_error": "license_signature_invalid",
+      "expect_never": "active"
+    },
+    {
+      "id": "caller_pinned_key",
+      "why": "An operator may pin their own public key for OEM and private-CA deployments; a file signed by that key is accepted.",
+      "signature": "valid",
+      "signing_key": "caller_pinned",
+      "expect": "active"
+    },
+    {
+      "id": "expired_entitlement",
+      "why": "A correctly signed file whose entitlement window has closed is inactive, not an error, and never silently upgraded to free-tier behaviour.",
+      "signature": "valid",
+      "now": "after_expires_at",
+      "expect": "inactive",
+      "expect_inactive_reason": "expired"
+    },
+    {
+      "id": "malformed_envelope",
+      "why": "Undecodable input is an error, not an empty entitlement.",
+      "signature": "valid",
+      "payload_mutation": "truncate",
+      "expect": "error",
+      "expect_error": "license_malformed"
+    },
+    {
+      "id": "unsupported_algorithm",
+      "why": "algorithm=none and any algorithm outside the Ed25519 allowlist are rejected before signature verification.",
+      "signature": "valid",
+      "algorithm_override": "none",
+      "expect": "error",
+      "expect_error": "license_algorithm_unsupported"
+    }
+  ],
+  "invariants": [
+    "Verification is entirely local: no network call, no vendor round trip, on any path including login.",
+    "A verification failure is never downgraded to an active or free-tier entitlement.",
+    "The vendor public key is not a secret and may ship compiled in; the signing private key never enters any SDK, repository, or CI.",
+    "inactive_reason is presentation-only, matching entitlement.json.",
+    "The private signing key is never transmitted to the SDK; only the signature and payload are."
+  ]
+}

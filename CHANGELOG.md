@@ -7,7 +7,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Rust SDK: `AccountContext::entitlement` changed from
+  `Option<serde_json::Value>` to `Option<Entitlement>`, and
+  `entitlement.typed_keys`, `entitlement.license_file`, and
+  `preferences.handoff` are now `present` for `rust` in the paradigm registry.
+  Reading the entitlement as raw JSON no longer compiles; use `Entitlement` or
+  re-serialise it deliberately. This and the transport change planned for W4
+  are the breaking changes that accumulate into the next minor version; the crate
+  is still published at 0.3.0 because no release has been cut. `LicenseTrust` also
+  gained `key_ids()` for rotation diagnostics, matching the other SDKs; it prints
+  key identifiers only.
+
 ### Added
+- Rust SDK: a typed commercial entitlement layer in `sdks/rust/src/entitlement.rs`.
+  `AccountContext::entitlement` is now `Option<Entitlement>` instead of
+  `Option<serde_json::Value>`, `Feature` and `Limit` are typed constants
+  generated from the ten `commerce.FeatureKey` and six `commerce.LimitKey`
+  values, and `LicenseState` distinguishes not-activated, inactive, and active.
+  `Entitlement::state_at` reproduces `commerce.EntitlementSnapshot.effective`
+  exactly, including the exclusive `expires_at` boundary, so a lapsed
+  entitlement is no longer indistinguishable from a live one. Lookups on an
+  inactive entitlement return not-granted rather than the stored value, an
+  absent entitlement is never unlimited, and a key this build predates is
+  preserved and reported by `unknown_features()` instead of being dropped or
+  granted. Timestamps are accepted as RFC 3339 or Unix seconds and held
+  internally as Unix seconds. `inactive_reason` is presentation-only.
+- Local signed-entitlement verification for the Go, TypeScript, Python, and PHP
+  SDKs, so `entitlement.license_file` is now `present` in all five and an
+  air-gapped deployment can gate paid features on any of them without a vendor
+  call on the login path, as `docs/commercial-model.md` requires. Every SDK
+  shares one envelope contract — `{version, algorithm, key_id, payload,
+  signature}`, with the signature taken over the decoded payload bytes so
+  verification cannot depend on a canonicalisation rule two implementations
+  might disagree about — and is verified against the same
+  `ops/build/sdk-conformance/license_file.json` fixture. In every SDK the
+  algorithm and envelope version are rejected before any signature work, a
+  structurally incomplete envelope is `license_malformed` rather than a
+  zero-valued version, and a failure is never downgraded to an active or
+  free-tier entitlement. The one primitive that differs is signature checking,
+  and each language takes it the way its ecosystem allows: Go verifies directly
+  because `crypto/ed25519` is stdlib; Rust verifies directly through
+  `ed25519-dalek`; Python injects a `LicenseVerifier` because the package is
+  stdlib-only by design and the stdlib has no Ed25519; TypeScript injects one
+  and makes `verifyLicenseFile` async so WebCrypto or `@noble/curves` can be
+  used without a dependency; PHP injects a callable and ships
+  `LicenseFile::sodiumVerifier()` for `ext-sodium` when it is loaded. The
+  signing private key never enters any SDK, the repository, or CI.
+- Rust SDK: presentation preferences in `sdks/rust/src/preferences.rs`,
+  including the legacy `sverp:theme_mode` alias and the conflict rejection that
+  matches the Python and TypeScript behaviour. A login handoff carries only
+  explicitly set values and never an empty one.
+- Typed commercial entitlement for the Go, TypeScript, Python, and PHP SDKs, so
+  `entitlement.typed_keys` is now `present` in all five. Each reproduces
+  `commerce.EntitlementSnapshot.effective` exactly, including the exclusive
+  `expires_at` boundary, and each is verified against the same shared
+  `ops/build/sdk-conformance/entitlement.json` fixture rather than a private
+  set of assertions. Where the wire shape is already published the typed view is
+  additive: Go keeps `AccountContext.Entitlement` as `map[string]any`, Python
+  keeps `account_context` as a dict, TypeScript keeps `accountContext`, and PHP
+  keeps `getAccountContext(): array`, each gaining a typed accessor beside it.
+  Because a Go `string`-typed constant, a TypeScript `string` parameter, and a
+  PHP `string` argument cannot stop a caller naming a key the SDK does not
+  define, `Has`/`has`/`hasFeature` and `Limit`/`limitOf`/`limit` reject a key
+  outside the declared vocabulary, matching what the Rust and Python enums
+  enforce for free; an unrecognised key stays visible through
+  `UnknownFeatures`/`unknownFeatures` and grants nothing.
+- Gitignore and Go fan-out gate: `sdks/rust/target/`, `sdks/python/build/`, and
+  `sdks/typescript/node_modules/` are local build and dependency output.
+  The first two also broke the Go directory depth and subdir fan-out gates for
+  any developer who ran `cargo build`, `cargo package`, or `python -m build` as
+  the package workflows instruct, so they are now skipped alongside the existing
+  cache exemptions in both `maintainability_budget_test.go` and
+  `engineering.yaml`.
+- Hand-written SDK-layer paradigm registry and gate:
+  `python cli.py sdk-paradigm check` governs the transport, session,
+  entitlement, preferences, and runtime behaviour of all five SDKs, which
+  `ops/build/sdk-surface.json` deliberately does not cover because only
+  TypeScript and Python receive generated clients. Every `present` entry names a
+  real file and a symbol the gate resolves against the tree, so renaming a
+  symbol fails until the registry is edited deliberately; every `missing` entry
+  names the wave that closes it and may not name a file or symbol. A capability
+  declared `parity` must be present in every language, so the six parity
+  capabilities cannot erode, and downgrading one to `divergent` is a contract
+  change requiring a minor bump and a CHANGELOG entry. Every package audited by
+  `sdk-surface versions` must declare a language, so a newly published SDK
+  cannot ship ungoverned. The gate also requires the four cross-language
+  conformance fixtures under `ops/build/sdk-conformance/` and their invariants.
+  `make sdk-paradigm-check` and `make sdk-paradigm-list` are added and the
+  check is a `make ci` prerequisite. The gate is read-only and non-networked;
+  it records the current divergences (no `refresh` outside TypeScript, no
+  `logout` in Go or Rust, no entitlement-file verifier, no typed entitlement
+  keys, no Python transport seam, and a blocking Rust transport) as `missing`
+  entries rather than changing any SDK.
+- `docs/sdk-paradigm.md` as the normative SDK contract: the two governed
+  layers, capability declaration and the parity ratchet, the L0 transport, L2
+  session, and L3 entitlement rules, the four distinct commercial credentials,
+  local entitlement-file verification required by `docs/commercial-model.md`,
+  the error taxonomy, the conformance fixtures, and interface conventions.
 - Additive, default-off stock password policy configuration at
   `authenticators.password.policy` for local complexity rules and optional
   login-time password expiry. Existing password-history enforcement remains an

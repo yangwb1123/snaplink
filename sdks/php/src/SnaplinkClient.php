@@ -168,6 +168,54 @@ final class SnaplinkClient
         return is_string($token) ? $token : null;
     }
 
+    /**
+     * The latest account context, or null when none was fetched.
+     *
+     * The raw wire shape, kept for callers that want it verbatim. Prefer
+     * {@see licenseState()} and {@see hasFeature()} for gating: an entitlement
+     * can be present and still grant nothing.
+     */
+    public function accountContext(): ?array
+    {
+        return $this->accountContext;
+    }
+
+    /**
+     * The latest entitlement as a typed value, or null if never activated.
+     *
+     * Distinguish null from an expired Entitlement with {@see licenseState()};
+     * the two need different copy.
+     */
+    public function entitlement(): ?Entitlement
+    {
+        return LicenseState::entitlementFromAccountContext($this->accountContext);
+    }
+
+    /**
+     * Classify the current licence, at $now or now by default.
+     *
+     * The only question a feature gate should ask.
+     *
+     * @return array{kind:string,reason?:string,until?:int|null}
+     */
+    public function licenseState(?int $now = null): array
+    {
+        return LicenseState::fromAccountContext(
+            $this->accountContext,
+            $now ?? Entitlement::unixNow(),
+        );
+    }
+
+    /** Whether $feature is granted, at $now or now by default. */
+    public function hasFeature(string $feature, ?int $now = null): bool
+    {
+        return LicenseState::hasFeature(
+            $this->accountContext,
+            $feature,
+            $now ?? Entitlement::unixNow(),
+        );
+    }
+
     public function tokens(): ?array
     {
         return $this->tokens;

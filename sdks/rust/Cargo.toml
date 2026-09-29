@@ -1,6 +1,6 @@
 [package]
 name = "snaplink-sso"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Snaplink public-client hosted login SDK"
 license = "Apache-2.0"
@@ -8,11 +8,30 @@ readme = "README.md"
 documentation = "https://docs.rs/snaplink-sso"
 
 [dependencies]
+async-trait = "0.1"
 base64 = "0.22"
+chrono = { version = "0.4.45", default-features = false, features = ["std", "serde"] }
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 rand = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+# Async client only. The `blocking` backend is opt-in via the feature below —
+# never a default, because it parks a runtime worker thread.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 thiserror = "1"
+# Only pulled in for the blocking adapter, which needs spawn_blocking.
+tokio = { version = "1", features = ["rt"], optional = true }
 url = "2"
+
+[features]
+default = []
+# Blocking adapter for CLIs and scripts only. Enabling it inside an async
+# context is a footgun — see `transport::BlockingTransport`.
+blocking = ["reqwest/blocking", "tokio/rt"]
+
+# Signing is a test-only concern: the SDK verifies, it never signs. The dev
+# dependency keeps the test keypair on the same crate version as the verifier.
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }

@@ -1,5 +1,6 @@
 import { SSOClient, SSOError, } from "./client.js";
 import { buildHostedLoginURL } from "./hosted-login.js";
+import { entitlementFromAccountContext, hasFeature, licenseStateFromAccountContext, unixNow, } from "./entitlement.js";
 const transactionPrefix = "snaplink.login.transaction.v1.";
 const handoffPrefix = "snaplink.login.handoff.v1.";
 const activationPrefix = "snaplink.activation.pending.v1.";
@@ -35,7 +36,9 @@ export class SnaplinkBrowserClient {
     get accessToken() {
         return this.tokens?.access_token;
     }
-    /** The server-derived product/account context from the latest activation. */
+    /** The server-derived product/account context from the latest activation.
+     * The raw wire shape; prefer {@link licenseState} and {@link hasFeature} for
+     * gating, because an entitlement can be present and still grant nothing. */
     get accountContext() {
         return this.activationContext;
     }
@@ -133,6 +136,28 @@ export class SnaplinkBrowserClient {
             this.clearTokens();
             this.activationContext = undefined;
         }
+    }
+    /**
+     * The latest entitlement as a typed value, or undefined if never activated.
+     *
+     * Distinguish undefined from an expired entitlement with {@link licenseState};
+     * the two need different copy.
+     */
+    get entitlement() {
+        return entitlementFromAccountContext(this.activationContext);
+    }
+    /**
+     * Classify the current licence, at `now` or now by default.
+     *
+     * The only question a feature gate should ask.
+     */
+    licenseState(now = unixNow()) {
+        return licenseStateFromAccountContext(this.activationContext, now);
+    }
+    /** Whether `feature` is granted, at `now` or now by default. */
+    hasFeature(feature, now = unixNow()) {
+        const entitlement = this.entitlement;
+        return entitlement ? hasFeature(entitlement, feature, now) : false;
     }
     configureAPI(options) {
         this.configureAPIValues(options.baseUrl, options.clientId, options.fetch);

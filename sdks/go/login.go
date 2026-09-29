@@ -167,12 +167,6 @@ func (c *Client) AccessToken() string {
 	return c.tokens.AccessToken
 }
 
-// Clear removes the in-memory session. Server logout remains an API concern.
-func (c *Client) Clear() {
-	c.tokens = nil
-	c.context = nil
-}
-
 type loginConfig struct {
 	baseURL     string
 	clientID    string

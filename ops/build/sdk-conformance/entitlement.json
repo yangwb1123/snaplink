@@ -1,0 +1,147 @@
+{
+  "$comment": "Shared entitlement-semantics fixture. Every SDK's entitlement reader must classify each case identically; the W2 Entitlement wave implements these assertions per language. The boundaries are the whole point: a naive `entitlement != null` check passes the current SDKs and fails every inactive case here.",
+  "schema_version": 1,
+  "reference_now": 1700000000,
+  "cases": [
+    {
+      "id": "never_activated",
+      "why": "No product-to-tenant binding exists. Must be distinguishable from every other case so the UI can show an activation prompt.",
+      "entitlement": null,
+      "expect_state": "not_activated"
+    },
+    {
+      "id": "active_within_window",
+      "why": "The ordinary success case.",
+      "entitlement": {
+        "tenant_id": "tenant-a",
+        "subscription_id": "sub-a",
+        "plan": { "id": "team", "version": 3 },
+        "revision": 7,
+        "active": true,
+        "features": { "core_sso": true, "scim": true, "vault": false },
+        "limits": { "users": { "soft": 50000, "hard": 60000 } },
+        "effective_at": 1699000000,
+        "expires_at": 1800000000,
+        "generated_at": 1699999000
+      },
+      "expect_state": "active",
+      "expect_features": { "core_sso": true, "scim": true, "vault": false },
+      "expect_limits": { "users": { "soft": 50000, "hard": 60000, "unlimited": false } }
+    },
+    {
+      "id": "one_second_before_expiry",
+      "why": "EntitlementSnapshot.effective() uses now < ExpiresAt, so this is still active.",
+      "now": 1799999999,
+      "entitlement": {
+        "tenant_id": "tenant-a",
+        "subscription_id": "sub-a",
+        "plan": { "id": "team", "version": 3 },
+        "revision": 8,
+        "active": true,
+        "features": { "core_sso": true },
+        "limits": {},
+        "effective_at": 1699000000,
+        "expires_at": 1800000000,
+        "generated_at": 1699999000
+      },
+      "expect_state": "active"
+    },
+    {
+      "id": "exactly_at_expiry",
+      "why": "effective() requires now < ExpiresAt, so the boundary second is already inactive. An off-by-one here silently grants a lapsed subscription.",
+      "now": 1800000000,
+      "entitlement": {
+        "tenant_id": "tenant-a",
+        "subscription_id": "sub-a",
+        "plan": { "id": "team", "version": 3 },
+        "revision": 9,
+        "active": true,
+        "features": { "core_sso": true, "scim": true },
+        "limits": {},
+        "effective_at": 1699000000,
+        "expires_at": 1800000000,
+        "generated_at": 1699999000
+      },
+      "expect_state": "inactive",
+      "expect_inactive_reason": "expired"
+    },
+    {
+      "id": "one_second_after_expiry",
+      "why": "The symmetric boundary after expiry.",
+      "now": 1800000001,
+      "entitlement": {
+        "tenant_id": "tenant-a",
+        "subscription_id": "sub-a",
+        "plan": { "id": "team", "version": 3 },
+        "revision": 10,
+        "active": true,
+        "features": { "core_sso": true },
+        "limits": {},
+        "effective_at": 1699000000,
+        "expires_at": 1800000000,
+        "generated_at": 1699999000
+      },
+      "expect_state": "inactive",
+      "expect_inactive_reason": "expired"
+    },
+    {
+      "id": "not_yet_effective",
+      "why": "A future-dated entitlement is not usable yet; a naive presence check would grant it early.",
+      "now": 1699500000,
+      "entitlement": {
+        "tenant_id": "tenant-a",
+        "subscription_id": "sub-a",
+        "plan": { "id": "team", "version": 3 },
+        "revision": 11,
+        "active": true,
+        "features": { "core_sso": true },
+        "limits": {},
+        "effective_at": 1699900000,
+        "generated_at": 1699400000
+      },
+      "expect_state": "inactive",
+      "expect_inactive_reason": "not_yet_effective"
+    },
+    {
+      "id": "inactive_flag_with_no_expiry",
+      "why": "Active=false must win even when the time window is open and no ExpiresAt is set.",
+      "entitlement": {
+        "tenant_id": "tenant-a",
+        "subscription_id": "sub-a",
+        "plan": { "id": "team", "version": 3 },
+        "revision": 12,
+        "active": false,
+        "features": { "core_sso": true, "scim": true },
+        "limits": {},
+        "effective_at": 1699000000,
+        "generated_at": 1699999000
+      },
+      "expect_state": "inactive",
+      "expect_inactive_reason": "suspended"
+    },
+    {
+      "id": "unlimited_limit",
+      "why": "LimitGrant.Unlimited short-circuits the soft/hard pair; an SDK that reads soft would report a bogus threshold.",
+      "entitlement": {
+        "tenant_id": "tenant-a",
+        "subscription_id": "sub-a",
+        "plan": { "id": "enterprise", "version": 1 },
+        "revision": 13,
+        "active": true,
+        "features": { "core_sso": true, "high_availability": true },
+        "limits": { "storage_bytes": { "soft": 0, "hard": 0, "unlimited": true } },
+        "effective_at": 1699000000,
+        "expires_at": 1900000000,
+        "generated_at": 1699999000
+      },
+      "expect_state": "active",
+      "expect_limits": { "storage_bytes": { "soft": 0, "hard": 0, "unlimited": true } }
+    }
+  ],
+  "invariants": [
+    "A present entitlement is not equivalent to an effective entitlement.",
+    "inactive_reason is presentation-only and must never drive retry or authorization behaviour.",
+    "Feature and limit lookups on an inactive entitlement return the not-granted value, never the stored value.",
+    "An absent entitlement is never treated as unlimited."
+  ]
+}

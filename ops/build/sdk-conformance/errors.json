@@ -1,0 +1,95 @@
+{
+  "$comment": "Shared error-taxonomy fixture. Only the TypeScript and Python SDKs currently carry the OAuth error code on their error type, so a Go, Rust, or PHP caller cannot branch on activation_invalid or insufficient_scope at all. These cases pin the classification every SDK error type must expose in W3 Session. The code vocabulary is sourced from docs/error-codes.md and is deliberately a controlled list: a caller branches on the code, never on the description text.",
+  "schema_version": 1,
+  "shape": {
+    "fields": ["status", "code", "description"],
+    "rule": "code is the controlled vocabulary; description is human-facing and may be reworded; neither may be empty for a protocol failure."
+  },
+  "cases": [
+    {
+      "code": "activation_invalid",
+      "status": 400,
+      "class": "activation",
+      "why": "Unknown, expired, already claimed, or cross-boundary license and invitation codes all collapse to this one oracle-safe code. An SDK must not add a distinct variant per underlying cause."
+    },
+    {
+      "code": "activation_not_found",
+      "status": 404,
+      "class": "activation",
+      "why": "The subject has no activation for the requested product; the caller should run setup."
+    },
+    {
+      "code": "activation_unavailable",
+      "status": 503,
+      "class": "activation",
+      "why": "Transient activation-store failure; bounded retry with backoff is the documented response."
+    },
+    {
+      "code": "invalid_grant",
+      "status": 400,
+      "class": "oauth",
+      "why": "Terminal for the grant. Also covers a refresh denied by conditional access, so a caller must not retry refresh indefinitely on this code."
+    },
+    {
+      "code": "invalid_client",
+      "status": 401,
+      "class": "oauth",
+      "why": "Client authentication failed or was mismatched; opaque on the wire and terminal for the caller."
+    },
+    {
+      "code": "invalid_scope",
+      "status": 400,
+      "class": "oauth",
+      "why": "A requested scope is not registered for the client under the scope registry."
+    },
+    {
+      "code": "insufficient_scope",
+      "status": 403,
+      "class": "authorization",
+      "why": "The token is valid but lacks the required scope; distinct from invalid_scope, which means the grant was never issuable."
+    },
+    {
+      "code": "invalid_token",
+      "status": 401,
+      "class": "authentication",
+      "why": "A DPoP or mTLS sender-constraint failure, or an invalid bearer. Covers every cause indistinguishably."
+    },
+    {
+      "code": "session_invalid",
+      "status": 404,
+      "class": "authentication",
+      "why": "Unknown WebAuthn session; drives re-ceremony rather than a retry."
+    },
+    {
+      "code": "mfa_invalid",
+      "status": 400,
+      "class": "authentication",
+      "why": "Every MFA failure collapses to this code; the SDK must not surface a per-cause variant."
+    },
+    {
+      "code": "commerce_entitlement_not_found",
+      "status": 404,
+      "class": "commerce",
+      "why": "No entitlement projection exists for the tenant; the commercial gate reports absent, never zero."
+    },
+    {
+      "code": "commerce_tenant_subscribed",
+      "status": 400,
+      "class": "commerce",
+      "why": "A subscription mutation was refused because the tenant is already subscribed."
+    },
+    {
+      "code": "license_signature_invalid",
+      "status": null,
+      "class": "license",
+      "why": "Local entitlement-file verification failed. This code originates in the SDK, not the server, and must never be remapped onto a network error."
+    }
+  ],
+  "invariants": [
+    "Every protocol failure carries the server error code verbatim; the SDK never invents a local code for a server response.",
+    "Codes originating in the SDK are namespaced by class and are distinguishable from server codes.",
+    "Oracle-safe collapsing is preserved end to end: the SDK exposes one classification per wire code, not per internal cause.",
+    "A description is never parsed. Callers branch on code only.",
+    "The controlled vocabulary is the union of docs/error-codes.md and the SDK-originated license class; adding a case here is a contract change."
+  ]
+}

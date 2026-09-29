@@ -48,6 +48,16 @@ var skipDirs = map[string]bool{
 	// ops/scripts/trend.py — their presence depends on what was run locally,
 	// so counting them would make the fan-out gates flap)
 	"__pycache__": true, ".pytest_cache": true, ".trends": true,
+	// cargo build output for the standalone Rust SDK crate (sdks/rust/target).
+	// Same category: present only in a checkout where `cargo build` or
+	// `cargo package` ran, and cargo nests a large fingerprint tree inside it.
+	"target": true,
+	// setuptools build output for the Python SDK package (sdks/python/build),
+	// the twin of the already-skipped "dist". The package workflow runs
+	// `python -m build`, so any developer following CI hits this locally.
+	// The only production tree named "build" is ops/build, which is already
+	// unreachable because its parent "ops" is skipped.
+	"build": true,
 	// batch-runner campaign definitions and per-run archives
 	// (docs/campaigns, docs/architect-analysis/auto/{runs,analyses},
 	// docs/results) — workflow tooling like ai-dev, not product surface; the

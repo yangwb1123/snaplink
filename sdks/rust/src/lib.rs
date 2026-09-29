@@ -7,7 +7,14 @@
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::{rngs::OsRng, RngCore};
-use reqwest::blocking::Client as HttpClient;
+// Re-exported so callers depend on one crate: they inject a Transport without
+// also having to name reqwest.
+pub use crate::transport::{
+    Method, ReqwestTransport, Transport, TransportError, TransportRequest, TransportResponse,
+};
+#[cfg(feature = "blocking")]
+pub use crate::transport::BlockingTransport;
+
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -17,6 +24,22 @@ use std::{
 };
 use thiserror::Error;
 use url::{form_urlencoded, Url};
+
+mod transport;
+
+mod entitlement;
+mod license_file;
+mod preferences;
+mod session;
+
+pub use entitlement::{
+    unix_now, Entitlement, Feature, InactiveReason, LicenseState, Limit, LimitGrant, PlanRef,
+};
+pub use license_file::{EntitlementFile, LicenseError, LicenseTrust};
+pub use preferences::{
+    build_login_preference_handoff, from_stored_preferences, to_update_request, PreferenceError,
+    PresentationPreferences, PresentationPreferencesPatch, ThemeMode,
+};
 
 const DEFAULT_TRANSACTION_TTL: Duration = Duration::from_secs(600);
 
@@ -136,7 +159,7 @@ impl LoginOptions {
         self
     }
 
-    pub fn setup(mut self, value: LoginSetupOptions) -> Self {
+    pub async fn setup(mut self, value: LoginSetupOptions) -> Self {
         self.setup = Some(value);
         self
     }
@@ -279,12 +302,44 @@ pub struct ActivationPreparation {
     pub product_id: String,
 }
 
+/// Server-derived product, tenant, and entitlement information.
+///
+/// Clients cannot submit or override these fields. Use [`AccountContext::state`]
+/// rather than testing `entitlement` for presence: an entitlement that exists
+/// but has lapsed grants nothing, and the two cases need different copy.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AccountContext {
     pub product_id: String,
     pub tenant_id: String,
     #[serde(default)]
-    pub entitlement: Option<serde_json::Value>,
+    pub entitlement: Option<Entitlement>,
+}
+
+impl AccountContext {
+    /// Classify the licence at the current time.
+    pub fn state(&self) -> LicenseState {
+        self.state_at(unix_now())
+    }
+
+    /// Classify the licence at `now`, given in Unix seconds.
+    pub fn state_at(&self, now: i64) -> LicenseState {
+        match &self.entitlement {
+            Some(entitlement) => entitlement.state_at(now),
+            None => LicenseState::NotActivated,
+        }
+    }
+
+    /// Whether `feature` is granted at the current time.
+    pub fn has(&self, feature: Feature) -> bool {
+        self.has_at(feature, unix_now())
+    }
+
+    /// Whether `feature` is granted at `now`, given in Unix seconds.
+    pub fn has_at(&self, feature: Feature, now: i64) -> bool {
+        self.entitlement
+            .as_ref()
+            .is_some_and(|entitlement| entitlement.has(feature, now))
+    }
 }
 
 /// Result of starting or completing hosted login.
@@ -365,8 +420,8 @@ pub enum SnaplinkError {
     InvalidRequest(String),
     #[error("state storage failed: {0}")]
     State(String),
-    #[error("HTTP request failed: {0}")]
-    Http(#[from] reqwest::Error),
+    #[error("transport failed: {0}")]
+    Http(#[from] TransportError),
     #[error("JSON encoding failed: {0}")]
     Json(#[from] serde_json::Error),
     #[error("OAuth token endpoint returned {status}: {code}: {description}")]
@@ -380,7 +435,7 @@ pub enum SnaplinkError {
 /// Public-client hosted-login session.
 pub struct SnaplinkClient {
     store: Arc<dyn StateStore>,
-    http_client: HttpClient,
+    transport: Arc<dyn Transport>,
     base_url: Option<Url>,
     client_id: Option<String>,
     tokens: Option<TokenResponse>,
@@ -394,19 +449,39 @@ impl Default for SnaplinkClient {
     }
 }
 
+/// Decode a token-endpoint response, collapsing any non-2xx into the same
+/// OAuth error shape the HTTP and JSON paths produced before the transport
+/// seam existed.
+pub(crate) fn decode_token(response: TransportResponse) -> Result<TokenResponse, SnaplinkError> {
+    if !(200..300).contains(&response.status) {
+        return Err(parse_oauth_error(response.status, &response.body));
+    }
+    Ok(serde_json::from_str(&response.body)?)
+}
+
+/// Decode a JSON endpoint response under the same status handling.
+fn decode_json<T: DeserializeOwned>(response: TransportResponse) -> Result<T, SnaplinkError> {
+    if !(200..300).contains(&response.status) {
+        return Err(parse_oauth_error(response.status, &response.body));
+    }
+    Ok(serde_json::from_str(&response.body)?)
+}
+
 impl SnaplinkClient {
     pub fn new() -> Self {
         Self::with_store(Arc::new(MemoryStateStore::new()))
     }
 
     pub fn with_store(store: Arc<dyn StateStore>) -> Self {
-        Self::with_http_client(store, HttpClient::new())
+        Self::with_transport(store, Arc::new(ReqwestTransport::new().expect("reqwest client")))
     }
 
-    pub fn with_http_client(store: Arc<dyn StateStore>, http_client: HttpClient) -> Self {
+    /// Adopt a caller-supplied transport. Use this to control timeouts, proxies,
+    /// and connection pools, or to substitute a test double.
+    pub fn with_transport(store: Arc<dyn StateStore>, transport: Arc<dyn Transport>) -> Self {
         Self {
             store,
-            http_client,
+            transport,
             base_url: None,
             client_id: None,
             tokens: None,
@@ -416,7 +491,7 @@ impl SnaplinkClient {
     }
 
     /// Start hosted login or complete a callback supplied in the options.
-    pub fn login(&mut self, options: &LoginOptions) -> Result<LoginResult, SnaplinkError> {
+    pub async fn login(&mut self, options: &LoginOptions) -> Result<LoginResult, SnaplinkError> {
         let resolved = resolve_options(options)?;
         if self.base_url.as_ref() != Some(&resolved.base_url)
             || self.client_id.as_deref() != Some(resolved.client_id.as_str())
@@ -428,7 +503,7 @@ impl SnaplinkClient {
             self.client_id = Some(resolved.client_id.clone());
         }
         if let Some(callback_url) = options.callback_url.as_deref() {
-            return self.finish(&resolved, callback_url);
+            return self.finish(&resolved, callback_url).await;
         }
         if let Some(setup) = options.setup.as_ref() {
             let setup = SetupOptions {
@@ -442,10 +517,10 @@ impl SnaplinkClient {
                 app_version: setup.app_version.clone(),
                 allow_insecure_http_for_development: options.allow_insecure_http_for_development,
             };
-            self.setup(&setup)?;
+            self.setup(&setup).await?;
         }
         if self.tokens.is_some() {
-            self.claim_pending(&resolved)?;
+            self.claim_pending(&resolved).await?;
             let tokens = self.tokens.clone().expect("checked above");
             return Ok(LoginResult::Complete {
                 tokens,
@@ -467,13 +542,8 @@ impl SnaplinkClient {
             .is_some_and(|value| !value.access_token.is_empty())
     }
 
-    pub fn clear(&mut self) {
-        self.tokens = None;
-        self.account_context = None;
-    }
-
     /// Prepare a one-time license or invitation activation ticket.
-    pub fn setup(
+    pub async fn setup(
         &mut self,
         options: &SetupOptions,
     ) -> Result<ActivationPreparation, SnaplinkError> {
@@ -502,12 +572,14 @@ impl SnaplinkClient {
             locale: options.locale.clone(),
             app_version: options.app_version.clone(),
         };
-        let preparation: ActivationPreparation = self.request_json(
-            self.http_client
-                .post(activation_endpoint(&base_url, "/api/v1/activation/prepare")),
-            Some(serde_json::to_value(request)?),
-            None,
-        )?;
+        let preparation: ActivationPreparation = self
+            .request_json(
+                Method::Post,
+                activation_endpoint(&base_url, "/api/v1/activation/prepare"),
+                Some(serde_json::to_value(request)?),
+                None,
+            )
+            .await?;
         if preparation.activation_ticket.trim().is_empty()
             || preparation.product_id != options.product_id
         {
@@ -523,7 +595,7 @@ impl SnaplinkClient {
     }
 
     /// Fetch server-derived entitlement and quota information.
-    pub fn get_account_context(
+    pub async fn get_account_context(
         &mut self,
         product_id: &str,
     ) -> Result<AccountContext, SnaplinkError> {
@@ -545,7 +617,8 @@ impl SnaplinkClient {
             .query_pairs_mut()
             .append_pair("product_id", product_id);
         let response: ActivationContextResponse =
-            self.request_json(self.http_client.get(endpoint), None, Some(&token))?;
+            self.request_json(Method::Get, endpoint, None, Some(&token))
+            .await?;
         self.account_context = Some(response.context.clone());
         Ok(response.context)
     }
@@ -582,7 +655,7 @@ impl SnaplinkClient {
         })
     }
 
-    fn finish(
+    async fn finish(
         &mut self,
         options: &ResolvedOptions,
         callback_url: &str,
@@ -626,13 +699,13 @@ impl SnaplinkClient {
         let code = response
             .code
             .ok_or_else(|| invalid("authorization response did not contain a code"))?;
-        let tokens = self.exchange(options, &transaction, &code)?;
+        let tokens = self.exchange(options, &transaction, &code).await?;
         self.tokens = Some(tokens.clone());
         if let (Some(ticket), Some(product_id)) = (
             transaction.activation_ticket.as_deref(),
             transaction.product_id.as_deref(),
         ) {
-            if let Err(error) = self.claim_activation(options, ticket, product_id) {
+            if let Err(error) = self.claim_activation(options, ticket, product_id).await {
                 self.tokens = None;
                 return Err(error);
             }
@@ -643,33 +716,25 @@ impl SnaplinkClient {
         })
     }
 
-    fn exchange(
+    async fn exchange(
         &self,
         options: &ResolvedOptions,
         transaction: &LoginTransaction,
         code: &str,
     ) -> Result<TokenResponse, SnaplinkError> {
         let endpoint = token_endpoint(&options.base_url);
-        let form = [
-            ("grant_type", "authorization_code"),
-            ("client_id", transaction.client_id.as_str()),
-            ("code", code),
-            ("code_verifier", transaction.code_verifier.as_str()),
-            ("redirect_uri", transaction.redirect_uri.as_str()),
-        ];
-        let response = self
-            .http_client
-            .post(endpoint)
+        let request = TransportRequest::new(Method::Post, endpoint)
             .header("Accept", "application/json")
             .header("Cache-Control", "no-store")
-            .form(&form)
-            .send()?;
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let body = response.text().unwrap_or_default();
-            return Err(parse_oauth_error(status, &body));
-        }
-        Ok(response.json()?)
+            .form([
+                ("grant_type", "authorization_code".to_owned()),
+                ("client_id", transaction.client_id.clone()),
+                ("code", code.to_owned()),
+                ("code_verifier", transaction.code_verifier.clone()),
+                ("redirect_uri", transaction.redirect_uri.clone()),
+            ]);
+        let response = self.transport.send(request).await?;
+        decode_token(response)
     }
 
     fn configure_session(&mut self, base_url: &Url, client_id: &str) {
@@ -684,17 +749,17 @@ impl SnaplinkClient {
         self.client_id = Some(client_id.to_owned());
     }
 
-    fn claim_pending(&mut self, options: &ResolvedOptions) -> Result<(), SnaplinkError> {
+    async fn claim_pending(&mut self, options: &ResolvedOptions) -> Result<(), SnaplinkError> {
         let pending = self.pending_setup.clone();
         if let Some(pending) = pending.filter(|value| {
             value.base_url == options.base_url && value.client_id == options.client_id
         }) {
-            self.claim_activation(options, &pending.activation_ticket, &pending.product_id)?;
+            self.claim_activation(options, &pending.activation_ticket, &pending.product_id).await?;
         }
         Ok(())
     }
 
-    fn claim_activation(
+    async fn claim_activation(
         &mut self,
         options: &ResolvedOptions,
         activation_ticket: &str,
@@ -710,13 +775,12 @@ impl SnaplinkClient {
             "product_id": product_id,
         });
         let response: ActivationContextResponse = self.request_json(
-            self.http_client.post(activation_endpoint(
-                &options.base_url,
-                "/api/v1/me/activation/claim",
-            )),
+            Method::Post,
+            activation_endpoint(&options.base_url, "/api/v1/me/activation/claim"),
             Some(request),
             Some(&token),
-        )?;
+        )
+        .await?;
         self.account_context = Some(response.context);
         if self
             .pending_setup
@@ -728,29 +792,25 @@ impl SnaplinkClient {
         Ok(())
     }
 
-    fn request_json<T: DeserializeOwned>(
+    async fn request_json<T: DeserializeOwned>(
         &self,
-        mut request: reqwest::blocking::RequestBuilder,
+        method: Method,
+        url: impl Into<String>,
         body: Option<serde_json::Value>,
         bearer: Option<&str>,
     ) -> Result<T, SnaplinkError> {
-        request = request
+        let mut request = TransportRequest::new(method, url)
             .header("Accept", "application/json")
             .header("Cache-Control", "no-store")
             .header("Pragma", "no-cache");
         if let Some(body) = body {
-            request = request.json(&body);
+            request = request.json(body);
         }
         if let Some(token) = bearer {
-            request = request.bearer_auth(token);
+            request = request.bearer(token.to_owned());
         }
-        let response = request.send()?;
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let body = response.text().unwrap_or_default();
-            return Err(parse_oauth_error(status, &body));
-        }
-        Ok(response.json()?)
+        let response = self.transport.send(request).await?;
+        decode_json(response)
     }
 }
 
@@ -1124,8 +1184,8 @@ mod tests {
         thread,
     };
 
-    #[test]
-    fn redirect_then_callback_exchanges_pkce_without_a_secret() {
+    #[tokio::test]
+    async fn redirect_then_callback_exchanges_pkce_without_a_secret() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let base_url = format!("http://{}", listener.local_addr().expect("address"));
         let server = thread::spawn(move || {
@@ -1164,7 +1224,7 @@ mod tests {
         )
         .return_to("http://app.example.test/dashboard")
         .allow_insecure_http_for_development(true);
-        let started = client.login(&options).expect("start");
+        let started = client.login(&options).await.expect("start");
         let redirect = Url::parse(started.redirect_url().expect("redirect")).expect("URL");
         assert_eq!(redirect.path(), "/login/");
         assert_eq!(
@@ -1181,33 +1241,33 @@ mod tests {
             urlencoding_raw(&base_url)
         );
         let completed = client
-            .login(&options.clone().callback_url(callback))
+            .login(&options.clone().callback_url(callback)).await
             .expect("complete");
         assert_eq!(completed.tokens().expect("tokens").access_token, "access-1");
         server.join().expect("server");
     }
 
-    #[test]
-    fn state_mismatch_is_rejected_before_exchange() {
+    #[tokio::test]
+async fn state_mismatch_is_rejected_before_exchange() {
         let mut client = SnaplinkClient::new();
         let options = LoginOptions::new(
             "https://sso.example.test",
             "spa-client",
             "https://app.example.test/callback",
         );
-        client.login(&options).expect("start");
+        client.login(&options).await.expect("start");
         let callback = options.callback_url(
             "https://app.example.test/callback?code=code-1&state=wrong&iss=https%3A%2F%2Fsso.example.test",
         );
         assert!(matches!(
-            client.login(&callback),
+            client.login(&callback).await,
             Err(SnaplinkError::InvalidRequest(message))
                 if message.contains("state did not match")
         ));
     }
 
-    #[test]
-    fn setup_claims_ticket_after_login_without_leaking_key() {
+    #[tokio::test]
+async fn setup_claims_ticket_after_login_without_leaking_key() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let base_url = format!("http://{}", listener.local_addr().expect("address"));
         let server = thread::spawn(move || {
@@ -1269,7 +1329,7 @@ mod tests {
                     .tenant_hint("tenant-hint")
                     .locale("zh-CN")
                     .app_version("1.2.3"),
-            )
+            ).await
             .expect("setup");
         let options = LoginOptions::new(
             &base_url,
@@ -1277,7 +1337,7 @@ mod tests {
             "http://app.example.test/auth/callback",
         )
         .allow_insecure_http_for_development(true);
-        let started = client.login(&options).expect("start");
+        let started = client.login(&options).await.expect("start");
         let redirect = Url::parse(started.redirect_url().expect("redirect")).expect("URL");
         let callback = format!(
             "{}?code=code-setup&state={}&iss={}",
@@ -1286,7 +1346,7 @@ mod tests {
             urlencoding_raw(&base_url)
         );
         let completed = client
-            .login(&options.clone().callback_url(callback))
+            .login(&options.clone().callback_url(callback)).await
             .expect("complete");
         assert_eq!(
             completed.tokens().expect("tokens").access_token,

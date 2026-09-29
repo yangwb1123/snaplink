@@ -83,6 +83,20 @@ __pycache__/
 /sso-snapshotctl
 /sso-import
 
+# Rust SDK cargo build output (the Rust SDK is a standalone crate with no
+# workspace; cargo writes its target dir beside its own manifest).
+/sdks/rust/target/
+
+# Python SDK packaging output (setuptools build dir and egg-info metadata; the
+# package workflow runs `python -m build`, whose wheel/sdist go to a
+# caller-supplied --outdir).
+/sdks/python/build/
+/sdks/python/*.egg-info/
+
+# TypeScript SDK dependency install (the package workflow runs `npm install`
+# before `tsc` and `bun test`).
+/sdks/typescript/node_modules/
+
 # OIDC conformance run archives (large, timestamped; see test/oidc-conformance/results/README.md)
 test/oidc-conformance/results/*/
 
@@ -151,6 +165,3 @@ logs/
 docs/archive/
 docs/auto/
 docs/requirements/runs/
-
-# TypeScript SDK local dependency installation.
-/sdks/typescript/node_modules/

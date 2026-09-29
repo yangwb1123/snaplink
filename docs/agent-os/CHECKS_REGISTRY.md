@@ -35,6 +35,7 @@ Catalog of the Python engineering helpers. Committed Go gates are specified in
 | `ops/scripts/sdk_schema.py` | Bounded `components.schemas` structural compatibility comparison using PyYAML; conservative for composition/unsupported keyword changes | Called by `sdk-surface diff` |
 | `ops/scripts/sdk_baseline.py` | Reads registry + OpenAPI from one local git ref without fetch/shell, or reports a closed baseline error | Called by `sdk-surface diff` |
 | `ops/scripts/sdk_report.py` | Stable operation-surface and schema breaking/additive report formatting | Called by `sdk-surface diff` |
+| `ops/scripts/sdk_paradigm.py` | Validates the hand-written SDK-layer capability registry, resolves every declared present symbol against the real tree, and enforces the cross-language conformance fixtures | `sdk-paradigm check`, `make sdk-paradigm-check`; also `sdk-paradigm list` / `make sdk-paradigm-list` |
 | `ops/scripts/profile_evidence.py` | Builds profile binaries and asserts the declared package-isolation boundaries (durable/admin graph must stay out of the small editions), archiving per-binary package/module/symbol/size evidence | `profiles evidence [--skip-build]` |
 | `ops/scripts/configure_modules.py` | Atomic alternate modfile/overlay/lock materialization and profile builds | `configure --profile <id> [--version vX.Y.Z] [--build]` |
 
@@ -48,12 +49,12 @@ Run `python cli.py check-test` for check-module tests and
 |---|---|
 | Fast loop | `check`, `check-filesize` |
 | Composite reports | `harness`, `accept`, `evaluate` |
-| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `check-proto-openapi-parity`, `adapters`, `capabilities check`, `sdk-surface versions`, `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `sdk-drift check`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
+| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `check-proto-openapi-parity`, `adapters`, `capabilities check`, `sdk-surface versions`, `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `sdk-drift check`, `sdk-paradigm check`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
 | Scaffolding | `generate` |
 | Diagnostics | `diagnose`, `trend`, `health-report`, `self-test` |
 | Test execution | `test`, `race`, `bench`, `check-test`, `skill-test` |
 | Review | `review [spec]` |
-| Module builds | `modules <action>`, `capabilities <action>`, `sdk-surface <action>`, `profiles evidence`, `configure --profile <id> [--version vX.Y.Z] [--build]`; `modules smoke` builds every supported profile plus each currently buildable preview |
+| Module builds | `modules <action>`, `capabilities <action>`, `sdk-surface <action>`, `sdk-paradigm <action>`, `profiles evidence`, `configure --profile <id> [--version vX.Y.Z] [--build]`; `modules smoke` builds every supported profile plus each currently buildable preview |
 
 `python cli.py --help` is the executable command index.
 
@@ -98,6 +99,22 @@ Run `python cli.py check-test` for check-module tests and
   diff. The opt-in `make sdk-surface-diff` target requires
   `SDK_SURFACE_BASELINE_REF`; it is intentionally not a `make ci` prerequisite, so
   a shallow or parentless local checkout cannot create a false baseline result.
+- `sdk-paradigm` governs what the generator never sees: the hand-written
+  transport, session, entitlement, preferences, and runtime behaviour of all five
+  SDKs, which `sdk-surface` deliberately does not cover because only TypeScript
+  and Python receive generated clients. The registry is the only source of
+  truth; the checker never infers a capability from source. A `present` entry
+  must name a real file and a symbol the checker finds in it, so renaming a
+  symbol fails until the registry is edited deliberately. A `missing` entry must
+  name the wave that closes it and may not name a file or symbol. A capability
+  declared `parity` must be present in every language, so the six parity
+  capabilities cannot erode; downgrading one to `divergent` is a contract change
+  requiring a minor bump and a CHANGELOG entry. Every package in
+  `sdk_versions.MANIFEST_SPECS` must declare a language, so a newly published SDK
+  cannot ship ungoverned. The gate also requires the four cross-language
+  conformance fixtures under `ops/build/sdk-conformance/` to exist and carry
+  their invariants. It is read-only, non-networked, and is a `make ci`
+  prerequisite; `make sdk-paradigm-list` prints the capability matrix.
 - `invariants.py` confirms selected markers exist somewhere; it does not prove
   per-endpoint behavior.
 - Coverage fails closed when the test subprocess fails, a package target cannot

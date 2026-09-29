@@ -12,6 +12,9 @@ on:
       - "cmd/gensdk/**"
       - "ops/build/sdk-surface.json"
       - "ops/build/sdk-surface.schema.json"
+      - "ops/build/sdk-paradigm.json"
+      - "ops/build/sdk-paradigm.schema.json"
+      - "ops/build/sdk-conformance/**"
       - "ops/build/capabilities.json"
       - "ops/scripts/sdk_surface.py"
       - "ops/scripts/sdk_versions.py"
@@ -21,6 +24,9 @@ on:
       - "ops/scripts/sdk_report.py"
       - "ops/scripts/test_sdk_surface.py"
       - "ops/scripts/test_sdk_versions.py"
+      - "ops/scripts/sdk_paradigm.py"
+      - "ops/scripts/test_sdk_paradigm.py"
+      - "docs/sdk-paradigm.md"
       - "cli.py"
       - "Makefile"
       - ".github/workflows/sdk-ci.yml"
@@ -32,6 +38,9 @@ on:
       - "cmd/gensdk/**"
       - "ops/build/sdk-surface.json"
       - "ops/build/sdk-surface.schema.json"
+      - "ops/build/sdk-paradigm.json"
+      - "ops/build/sdk-paradigm.schema.json"
+      - "ops/build/sdk-conformance/**"
       - "ops/build/capabilities.json"
       - "ops/scripts/sdk_surface.py"
       - "ops/scripts/sdk_versions.py"
@@ -41,6 +50,9 @@ on:
       - "ops/scripts/sdk_report.py"
       - "ops/scripts/test_sdk_surface.py"
       - "ops/scripts/test_sdk_versions.py"
+      - "ops/scripts/sdk_paradigm.py"
+      - "ops/scripts/test_sdk_paradigm.py"
+      - "docs/sdk-paradigm.md"
       - "cli.py"
       - "Makefile"
       - ".github/workflows/sdk-ci.yml"
@@ -118,6 +130,8 @@ jobs:
         run: python -m unittest discover -s ops/scripts -p 'test_sdk_*.py' -v
       - name: Verify SDK package versions
         run: python cli.py sdk-surface versions
+      - name: Verify hand-written SDK-layer paradigm registry
+        run: python cli.py sdk-paradigm check
       - name: Compare operation and schema surface with pull request base
         if: github.event_name == 'pull_request'
         env:
@@ -171,7 +185,10 @@ jobs:
       - name: Validate Composer package
         run: composer validate --strict --no-check-publish
       - name: Run SDK tests
-        run: php tests/hosted_login_test.php
+        run: |
+          php tests/hosted_login_test.php
+          php tests/entitlement_test.php
+          php tests/license_file_test.php
 
   typescript:
     name: TypeScript SDK

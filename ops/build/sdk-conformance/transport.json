@@ -1,0 +1,73 @@
+{
+  "$comment": "Shared transport fixture. W4 Transport replaces per-language ad hoc HTTP calls with one injectable seam, and these cases pin the normalized request and response shape so a call recorded against one SDK replays identically through another. Go, TypeScript, and PHP already have a seam; Python calls urllib.request.urlopen directly and Rust takes a concrete reqwest::blocking::Client, which is why transport.injection is divergent in ops/build/sdk-paradigm.json.",
+  "schema_version": 1,
+  "request": {
+    "method_preservation": true,
+    "header_canonicalization": "Header names are matched case-insensitively and serialized in a stable order so two SDKs produce byte-comparable requests.",
+    "required_rules": [
+      "A credential endpoint request carries Cache-Control: no-store, matching the server's own no-store response policy.",
+      "No secret value ever appears in a URL, a redirect, or an error message.",
+      "Form bodies are application/x-www-form-urlencoded with deterministic key ordering.",
+      "JSON bodies are UTF-8 with no trailing newline."
+    ]
+  },
+  "cases": [
+    {
+      "id": "authorization_code_exchange",
+      "why": "The most security-sensitive request the SDK makes: it carries a code_verifier, which must never be logged or placed in a URL.",
+      "method": "POST",
+      "path": "/token",
+      "content_type": "application/x-www-form-urlencoded",
+      "required_fields": ["grant_type", "code", "code_verifier", "redirect_uri", "client_id"],
+      "forbidden_in_url": ["code", "code_verifier", "client_secret"]
+    },
+    {
+      "id": "refresh_token_exchange",
+      "why": "Rotation-sensitive: the response refresh token replaces the old one, and a refresh never carries a verifier.",
+      "method": "POST",
+      "path": "/token",
+      "content_type": "application/x-www-form-urlencoded",
+      "required_fields": ["grant_type", "refresh_token", "client_id"],
+      "forbidden_fields": ["code_verifier"]
+    },
+    {
+      "id": "confidential_client_auth",
+      "why": "HTTP Basic takes precedence over body credentials, so a client secret belongs in the Authorization header and never in the form body.",
+      "method": "POST",
+      "path": "/token",
+      "authorization_scheme": "Basic",
+      "forbidden_in_body": ["client_secret"]
+    },
+    {
+      "id": "account_context_read",
+      "why": "Carries a bearer and a product selector; the commercial projection must be read through the injected transport like any other call.",
+      "method": "GET",
+      "path": "/api/v1/me/account-context",
+      "query_fields": ["product_id"],
+      "bearer": true
+    },
+    {
+      "id": "activation_prepare",
+      "why": "Carries a one-time license key or invitation code in a JSON body; the credential is never retained in login state or the state store.",
+      "method": "POST",
+      "path": "/api/v1/activation/prepare",
+      "content_type": "application/json",
+      "required_fields": ["client_id", "product_id"],
+      "exactly_one_of": ["license_key", "invitation_code"],
+      "forbidden_in_url": ["license_key", "invitation_code"]
+    },
+    {
+      "id": "userinfo_bearer",
+      "why": "The canonical resource-server call; the transport forwards the bearer unchanged and never logs it.",
+      "method": "GET",
+      "path": "/userinfo",
+      "bearer": true
+    }
+  ],
+  "invariants": [
+    "A transport double replays these cases byte-identically in every language.",
+    "Redirect construction is a pure function of its inputs and performs no I/O, so it is testable without a transport.",
+    "No transport implementation is allowed to log a header whose name matches Authorization, DPoP, or a credential form field.",
+    "Timeout and retry policy live in the transport, not in the session layer, so both are substitutable in one place."
+  ]
+}

@@ -121,6 +121,8 @@ directory_fanout:
     - node_modules
     - dist
     - bin
+    - target
+    - build
     - .superpowers
     - .ai
     - .devcontainer

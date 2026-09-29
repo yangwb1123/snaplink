@@ -39,6 +39,7 @@ Commands:
     capabilities           Validate/generate/list the capability registry
     sdk-surface            Validate/compare/regenerate/list SDK surface and package versions
     sdk-drift              Regenerate SDKs in a temporary tree and sweep deploy copies
+    sdk-paradigm           Validate the hand-written SDK-layer paradigm registry and fixtures
     profiles               Prove build-profile physical isolation (evidence)
     lint                   Run golangci-lint
     security-scan          Run govulncheck + gosec
@@ -284,6 +285,12 @@ def cmd_sdk_drift(args: list):
     return sdk_drift_run(args)
 
 
+def cmd_sdk_paradigm(args: list):
+    sys.path.insert(0, str(ROOT / "ops" / "scripts"))
+    from sdk_paradigm import run as sdk_paradigm_run
+    return sdk_paradigm_run(args)
+
+
 def cmd_profiles(args: list):
     sys.path.insert(0, str(ROOT / "ops" / "scripts"))
     from profile_evidence import run as profiles_run
@@ -361,6 +368,7 @@ COMMANDS = {
     "capabilities": cmd_capabilities,
     "sdk-surface": cmd_sdk_surface,
     "sdk-drift": cmd_sdk_drift,
+    "sdk-paradigm": cmd_sdk_paradigm,
     "profiles": cmd_profiles,
     "lint": cmd_lint,
     "security-scan": cmd_security_scan,
@@ -392,7 +400,8 @@ def main():
     if cmd == "review":
         spec = parsed.args[0] if parsed.args else None
         return handler(spec)
-    elif cmd in ("skill", "configure", "modules", "capabilities", "sdk-surface", "sdk-drift", "profiles"):
+    elif cmd in ("skill", "configure", "modules", "capabilities", "sdk-surface", "sdk-drift",
+                 "sdk-paradigm", "profiles"):
         return handler(parsed.args + unknown)
     elif cmd == "help":
         return handler()

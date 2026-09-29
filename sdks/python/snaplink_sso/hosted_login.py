@@ -19,8 +19,24 @@ from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, U
 
 try:
     from .client import SSOClient, SSOError
+    from .entitlement import (
+        Entitlement,
+        Feature,
+        LicenseState,
+        entitlement_from_account_context,
+        license_state_from_account_context,
+        unix_now,
+    )
 except ImportError:  # Allow the two SDK files to be vendored side by side.
     from client import SSOClient, SSOError
+    from entitlement import (  # type: ignore[no-redef]
+        Entitlement,
+        Feature,
+        LicenseState,
+        entitlement_from_account_context,
+        license_state_from_account_context,
+        unix_now,
+    )
 
 
 class StateStore(Protocol):
@@ -87,9 +103,41 @@ class Snaplink:
 
     @property
     def account_context(self) -> Optional[Dict[str, Any]]:
-        """The latest server-derived product/account context, if available."""
+        """The latest server-derived product/account context, if available.
+
+        The raw wire shape, kept for callers that want it verbatim. Prefer
+        :attr:`entitlement` and :attr:`license_state` for gating: an entitlement
+        can be present and still grant nothing.
+        """
 
         return self._activation_context
+
+    @property
+    def entitlement(self) -> Optional[Entitlement]:
+        """The latest entitlement as a typed value, or ``None`` if never activated.
+
+        Distinguish ``None`` from an expired :class:`Entitlement` using
+        :attr:`license_state`; the two need different copy.
+        """
+
+        return entitlement_from_account_context(self._activation_context)
+
+    def license_state(self, now: Optional[int] = None) -> LicenseState:
+        """Classify the current licence, at ``now`` or now by default.
+
+        The only question a feature gate should ask. An entitlement that exists
+        but has lapsed is not a licence.
+        """
+
+        return license_state_from_account_context(
+            self._activation_context, unix_now() if now is None else now
+        )
+
+    def has_feature(self, feature: Feature, now: Optional[int] = None) -> bool:
+        """Whether ``feature`` is granted, at ``now`` or now by default."""
+
+        state = self.license_state(now)
+        return state.is_active and state.entitlement.has(feature, unix_now() if now is None else now)
 
     @property
     def api(self) -> SSOClient:

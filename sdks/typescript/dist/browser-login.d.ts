@@ -1,4 +1,5 @@
 import { ActivationContextResponse, ActivationPrepareResponse, FetchLike, SSOClient, TokenIssuance } from "./client.js";
+import type { Entitlement, Feature, LicenseState } from "./entitlement.js";
 /** Minimal storage contract used for the cross-navigation login transaction. */
 export interface SnaplinkStorage {
     getItem(key: string): string | null;
@@ -93,7 +94,9 @@ export declare class SnaplinkBrowserClient {
     get isLoggedIn(): boolean;
     /** Access token held by this page, or undefined before login/after logout. */
     get accessToken(): string | undefined;
-    /** The server-derived product/account context from the latest activation. */
+    /** The server-derived product/account context from the latest activation.
+     * The raw wire shape; prefer {@link licenseState} and {@link hasFeature} for
+     * gating, because an entitlement can be present and still grant nothing. */
     get accountContext(): AccountContext | undefined;
     /** Generated API client with the current access-token provider. */
     get api(): SSOClient;
@@ -104,6 +107,21 @@ export declare class SnaplinkBrowserClient {
     getAccountContext(productId?: string): Promise<AccountContext>;
     /** Best-effort server logout followed by local token removal. */
     logout(): Promise<void>;
+    /**
+     * The latest entitlement as a typed value, or undefined if never activated.
+     *
+     * Distinguish undefined from an expired entitlement with {@link licenseState};
+     * the two need different copy.
+     */
+    get entitlement(): Entitlement | undefined;
+    /**
+     * Classify the current licence, at `now` or now by default.
+     *
+     * The only question a feature gate should ask.
+     */
+    licenseState(now?: number): LicenseState;
+    /** Whether `feature` is granted, at `now` or now by default. */
+    hasFeature(feature: Feature, now?: number): boolean;
     private configureAPI;
     private configureAPIValues;
     private finishLogin;

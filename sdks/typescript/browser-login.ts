@@ -8,6 +8,13 @@ import {
   TokenIssuance,
 } from "./client.js";
 import { buildHostedLoginURL } from "./hosted-login.js";
+import {
+  entitlementFromAccountContext,
+  hasFeature,
+  licenseStateFromAccountContext,
+  unixNow,
+} from "./entitlement.js";
+import type { Entitlement, Feature, LicenseState } from "./entitlement.js";
 
 const transactionPrefix = "snaplink.login.transaction.v1.";
 const handoffPrefix = "snaplink.login.handoff.v1.";
@@ -185,7 +192,9 @@ export class SnaplinkBrowserClient {
     return this.tokens?.access_token;
   }
 
-  /** The server-derived product/account context from the latest activation. */
+  /** The server-derived product/account context from the latest activation.
+   * The raw wire shape; prefer {@link licenseState} and {@link hasFeature} for
+   * gating, because an entitlement can be present and still grant nothing. */
   get accountContext(): AccountContext | undefined {
     return this.activationContext;
   }
@@ -294,6 +303,31 @@ export class SnaplinkBrowserClient {
       this.clearTokens();
       this.activationContext = undefined;
     }
+  }
+
+  /**
+   * The latest entitlement as a typed value, or undefined if never activated.
+   *
+   * Distinguish undefined from an expired entitlement with {@link licenseState};
+   * the two need different copy.
+   */
+  get entitlement(): Entitlement | undefined {
+    return entitlementFromAccountContext(this.activationContext);
+  }
+
+  /**
+   * Classify the current licence, at `now` or now by default.
+   *
+   * The only question a feature gate should ask.
+   */
+  licenseState(now: number = unixNow()): LicenseState {
+    return licenseStateFromAccountContext(this.activationContext, now);
+  }
+
+  /** Whether `feature` is granted, at `now` or now by default. */
+  hasFeature(feature: Feature, now: number = unixNow()): boolean {
+    const entitlement = this.entitlement;
+    return entitlement ? hasFeature(entitlement, feature, now) : false;
   }
 
   private configureAPI(options: ResolvedLoginOptions): void {
