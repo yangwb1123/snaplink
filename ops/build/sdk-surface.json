@@ -3,7 +3,7 @@
   "compatibility": {
     "languages": [
       {
-        "file": "docs/sdks/typescript/client.ts",
+        "file": "sdks/typescript/client.ts",
         "id": "typescript",
         "notes": "fetch-based, zero runtime dependencies; package build and npm provenance publish are gated by the SDK workflows",
         "status": "stable"

@@ -137,14 +137,14 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: docs/sdks/typescript
+        working-directory: sdks/typescript
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: docs/sdks/typescript/package-lock.json
+          cache-dependency-path: sdks/typescript/package-lock.json
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0

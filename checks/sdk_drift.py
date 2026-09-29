@@ -17,12 +17,12 @@ REGEN_CMD = ["go", "run", "./cmd/gensdk", "--lang=all"]
 DIFF_SAMPLE_LINES = 10
 STATIC_DIR = Path("ops/deploy/openresty/fullstack/static")
 REGEN_OUTPUTS = (
-    (Path("docs/sdks/typescript/client.ts"), "client.ts"),
+    (Path("sdks/typescript/client.ts"), "client.ts"),
     (Path("docs/sdks/python/client.py"), "client.py"),
 )
 DEPLOY_OUTPUTS = (
     (Path("docs/openapi.yaml"), Path("docs/openapi.yaml")),
-    (Path("docs/sdks/typescript/client.ts"), Path("docs/sdks/client.ts")),
+    (Path("sdks/typescript/client.ts"), Path("docs/sdks/client.ts")),
     (Path("docs/sdks/python/client.py"), Path("docs/sdks/client.py")),
 )
 
@@ -91,16 +91,17 @@ def _status_errors(root: Path) -> list[str]:
                 "--untracked-files=all",
                 "--",
                 "docs/sdks/",
-                ":(exclude)docs/sdks/typescript/dist/",
+                "sdks/typescript/",
+                ":(exclude)sdks/typescript/dist/",
             ],
             root,
         )
     except OSError as exc:
-        return [f"git status unavailable while checking docs/sdks/: {exc}"]
+        return [f"git status unavailable while checking SDK source directories: {exc}"]
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "no diagnostic").strip()
-        return [f"git status failed while checking docs/sdks/: {detail}"]
-    return [f"docs/sdks/ has uncommitted drift: {line}" for line in result.stdout.splitlines()]
+        return [f"git status failed while checking SDK source directories: {detail}"]
+    return [f"SDK source directories have uncommitted drift: {line}" for line in result.stdout.splitlines()]
 
 
 def _run_generator(root: Path, tmp: Path, regen_cmd: list[str]) -> list[str]:

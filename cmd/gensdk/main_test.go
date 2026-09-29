@@ -6,6 +6,16 @@ import (
 	"testing"
 )
 
+func TestParseFlagsDefaultsTypeScriptOutputToPackageRoot(t *testing.T) {
+	opts, err := parseFlags(nil)
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if want := filepath.Join("sdks", "typescript", "client.ts"); opts.outTS != want {
+		t.Errorf("default TypeScript output = %q, want %q", opts.outTS, want)
+	}
+}
+
 func TestWritePythonOutputsKeepsConsumerFilesInSync(t *testing.T) {
 	dir := t.TempDir()
 	opts := cliOptions{

@@ -40,12 +40,12 @@ def _write_fixtures(
     lock_version = lock_version or ts_version
     _write(
         root,
-        "docs/sdks/typescript/package.json",
+        "sdks/typescript/package.json",
         json.dumps({"name": NAMES[0], "version": ts_version}),
     )
     _write(
         root,
-        "docs/sdks/typescript/package-lock.json",
+        "sdks/typescript/package-lock.json",
         json.dumps(
             {
                 "name": NAMES[0],
@@ -155,8 +155,8 @@ class SDKVersionGateTests(unittest.TestCase):
 
     def test_bad_json_fails_closed(self) -> None:
         for relative in (
-            "docs/sdks/typescript/package.json",
-            "docs/sdks/typescript/package-lock.json",
+            "sdks/typescript/package.json",
+            "sdks/typescript/package-lock.json",
             "sdks/php/composer.json",
         ):
             with self.subTest(manifest=relative), tempfile.TemporaryDirectory() as directory:
@@ -189,7 +189,7 @@ class SDKVersionGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _write_fixtures(root)
-            package_path = root / "docs/sdks/typescript/package.json"
+            package_path = root / "sdks/typescript/package.json"
             package_path.write_text(json.dumps({"name": NAMES[0]}), encoding="utf-8")
             report = sdk_versions.load_version_report(root)
         self.assertFalse(report.ok)
@@ -198,7 +198,7 @@ class SDKVersionGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _write_fixtures(root)
-            lock_path = root / "docs/sdks/typescript/package-lock.json"
+            lock_path = root / "sdks/typescript/package-lock.json"
             lock = json.loads(lock_path.read_text(encoding="utf-8"))
             del lock["packages"][""]["version"]
             lock_path.write_text(json.dumps(lock), encoding="utf-8")
@@ -217,7 +217,7 @@ class SDKVersionGateTests(unittest.TestCase):
 
     def test_dependency_versions_are_not_package_versions(self) -> None:
         cases = {
-            "typescript": ("docs/sdks/typescript/package.json", {"name": NAMES[0]}),
+            "typescript": ("sdks/typescript/package.json", {"name": NAMES[0]}),
             "python": (
                 "sdks/python/pyproject.toml",
                 '[project]\nname = "snaplink-sso"\n\n[dependency]\nversion = "99.99.99"\n',

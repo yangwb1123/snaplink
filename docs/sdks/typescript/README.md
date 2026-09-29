@@ -7,15 +7,17 @@
 > `sso-server` is a pure API backend; those browser experiences are separate
 > frontend projects.
 
-`client.ts` is **generated output**, committed the same way generated Go under
-`gen/proto/` is: checked in for consumers to use directly, regenerated from
-`docs/openapi.yaml` by a Go program rather than hand-maintained.
+`client.ts` is **generated output**, committed at
+`sdks/typescript/client.ts` the same way generated Go under `gen/proto/` is:
+checked in for consumers to use directly, regenerated from `docs/openapi.yaml`
+by a Go program rather than hand-maintained.
 `hosted-login.ts` is the small hand-written browser-navigation companion and
 `browser-login.ts` is the public-client PKCE facade; both are exported through
 `index.ts` and are not overwritten by API generation.
 
-The directory is a valid npm package (`@snaplink/sso-client`) and can be
-consumed from a checked-out Snaplink repository with a `file:` dependency.
+The package root is `sdks/typescript/`. This page remains the user-facing
+integration guide under `docs/sdks/typescript/`; the package can be consumed
+from a checked-out Snaplink repository with a `file:` dependency.
 
 ```
 go run ./cmd/gensdk --lang=ts
@@ -25,10 +27,10 @@ Regenerate after any change to `docs/openapi.yaml` or
 `ops/build/sdk-surface.json` (run `python cli.py sdk-surface generate`, which
 re-emits every language). The generator is a plain Go program (`cmd/gensdk`)
 that parses the YAML spec (via the `goccy/go-yaml` dependency already in
-`go.mod`) and writes a plain `.ts` file. The package's npm build and browser
-tests run in `.github/workflows/sdk-ci.yml`; the protected npm publish path is
-`.github/workflows/sdk-typescript.yml`. The root `make ci` remains Go/API
-focused and does not install the Node toolchain.
+`go.mod`) and writes a plain `.ts` file under `sdks/typescript/`. The package's
+npm build and browser tests run in `.github/workflows/sdk-ci.yml`; the protected
+npm publish path is `.github/workflows/sdk-typescript.yml`. The root `make ci`
+remains Go/API focused and does not install the Node toolchain.
 
 The generator reads `docs/openapi.yaml`; it does not discover Go route
 registration. A runtime endpoint missing from OpenAPI cannot appear in this

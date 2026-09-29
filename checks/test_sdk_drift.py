@@ -67,9 +67,9 @@ def _make_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Pat
     _write(payload_ts, b"export const generated = 'ts';\n")
     _write(payload_py, b"generated = 'py'\n")
     _write(root / "docs/openapi.yaml", b"openapi: 3.0.3\n")
-    _write(root / "docs/sdks/typescript/client.ts", payload_ts.read_bytes())
+    _write(root / "sdks/typescript/client.ts", payload_ts.read_bytes())
     _write(root / "docs/sdks/python/client.py", payload_py.read_bytes())
-    _write(root / "docs/sdks/typescript/dist/client.js", b"built\n")
+    _write(root / "sdks/typescript/dist/client.js", b"built\n")
     _write(root / "ops/deploy/openresty/fullstack/static/docs/openapi.yaml", b"openapi: 3.0.3\n")
     _write(
         root / "ops/deploy/openresty/fullstack/static/docs/sdks/client.ts",
@@ -88,9 +88,9 @@ def _make_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Pat
     )
     return {
         "root": root,
-        "ts": root / "docs/sdks/typescript/client.ts",
+        "ts": root / "sdks/typescript/client.ts",
         "py": root / "docs/sdks/python/client.py",
-        "dist": root / "docs/sdks/typescript/dist/client.js",
+        "dist": root / "sdks/typescript/dist/client.js",
         "openapi": root / "docs/openapi.yaml",
         "static": root / "ops/deploy/openresty/fullstack/static",
         "static_ts": root / "ops/deploy/openresty/fullstack/static/docs/sdks/client.ts",
@@ -115,7 +115,7 @@ def test_absent_deploy_tree_skips(tree: dict[str, Path], capsys: pytest.CaptureF
 
 @pytest.mark.parametrize(
     ("key", "label"),
-    [("ts", "docs/sdks/typescript/client.ts"), ("py", "docs/sdks/python/client.py")],
+    [("ts", "sdks/typescript/client.ts"), ("py", "docs/sdks/python/client.py")],
 )
 def test_stale_committed_copy_fails_and_restores(
     tree: dict[str, Path], key: str, label: str, capsys: pytest.CaptureFixture[str]
@@ -134,7 +134,7 @@ def test_stale_committed_copy_fails_and_restores(
     ("key", "source"),
     [
         ("static_openapi", "docs/openapi.yaml"),
-        ("static_ts", "docs/sdks/typescript/client.ts"),
+        ("static_ts", "sdks/typescript/client.ts"),
         ("static_py", "docs/sdks/python/client.py"),
     ],
 )
@@ -167,6 +167,16 @@ def test_stray_file_under_docs_sdks_fails(tree: dict[str, Path], capsys: pytest.
 
     assert sdk_drift.run(["check"]) == 1
     assert "docs/sdks/stray.txt" in capsys.readouterr().out
+
+
+def test_stray_file_under_typescript_package_fails(
+    tree: dict[str, Path], capsys: pytest.CaptureFixture[str]
+):
+    stray = tree["root"] / "sdks/typescript/stray.txt"
+    stray.write_text("not generated")
+
+    assert sdk_drift.run(["check"]) == 1
+    assert "sdks/typescript/stray.txt" in capsys.readouterr().out
 
 
 def test_dist_dirt_does_not_fail(tree: dict[str, Path], capsys: pytest.CaptureFixture[str]):

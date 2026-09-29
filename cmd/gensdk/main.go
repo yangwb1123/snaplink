@@ -1,5 +1,5 @@
 // Command gensdk regenerates the consumer SDKs committed at
-// docs/sdks/typescript/client.ts, docs/sdks/python/client.py, and the
+// sdks/typescript/client.ts, docs/sdks/python/client.py, and the
 // installable sdks/python package module from docs/openapi.yaml — the
 // "multi-language SDK generation + developer
 // portal" backlog item (docs/deferred-backlog.md).
@@ -124,7 +124,7 @@ func parseFlags(args []string) (cliOptions, error) {
 	fs.StringVar(&opts.lang, "lang", "all", "target language: ts | py | all")
 	fs.StringVar(&opts.specPath, "spec", "", "override the OpenAPI spec path (default: the embedded docs.OpenAPISpec)")
 	fs.StringVar(&opts.surfacePath, "surface", defaultSurfacePath, "path to the sdk-surface registry (ops/build/sdk-surface.json)")
-	fs.StringVar(&opts.outTS, "out-ts", filepath.Join("docs", "sdks", "typescript", "client.ts"), "TypeScript output path")
+	fs.StringVar(&opts.outTS, "out-ts", filepath.Join("sdks", "typescript", "client.ts"), "TypeScript output path")
 	fs.StringVar(&opts.outPy, "out-py", filepath.Join("docs", "sdks", "python", "client.py"), "Python output path")
 	fs.StringVar(&opts.outPackagePy, "out-package-py", filepath.Join("sdks", "python", "snaplink_sso", "client.py"), "installable Python package output path (empty to disable)")
 	if err := fs.Parse(args); err != nil {

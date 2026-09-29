@@ -33,7 +33,7 @@ class ManifestSpec:
 MANIFEST_SPECS = (
     ManifestSpec(
         "typescript",
-        Path("docs/sdks/typescript/package.json"),
+        Path("sdks/typescript/package.json"),
         "@snaplink/sso-client",
         "json",
     ),
@@ -57,7 +57,7 @@ MANIFEST_SPECS = (
     ),
 )
 
-TYPESCRIPT_LOCK_PATH = Path("docs/sdks/typescript/package-lock.json")
+TYPESCRIPT_LOCK_PATH = Path("sdks/typescript/package-lock.json")
 _CORE_SEMVER = re.compile(
     r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z",
     re.ASCII,

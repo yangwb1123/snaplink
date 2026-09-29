@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// GenerateTS renders the full docs/sdks/typescript/client.ts contents:
+// GenerateTS renders the full sdks/typescript/client.ts contents:
 // the generated-file banner, every named component schema as an
 // `interface`/`type`, the small fetch-based runtime, and one SSOClient
 // method per curated Operation.

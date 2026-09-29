@@ -18,7 +18,12 @@ interfaces/      inbound delivery + Server API grpcserver · adapters (Router ba
 infrastructure/  concrete SPI impls            defaultimpl · auditgovernance · redis · postgres (tenantcommerce, tenantquota, usageledger) · sms · optional nested ldap/kerberos/radius/saml/extauthz/kafka/mqtt/kms modules
 internal/        unexported helpers            internal/auth/* (domains) · internal/{handler,adminuser} (interfaces) · internal/composition (small-edition composition layer)
 cmd/ · config/ · docs/ · gen/ · proto/ · test/ · ops/ · checks/  composition/tooling
+sdks/{go,typescript,python,php,rust}/                         language packages
 ```
+
+Language-specific package roots live under `sdks/<language>/`; the public Go
+server-embedding API remains in `interfaces/sso/` because it belongs to the
+layered server library, not the standalone client-package directory.
 
 `cmd/sso-server/servermodules` is the explicit cold-module registration hook
 for the stock compatibility composition. `prototype` and `minimal` have
