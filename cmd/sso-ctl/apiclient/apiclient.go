@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -151,6 +152,27 @@ func (c *Client) Get(path string) (*http.Response, error) {
 // Post is a convenience wrapper for POST requests.
 func (c *Client) Post(path string, body any) (*http.Response, error) {
 	return c.Do(http.MethodPost, path, body)
+}
+
+// PostForm sends an application/x-www-form-urlencoded POST and returns the
+// response. The caller must close resp.Body.
+func (c *Client) PostForm(path string, values url.Values) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+path, strings.NewReader(values.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set(headerContentType, contentTypeFormEncoded)
+	req.Header.Set("Accept", "application/json")
+	if c.basicAuth != nil {
+		req.SetBasicAuth(c.basicAuth.username, c.basicAuth.password)
+	} else if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request: %w", err)
+	}
+	return resp, nil
 }
 
 // Delete is a convenience wrapper for DELETE requests.

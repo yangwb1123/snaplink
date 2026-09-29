@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -75,6 +76,14 @@ func newLiveServer(t *testing.T) *httptest.Server {
 // Ed25519 token issuer uses the same issuer value because the sweep asserts
 // iss == discovery issuer.
 func newLiveServerWithAuth(t *testing.T, authMethod string) *httptest.Server {
+	return newLiveServerWithFormMode(t, authMethod, false)
+}
+
+func newFormOnlyLiveServer(t *testing.T, authMethod string) *httptest.Server {
+	return newLiveServerWithFormMode(t, authMethod, true)
+}
+
+func newLiveServerWithFormMode(t *testing.T, authMethod string, formOnly bool) *httptest.Server {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -86,13 +95,17 @@ func newLiveServerWithAuth(t *testing.T, authMethod string) *httptest.Server {
 		ID: "demo", Secret: "s", Active: true,
 		AllowedScopes: []string{"read", "write"}, TokenEndpointAuthMethod: authMethod,
 	})
-	srv := sso.NewServer(
+	options := []sso.Option{
 		sso.WithIssuer(addr),
 		sso.WithClientStore(clients),
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute), defaultimpl.WithEd25519Issuer(addr))),
 		sso.WithDefaultTokenStrategy("jwt"),
 		sso.WithIDTokenIssuer(defaultimpl.NewEd25519JWTIssuer()),
-	)
+	}
+	if formOnly {
+		options = append(options, sso.WithCredentialFormOnly(true))
+	}
+	srv := sso.NewServer(options...)
 	httpSrv := &httptest.Server{Listener: lis, Config: &http.Server{Handler: srv.Handler()}}
 	httpSrv.Start()
 	t.Cleanup(httpSrv.Close)
@@ -274,7 +287,8 @@ func (s *stubCheck) handleToken(w http.ResponseWriter, r *http.Request) {
 // canned active response.
 func (s *stubCheck) handleIntrospect(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
-	if !bytes.Contains(body, []byte(`"client_id"`)) {
+	_, _, basicAuth := r.BasicAuth()
+	if !basicAuth && !bodyHasClientID(body) {
 		status, respBody := s.t9Resp()
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(respBody))
@@ -283,6 +297,15 @@ func (s *stubCheck) handleIntrospect(w http.ResponseWriter, r *http.Request) {
 	status, respBody := s.postRevoke()
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(respBody))
+}
+
+func bodyHasClientID(body []byte) bool {
+	var jsonBody map[string]json.RawMessage
+	if json.Unmarshal(body, &jsonBody) == nil && jsonBody["client_id"] != nil {
+		return true
+	}
+	values, err := url.ParseQuery(string(body))
+	return err == nil && values.Has("client_id")
 }
 
 // craftJWT builds an unsigned-shaped JWT (header.payload.sig). The sweep
@@ -533,6 +556,26 @@ func TestSweep_BasicClientAuth(t *testing.T) {
 	}
 	if errOut != "" {
 		t.Errorf("stderr = %q, want empty on a green Basic-auth run", errOut)
+	}
+}
+
+func TestSweep_FormOnlyServer(t *testing.T) {
+	for _, authMethod := range []string{clientAuthMethodPost, clientAuthMethodBasic} {
+		t.Run(authMethod, func(t *testing.T) {
+			cleanSweepEnv(t)
+			srv := newFormOnlyLiveServer(t, authMethod)
+			args := checkArgs(srv.URL)
+			if authMethod == clientAuthMethodBasic {
+				args = append(args, "--client-auth-method", authMethod)
+			}
+			code, out, errOut := runCheck(t, args...)
+			if code != 0 {
+				t.Fatalf("exit = %d, want 0; stdout:\n%s\nstderr:\n%s", code, out, errOut)
+			}
+			if out != goldenGreenStdout || errOut != "" {
+				t.Errorf("stdout/stderr = %q/%q, want %q/empty", out, errOut, goldenGreenStdout)
+			}
+		})
 	}
 }
 

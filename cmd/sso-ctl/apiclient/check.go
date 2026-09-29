@@ -28,8 +28,8 @@ package apiclient
 //     307/308 POST bodies and same-host Authorization);
 //   - the mint/T-8d/T-9 probes never carry a bearer (a non-Basic
 //     Authorization header makes /token reject the request outright);
-//   - credential-bearing probes use the selected OAuth client-auth method,
-//     targeted at the *advertised* endpoints only, without mixing methods;
+//   - credential-bearing probes use form-encoded bodies and exactly one
+//     selected auth method, targeted at advertised endpoints only;
 //   - no diagnostic ever echoes a credential, the minted token, or the probe
 //     scope; declared/observed claim values (tenant_id, scope, roles) may be
 //     named, and redactURL/sanitizeBody are the only URL/body printers.

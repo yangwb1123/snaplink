@@ -3,12 +3,13 @@ package apiclient
 // T-8a mint/claims/revoke round trip, T-8d unregistered-scope probe, T-9
 // credential-less introspection probe. The claims matrix lives in
 // claims.go; the shared redaction helpers in sweep.go. Credential-bearing
-// probes use exactly one selected auth method at advertised endpoints.
+// probes use form bodies and exactly one auth method at advertised endpoints.
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -52,34 +53,36 @@ func (ck *checker) runT8a() (ok, skipped bool) {
 	return true, false
 }
 
+// credentialProbeClient selects exactly one authentication method for an
+// advertised OAuth endpoint; Basic credentials stay out of the form body.
+func (ck *checker) credentialProbeClient(target string, values url.Values) *Client {
+	client := probeClient(target)
+	if ck.clientAuthMethod == clientAuthMethodBasic {
+		return client.withBasicAuth(ck.clientID, ck.clientSecret)
+	}
+	values.Set("client_id", ck.clientID)
+	values.Set("client_secret", ck.clientSecret)
+	return client
+}
+
 // mint performs the client-credentials mint against the advertised
 // token_endpoint and decodes the JWT header/payload. The minted token is
 // returned for the revoke leg; it is never echoed in any diagnostic. The
 // advertised URL is preflighted first (row-2 rule): a malformed value must
 // fail without any request and without the HTTP layer echoing it raw.
-func (ck *checker) credentialProbeClient(target string, body map[string]any) *Client {
-	client := probeClient(target)
-	if ck.clientAuthMethod == clientAuthMethodBasic {
-		return client.withBasicAuth(ck.clientID, ck.clientSecret)
-	}
-	body["client_id"] = ck.clientID
-	body["client_secret"] = ck.clientSecret
-	return client
-}
-
 func (ck *checker) mint() (string, []string) {
 	if err := validateAdvertisedURL(ck.doc.TokenEndpoint); err != nil {
 		return "", []string{fmt.Sprintf("mint: token_endpoint %s: %s; row failed", redactURL(ck.doc.TokenEndpoint), err.Error())}
 	}
-	body := map[string]any{"grant_type": "client_credentials"}
+	values := url.Values{"grant_type": {"client_credentials"}}
 	if ck.scope != "" {
-		body["scope"] = ck.scope
+		values.Set("scope", ck.scope)
 	}
-	if len(ck.resources) > 0 {
-		body["resource"] = ck.resources
+	for _, resource := range ck.resources {
+		values.Add("resource", resource)
 	}
-	client := ck.credentialProbeClient(ck.doc.TokenEndpoint, body)
-	resp, err := client.Post("", body)
+	client := ck.credentialProbeClient(ck.doc.TokenEndpoint, values)
+	resp, err := client.PostForm("", values)
 	if err != nil {
 		return "", []string{"mint: " + redactURL(err.Error())}
 	}
@@ -128,9 +131,9 @@ func (ck *checker) revoke(token string) []string {
 	if err := validateAdvertisedURL(ck.doc.RevocationEndpoint); err != nil {
 		return []string{"revoke: revocation_endpoint " + redactURL(ck.doc.RevocationEndpoint) + ": " + err.Error() + "; row failed"}
 	}
-	body := map[string]any{"token": token}
-	client := ck.credentialProbeClient(ck.doc.RevocationEndpoint, body)
-	resp, err := client.Post("", body)
+	values := url.Values{"token": {token}}
+	client := ck.credentialProbeClient(ck.doc.RevocationEndpoint, values)
+	resp, err := client.PostForm("", values)
 	if err != nil {
 		return []string{"revoke: " + redactURL(err.Error())}
 	}
@@ -153,9 +156,9 @@ func (ck *checker) postRevokeIntrospect(token string) []string {
 	if err := validateAdvertisedURL(ck.doc.IntrospectionEndpoint); err != nil {
 		return []string{"revoke: introspection_endpoint " + redactURL(ck.doc.IntrospectionEndpoint) + ": " + err.Error() + "; row failed"}
 	}
-	body := map[string]any{"token": token}
-	client := ck.credentialProbeClient(ck.doc.IntrospectionEndpoint, body)
-	iresp, err := client.Post("", body)
+	values := url.Values{"token": {token}}
+	client := ck.credentialProbeClient(ck.doc.IntrospectionEndpoint, values)
+	iresp, err := client.PostForm("", values)
 	if err != nil {
 		return []string{"revoke: " + redactURL(err.Error())}
 	}
@@ -193,12 +196,12 @@ func (ck *checker) runT8d(probeScope string) (ok, skipped bool) {
 	if err := validateAdvertisedURL(ck.doc.TokenEndpoint); err != nil {
 		return fail(fmt.Sprintf("invalid_scope probe: token_endpoint %s: %s; row failed", redactURL(ck.doc.TokenEndpoint), err.Error())), false
 	}
-	body := map[string]any{
-		"grant_type": "client_credentials",
-		"scope":      probeScope,
+	values := url.Values{
+		"grant_type": {"client_credentials"},
+		"scope":      {probeScope},
 	}
-	client := ck.credentialProbeClient(ck.doc.TokenEndpoint, body)
-	resp, err := client.Post("", body)
+	client := ck.credentialProbeClient(ck.doc.TokenEndpoint, values)
+	resp, err := client.PostForm("", values)
 	if err != nil {
 		return fail("invalid_scope probe: " + redactURL(err.Error())), false
 	}
@@ -249,11 +252,12 @@ func (ck *checker) runT9() (ok, skipped bool) {
 		return fail(fmt.Sprintf("endpoint introspection_endpoint %s: %s; row failed", redactURL(target), err.Error())), false
 	}
 	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: RejectRedirect}
-	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(`{"token":"sweep-probe-dummy"}`))
+	values := url.Values{"token": {"sweep-probe-dummy"}}
+	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(values.Encode()))
 	if err != nil {
 		return fail("introspect probe: " + err.Error()), false
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(headerContentType, contentTypeFormEncoded)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fail("introspect probe: " + redactURL(err.Error())), false

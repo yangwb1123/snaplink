@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -96,6 +97,37 @@ func TestDo_JSONHeaders(t *testing.T) {
 	}
 	if gotAccept != "application/json" {
 		t.Errorf("GET Accept = %q, want application/json", gotAccept)
+	}
+}
+
+func TestPostForm_FormEncoding(t *testing.T) {
+	t.Setenv(EnvToken, "")
+	t.Setenv(EnvAddr, "")
+	values := url.Values{"resource": {"one", "two"}, "scope": {"read write"}}
+	var gotBody []byte
+	var gotContentType, gotAccept, gotAuthorization string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		gotBody, _ = io.ReadAll(req.Body)
+		gotContentType = req.Header.Get(headerContentType)
+		gotAccept = req.Header.Get("Accept")
+		gotAuthorization = req.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	resp, err := New(WithAddr(srv.URL), WithToken("tok-123")).PostForm("/token", values)
+	if err != nil {
+		t.Fatalf("PostForm: %v", err)
+	}
+	_ = resp.Body.Close()
+	if string(gotBody) != values.Encode() {
+		t.Errorf("body = %q, want encoded form %q", gotBody, values.Encode())
+	}
+	if gotContentType != contentTypeFormEncoded || gotAccept != "application/json" {
+		t.Errorf("headers = Content-Type %q, Accept %q", gotContentType, gotAccept)
+	}
+	if gotAuthorization != "Bearer tok-123" {
+		t.Errorf("Authorization = %q, want bearer token preserved", gotAuthorization)
 	}
 }
 
