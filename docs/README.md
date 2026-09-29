@@ -43,6 +43,9 @@ feature, gate, configuration, or error tables into another guide.
 - [openapi.yaml](openapi.yaml) — the OpenAPI 3 contract for the documented HTTP
   surface. Use the runtime endpoint inventory to distinguish configured
   optional routes from routes that are absent on a particular replica.
+- [sdks/native.md](sdks/native.md) — experimental Kotlin/Android and Swift/iOS
+  hosted-login SDK packages. They are not published or production-approved and
+  are not generated business REST clients.
 - [deployment.md](deployment.md) — build, run, Kubernetes/Compose, the four call
   surfaces, and the **distributed architecture** (cluster Bus, shared-state
   tiers, which modules scale, microservices decomposition).

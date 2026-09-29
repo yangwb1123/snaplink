@@ -62,6 +62,47 @@ jobs:
       - run: go test ./sdks/go
       - run: go vet ./sdks/go
 
+  android:
+    name: Android SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/kotlin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+      - name: Install pinned Android compile SDK
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+      - name: Run Kotlin unit tests and release build
+        run: ./gradlew :snaplink-sso:testDebugUnitTest :snaplink-sso:assembleRelease
+      - name: Run Android Keystore instrumentation test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          script: cd sdks/kotlin && ./gradlew :snaplink-sso:connectedDebugAndroidTest
+
+  swift:
+    name: Swift SDK
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: sdks/swift
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Swift package tests
+        run: swift test
+      - name: Build iOS Simulator package
+        run: SDKROOT="$(xcrun --sdk iphonesimulator --show-sdk-path)" swift build --triple arm64-apple-ios17.0-simulator
+      - name: Build release package
+        run: swift build -c release
+
   surface:
     name: SDK surface compatibility
     runs-on: ubuntu-latest
