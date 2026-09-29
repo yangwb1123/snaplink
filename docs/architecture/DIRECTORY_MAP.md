@@ -18,7 +18,7 @@ interfaces/      inbound delivery + Server API grpcserver · adapters (Router ba
 infrastructure/  concrete SPI impls            defaultimpl · auditgovernance · redis · postgres (tenantcommerce, tenantquota, usageledger) · sms · optional nested ldap/kerberos/radius/saml/extauthz/kafka/mqtt/kms modules
 internal/        unexported helpers            internal/auth/* (domains) · internal/{handler,adminuser} (interfaces) · internal/composition (small-edition composition layer)
 cmd/ · config/ · docs/ · gen/ · proto/ · test/ · ops/ · checks/  composition/tooling
-sdks/{go,typescript,python,php,rust}/                         language packages
+sdks/{go,kotlin,php,python,rust,swift,typescript}/           language packages
 ```
 
 Language-specific package roots live under `sdks/<language>/`; the public Go
