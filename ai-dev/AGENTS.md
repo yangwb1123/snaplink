@@ -1,34 +1,52 @@
 # ai-dev — AI-SDLC 工具集说明（Agent 使用指南）
 
-`ai-dev/` 是 Snaplink 仓库内的可选 AI 编排框架：用 CLI agent（pi，可换成
-claude/codex/gemini 等）驱动软件开发流程——分析任意项目/想法、按角色产出
+AI 编排框架（ai-batch-runner）用 CLI agent（pi，可换成 claude/codex/gemini 等）
+驱动软件开发流程——分析任意项目/想法、按角色产出
 交付物、自优化增删角色、交叉对抗验证、7×24 无人值守。它**补充而非替代**
 仓库的工程门禁（`make ci`、`python cli.py check` 等）；AI 产出是**提案**，
 须按证据标准核对后提升到维护文档。
 
 ## 1. 组件清单
 
-| 组件 | 用途 |
-|---|---|
-| `pi-batch.py` | 入口薄壳（24 行）：原命令全部不变，实现见 `pbatch/` 包 |
-| `pbatch/config.py` | 声明式配置解析（pi-batch.yaml）、agent 默认值、会话标志、验证器注册表 |
-| `pbatch/models.py` | 数据模型：Task / TaskResult / Stage / Pipeline |
-| `pbatch/runner.py` | 任务执行：硬超时、失败签名拒绝、重试、验证门禁、摘要 |
-| `pbatch/pipeline.py` | 流水线：阶段构建、meta 角色编排、gate 裁决、决策日志、归档 |
-| `pbatch/cli.py` | 命令行：参数解析、main、轮循环、单批/流水线分发 |
-| `quality.py` | 代码组织质量扫描器（纯标准库）：函数 ≤50 行、复杂度 ≤15、文件 ≤1000 行 |
-| `ai/run-review.py` | 十阶段评审 runner（`--all`/`--resume`/共享会话/验证门禁） |
-| `ai/prompts/00-09` | 评审阶段模板（产品发现→CTO 决策） |
-| `ai/prompts-shared/` | 评审共享片段（工程原则、输出格式、检查清单、角色定义） |
-| `prompts/` | 19 个专家角色模板（architect、security_engineer、qa_lead…） |
-| `pipelines/` | SDLC 角色图与代码实现流水线（设计图） |
-| `examples/` | 5 个可用案例：提案工作流、SDLC 角色流水线、通用 meta 分析、MFA 分析、完整闭环 |
-| `tests/` | 91 个回归测试（`make ai-dev-test`） |
-| `docs/` | 机制文档（`RUNNING_247.md`、`AUTOMATION_WORKFLOW_SUMMARY.md` 等） |
-| `pi-batch.yaml` | 声明式配置：agent 二进制、会话标志、6 个验证器（含 `pyquality`） |
+引擎与上游材料（prompts / pipelines / scripts / tests / quality.py）**不再 vendored 在本
+仓**，统一从 ai-batch-runner 仓取用（`~/ai-batch-runner`，下称 `$RUNNER`）：
 
-**可移植性**：把 `pi-batch.py`（薄壳）+ `pbatch/` 目录 + `pi-batch.yaml`
-复制到其他项目即可用；配置查找顺序为入口脚本旁 → 包目录 → 工作目录。
+| 组件 | 位置 | 用途 |
+|---|---|---|
+| `pi-batch.py` | `$RUNNER/pi-batch.py` | 入口薄壳：原命令不变，实现见 `pbatch/` 包 |
+| `pbatch/config.py` | `$RUNNER/pbatch/` | 声明式配置解析（pi-batch.yaml）、agent 默认值、会话标志、验证器注册表 |
+| `pbatch/models.py` | `$RUNNER/pbatch/` | 数据模型：Task / TaskResult / Stage / Pipeline |
+| `pbatch/runner.py` | `$RUNNER/pbatch/` | 任务执行：硬超时、失败签名拒绝、重试、验证门禁、摘要 |
+| `pbatch/pipeline.py` | `$RUNNER/pbatch/` | 流水线：阶段构建、meta 角色编排、gate 裁决、决策日志、归档 |
+| `pbatch/cli.py` | `$RUNNER/pbatch/` | 命令行：参数解析、main、轮循环、单批/流水线分发 |
+| `quality.py` | `$RUNNER/quality.py` | 代码组织质量扫描器（纯标准库）：函数 ≤50 行、复杂度 ≤15、文件 ≤1000 行 |
+| `ai/run-review.py` | `$RUNNER/ai/` | 十阶段评审 runner（`--all`/`--resume`/共享会话/验证门禁） |
+| `ai/prompts/00-09` | `$RUNNER/ai/prompts/` | 评审阶段模板（产品发现→CTO 决策） |
+| `ai/prompts-shared/` | `$RUNNER/ai/prompts-shared/` | 评审共享片段（工程原则、输出格式、检查清单、角色定义） |
+| `prompts/` | `$RUNNER/prompts/` | 19 个专家角色模板（architect、security_engineer、qa_lead…） |
+| `pipelines/` | `$RUNNER/pipelines/` | SDLC 角色图与代码实现流水线（设计图） |
+| `scripts/` | `$RUNNER/scripts/` | full-auto.sh / full-flow.sh 等无人值守脚本 |
+| `role_keywords.yaml` | `$RUNNER/pbatch/role_keywords.yaml` | meta 阶段角色相关度打分关键词 |
+
+**留在本仓的部分**（snaplink 自有，不是上游副本）：
+
+| 路径 | 内容 |
+|---|---|
+| `ai-dev/AGENTS.md` | 本文件：使用指南与机制说明 |
+| `ai-dev/docs/**` | 机制文档（`RUNNING_247.md`、`AUTOMATION_WORKFLOW_SUMMARY.md` 等） |
+| `ai-dev/examples/**` | snaplink 专属输入（`quickstart-snaplink-analysis.yaml`、`snaplink-proposals.yaml` 等） |
+| `~/ai-batch-runner/projects/snaplink/` | campaign 配置、流水线模板与项目 validator 注册表（source of truth） |
+
+**运行方式**：
+
+```sh
+bash ~/ai-batch-runner/projects/snaplink/run-campaign.sh --dry-run
+python3 ~/ai-batch-runner/pi-batch.py context "snaplink" --paths internal/
+```
+
+配置查找顺序为入口脚本旁 → 包目录 → 工作目录；campaign 模式要求配置位于目标仓内，
+`run-campaign.sh` 会把 `$RUNNER/projects/snaplink/` 同步到本仓 gitignored 的
+`.pi-batch/snaplink/`。
 
 ## 2. 能力机制
 
@@ -71,7 +89,8 @@ validators:
   build: "go build ./... && go vet ./..."
   config: "python cli.py config-validate"
   root: "python cli.py check-root"
-  pyquality: "python {cwd}/ai-dev/quality.py {cwd}/ai-dev"
+  # pyquality 用运行器自带扫描器：python {tool_root}/quality.py {cwd}
+  # snaplink 自身的门禁是 python cli.py check / make ci
 ```
 
 - `--validate quick,gofmt`：命名引用，AND 语义（全部通过才落盘）
@@ -114,7 +133,7 @@ stages:
   - name: review
     from_outputs: kickoff
     meta: true                       # 编排者动态挑角色
-    role_dir: ai-dev/prompts         # 命名角色模板目录（可缺省）
+    role_dir: prompts                # 命名角色模板目录；由 $RUNNER 解析（可缺省）
     output_dir: docs/reviews
     max_iterations: 3
 ```
@@ -129,7 +148,7 @@ stages:
 
 - 选中角色**并发执行**，各自独立 agent 会话
 - 证据折叠：下一轮编排者/角色能看到前几轮结论（自优化闭环）
-- **相关性预判（先判断再执行）**：`ai-dev/role_keywords.yaml` 给 19 个角色
+- **相关性预判（先判断再执行）**：`$RUNNER/pbatch/role_keywords.yaml` 给 19 个角色
   配关键词（中英双语）；编排前按交付物关键词重叠打分，把
   `Relevance suggestions (0-10)` 列表注入编排者 prompt，并限定**最多选
   3 个角色**——防止编排者每次遍历全部角色（无关角色不再被选，省 API）
@@ -145,7 +164,7 @@ stages:
   - name: adversarial_review   # 编排者挑多个角色并发交叉审查（对抗视角）
     from_outputs: design
     meta: true
-    role_dir: ai-dev/prompts
+    role_dir: prompts
     output_dir: docs/proposals
     max_iterations: 2
   - name: gate                  # 独立 gatekeeper 裁决：VERDICT: PASS/FAIL
@@ -195,8 +214,8 @@ archive_dir: docs/archive   # 全部成功完成后，把交付物移入 docs/ar
 ### 2.10 代码组织质量门禁（dogfooding）
 
 ```bash
-python ai-dev/quality.py ai-dev/          # 组织质量扫描（纯标准库）
-python ai-dev/quality.py --strict ai-dev/ # 严格模式（含文件行数预算）
+python $RUNNER/quality.py .                 # 组织质量扫描（纯标准库）
+python $RUNNER/quality.py --strict .        # 严格模式（含文件行数预算）
 # 注册为 validator 后可在流水线中调用：--validate pyquality
 ```
 
@@ -224,60 +243,60 @@ python ai-dev/quality.py --strict ai-dev/ # 严格模式（含文件行数预算
 
 ```bash
 # 一句话 → 动态角色分析（任意项目，无需输入文件）
-python ai-dev/pi-batch.py ai-dev/examples/meta-review-pipeline.yaml
+python $RUNNER/pi-batch.py ai-dev/examples/meta-review-pipeline.yaml
 
 # 完整闭环：一句话 → 需求 → 设计 → 对抗审查 → 裁决门 → 实现+工程门禁 → 验收门
 #          → git 提交 → 归档 → 决策日志
-python ai-dev/pi-batch.py ai-dev/examples/quickstart-full-sdlc.yaml \
+python $RUNNER/pi-batch.py ai-dev/examples/quickstart-full-sdlc.yaml \
   --log-file logs/full-sdlc.log
 
 # 全流程真实实现版：同一闭环，但 implement 阶段 agent 直接修改仓库代码
 # （go build/vet 门禁 + QA 验收门把关），建议先 --dry-run 预览再跑
-python ai-dev/pi-batch.py ai-dev/examples/full-sdlc-implement.yaml \
+python $RUNNER/pi-batch.py ai-dev/examples/full-sdlc-implement.yaml \
   --log-file logs/full-impl.log
 
 # 一体式入口：滚动分析发现方向 → 选择方向 → 自动跑完整 SDLC（含真实实现）
 #   full-flow.sh [轮数] [间隔秒] [方向]
 # 交互模式：不给方向参数，展示候选后输入；非交互：直接传方向
-bash ai-dev/scripts/full-flow.sh 3 300            # 3 轮分析 + 交互选方向
-bash ai-dev/scripts/full-flow.sh 3 300 "设备信任"  # 3 轮分析 + 直接实现该方向
+bash $RUNNER/scripts/full-flow.sh 3 300            # 3 轮分析 + 交互选方向
+bash $RUNNER/scripts/full-flow.sh 3 300 "设备信任"  # 3 轮分析 + 直接实现该方向
 
 # 全自动：按项目架构模块逐个分析 → 自动提取每个方向 → 每个方向跑完整实现
 #   full-auto.sh [--modules m1,m2] [--max-directions N] [--dry-run]
 # 默认扫描 domains/interfaces/infrastructure/platform/protocols/shared 全部
 # 模块；gate FAIL 等失败记录到 SUMMARY 并继续下一项，无人值守
-bash ai-dev/scripts/full-auto.sh --dry-run                     # 先看计划
-bash ai-dev/scripts/full-auto.sh --max-directions 3            # 全模块自动跑
-bash ai-dev/scripts/full-auto.sh --modules "domains/mfa"       # 限定模块
+bash $RUNNER/scripts/full-auto.sh --dry-run                     # 先看计划
+bash $RUNNER/scripts/full-auto.sh --max-directions 3            # 全模块自动跑
+bash $RUNNER/scripts/full-auto.sh --modules "domains/mfa"       # 限定模块
 
 # MFA 子系统分析（一句话起点 + 动态角色审查）
-python ai-dev/pi-batch.py ai-dev/examples/quickstart-snaplink-analysis.yaml
+python $RUNNER/pi-batch.py ai-dev/examples/quickstart-snaplink-analysis.yaml
 
 # SDLC 角色流水线（需求→架构→安全→质量，6 角色）
-python ai-dev/pi-batch.py ai-dev/examples/sdlc-mini-pipeline.yaml \
+python $RUNNER/pi-batch.py ai-dev/examples/sdlc-mini-pipeline.yaml \
   --log-file logs/sdlc.log
 
 # 功能需求提案（同会话两任务）
-python ai-dev/pi-batch.py ai-dev/examples/snaplink-proposals.yaml \
+python $RUNNER/pi-batch.py ai-dev/examples/snaplink-proposals.yaml \
   --mode serial --session-mode shared --session-name logout-proposals
 
 # 滚动分析（替代 for i in {1..200} 裸循环：会话延续 + 决策日志 + 归档）
-python ai-dev/pi-batch.py -p "基于当前代码库分析扩展方向" \
+python $RUNNER/pi-batch.py -p "基于当前代码库分析扩展方向" \
   --output "docs/requirements/runs/run-$(date +%Y%m%d-%H%M%S).md" \
   --session-mode shared --session-name ext-rolling \
   --min-interval 60 --retries 3 --log-file logs/ext.log \
   --decision-log docs/DECISIONS.md --git-commit --archive-dir docs/archive
 
 # 7×24 无人值守
-python ai-dev/pi-batch.py tasks.yaml --mode serial --reuse --retries 3 \
+python $RUNNER/pi-batch.py tasks.yaml --mode serial --reuse --retries 3 \
   --max-rounds 0 --round-delay 300 --min-interval 5 --log-file logs/run.log
 
 # 评审闭环（十阶段，共享会话，可续跑）
-python ai-dev/ai/run-review.py --all --context ctx.yaml \
+python $RUNNER/ai/run-review.py --all --context ctx.yaml \
   --session-mode shared --resume --validate quick
 
 # 代码组织质量检查（重构 ai-dev 后用）
-python ai-dev/quality.py --strict ai-dev/
+python $RUNNER/quality.py --strict .
 ```
 
 ## 4. 测试与门禁
@@ -285,7 +304,7 @@ python ai-dev/quality.py --strict ai-dev/
 ```bash
 make ai-dev-test            # 91 个回归测试（pi-batch 66 + run-review 20 + quality 5）
 python -m pytest checks/    # 仓库工程门禁自测（147+ 个）
-python ai-dev/quality.py --strict ai-dev/   # 组织质量门禁（当前全绿）
+python $RUNNER/quality.py --strict .   # 组织质量门禁（当前全绿）
 ```
 
 修改 ai-dev 后：跑 `make ai-dev-test` + `quality.py` + 与改动相称的仓库
