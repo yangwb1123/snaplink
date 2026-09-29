@@ -16,11 +16,8 @@
 #      为唯一许可类）+ relay（复用 managed_relay.go）+ auth.token.issue
 #      L1 聚合；stock audit.backend memory→sqlite/postgres + hash_chain
 # 门禁：G1（B4-1+B1-1+B1-7 联合 T-1.1/T-1.2/T-8a）、G5（B4-2..5）
-# 用法（snaplink 仓库内）：
-#   python3 pi-batch.py campaign --config docs/campaigns/campaign-snaplink-b4.yaml --dry-run
-#   python3 pi-batch.py campaign --config docs/campaigns/campaign-snaplink-b4.yaml \
-#     --jobs 4 --max-directions 2 --validate gobuild,gotest,pyquality
-
+# 运行（引擎与配置在 ai-batch-runner 仓内，cwd 必须是本仓）：
+#   bash ~/ai-batch-runner/projects/snaplink/run-campaign.sh --dry-run
 name: snaplink-b4-trust-path
 
 discovery:
