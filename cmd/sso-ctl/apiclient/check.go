@@ -18,6 +18,7 @@ package apiclient
 //	      present, absence tolerated) or --expect-no-roles (cc-path pin);
 //	      revoke + post-revoke introspection.
 //	T-8d  unregistered-scope probe: byte-identical 400 {"error":"invalid_scope"}.
+//	T-8e  optional --expect-form-only rejection probe for non-form token requests.
 //	T-9   credential-less introspection probe: byte-identical 401
 //	      {"error":"invalid_client"} via a bare client (apiclient.New would
 //	      inherit SSO_ADMIN_TOKEN).
@@ -88,13 +89,14 @@ func CheckRun(args []string) int {
 	}
 	discoveryOK := ck.runT2()
 	mintOK, mintSkipped := ck.runT8a()
+	contentTypeOK, contentTypeSkipped := ck.runT8eIfRequested(scope)
 	invalidScopeOK, invalidScopeSkipped := ck.runT8d(scope)
 	introspectOK, introspectSkipped := ck.runT9()
-	if mintSkipped || invalidScopeSkipped || introspectSkipped {
+	if mintSkipped || contentTypeSkipped || invalidScopeSkipped || introspectSkipped {
 		fmt.Fprintln(os.Stdout, "check INCOMPLETE")
 		return 1
 	}
-	if !discoveryOK || !mintOK || !invalidScopeOK || !introspectOK {
+	if !discoveryOK || !mintOK || !contentTypeOK || !invalidScopeOK || !introspectOK {
 		fmt.Fprintln(os.Stdout, "check FAIL")
 		return 1
 	}
@@ -104,9 +106,8 @@ func CheckRun(args []string) int {
 
 // parseCheckConfig parses and validates the check invocation, returning the
 // wired checker or a nonzero exit code on misuse (diagnostics and usage
-// already printed; flag-package errors print their own diagnostic). The
-// client-auth and role flags are validated before credentials so malformed
-// flag input always wins the misuse diagnostic.
+// already printed; flag-package errors print their own diagnostic). Help maps
+// to exit zero; malformed client-auth and role flags are checked before creds.
 func parseCheckConfig(args []string) (*checker, int) {
 	fs := flag.NewFlagSet(checkProg, flag.ContinueOnError)
 	fs.Usage = usage
@@ -121,11 +122,10 @@ func parseCheckConfig(args []string) (*checker, int) {
 	var expectRoles expectRolesFlag
 	fs.Var(&expectRoles, "expect-roles", "declare the roles set a minted token's roles claim MUST equal when present; absence is tolerated (conditional assertion; repeatable or space-separated)")
 	expectNoRoles := fs.Bool("expect-no-roles", false, "declare the minted token MUST NOT carry a non-empty roles claim (the attainable client-credentials pin: cc mints never resolve Subject.Roles)")
+	expectFormOnly := fs.Bool("expect-form-only", false, "require non-form token requests to be rejected (opt-in; requires server form-only mode)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			return nil, 0 // usage() already printed by the flag package; the
-			// tree's ContinueOnError convention would exit 2 here, but A1
-			// mandates exit 0 for help — check is the deliberate first case.
+			return nil, 0
 		}
 		return nil, 2 // flag package printed the error + usage to stderr
 	}
@@ -155,6 +155,7 @@ func parseCheckConfig(args []string) (*checker, int) {
 		expectRoles:      []string(expectRoles.set),
 		expectRolesSet:   expectRoles.present,
 		expectNoRoles:    *expectNoRoles,
+		expectFormOnly:   *expectFormOnly,
 	}, 0
 }
 
@@ -196,6 +197,8 @@ Probe groups:
   T-8d  Unregistered-scope probe: 400 {"error":"invalid_scope"} byte-identical.
         Valid only when the client's AllowedScopes is non-empty or a global
         scope registry is wired.
+  T-8e  Optional --expect-form-only check requires 415 invalid_request for
+        non-form token requests.
   T-9   Credential-less introspection probe: 401 {"error":"invalid_client"}.
 
 Exit codes:
@@ -218,13 +221,12 @@ Flags:
   --expect-no-roles          declare the minted token MUST NOT carry a non-empty roles claim —
                              the attainable client-credentials pin: roles arrive only on
                              authcode/device/refresh paths the sweep cannot drive (optional)
+  --expect-form-only         require /token to reject non-form Content-Type with 415 (opt-in)
   -h, --help                 print this usage and exit 0
 
 Roles notes:
-  Server-side roles emission stays pinned by the infrastructure/defaultimpl
-  issue_payload tests (TestTenantRoles_ClaimsPerIssuer). Because absence is
-  tolerated, --expect-roles cannot detect a total loss of roles emission on a
-  user path — the defaultimpl pin is the regression guard for that.
+  Server-side roles emission is pinned by infrastructure/defaultimpl's
+  TestTenantRoles_ClaimsPerIssuer; absence-tolerant claims cannot detect user-path loss.
 `)
 }
 

@@ -162,7 +162,7 @@ func (c *Client) PostForm(path string, values url.Values) (*http.Response, error
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set(headerContentType, contentTypeFormEncoded)
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set(headerAccept, contentTypeJSON)
 	if c.basicAuth != nil {
 		req.SetBasicAuth(c.basicAuth.username, c.basicAuth.password)
 	} else if c.token != "" {

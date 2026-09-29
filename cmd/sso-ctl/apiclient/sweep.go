@@ -61,6 +61,7 @@ type checker struct {
 	expectRoles      []string
 	expectRolesSet   bool
 	expectNoRoles    bool
+	expectFormOnly   bool
 
 	doc     *discoveryDoc
 	header  map[string]any

@@ -30,7 +30,10 @@ import (
 // goldenGreenStdout is the byte-deterministic stdout of a fully green run:
 // one constant line per executed probe group, in fixed order, plus the final
 // verdict. No URL, status, or count ever reaches stdout.
-const goldenGreenStdout = "discovery: OK\nmint: OK\ninvalid_scope: OK\nintrospect: OK\ncheck OK\n"
+const (
+	goldenGreenStdout    = "discovery: OK\nmint: OK\ninvalid_scope: OK\nintrospect: OK\ncheck OK\n"
+	goldenFormOnlyStdout = "discovery: OK\nmint: OK\ncontent_type: OK\ninvalid_scope: OK\nintrospect: OK\ncheck OK\n"
+)
 
 // cleanSweepEnv force-unsets the sweep env vars so a runner's environment
 // can never leak into a test (unless the test sets them itself afterwards).
@@ -363,6 +366,7 @@ func TestUsage_RolesContract(t *testing.T) {
 		"--expect-no-roles",
 		"--client-auth-method",
 		"client_secret_basic",
+		"--expect-form-only",
 		"absence is tolerated",
 		"infrastructure/defaultimpl",
 		"TestTenantRoles_ClaimsPerIssuer",
@@ -564,7 +568,7 @@ func TestSweep_FormOnlyServer(t *testing.T) {
 		t.Run(authMethod, func(t *testing.T) {
 			cleanSweepEnv(t)
 			srv := newFormOnlyLiveServer(t, authMethod)
-			args := checkArgs(srv.URL)
+			args := checkArgs(srv.URL, "--expect-form-only")
 			if authMethod == clientAuthMethodBasic {
 				args = append(args, "--client-auth-method", authMethod)
 			}
@@ -572,10 +576,51 @@ func TestSweep_FormOnlyServer(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("exit = %d, want 0; stdout:\n%s\nstderr:\n%s", code, out, errOut)
 			}
-			if out != goldenGreenStdout || errOut != "" {
-				t.Errorf("stdout/stderr = %q/%q, want %q/empty", out, errOut, goldenGreenStdout)
+			if out != goldenFormOnlyStdout || errOut != "" {
+				t.Errorf("stdout/stderr = %q/%q, want %q/empty", out, errOut, goldenFormOnlyStdout)
 			}
 		})
+	}
+}
+
+func TestSweep_FormOnlyExpectationFailsOnPermissiveServer(t *testing.T) {
+	cleanSweepEnv(t)
+	srv := newLiveServer(t)
+	args := checkArgs(srv.URL, "--expect-form-only")
+	code, out, errOut := runCheck(t, args...)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 for the permissive credential parser", code)
+	}
+	want := "discovery: OK\nmint: OK\ncontent_type: FAIL\ninvalid_scope: OK\nintrospect: OK\ncheck FAIL\n"
+	if out != want {
+		t.Errorf("stdout = %q, want %q", out, want)
+	}
+	if !strings.Contains(errOut, "content_type probe (application/json): status 400") || strings.Contains(errOut, "eyJ") {
+		t.Errorf("stderr = %q, want the status diagnostic without a minted token", errOut)
+	}
+}
+
+func TestFormOnlyExpectationSkippedWithoutTokenEndpoint(t *testing.T) {
+	cleanSweepEnv(t)
+	stub := newStubCheck(t)
+	stub.healthy()
+	stub.advertiseDoc(stub.srv.URL, map[string]string{
+		"authorization_endpoint": "/auth/login",
+		"jwks_uri":               "/jwks",
+		"introspection_endpoint": "/token/introspect",
+		"revocation_endpoint":    "/token/revoke",
+		"userinfo_endpoint":      "/userinfo",
+		"end_session_endpoint":   "/logout",
+	})
+	code, out, errOut := runCheck(t, checkArgs(stub.srv.URL, "--expect-form-only")...)
+	if code != 1 || !strings.HasSuffix(out, "check INCOMPLETE\n") {
+		t.Fatalf("exit/stdout = %d/%q, want incomplete exit 1", code, out)
+	}
+	if strings.Contains(out, "content_type:") || !strings.Contains(errOut, "T-8e skipped") {
+		t.Errorf("stdout/stderr = %q/%q, want skipped probe without a group line", out, errOut)
+	}
+	if stub.requestsTo("/token") != 0 {
+		t.Error("unadvertised token endpoint was probed")
 	}
 }
 
