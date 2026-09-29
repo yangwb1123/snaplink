@@ -2,32 +2,49 @@
   "$schema": "./sdk-paradigm.schema.json",
   "schema_version": 1,
   "compatibility": {
-    "policy": "This registry is the single source of truth for the hand-written SDK layers (transport, session, entitlement, preferences, runtime). It covers what ops/build/sdk-surface.json deliberately does not: the operationId surface is generated for TypeScript and Python only, so the hosted-login and commercial-entitlement behaviour of every published SDK is reconciled here instead. The checker never infers a capability from source; every present entry names the exact file and symbol that provides it, and every missing entry names the wave that will add it. A capability declared as parity must be present in every language, so closing a gap means flipping an entry from missing to present with a real symbol, not relaxing the declaration. Capability entries are append-only in id; changing the file or symbol behind a present entry is a deliberate edit the diff gate can review, and dropping an id or downgrading parity from parity to divergent is a breaking change for the cross-language contract and requires a minor version bump plus a CHANGELOG entry. Adding a language id is allowed and must declare every existing capability for it.",
+    "policy": "This registry is the single source of truth for the hand-written SDK layers (transport, session, entitlement, preferences, runtime). It covers what ops/build/sdk-surface.json deliberately does not: the operationId surface is generated for TypeScript and Python only, so the hosted-login and commercial-entitlement behaviour of every published SDK is reconciled here instead. The checker never infers a capability from source; every present entry names the exact file and symbol that provides it, and every missing entry names the wave that will add it. A capability declared as parity must be present in every language, so closing a gap means flipping an entry from missing to present with a real symbol, not relaxing the declaration. Capability entries are append-only in id; changing the file or symbol behind a present entry is a deliberate edit the diff gate can review, and dropping an id or downgrading parity from parity to divergent is a breaking change for the cross-language contract and requires a minor version bump plus a CHANGELOG entry. Adding a language id is allowed and must declare every existing capability for it. A language is onboarded only after it has been reviewed against the parity floor; a language still onboarding must declare every capability so its debt is reported rather than hidden, but is not held to parity until it is onboarded. This exists so a newly added SDK is neither able to fake a pass nor able to downgrade a capability to turn the gate green.",
     "languages": [
       {
         "id": "typescript",
         "package": true,
-        "notes": "sdks/typescript; npm @snaplink/sso-client, version gated by sdk-surface versions"
+        "notes": "sdks/typescript; npm @snaplink/sso-client, version gated by sdk-surface versions",
+        "onboarded": true
       },
       {
         "id": "python",
         "package": true,
-        "notes": "sdks/python; PyPI snaplink-sso, version gated by sdk-surface versions"
+        "notes": "sdks/python; PyPI snaplink-sso, version gated by sdk-surface versions",
+        "onboarded": true
       },
       {
         "id": "rust",
         "package": true,
-        "notes": "sdks/rust; crates.io snaplink-sso, version gated by sdk-surface versions"
+        "notes": "sdks/rust; crates.io snaplink-sso, version gated by sdk-surface versions",
+        "onboarded": true
       },
       {
         "id": "php",
         "package": true,
-        "notes": "sdks/php; Packagist snaplink/sso-client, version gated by sdk-surface versions"
+        "notes": "sdks/php; Packagist snaplink/sso-client, version gated by sdk-surface versions",
+        "onboarded": true
       },
       {
         "id": "go",
         "package": false,
-        "notes": "sdks/go plus interfaces/ssoclient; versioned by the root Go module, so it carries no package manifest"
+        "notes": "sdks/go plus interfaces/ssoclient; versioned by the root Go module, so it carries no package manifest",
+        "onboarded": true
+      },
+      {
+        "id": "kotlin",
+        "package": true,
+        "notes": "sdks/kotlin; Android/JVM artifact com.snaplink:snaplink-sso, browser-PKCE plus encrypted secure storage",
+        "onboarded": false
+      },
+      {
+        "id": "swift",
+        "package": true,
+        "notes": "sdks/swift; SwiftPM artifact SnaplinkSSO, versioned from the release tag rather than the manifest",
+        "onboarded": false
       }
     ]
   },
@@ -59,9 +76,20 @@
           "plan": "W4 Transport: introduce a Transport Protocol mirroring FetchLike and route both modules through it."
         },
         "rust": {
+          "status": "present",
+          "note": "W4: replaced the concrete reqwest::blocking type alias with an async trait; ReqwestTransport is the default.",
+          "file": "sdks/rust/src/transport.rs",
+          "symbol": "pub trait Transport: Send + Sync"
+        },
+        "kotlin": {
           "status": "missing",
-          "note": "with_http_client takes the concrete reqwest::blocking::Client, so a caller cannot supply an async client.",
-          "plan": "W4 Transport: replace the HttpClient type alias with an async trait and keep a blocking adapter behind a feature flag."
+          "plan": "W5 generator coverage does not apply; see the kotlin SDK roadmap. OAuthTransport is internal, so an application cannot supply its own transport, a test double, or a proxy-aware client.",
+          "note": "OAuthTransport is internal, so an application cannot supply its own transport, a test double, or a proxy-aware client."
+        },
+        "swift": {
+          "status": "present",
+          "file": "sdks/swift/Sources/SnaplinkSSO/Errors.swift",
+          "symbol": "protocol OAuthTransport: Sendable"
         }
       }
     },
@@ -94,7 +122,18 @@
         "rust": {
           "status": "present",
           "file": "sdks/rust/src/lib.rs",
-          "symbol": "pub fn login(&mut self, options: &LoginOptions) -> Result<LoginResult, SnaplinkError>"
+          "symbol": "pub async fn login(&mut self, options: &LoginOptions) -> Result<LoginResult, SnaplinkError>",
+          "note": "W4 made the hosted-login surface async over an injected Transport."
+        },
+        "kotlin": {
+          "status": "present",
+          "file": "sdks/kotlin/snaplink-sso/src/main/java/com/snaplink/sso/SnaplinkAuthClient.kt",
+          "symbol": "public suspend fun beginAuthorization(): URI"
+        },
+        "swift": {
+          "status": "present",
+          "file": "sdks/swift/Sources/SnaplinkSSO/SnaplinkAuthClient.swift",
+          "symbol": "public func beginAuthorization() throws -> URL"
         }
       }
     },
@@ -128,6 +167,17 @@
           "status": "present",
           "file": "sdks/rust/src/lib.rs",
           "symbol": "pub trait StateStore: Send + Sync"
+        },
+        "kotlin": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the kotlin SDK roadmap. The transaction is held in an internal SnaplinkSecureStore backed by Android Keystore, so a multi-process caller cannot supply its own.",
+          "note": "The transaction is held in an internal SnaplinkSecureStore backed by Android Keystore, so a multi-process caller cannot supply its own."
+        },
+        "swift": {
+          "status": "present",
+          "file": "sdks/swift/Sources/SnaplinkSSO/Errors.swift",
+          "symbol": "protocol SnaplinkSecureStore: Sendable",
+          "note": "A public protocol, so a caller can supply KeychainSecureStore or a test double."
         }
       }
     },
@@ -161,6 +211,16 @@
           "status": "present",
           "file": "sdks/rust/src/lib.rs",
           "symbol": "pub struct MemoryStateStore"
+        },
+        "kotlin": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the kotlin SDK roadmap. No in-memory store ships; the Android Keystore store is the only backing.",
+          "note": "No in-memory store ships; the Android Keystore store is the only backing."
+        },
+        "swift": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. No in-memory store ships alongside the Keychain-backed one.",
+          "note": "No in-memory store ships alongside the Keychain-backed one."
         }
       }
     },
@@ -194,6 +254,16 @@
           "status": "present",
           "file": "sdks/rust/src/lib.rs",
           "symbol": "pub fn access_token(&self) -> Option<&str>"
+        },
+        "kotlin": {
+          "status": "present",
+          "file": "sdks/kotlin/snaplink-sso/src/main/java/com/snaplink/sso/SnaplinkAuthClient.kt",
+          "symbol": "public suspend fun accessToken(): String"
+        },
+        "swift": {
+          "status": "present",
+          "file": "sdks/swift/Sources/SnaplinkSSO/SnaplinkAuthClient.swift",
+          "symbol": "public func accessToken() async throws -> String"
         }
       }
     },
@@ -204,9 +274,9 @@
       "parity": "divergent",
       "languages": {
         "go": {
-          "status": "missing",
-          "note": "Callers compare AccessToken() against the empty string instead.",
-          "plan": "W3 Session: add IsLoggedIn so every language exposes the same predicate."
+          "status": "present",
+          "file": "sdks/go/session.go",
+          "symbol": "func (c *Client) IsLoggedIn() bool"
         },
         "typescript": {
           "status": "present",
@@ -227,6 +297,16 @@
           "status": "present",
           "file": "sdks/rust/src/lib.rs",
           "symbol": "pub fn is_logged_in(&self) -> bool"
+        },
+        "kotlin": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the kotlin SDK roadmap. Callers infer it from accessToken() or a session read.",
+          "note": "Callers infer it from accessToken() or a session read."
+        },
+        "swift": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. Callers infer it from accessToken().",
+          "note": "Callers infer it from accessToken()."
         }
       }
     },
@@ -238,7 +318,7 @@
       "languages": {
         "go": {
           "status": "present",
-          "file": "sdks/go/login.go",
+          "file": "sdks/go/session.go",
           "symbol": "func (c *Client) Clear()"
         },
         "typescript": {
@@ -258,8 +338,18 @@
         },
         "rust": {
           "status": "present",
-          "file": "sdks/rust/src/lib.rs",
+          "file": "sdks/rust/src/session.rs",
           "symbol": "pub fn clear(&mut self)"
+        },
+        "kotlin": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the kotlin SDK roadmap. logout() revokes and clears; there is no local-only reset.",
+          "note": "logout() revokes and clears; there is no local-only reset."
+        },
+        "swift": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. logout() revokes and clears; there is no local-only reset.",
+          "note": "logout() revokes and clears; there is no local-only reset."
         }
       }
     },
@@ -270,9 +360,9 @@
       "parity": "divergent",
       "languages": {
         "go": {
-          "status": "missing",
-          "note": "Only Clear() exists, so a Go caller cannot revoke server-side state.",
-          "plan": "W3 Session: add Logout(ctx) that posts /logout before clearing."
+          "status": "present",
+          "file": "sdks/go/session.go",
+          "symbol": "func (c *Client) Logout(ctx context.Context) error"
         },
         "typescript": {
           "status": "present",
@@ -290,9 +380,20 @@
           "symbol": "public function logout(): void"
         },
         "rust": {
-          "status": "missing",
-          "note": "clear() drops local state but never revokes; the Rust crate is the only SDK with no server-side logout path.",
-          "plan": "W3 Session: add logout() posting /logout, keeping clear() for local reset."
+          "status": "present",
+          "note": "W3: revokes server-side, then clears local state even when the server call fails.",
+          "file": "sdks/rust/src/session.rs",
+          "symbol": "pub async fn logout(&mut self) -> Result<(), SnaplinkError>"
+        },
+        "kotlin": {
+          "status": "present",
+          "file": "sdks/kotlin/snaplink-sso/src/main/java/com/snaplink/sso/SnaplinkAuthClient.kt",
+          "symbol": "public suspend fun logout()"
+        },
+        "swift": {
+          "status": "present",
+          "file": "sdks/swift/Sources/SnaplinkSSO/SnaplinkAuthClient.swift",
+          "symbol": "public func logout() async throws"
         }
       }
     },
@@ -303,9 +404,9 @@
       "parity": "divergent",
       "languages": {
         "go": {
-          "status": "missing",
-          "note": "access expiry forces a full re-login.",
-          "plan": "W3 Session: add Refresh(ctx) performing the refresh_token grant."
+          "status": "present",
+          "file": "sdks/go/session.go",
+          "symbol": "func (c *Client) Refresh(ctx context.Context) (TokenResponse, error)"
         },
         "typescript": {
           "status": "present",
@@ -323,9 +424,22 @@
           "plan": "W3 Session: add refresh() performing the refresh_token grant."
         },
         "rust": {
-          "status": "missing",
-          "note": "access expiry forces a full re-login.",
-          "plan": "W3 Session: add refresh() performing the refresh_token grant."
+          "status": "present",
+          "note": "W3: explicit renewal; automatic refresh is deliberately absent.",
+          "file": "sdks/rust/src/session.rs",
+          "symbol": "pub async fn refresh(&mut self) -> Result<crate::TokenResponse, SnaplinkError>"
+        },
+        "kotlin": {
+          "status": "present",
+          "file": "sdks/kotlin/snaplink-sso/src/main/java/com/snaplink/sso/SnaplinkAuthClient.kt",
+          "symbol": "val response = transport.refresh(refreshToken)",
+          "note": "Refresh is performed implicitly by accessToken() under a single-flight lock rather than through an explicit call. That is a deliberate divergence from the hosted-login SDKs: a mobile call site wants a valid bearer, and forcing every caller to check expiry is worse ergonomics. The cost is that the refresh grant is not observable from the call site, which is why the single-flight lock exists."
+        },
+        "swift": {
+          "status": "present",
+          "file": "sdks/swift/Sources/SnaplinkSSO/SnaplinkAuthClient.swift",
+          "symbol": "Task { try await transport.refresh(refreshToken) }",
+          "note": "Refresh is performed implicitly by accessToken() under a single-flight lock rather than through an explicit call. That is a deliberate divergence from the hosted-login SDKs: a mobile call site wants a valid bearer, and forcing every caller to check expiry is worse ergonomics. The cost is that the refresh grant is not observable from the call site, which is why the single-flight lock exists."
         }
       }
     },
@@ -358,7 +472,18 @@
         "rust": {
           "status": "present",
           "file": "sdks/rust/src/lib.rs",
-          "symbol": "pub fn setup("
+          "symbol": "pub async fn setup(",
+          "note": "W4 made the hosted-login surface async; the symbols moved from the login path to an async transport."
+        },
+        "kotlin": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the kotlin SDK roadmap. Commercial activation is not implemented; setup() is a hosted-login SDK feature.",
+          "note": "Commercial activation is not implemented; setup() is a hosted-login SDK feature."
+        },
+        "swift": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. Commercial activation is not implemented.",
+          "note": "Commercial activation is not implemented."
         }
       }
     },
@@ -391,7 +516,17 @@
         "rust": {
           "status": "present",
           "file": "sdks/rust/src/lib.rs",
-          "symbol": "pub fn get_account_context("
+          "symbol": "pub async fn get_account_context("
+        },
+        "kotlin": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the kotlin SDK roadmap. The product and tenant projection is not read.",
+          "note": "The product and tenant projection is not read."
+        },
+        "swift": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. The product and tenant projection is not read.",
+          "note": "The product and tenant projection is not read."
         }
       }
     },
@@ -430,6 +565,16 @@
           "file": "sdks/rust/src/entitlement.rs",
           "symbol": "pub enum Feature",
           "note": "W2: entitlement is no longer Option<Value>; Feature and Limit are typed and effective() semantics ship with the SDK."
+        },
+        "kotlin": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the kotlin SDK roadmap. No entitlement model is exposed.",
+          "note": "No entitlement model is exposed."
+        },
+        "swift": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. No entitlement model is exposed.",
+          "note": "No entitlement model is exposed."
         }
       }
     },
@@ -468,6 +613,16 @@
           "file": "sdks/rust/src/license_file.rs",
           "symbol": "pub struct EntitlementFile",
           "note": "W2: local Ed25519 verification. LicenseTrust::vendor_pinned() reports TrustUnconfigured until a release supplies the vendor root, so no placeholder key ships."
+        },
+        "kotlin": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the kotlin SDK roadmap. An offline deployment on this SDK still has to reach the server for a paid-feature decision, which docs/commercial-model.md forbids.",
+          "note": "An offline deployment on this SDK still has to reach the server for a paid-feature decision, which docs/commercial-model.md forbids."
+        },
+        "swift": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. An offline deployment on this SDK still has to reach the server for a paid-feature decision, which docs/commercial-model.md forbids.",
+          "note": "An offline deployment on this SDK still has to reach the server for a paid-feature decision, which docs/commercial-model.md forbids."
         }
       }
     },
@@ -502,6 +657,16 @@
           "file": "sdks/rust/src/preferences.rs",
           "symbol": "pub fn build_login_preference_handoff(",
           "note": "W2: includes the legacy sverp:theme_mode alias, matching the Python and TypeScript behaviour."
+        },
+        "kotlin": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the kotlin SDK roadmap. No preference handoff is emitted on the authorization request.",
+          "note": "No preference handoff is emitted on the authorization request."
+        },
+        "swift": {
+          "status": "missing",
+          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. No preference handoff is emitted on the authorization request.",
+          "note": "No preference handoff is emitted on the authorization request."
         }
       }
     },
@@ -532,9 +697,20 @@
           "plan": "W4 Transport: offer an event-loop-friendly transport alongside the synchronous default."
         },
         "rust": {
-          "status": "missing",
-          "note": "reqwest::blocking blocks a tokio worker, so the crate cannot be called from an async handler.",
-          "plan": "W4 Transport: async by default with a blocking adapter behind a feature flag."
+          "status": "present",
+          "note": "W4: async by default, which is why the crate is 0.4.0 rather than 0.3.0.",
+          "file": "sdks/rust/src/lib.rs",
+          "symbol": "pub async fn login(&mut self, options: &LoginOptions) -> Result<LoginResult, SnaplinkError>"
+        },
+        "kotlin": {
+          "status": "present",
+          "file": "sdks/kotlin/snaplink-sso/src/main/java/com/snaplink/sso/SnaplinkAuthClient.kt",
+          "symbol": "public suspend fun beginAuthorization(): URI"
+        },
+        "swift": {
+          "status": "present",
+          "file": "sdks/swift/Sources/SnaplinkSSO/SnaplinkAuthClient.swift",
+          "symbol": "public func accessToken() async throws -> String"
         }
       }
     }

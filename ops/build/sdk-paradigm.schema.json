@@ -18,10 +18,11 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["id", "package"],
+            "required": ["id", "package", "onboarded"],
             "properties": {
               "id": { "type": "string", "minLength": 1 },
               "package": { "type": "boolean" },
+              "onboarded": { "type": "boolean" },
               "notes": { "type": "string" }
             }
           }

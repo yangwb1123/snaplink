@@ -55,6 +55,31 @@ MANIFEST_SPECS = (
         "snaplink/sso-client",
         "json",
     ),
+    ManifestSpec(
+        "kotlin",
+        Path("sdks/kotlin/snaplink-sso/build.gradle.kts"),
+        "com.snaplink:snaplink-sso",
+        "gradle",
+    ),
+    ManifestSpec(
+        "swift",
+        Path("sdks/swift/Package.swift"),
+        "SnaplinkSSO",
+        "swift",
+    ),
+)
+
+#: Manifests that identify a published SDK package directory. A directory under
+#: sdks/ that carries one of these but is absent from MANIFEST_SPECS is an
+#: SDK that shipped without a version gate, which is how Kotlin and Swift
+#: escaped review until they were found by hand.
+SDK_MANIFEST_MARKERS = (
+    Path("package.json"),
+    Path("pyproject.toml"),
+    Path("Cargo.toml"),
+    Path("composer.json"),
+    Path("Package.swift"),
+    Path("snaplink-sso/build.gradle.kts"),
 )
 
 TYPESCRIPT_LOCK_PATH = Path("sdks/typescript/package-lock.json")
@@ -184,7 +209,7 @@ def _parse_toml(text: str, source: str) -> dict:
     return value
 
 
-def _metadata(value: dict, table: str | None, source: str) -> tuple[str, str]:
+def _metadata(value: dict, table: str | None, source: str) -> tuple[str, str | None]:
     metadata = value if table is None else value.get(table)
     if not isinstance(metadata, dict):
         label = "root" if table is None else f"[{table}]"
@@ -195,7 +220,7 @@ def _metadata(value: dict, table: str | None, source: str) -> tuple[str, str]:
     if "version" not in metadata:
         raise SDKVersionError(f"{source}: package version is missing")
     version = metadata["version"]
-    if not isinstance(version, str):
+    if version is not None and not isinstance(version, str):
         raise SDKVersionError(f"{source}: version must be a string")
     return name, version
 
@@ -238,6 +263,66 @@ def _lock_root_version(lock: dict, package_version: str) -> None:
             )
 
 
+_GRADLE_VERSION = re.compile(r"""^\s*version\s*=\s*["']([^"']+)["']""", re.MULTILINE)
+_GRADLE_GROUP = re.compile(r"""^\s*group\s*=\s*["']([^"']+)["']""", re.MULTILINE)
+_SWIFT_NAME = re.compile(r"""\bname\s*:\s*["']([^"']+)["']""", re.MULTILINE)
+_SWIFT_VERSION = re.compile(r"""//\s*version\s*:\s*(\S+)""")
+
+
+def _parse_gradle(text: str, source: str, artifact: str) -> dict:
+    """Read a Kotlin DSL build script's group and version literals.
+
+    Gradle scripts are programs, not a data format, so only the top-level
+    `group = "..."` and `version = "..."` assignments are read and nothing is
+    evaluated. The published coordinate is the group joined to the module
+    directory name, which is how Gradle names the artifact.
+    """
+    version = _GRADLE_VERSION.search(text)
+    if version is None:
+        raise SDKVersionError(f"{source}: version assignment is missing")
+    group = _GRADLE_GROUP.search(text)
+    if group is None:
+        raise SDKVersionError(f"{source}: group assignment is missing")
+    return {"name": f"{group.group(1)}:{artifact}", "version": version.group(1)}
+
+
+def _parse_swift(text: str, source: str) -> dict:
+    """Read a SwiftPM manifest's package name.
+
+    SwiftPM derives the version from the release tag rather than the manifest,
+    so there is no version to validate here; the name is still checked so a
+    renamed package cannot drift unnoticed.
+    """
+    name = _SWIFT_NAME.search(text)
+    if name is None:
+        raise SDKVersionError(f"{source}: package name is missing")
+    pinned = _SWIFT_VERSION.search(text)
+    version = pinned.group(1) if pinned is not None else None
+    return {"name": name.group(1), "version": version}
+
+
+def discover_undeclared_sdk_directories(root: Path = ROOT) -> list[str]:
+    """Return sdks/ subdirectories that carry a package manifest but no gate.
+
+    This is the check that would have caught Kotlin and Swift. Without it, a new
+    SDK is only governed if whoever adds it remembers to add it here, which is
+    the exact failure this repository already had once.
+    """
+    sdks = root / "sdks"
+    if not sdks.is_dir():
+        return []
+    declared = {spec.path.parts[1] for spec in MANIFEST_SPECS}
+    undeclared: list[str] = []
+    for entry in sorted(sdks.iterdir(), key=lambda path: path.name):
+        if not entry.is_dir():
+            continue
+        relative = Path("sdks") / entry.name
+        if any((root / relative / marker).is_file() for marker in SDK_MANIFEST_MARKERS):
+            if entry.name not in declared:
+                undeclared.append(entry.name)
+    return undeclared
+
+
 def _load_package(spec: ManifestSpec, root: Path) -> PackageVersion:
     result = PackageVersion(spec.id, spec.expected_name, None)
     source = spec.path.as_posix()
@@ -251,9 +336,20 @@ def _load_package(spec: ManifestSpec, root: Path) -> PackageVersion:
         elif spec.format == "toml:package":
             data = _parse_toml(_read_fixed(root, spec.path), source)
             table = "package"
+        elif spec.format == "gradle":
+            artifact = spec.path.parent.name
+            data = _parse_gradle(_read_fixed(root, spec.path), source, artifact)
+            table = None
+        elif spec.format == "swift":
+            data = _parse_swift(_read_fixed(root, spec.path), source)
+            table = None
         else:  # The tuple above is fixed; guard accidental code drift.
             raise SDKVersionError(f"{source}: unsupported fixed manifest parser")
         name, version = _metadata(data, table, source)
+        if version is None:
+            # SwiftPM versions from the release tag. The package is still
+            # audited by name; there is simply no file to read a number from.
+            return PackageVersion(spec.id, name, None, None)
         result = PackageVersion(spec.id, name, version)
         _validate_package_name(name, spec.expected_name, source)
         validate_semver(version, source)
@@ -266,20 +362,51 @@ def _load_package(spec: ManifestSpec, root: Path) -> PackageVersion:
         return PackageVersion(result.id, result.name, result.version, str(exc))
 
 
+def _major_of(version: str) -> str:
+    return version.split(".", 1)[0]
+
+
+def check_train_consistency(packages: tuple[PackageVersion, ...]) -> str | None:
+    """Every versioned package must share one major; minors may differ.
+
+    The previous rule required all manifests to carry the *identical* version.
+    That was correct while the SDKs shipped as one lockstep release, and wrong
+    the moment one of them took a breaking change: Rust became 0.4.0 for a real
+    breaking reason while the other packages were legitimately still 0.3.0 with
+    additive-only changes. Forcing them to match would have misstated three
+    packages' compatibility to make one number tidy.
+
+    The invariant that still matters is coherence of the release train, so that
+    is what is enforced: no package may sit on a different major than the rest,
+    and the report always shows the spread so a partial bump stays visible.
+    """
+    versioned = [package for package in packages if package.version is not None]
+    if not versioned:
+        return None
+    majors = {_major_of(package.version) for package in versioned}
+    if len(majors) == 1:
+        return None
+    details = ", ".join(
+        f"{package.id}={_quote(package.version)}" for package in versioned
+    )
+    return f"SDK package majors differ: {details}"
+
+
 def load_version_report(root: Path = ROOT) -> VersionReport:
-    """Read only the fixed manifests and return their complete validation report."""
+    """Read every audited manifest and return the complete validation report."""
     packages = tuple(_load_package(spec, root) for spec in MANIFEST_SPECS)
-    if any(not package.ok for package in packages):
-        return VersionReport(packages)
-    versions = [package.version for package in packages]
-    unique_versions = sorted(set(versions))
     consistency_error = None
-    if len(unique_versions) != 1:
-        details = ", ".join(
-            f"{package.id}={_quote(package.version or UNAVAILABLE)}"
-            for package in packages
+    undeclared = tuple(discover_undeclared_sdk_directories(root))
+    if undeclared:
+        consistency_error = (
+            "SDK directories carry a package manifest but no version gate: "
+            + ", ".join(undeclared)
+            + "; add each to MANIFEST_SPECS"
         )
-        consistency_error = f"SDK package versions differ: {details}"
+    if consistency_error is None and any(not package.ok for package in packages):
+        return VersionReport(packages)
+    if consistency_error is None:
+        consistency_error = check_train_consistency(packages)
     return VersionReport(packages, consistency_error)
 
 

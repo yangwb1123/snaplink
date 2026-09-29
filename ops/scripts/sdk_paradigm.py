@@ -101,8 +101,15 @@ def validate_schema() -> None:
         raise SDKParadigmError(f"{SCHEMA_PATH.name}: capability languages must be a patternProperties map")
 
 
-def validate_languages(compatibility: dict, source: str) -> list[str]:
-    """Return the declared language ids after checking shape and completeness."""
+def validate_languages(compatibility: dict, source: str) -> tuple[list[str], set[str]]:
+    """Return the declared language ids and the onboarded subset.
+
+    A language is *onboarded* once it has been reviewed against the parity
+    floor. A language still onboarding must declare every capability so its debt
+    stays visible and countable, but it is not held to parity yet: a new SDK is
+    neither allowed to fake a pass nor to downgrade a capability to turn the gate
+    green.
+    """
     missing_keys = sorted({"policy", "languages"} - compatibility.keys())
     if missing_keys:
         raise SDKParadigmError(f"{source}: compatibility missing {', '.join(missing_keys)}")
@@ -112,6 +119,7 @@ def validate_languages(compatibility: dict, source: str) -> list[str]:
     _require_str(compatibility["policy"], source, "compatibility.policy")
 
     declared: list[str] = []
+    onboarded: set[str] = set()
     for index, entry in enumerate(_require_list(compatibility["languages"], source, "compatibility.languages")):
         where = f"{source}: compatibility.languages[{index}]"
         entry = _require_dict(entry, where, "language entry")
@@ -120,12 +128,20 @@ def validate_languages(compatibility: dict, source: str) -> list[str]:
             raise SDKParadigmError(f"{where}: id must be lowercase alphanumeric")
         if not isinstance(entry.get("package"), bool):
             raise SDKParadigmError(f"{where}: package must be a boolean")
+        if not isinstance(entry.get("onboarded"), bool):
+            raise SDKParadigmError(
+                f"{where}: onboarded must be a boolean; state the review status explicitly"
+            )
+        if entry["onboarded"]:
+            onboarded.add(language_id)
         if "notes" in entry and not isinstance(entry["notes"], str):
             raise SDKParadigmError(f"{where}: notes must be a string")
         declared.append(language_id)
     if len(set(declared)) != len(declared):
         raise SDKParadigmError(f"{source}: compatibility.languages has duplicate ids")
-    return declared
+    if not onboarded:
+        raise SDKParadigmError(f"{source}: at least one language must be onboarded")
+    return declared, onboarded
 
 
 def validate_package_coverage(declared: list[str], source: str) -> None:
@@ -139,8 +155,15 @@ def validate_package_coverage(declared: list[str], source: str) -> None:
         )
 
 
-def validate_capabilities(capabilities: object, source: str, languages: list[str]) -> None:
-    """Check every capability entry, its per-language declarations, and the parity contract."""
+def validate_capabilities(
+    capabilities: object, source: str, languages: list[str], onboarded: set[str]
+) -> None:
+    """Check every capability entry, its declarations, and the parity contract.
+
+    Parity is enforced against the onboarded languages only. A language still
+    onboarding must still declare every capability, so its remaining debt is
+    reported rather than hidden.
+    """
     entries = _require_list(capabilities, source, "capabilities")
     if not entries:
         raise SDKParadigmError(f"{source}: capabilities must not be empty")
@@ -183,11 +206,17 @@ def validate_capabilities(capabilities: object, source: str, languages: list[str
 
         for language_id, declaration in declarations.items():
             _validate_declaration(
-                declaration, f"{where}.languages.{language_id}", parity, language_id
+                declaration,
+                f"{where}.languages.{language_id}",
+                parity,
+                language_id,
+                enforce_parity=language_id in onboarded,
             )
 
 
-def _validate_declaration(declaration: object, where: str, parity: str, language_id: str) -> None:
+def _validate_declaration(
+    declaration: object, where: str, parity: str, language_id: str, enforce_parity: bool = True
+) -> None:
     """One language's claim about one capability, checked against the parity contract."""
     declaration = _require_dict(declaration, where, "declaration")
     status = _require_str(declaration.get("status"), where, "status")
@@ -214,7 +243,7 @@ def _validate_declaration(declaration: object, where: str, parity: str, language
     if "file" in declaration or "symbol" in declaration:
         raise SDKParadigmError(f"{where}: a missing declaration must not name a file or symbol")
     _require_str(declaration.get("plan"), where, "plan")
-    if parity == "parity":
+    if parity == "parity" and enforce_parity:
         raise SDKParadigmError(
             f"{where}: capability is declared parity but {language_id} is missing; "
             "either close the gap or change parity to divergent with a CHANGELOG entry"
@@ -294,10 +323,10 @@ def check() -> int:
 
     try:
         compatibility = _require_dict(document.get("compatibility"), source, "compatibility")
-        languages = validate_languages(compatibility, source)
+        languages, onboarded = validate_languages(compatibility, source)
         validate_package_coverage(languages, source)
         capabilities = document.get("capabilities")
-        validate_capabilities(capabilities, source, languages)
+        validate_capabilities(capabilities, source, languages, onboarded)
     except SDKParadigmError as exc:
         print(f"sdk-paradigm: {exc}", file=sys.stderr)
         return 1
@@ -318,10 +347,13 @@ def check() -> int:
     total = sum(len(entry["languages"]) for entry in entries)
     parity_count = sum(1 for entry in entries if entry["parity"] == "parity")
     print(
-        f"sdk-paradigm: languages={len(languages)} capabilities={len(entries)} "
-        f"parity={parity_count} coverage={present}/{total} "
-        f"conformance={len(REQUIRED_CONFORMANCE_FILES)}"
+        f"sdk-paradigm: languages={len(languages)} onboarded={len(onboarded)} "
+        f"capabilities={len(entries)} parity={parity_count} "
+        f"coverage={present}/{total} conformance={len(REQUIRED_CONFORMANCE_FILES)}"
     )
+    pending = sorted(set(languages) - onboarded)
+    if pending:
+        print(f"sdk-paradigm: onboarding {', '.join(pending)}; not yet held to parity")
     print("verdict: PASS")
     return 0
 
@@ -331,7 +363,7 @@ def list_capabilities() -> int:
     source = str(PARADIGM_RELATIVE_PATH)
     try:
         document = _require_dict(_read_json(PARADIGM_PATH), source, "registry")
-        languages = validate_languages(
+        languages, onboarded = validate_languages(
             _require_dict(document.get("compatibility"), source, "compatibility"), source
         )
     except SDKParadigmError as exc:
@@ -341,6 +373,9 @@ def list_capabilities() -> int:
     entries = _require_list(document.get("capabilities"), source, "capabilities")
     width = max((len(entry["id"]) for entry in entries), default=0)
     print(f"{'capability'.ljust(width)}  parity      " + "  ".join(f"{lang:<10}" for lang in languages))
+    for index, entry in enumerate(document["compatibility"]["languages"]):
+        if not entry["onboarded"]:
+            print(f"{'':<{width}}  (onboarding: {entry['id']} is not yet held to parity)")
     for entry in entries:
         cells = "  ".join(
             f"{('yes' if entry['languages'][lang]['status'] == 'present' else 'MISSING'):<10}"

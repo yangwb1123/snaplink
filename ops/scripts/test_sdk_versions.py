@@ -16,12 +16,19 @@ import sdk_toml
 import sdk_versions
 
 
-VERSIONS = ("0.3.0", "0.3.0", "0.3.0", "0.3.0")
+VERSIONS = ("0.3.0", "0.3.0", "0.3.0", "0.3.0", "0.3.0", "")
+
+#: What the committed manifests actually say. Rust is ahead at 0.4.0 because it
+#: took a breaking change (async transport); the others are 0.3.0 with additive
+#: changes only, which the train rule permits.
+REPOSITORY_VERSIONS = ("0.3.0", "0.3.0", "0.4.0", "0.3.0", "0.3.0", "")
 NAMES = (
     "@snaplink/sso-client",
     "snaplink-sso",
     "snaplink-sso",
     "snaplink/sso-client",
+    "com.snaplink:snaplink-sso",
+    "SnaplinkSSO",
 )
 
 
@@ -33,10 +40,10 @@ def _write(root: Path, relative: str, content: str) -> None:
 
 def _write_fixtures(
     root: Path,
-    versions: tuple[str, str, str, str] = VERSIONS,
+    versions: tuple[str, ...] = VERSIONS,
     lock_version: str | None = None,
 ) -> None:
-    ts_version, py_version, rust_version, php_version = versions
+    ts_version, py_version, rust_version, php_version, kotlin_version, _ = versions
     lock_version = lock_version or ts_version
     _write(
         root,
@@ -97,6 +104,27 @@ example-dependency = "77.77.77"
             }
         ),
     )
+    _write(
+        root,
+        "sdks/kotlin/snaplink-sso/build.gradle.kts",
+        f'''plugins {{ id("com.android.library") }}
+group = "com.snaplink"
+version = "{kotlin_version}"
+
+android {{ namespace = "com.snaplink.sso" }}
+''',
+    )
+    # SwiftPM derives its version from the release tag, so the fixture pins the
+    # package name only. That is the one manifest with no version to read.
+    _write(
+        root,
+        "sdks/swift/Package.swift",
+        '''// swift-tools-version: 5.9
+let package = Package(
+    name: "SnaplinkSSO"
+)
+''',
+    )
 
 
 def _package(report: sdk_versions.VersionReport, package_id: str) -> sdk_versions.PackageVersion:
@@ -106,9 +134,20 @@ def _package(report: sdk_versions.VersionReport, package_id: str) -> sdk_version
 class SDKVersionGateTests(unittest.TestCase):
     def test_current_repository_versions_pass(self) -> None:
         report = sdk_versions.load_version_report()
-        self.assertTrue(report.ok)
-        self.assertEqual([package.version for package in report.packages], list(VERSIONS))
+        self.assertTrue(report.ok, report.failure_message())
+        self.assertEqual(
+            [package.version for package in report.packages],
+            # Swift has no manifest version to compare against.
+            [
+                None if version == "" else version
+                for version in REPOSITORY_VERSIONS
+            ],
+        )
         self.assertEqual([package.name for package in report.packages], list(NAMES))
+
+    def test_the_repository_declares_every_sdk_directory(self) -> None:
+        """The check that would have caught Kotlin and Swift."""
+        self.assertEqual([], sdk_versions.discover_undeclared_sdk_directories())
 
     def test_semver_supports_prerelease_and_build_metadata(self) -> None:
         self.assertTrue(sdk_versions.is_valid_semver("1.2.3-alpha.1+build.5"))
@@ -119,7 +158,7 @@ class SDKVersionGateTests(unittest.TestCase):
         self.assertFalse(sdk_versions.is_valid_semver("0.3"))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            _write_fixtures(root, versions=("1.2.3-alpha.1+build.5",) * 4)
+            _write_fixtures(root, versions=("1.2.3-alpha.1+build.5",) * 5 + ("",))
             report = sdk_versions.load_version_report(root)
         self.assertTrue(report.ok)
 
@@ -133,22 +172,51 @@ class SDKVersionGateTests(unittest.TestCase):
         self.assertIn("package-lock root version", package.error or "")
         self.assertEqual(package.version, "0.3.0")
 
-    def test_package_version_mismatch_fails_without_normalizing(self) -> None:
+    def test_a_minor_difference_is_allowed(self) -> None:
+        """Rust is 0.4.0 for a real breaking change while the rest are 0.3.0.
+
+        Semver is per language: forcing every manifest to the same number to
+        keep one tidy train would misstate the packages whose changes were
+        additive only.
+        """
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            _write_fixtures(root, versions=("0.3.0", "0.3.1", "0.3.0", "0.3.0"))
+            _write_fixtures(root, versions=("0.3.0", "0.3.0", "0.4.0", "0.3.0", "0.3.0", ""))
+            report = sdk_versions.load_version_report(root)
+        self.assertTrue(report.ok, report.failure_message())
+        output = sdk_versions.format_version_report(report)
+        self.assertIn('id="rust" name="snaplink-sso" version="0.4.0"', output)
+        self.assertTrue(output.endswith("verdict: PASS"))
+
+    def test_a_major_difference_fails_without_normalizing(self) -> None:
+        """A package left on a different major is a broken release train."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_fixtures(root, versions=("0.3.0", "0.3.0", "1.0.0", "0.3.0", "0.3.0", ""))
             report = sdk_versions.load_version_report(root)
         self.assertFalse(report.ok)
-        self.assertIn("SDK package versions differ", report.failure_message())
+        self.assertIn("SDK package majors differ", report.failure_message())
         output = sdk_versions.format_version_report(report)
-        self.assertIn('id="python" name="snaplink-sso" version="0.3.1"', output)
+        self.assertIn('id="rust" name="snaplink-sso" version="1.0.0"', output)
         self.assertTrue(output.endswith("verdict: FAIL"))
+
+    def test_an_undeclared_sdk_directory_fails(self) -> None:
+        """A new SDK must not ship without a version gate, which is how Kotlin
+        and Swift escaped review the first time."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_fixtures(root)
+            _write(root, "sdks/brandnew/package.json", json.dumps({"name": "x", "version": "0.1.0"}))
+            report = sdk_versions.load_version_report(root)
+        self.assertFalse(report.ok)
+        self.assertIn("brandnew", report.failure_message())
+        self.assertIn("MANIFEST_SPECS", report.failure_message())
 
     def test_invalid_semver_is_rejected_in_each_manifest_format(self) -> None:
         for invalid in ("0.3.0-01", "0.3.0-rc..1", "0.3", "1.2.3+"):
             with self.subTest(version=invalid), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                _write_fixtures(root, versions=(invalid,) * 4)
+                _write_fixtures(root, versions=(invalid,) * 5 + ("",))
                 report = sdk_versions.load_version_report(root)
             self.assertFalse(report.ok)
             self.assertIn("invalid SemVer", report.failure_message())
@@ -256,7 +324,11 @@ class SDKVersionGateTests(unittest.TestCase):
     def test_success_output_is_stable(self) -> None:
         report = sdk_versions.VersionReport(
             tuple(
-                sdk_versions.PackageVersion(package_id, name, "0.3.0")
+                # SwiftPM versions from the tag, so the synthetic report leaves
+                # it versionless the way the real gate does.
+                sdk_versions.PackageVersion(
+                    package_id, name, None if package_id == "swift" else "0.3.0"
+                )
                 for package_id, name in zip((spec.id for spec in sdk_versions.MANIFEST_SPECS), NAMES)
             )
         )
@@ -269,6 +341,8 @@ class SDKVersionGateTests(unittest.TestCase):
                     'package id="python" name="snaplink-sso" version="0.3.0" status=PASS',
                     'package id="rust" name="snaplink-sso" version="0.3.0" status=PASS',
                     'package id="php" name="snaplink/sso-client" version="0.3.0" status=PASS',
+                'package id="kotlin" name="com.snaplink:snaplink-sso" version="0.3.0" status=PASS',
+                'package id="swift" name="SnaplinkSSO" version="<unavailable>" status=PASS',
                     "verdict: PASS",
                 ]
             ),

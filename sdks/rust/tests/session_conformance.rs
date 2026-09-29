@@ -48,9 +48,30 @@ fn serve(responses: Vec<(&'static str, u16, &'static str)>) -> Harness {
     let base_url = format!("http://{}", listener.local_addr().expect("address"));
     let sink: Arc<Mutex<Vec<Captured>>> = Arc::new(Mutex::new(Vec::new()));
     let writer = Arc::clone(&sink);
+    // Non-blocking accept with an idle deadline. A test that ends without
+    // issuing every queued request (e.g. refresh() short-circuits because the
+    // session was cleared) must still let the server thread exit, otherwise
+    // Harness::drop joins a thread parked in accept() forever.
+    listener
+        .set_nonblocking(true)
+        .expect("listener must support non-blocking accept");
     let handle = thread::spawn(move || {
         for (body, status, payload) in responses {
-            let Ok((mut stream, _)) = listener.accept() else { return };
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut accepted = None;
+            while std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok(pair) => {
+                        accepted = Some(pair);
+                        break;
+                    }
+                    Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(_) => return,
+                }
+            }
+            let Some((mut stream, _)) = accepted else { return };
             let mut buffer = [0_u8; 8192];
             let Ok(size) = stream.read(&mut buffer) else { return };
             let request = String::from_utf8_lossy(&buffer[..size]).to_string();

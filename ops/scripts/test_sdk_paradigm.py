@@ -27,6 +27,14 @@ def _language_ids() -> list[str]:
     return [entry["id"] for entry in _registry()["compatibility"]["languages"]]
 
 
+def _onboarded_ids() -> set[str]:
+    return {
+        entry["id"]
+        for entry in _registry()["compatibility"]["languages"]
+        if entry["onboarded"]
+    }
+
+
 def _capability(document: dict, capability_id: str) -> dict:
     for entry in document["capabilities"]:
         if entry["id"] == capability_id:
@@ -39,9 +47,11 @@ class RegistryShapeTest(unittest.TestCase):
 
     def test_committed_registry_is_valid(self) -> None:
         document = _registry()
-        languages = sdk_paradigm.validate_languages(document["compatibility"], "registry")
+        languages, onboarded = sdk_paradigm.validate_languages(document["compatibility"], "registry")
         sdk_paradigm.validate_package_coverage(languages, "registry")
-        sdk_paradigm.validate_capabilities(document["capabilities"], "registry", languages)
+        sdk_paradigm.validate_capabilities(
+            document["capabilities"], "registry", languages, onboarded
+        )
         self.assertEqual([], sdk_paradigm.validate_symbol_presence(document["capabilities"], "registry"))
         self.assertEqual([], sdk_paradigm.validate_conformance())
 
@@ -57,13 +67,32 @@ class RegistryShapeTest(unittest.TestCase):
         for entry in document["capabilities"]:
             self.assertEqual(languages, set(entry["languages"]), entry["id"])
 
-    def test_parity_capabilities_are_fully_covered(self) -> None:
+    def test_parity_capabilities_are_fully_covered_by_onboarded_languages(self) -> None:
+        """Parity is the floor for a reviewed SDK.
+
+        A language still onboarding is allowed to miss it, but only if it is
+        marked as such: that is the difference between a visible debt and a
+        capability quietly downgraded to make the gate green.
+        """
         document = _registry()
+        onboarded = _onboarded_ids()
         parity = [entry for entry in document["capabilities"] if entry["parity"] == "parity"]
         self.assertTrue(parity, "the registry must retain parity-enforced capabilities")
         for entry in parity:
             for language_id, declaration in entry["languages"].items():
-                self.assertEqual("present", declaration["status"], f"{entry['id']}.{language_id}")
+                if language_id in onboarded:
+                    self.assertEqual("present", declaration["status"], f"{entry['id']}.{language_id}")
+
+    def test_an_onboarding_language_still_declares_every_capability(self) -> None:
+        document = _registry()
+        languages = set(_language_ids())
+        onboarding = languages - _onboarded_ids()
+        self.assertTrue(onboarding, "the repository has SDKs still onboarding")
+        for entry in document["capabilities"]:
+            self.assertEqual(languages, set(entry["languages"]), entry["id"])
+
+    def test_at_least_one_language_is_onboarded(self) -> None:
+        self.assertTrue(_onboarded_ids())
 
     def test_layer_prefix_matches_declared_layer(self) -> None:
         for entry in _registry()["capabilities"]:
@@ -125,7 +154,9 @@ class DeclarationValidationTest(unittest.TestCase):
         document = _registry()
         _capability(document, "session.start")["parity"] = "eventually"
         with self.assertRaises(SDKParadigmError):
-            sdk_paradigm.validate_capabilities(document["capabilities"], "registry", _language_ids())
+            sdk_paradigm.validate_capabilities(
+            document["capabilities"], "registry", _language_ids(), _onboarded_ids()
+        )
 
     def test_unknown_keys_are_rejected(self) -> None:
         with self.assertRaises(SDKParadigmError):
@@ -141,28 +172,34 @@ class CapabilityValidationTest(unittest.TestCase):
         document = _registry()
         document["capabilities"].append(dict(_capability(document, "session.start")))
         with self.assertRaises(SDKParadigmError) as caught:
-            sdk_paradigm.validate_capabilities(document["capabilities"], "registry", _language_ids())
+            sdk_paradigm.validate_capabilities(
+            document["capabilities"], "registry", _language_ids(), _onboarded_ids()
+        )
         self.assertIn("duplicate", str(caught.exception))
 
     def test_id_layer_mismatch_is_rejected(self) -> None:
         document = _registry()
         _capability(document, "session.start")["layer"] = "transport"
         with self.assertRaises(SDKParadigmError) as caught:
-            sdk_paradigm.validate_capabilities(document["capabilities"], "registry", _language_ids())
+            sdk_paradigm.validate_capabilities(
+            document["capabilities"], "registry", _language_ids(), _onboarded_ids()
+        )
         self.assertIn("does not match its layer", str(caught.exception))
 
     def test_unqualified_id_is_rejected(self) -> None:
         document = _registry()
         _capability(document, "session.start")["id"] = "refresh"
         with self.assertRaises(SDKParadigmError):
-            sdk_paradigm.validate_capabilities(document["capabilities"], "registry", _language_ids())
+            sdk_paradigm.validate_capabilities(
+            document["capabilities"], "registry", _language_ids(), _onboarded_ids()
+        )
 
     def test_silent_language_is_rejected(self) -> None:
         document = _registry()
         del _capability(document, "session.start")["languages"]["php"]
         with self.assertRaises(SDKParadigmError) as caught:
             sdk_paradigm.validate_capabilities(
-                document["capabilities"], "registry", _language_ids()
+                document["capabilities"], "registry", _language_ids(), _onboarded_ids()
             )
         self.assertIn("silent", str(caught.exception))
 
@@ -172,7 +209,9 @@ class CapabilityValidationTest(unittest.TestCase):
             "status": "present", "file": "sdks/go/login.go", "symbol": "x",
         }
         with self.assertRaises(SDKParadigmError) as caught:
-            sdk_paradigm.validate_capabilities(document["capabilities"], "registry", _language_ids())
+            sdk_paradigm.validate_capabilities(
+            document["capabilities"], "registry", _language_ids(), _onboarded_ids()
+        )
         self.assertIn("undeclared", str(caught.exception))
 
 
