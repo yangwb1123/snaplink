@@ -30,8 +30,10 @@ class SchemeTests(unittest.TestCase):
         self.assertEqual("sso", sdk_naming.CAPABILITY)
 
     def test_namespaces_own_the_brand_and_names_own_the_capability(self):
-        """A namespace slot holds the brand unless the platform needs a domain."""
+        """A namespace slot holds the brand unless the platform forbids it."""
         for convention in sdk_naming.CONVENTIONS:
+            if convention.id == "go":
+                continue  # asserted separately: the path is the fetchable address
             namespace, _, name_slot = convention.expected.rpartition("/")
             if convention.id == "kotlin":
                 namespace, _, name_slot = convention.expected.rpartition(":")
@@ -48,6 +50,22 @@ class SchemeTests(unittest.TestCase):
             self.assertIn("snaplink", namespace, convention.id)
             self.assertNotIn("snaplink", name_slot, convention.id)
             self.assertEqual(sdk_naming.CAPABILITY, name_slot, convention.id)
+
+    def test_the_go_module_path_is_the_fetchable_address(self):
+        """Go is the one name dictated by location: `go get` resolves this string."""
+        convention = CONVENTIONS["go"]
+        self.assertEqual(sdk_naming.GO_MODULE_PATH, convention.expected)
+        self.assertEqual("github.com/yangwb1123/snaplink/sdks/go", convention.expected)
+        self.assertTrue(convention.expected.startswith("github.com/yangwb1123/snaplink/"))
+        # The brand travels in the repository path, and the package identifier a
+        # consumer writes comes from the package clause, not the path.
+        self.assertIn("snaplink", convention.expected)
+        self.assertNotIn("sso", convention.expected.rsplit("/", 1)[-1])
+        module_line = next(
+            line for line in Path("sdks/go/go.mod").read_text().splitlines()
+            if line.startswith("module ")
+        )
+        self.assertEqual(f"module {convention.expected}", module_line)
 
     def test_the_maven_group_is_the_reverse_dns_product_host(self):
         """A Central groupId must name a host the publisher controls."""

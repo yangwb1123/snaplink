@@ -59,6 +59,13 @@ SWIFT_MODULE = "SnaplinkSSO"
 #: product host is `sso.ywbsd.site`, so the group is `site.ywbsd.sso`.
 MAVEN_GROUP = "site.ywbsd.sso"
 
+#: The Go module path. The client SDK is a nested module under this repository
+#: so it can be versioned independently of the server, which means the path is
+#: the repository path plus the language directory. `go get` resolves exactly
+#: this string, so it is the one name here that is dictated by where the code
+#: lives rather than chosen.
+GO_MODULE_PATH = "github.com/yangwb1123/snaplink/sdks/go"
+
 
 @dataclass(frozen=True)
 class Convention:
@@ -105,6 +112,15 @@ _MAVEN = re.compile(
 
 #: SwiftPM module names are Swift identifiers; PascalCase is the house rule.
 _SWIFT = re.compile(r"^[A-Z][A-Za-z0-9]*$")
+
+#: A Go module path is a VCS host, an owner, and a directory. The path is the
+#: address the go command fetches from, so it cannot be chosen freely: a
+#: subdirectory module has to be addressed by its real repository path. That is
+#: why the Go package cannot carry the product token the way the other five do.
+_GO_MODULE = re.compile(
+    r"^github\.com/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*"
+    r"(/[a-z0-9][a-z0-9._-]*)*$"
+)
 
 
 CONVENTIONS = (
@@ -157,6 +173,14 @@ CONVENTIONS = (
         rule="PascalCase SwiftPM module; brand and product token in one slot",
         namespace_slot="none",
     ),
+    Convention(
+        id="go",
+        manifest=Path("sdks/go/go.mod"),
+        expected=GO_MODULE_PATH,
+        pattern=_GO_MODULE,
+        rule="module path is the fetchable repository path; tag is <module path>/v<version>",
+        namespace_slot="repository path",
+    ),
 )
 
 
@@ -175,6 +199,7 @@ REGISTRIES = {
     "php": "Packagist",
     "kotlin": "Maven Central",
     "swift": "SwiftPM",
+    "go": "Go module proxy",
 }
 
 #: The repository's own engineering CLI. It is installed with
@@ -239,6 +264,10 @@ def _read_via_spec(sdk_versions, root: Path, spec) -> dict:
         )
     if spec.format == "swift":
         return sdk_versions._parse_swift(
+            sdk_versions._read_fixed(root, spec.path), spec.path.as_posix()
+        )
+    if spec.format == "gomod":
+        return sdk_versions._parse_gomod(
             sdk_versions._read_fixed(root, spec.path), spec.path.as_posix()
         )
     raise SDKNamingError(f"{spec.path.as_posix()}: unknown manifest format {spec.format!r}")

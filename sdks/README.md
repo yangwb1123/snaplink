@@ -17,7 +17,7 @@ namespace slot; the product token fills the name slot:
 | Packagist | `snaplink/sso` | lowercase `vendor/package` | `Snaplink\…` |
 | Maven | `site.ywbsd.sso:snaplink` | reverse-DNS `groupId:artifactId`, group is a controlled domain | `com.snaplink.sso` |
 | SwiftPM | `SnaplinkSSO` | PascalCase module | `SnaplinkSSO` |
-| Go | root Go module `github.com/yangwb1123/snaplink` | import path is the repository path | `snaplink` |
+| Go | `github.com/yangwb1123/snaplink/sdks/go` | module path is the fetchable repository path; tagged `<module path>/v<version>` | `snaplink` |
 
 The product token is the product itself, not the role the artifact plays. On
 every registry that carries this SDK a published library *is* a client, so a
@@ -34,8 +34,15 @@ Notes on the deliberate exceptions:
   token, and it does not stutter against the `SnaplinkAuthClient` type inside it.
 - **PHP** classes are de-stuttered for the same reason: the client is
   `Snaplink\SSOClient`, never `Snaplink\SnaplinkClient`.
-- **Go** cannot be renamed independently — the import path is the repository
-  path, and the SDK ships with the root module.
+- **Go** is a nested module, so it has its own version stream and never
+  triggers the server release. Two things are still dictated by where the code
+  lives rather than chosen: the module path is the repository path plus the
+  language directory, because that is the address `go get` resolves; and Go
+  **requires** a subdirectory module's tag to be prefixed with the module
+  path, so releases are `sdks/go/v0.3.0`, not `sdk-go-v0.3.0`. That prefix is
+  fixed by the go command. The product token therefore does not appear in the
+  path — it travels in the package identifier instead, since the package is
+  `snaplink` and its entry type is `Client`.
 - **Maven is the one platform where the namespace slot cannot hold the brand.**
   Central verifies a `groupId` against a domain the publisher controls, so the
   group is the reverse-DNS form of the product host `sso.ywbsd.site` and the
@@ -66,7 +73,7 @@ reproduces in reverse.
 
 | Language | Distribution | Release source | Current automation/status |
 |---|---|---|---|
-| Go | Go Modules, root module `github.com/yangwb1123/snaplink` | Root `vX.Y.Z` tag | Released with the server module; versions are coupled by the root module layout |
+| Go | Go Modules, `github.com/yangwb1123/snaplink/sdks/go` | `sdks/go/v<package-version>` | Own Go module, so the SDK versions and releases independently of the server; `make ci-modules` builds and tests it, because a `go.mod` makes the architecture and budget gates skip this directory |
 | TypeScript | npm, `@snaplink/sso` | `sdk-ts-v<package-version>` | `.github/workflows/sdk-typescript.yml` tests, checks the tag, and publishes with provenance |
 | Python | PyPI, `snaplink-sso` | `sdk-py-v<package-version>` | `.github/workflows/sdk-python.yml` tests, builds, checks the tag, and uses PyPI trusted publishing |
 | Rust | crates.io, `snaplink-sso` | `sdk-rs-v<package-version>` | `.github/workflows/sdk-rust.yml` tests, packages, checks the tag, and publishes |
