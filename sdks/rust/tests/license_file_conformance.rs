@@ -16,7 +16,10 @@ fn fixture_cases() -> Vec<serde_json::Value> {
         .join("../../ops/build/sdk-conformance/license_file.json");
     let text = std::fs::read_to_string(path).expect("cannot read the shared fixture");
     let document: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
-    document["cases"].as_array().expect("cases must be an array").clone()
+    document["cases"]
+        .as_array()
+        .expect("cases must be an array")
+        .clone()
 }
 
 fn fixture_ids() -> Vec<String> {
@@ -59,12 +62,7 @@ fn entitlement_payload(expires_at: Option<i64>) -> Vec<u8> {
     serde_json::to_vec(&value).expect("serialise")
 }
 
-fn envelope(
-    payload: &[u8],
-    signature: &[u8],
-    key_id: &str,
-    algorithm: &str,
-) -> Vec<u8> {
+fn envelope(payload: &[u8], signature: &[u8], key_id: &str, algorithm: &str) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "version": 1, "algorithm": algorithm, "key_id": key_id,
         "payload": BASE64.encode(payload), "signature": BASE64.encode(signature),
@@ -89,7 +87,9 @@ fn a_correctly_signed_file_verifies_offline() {
     let verified = EntitlementFile::verify(&file, &trust_for(&public)).expect("must verify");
     assert_eq!("vendor-2026", verified.key_id);
     assert!(verified.state_at(REFERENCE_NOW).is_active());
-    assert!(verified.entitlement.has(snaplink_sso::Feature::Scim, REFERENCE_NOW));
+    assert!(verified
+        .entitlement
+        .has(snaplink_sso::Feature::Scim, REFERENCE_NOW));
 }
 
 #[test]
@@ -130,14 +130,20 @@ fn a_signature_from_an_untrusted_key_never_verifies() {
 fn a_caller_pinned_key_is_accepted() {
     let (file, public) = signed_file("oem-2026", Some(1_900_000_000));
     let trust = LicenseTrust::from_key("oem-2026", &public).expect("a valid key must be accepted");
-    assert!(EntitlementFile::verify(&file, &trust).is_ok(), "an OEM key must verify");
+    assert!(
+        EntitlementFile::verify(&file, &trust).is_ok(),
+        "an OEM key must verify"
+    );
 }
 
 #[test]
 fn an_unknown_key_id_is_refused() {
     let (file, public) = signed_file("someone-elses-key", Some(1_900_000_000));
     let error = EntitlementFile::verify(&file, &trust_for(&public)).expect_err("must not verify");
-    assert_eq!(LicenseError::UntrustedKey("someone-elses-key".to_owned()), error);
+    assert_eq!(
+        LicenseError::UntrustedKey("someone-elses-key".to_owned()),
+        error
+    );
 }
 
 #[test]
@@ -150,7 +156,10 @@ fn an_expired_file_is_inactive_rather_than_an_error() {
         Some(snaplink_sso::InactiveReason::Expired),
         state.inactive_reason()
     );
-    assert!(verified.state_at(1_799_999_999).is_active(), "one second earlier it granted");
+    assert!(
+        verified.state_at(1_799_999_999).is_active(),
+        "one second earlier it granted"
+    );
 }
 
 #[test]
@@ -240,8 +249,13 @@ fn verification_performs_no_network_io() {
     let (file, public) = signed_file("vendor-2026", Some(1_900_000_000));
     let started = std::time::Instant::now();
     let verified = EntitlementFile::verify(&file, &trust_for(&public)).expect("must verify");
-    assert!(started.elapsed() < std::time::Duration::from_millis(50), "verification must be local");
-    assert!(verified.entitlement.has(snaplink_sso::Feature::HighAvailability, REFERENCE_NOW));
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(50),
+        "verification must be local"
+    );
+    assert!(verified
+        .entitlement
+        .has(snaplink_sso::Feature::HighAvailability, REFERENCE_NOW));
 }
 
 #[test]
@@ -259,7 +273,10 @@ fn every_fixture_case_is_implemented_here() {
     ];
     let ids = fixture_ids();
     for case in implemented {
-        assert!(ids.iter().any(|id| id == case), "fixture case {case} disappeared");
+        assert!(
+            ids.iter().any(|id| id == case),
+            "fixture case {case} disappeared"
+        );
     }
     for id in &ids {
         assert!(

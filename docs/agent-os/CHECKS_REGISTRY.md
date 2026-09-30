@@ -109,7 +109,7 @@ Run `python cli.py check-test` for check-module tests and
   must name a real file and a symbol the checker finds in it, so renaming a
   symbol fails until the registry is edited deliberately. A `missing` entry must
   name the wave that closes it and may not name a file or symbol. A capability
-  declared `parity` must be present in every language, so the seven parity
+  declared `parity` must be present in every language, so the eight parity
   capabilities cannot erode; downgrading one to `divergent` is a contract change
   requiring a minor bump and a CHANGELOG entry. Every package in
   `sdk_versions.MANIFEST_SPECS` must declare a language, so a newly published SDK

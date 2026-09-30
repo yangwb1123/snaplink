@@ -34,6 +34,13 @@ type LoginOptions struct {
 	AllowInsecureHTTPForDevelopment bool
 	TransactionTTL                  time.Duration
 	Setup                           *SetupOptions
+
+	// Presentation hints from a preferences handoff. They are UI hints the
+	// server persists as the user's preference after a successful
+	// authentication, never authorization or tenant parameters. Build them with
+	// BuildLoginPreferenceHandoff rather than by hand.
+	PresentationLocale    string
+	PresentationThemeMode string
 }
 
 // TokenResponse is the successful authorization-code exchange response.

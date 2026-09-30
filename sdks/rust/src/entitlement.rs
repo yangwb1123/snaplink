@@ -78,7 +78,9 @@ impl Feature {
     /// Resolve a wire key, or `None` when the server defines a key this build
     /// predates. An unknown key grants nothing.
     pub fn from_key(key: &str) -> Option<Feature> {
-        Feature::ALL.into_iter().find(|feature| feature.as_str() == key)
+        Feature::ALL
+            .into_iter()
+            .find(|feature| feature.as_str() == key)
     }
 }
 
@@ -327,7 +329,10 @@ impl Entitlement {
         if !self.state_at(now).is_active() {
             return false;
         }
-        self.features.get(feature.as_str()).copied().unwrap_or(false)
+        self.features
+            .get(feature.as_str())
+            .copied()
+            .unwrap_or(false)
     }
 
     /// The grant for `limit` at `now`, or `None` when inactive or absent.
@@ -364,7 +369,8 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<serde_json::Value>::deserialize(deserializer)?;
-    parse_timestamp(raw).ok_or_else(|| D::Error::custom("expected an RFC 3339 timestamp or Unix seconds"))
+    parse_timestamp(raw)
+        .ok_or_else(|| D::Error::custom("expected an RFC 3339 timestamp or Unix seconds"))
 }
 
 /// Same as [`de_timestamp`] but preserves an absent or zero expiry as `None`.

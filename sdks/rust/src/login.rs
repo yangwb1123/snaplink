@@ -11,7 +11,7 @@ use url::{form_urlencoded, Url};
 
 use crate::{
     unix_now, Entitlement, Feature, LicenseState, MemoryStateStore, Method, ReqwestTransport,
-    SnaplinkError, StateStore, Transport, TransportRequest, TransportResponse,
+    SnaplinkError, StateStore, ThemeMode, Transport, TransportRequest, TransportResponse,
 };
 
 const DEFAULT_TRANSACTION_TTL: Duration = Duration::from_secs(600);
@@ -31,6 +31,12 @@ pub struct LoginOptions {
     pub login_hint: Option<String>,
     pub acr_values: Option<String>,
     pub ui_locales: Option<String>,
+    /// Presentation hint from a preferences handoff; see
+    /// [`crate::build_login_preference_handoff`].
+    pub presentation_locale: Option<String>,
+    /// Presentation hint from a preferences handoff. The typed enum keeps a
+    /// value outside the server allowlist from ever reaching the login URL.
+    pub presentation_theme_mode: Option<ThemeMode>,
     pub callback_url: Option<String>,
     pub allow_insecure_http_for_development: bool,
     pub transaction_ttl: Option<Duration>,
@@ -57,6 +63,8 @@ impl LoginOptions {
             login_hint: None,
             acr_values: None,
             ui_locales: None,
+            presentation_locale: None,
+            presentation_theme_mode: None,
             callback_url: None,
             allow_insecure_http_for_development: false,
             transaction_ttl: None,
@@ -114,6 +122,18 @@ impl LoginOptions {
 
     pub fn ui_locales(mut self, value: impl Into<String>) -> Self {
         self.ui_locales = Some(value.into());
+        self
+    }
+
+    /// Attach the hosted-login locale hint from a preferences handoff.
+    pub fn presentation_locale(mut self, value: impl Into<String>) -> Self {
+        self.presentation_locale = Some(value.into());
+        self
+    }
+
+    /// Attach the hosted-login theme hint from a preferences handoff.
+    pub fn presentation_theme_mode(mut self, value: ThemeMode) -> Self {
+        self.presentation_theme_mode = Some(value);
         self
     }
 
@@ -768,6 +788,8 @@ struct ResolvedOptions {
     login_hint: Option<String>,
     acr_values: Option<String>,
     ui_locales: Option<String>,
+    presentation_locale: Option<String>,
+    presentation_theme_mode: Option<ThemeMode>,
     ttl: Duration,
 }
 
@@ -890,6 +912,8 @@ fn resolve_options(options: &LoginOptions) -> Result<ResolvedOptions, SnaplinkEr
         login_hint: options.login_hint.clone(),
         acr_values: options.acr_values.clone(),
         ui_locales: options.ui_locales.clone(),
+        presentation_locale: options.presentation_locale.clone(),
+        presentation_theme_mode: options.presentation_theme_mode,
         ttl,
     })
 }
@@ -916,6 +940,8 @@ fn build_login_url(
         "login_hint",
         "acr_values",
         "ui_locales",
+        "presentation_locale",
+        "presentation_theme_mode",
     ];
     let mut pairs = options
         .login_page_url
@@ -941,6 +967,17 @@ fn build_login_url(
     append_optional(&mut pairs, "login_hint", options.login_hint.as_deref());
     append_optional(&mut pairs, "acr_values", options.acr_values.as_deref());
     append_optional(&mut pairs, "ui_locales", options.ui_locales.as_deref());
+    append_optional(
+        &mut pairs,
+        "presentation_locale",
+        options.presentation_locale.as_deref(),
+    );
+    if let Some(theme_mode) = options.presentation_theme_mode {
+        pairs.push((
+            "presentation_theme_mode".into(),
+            theme_mode.as_str().to_owned(),
+        ));
+    }
     if let Some(max_age) = options.max_age {
         pairs.push(("max_age".into(), max_age.to_string()));
     }
@@ -1228,6 +1265,64 @@ mod tests {
             &redirect,
         )
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn a_preference_handoff_reaches_the_login_url() {
+        let mut client = SnaplinkClient::new();
+        let handoff = crate::build_login_preference_handoff(&crate::PresentationPreferencesPatch {
+            locale: Some("zh-CN".into()),
+            theme_mode: Some(ThemeMode::Dark),
+        })
+        .expect("a valid handoff is built");
+        let options = LoginOptions::new(
+            "https://sso.example.test",
+            "spa-client",
+            "https://app.example.test/callback",
+        )
+        .presentation_locale(handoff.get("presentation_locale").expect("locale"))
+        .presentation_theme_mode(ThemeMode::Dark);
+
+        let started = client.login(&options).await.expect("start");
+        let url = Url::parse(started.redirect_url().expect("redirect")).expect("URL");
+        let query = url.query_pairs().into_owned().collect::<HashMap<_, _>>();
+        assert_eq!(
+            query.get("presentation_locale").map(String::as_str),
+            Some("zh-CN")
+        );
+        assert_eq!(
+            query.get("presentation_theme_mode").map(String::as_str),
+            Some("dark")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stale_presentation_hint_in_the_login_page_url_is_replaced() {
+        let mut client = SnaplinkClient::new();
+        let options = LoginOptions::new(
+            "https://sso.example.test",
+            "spa-client",
+            "https://app.example.test/callback",
+        )
+        .login_page_url("https://sso.example.test/login/?keep=1&presentation_locale=de-DE&presentation_theme_mode=light");
+
+        let started = client.login(&options).await.expect("start");
+        let url = Url::parse(started.redirect_url().expect("redirect")).expect("URL");
+        let values = url
+            .query_pairs()
+            .filter_map(|(key, value)| (key == "presentation_locale").then(|| value.into_owned()))
+            .collect::<Vec<_>>();
+        assert!(
+            values.is_empty(),
+            "an unset hint must not be inherited: {values:?}"
+        );
+        let query = url.query_pairs().into_owned().collect::<HashMap<_, _>>();
+        assert_eq!(query.get("keep").map(String::as_str), Some("1"));
+        assert_eq!(
+            query.get("client_id").map(String::as_str),
+            Some("spa-client")
+        );
+        assert!(!query.contains_key("presentation_theme_mode"));
     }
 
     #[tokio::test]

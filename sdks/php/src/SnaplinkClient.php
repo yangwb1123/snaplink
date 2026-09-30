@@ -226,6 +226,41 @@ final class SnaplinkClient
         return $this->accessToken() !== null && $this->accessToken() !== '';
     }
 
+    /**
+     * Read the authenticated user's allowlisted presentation preferences.
+     *
+     * The wire shape stays inside the SDK; use
+     * {@see PresentationPreferences::fromMyPreferences()} for the typed view.
+     *
+     * @return array<string,mixed>
+     */
+    public function getMyPreferences(): array
+    {
+        $token = $this->accessToken();
+        if ($token === null || $token === '' || $this->baseUrl === null) {
+            throw new SnaplinkError(401, 'login_required', 'login is required');
+        }
+        return $this->jsonRequest('GET', rtrim($this->baseUrl, '/') . '/me/preferences', null, $token);
+    }
+
+    /**
+     * Write the supplied preference fields and return the server's merged view.
+     *
+     * An empty string removes a stored value; an omitted key is not sent.
+     *
+     * @param array<string,string|null> $patch
+     * @return array<string,mixed>
+     */
+    public function updateMyPreferences(array $patch): array
+    {
+        $token = $this->accessToken();
+        if ($token === null || $token === '' || $this->baseUrl === null) {
+            throw new SnaplinkError(401, 'login_required', 'login is required');
+        }
+        $body = PresentationPreferences::toMyPreferencesUpdateRequest($patch);
+        return $this->jsonRequest('PUT', rtrim($this->baseUrl, '/') . '/me/preferences', $body, $token);
+    }
+
     public function refresh(): array
     {
         $refreshToken = $this->tokens['refresh_token'] ?? null;
@@ -551,9 +586,32 @@ final class SnaplinkClient
             'login_hint' => self::optionalSpaceValue(self::option($options, 'login_hint', 'loginHint')),
             'acr_values' => self::optionalSpaceValue(self::option($options, 'acr_values', 'acrValues')),
             'ui_locales' => self::optionalSpaceValue(self::option($options, 'ui_locales', 'uiLocales')),
+            // Presentation hints from a preferences handoff. Build them with
+            // PresentationPreferences::buildLoginPreferenceHandoff().
+            'presentation_locale' => self::optionalHint(
+                self::option($options, 'presentation_locale', 'presentationLocale')
+            ),
+            'presentation_theme_mode' => self::optionalHint(
+                self::option($options, 'presentation_theme_mode', 'presentationThemeMode')
+            ),
             'ttl' => $ttlValue,
             'allow_insecure' => $allowInsecure,
         ];
+    }
+
+    /**
+     * A presentation hint is a single opaque token: no whitespace splitting and
+     * no value validation, because the login page and the server own it.
+     */
+    private static function optionalHint(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (!is_string($value) || $value === '' || preg_match('/\s/', $value) === 1) {
+            throw new SnaplinkError(0, 'invalid_request', 'presentation hints must be non-empty single values');
+        }
+        return $value;
     }
 
     private static function buildLoginUrl(array $options, string $state, string $challenge): string
@@ -566,6 +624,7 @@ final class SnaplinkClient
             'client_id', 'redirect_uri', 'response_type', 'response_mode', 'scope',
             'state', 'code_challenge', 'code_challenge_method', 'resource', 'prompt',
             'max_age', 'login_hint', 'acr_values', 'ui_locales',
+            'presentation_locale', 'presentation_theme_mode',
         ];
         $pairs = [];
         foreach (self::queryPairs($parts['query'] ?? null) as $pair) {
@@ -588,7 +647,7 @@ final class SnaplinkClient
         foreach ($options['resource'] as $resource) {
             $pairs[] = ['resource', $resource];
         }
-        foreach (['prompt', 'login_hint', 'acr_values', 'ui_locales'] as $key) {
+        foreach (['prompt', 'login_hint', 'acr_values', 'ui_locales', 'presentation_locale', 'presentation_theme_mode'] as $key) {
             if ($options[$key] !== null) {
                 $pairs[] = [$key, $options[$key]];
             }

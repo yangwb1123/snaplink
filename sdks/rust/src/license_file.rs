@@ -114,15 +114,18 @@ impl LicenseTrust {
         public_key: &str,
     ) -> Result<(), LicenseError> {
         let key_id = key_id.into();
-        let raw = BASE64
-            .decode(public_key.trim())
-            .map_err(|error| LicenseError::Malformed(format!("key {key_id} is not base64: {error}")))?;
+        let raw = BASE64.decode(public_key.trim()).map_err(|error| {
+            LicenseError::Malformed(format!("key {key_id} is not base64: {error}"))
+        })?;
         let bytes: [u8; 32] = raw
             .as_slice()
             .try_into()
             .map_err(|_| LicenseError::Malformed(format!("key {key_id} is not 32 bytes")))?;
-        let key = VerifyingKey::from_bytes(&bytes)
-            .map_err(|error| LicenseError::Malformed(format!("key {key_id} is not a valid Ed25519 point: {error}")))?;
+        let key = VerifyingKey::from_bytes(&bytes).map_err(|error| {
+            LicenseError::Malformed(format!(
+                "key {key_id} is not a valid Ed25519 point: {error}"
+            ))
+        })?;
         self.keys.retain(|(existing, _)| existing != &key_id);
         self.keys.push((key_id, key));
         Ok(())
@@ -204,7 +207,9 @@ impl EntitlementFile {
             )));
         }
         if envelope.algorithm != ALGORITHM {
-            return Err(LicenseError::AlgorithmUnsupported(envelope.algorithm.clone()));
+            return Err(LicenseError::AlgorithmUnsupported(
+                envelope.algorithm.clone(),
+            ));
         }
         let key = trust
             .lookup(&envelope.key_id)
@@ -212,15 +217,16 @@ impl EntitlementFile {
         let payload = BASE64
             .decode(envelope.payload.trim())
             .map_err(|error| LicenseError::Malformed(format!("payload is not base64: {error}")))?;
-        let signature_bytes = BASE64
-            .decode(envelope.signature.trim())
-            .map_err(|error| LicenseError::Malformed(format!("signature is not base64: {error}")))?;
+        let signature_bytes = BASE64.decode(envelope.signature.trim()).map_err(|error| {
+            LicenseError::Malformed(format!("signature is not base64: {error}"))
+        })?;
         let signature = Signature::from_slice(&signature_bytes)
             .map_err(|error| LicenseError::Malformed(format!("signature is malformed: {error}")))?;
         key.verify_strict(&payload, &signature)
             .map_err(|_| LicenseError::SignatureInvalid)?;
-        let entitlement: Entitlement = serde_json::from_slice(&payload)
-            .map_err(|error| LicenseError::Malformed(format!("payload is not an entitlement: {error}")))?;
+        let entitlement: Entitlement = serde_json::from_slice(&payload).map_err(|error| {
+            LicenseError::Malformed(format!("payload is not an entitlement: {error}"))
+        })?;
         Ok(EntitlementFile {
             entitlement,
             key_id: envelope.key_id,

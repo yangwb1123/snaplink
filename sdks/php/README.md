@@ -109,6 +109,25 @@ The client exposes the explicit lifecycle shared by the hosted-login SDKs:
 state, and `logout()` calls the server before clearing local state even when
 revocation fails.
 
+For shared presentation settings, `PresentationPreferences` maps the wire
+shape, validates values, and builds the login hints:
+
+~~~php
+$preferences = PresentationPreferences::fromMyPreferences($snaplink->getMyPreferences());
+$snaplink->updateMyPreferences(['theme_mode' => 'dark']);
+
+$handoff = PresentationPreferences::buildLoginPreferenceHandoff([
+    'locale' => 'en-US',
+    'theme_mode' => 'dark',
+]);
+$started = $snaplink->login($options + $handoff);
+~~~
+
+A handoff carries only values the application explicitly set, so it never
+clears a stored preference. `locale` is a BCP 47 language tag and `theme_mode`
+is one of light, dark, or auto; anything else is rejected before a request is
+made. These are presentation hints, not authorization or tenant parameters.
+
 Use a durable StateStore implementation for multi-worker deployments;
 MemoryStateStore is intended for development and single-process examples.
 The default token transport uses PHP's standard-library HTTP streams. Tests

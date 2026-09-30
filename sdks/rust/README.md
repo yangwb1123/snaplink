@@ -116,8 +116,18 @@ let handoff = build_login_preference_handoff(&PresentationPreferencesPatch {
     locale: Some("en-US".into()),
     theme_mode: Some(ThemeMode::Dark),
 })?;
-// spread `handoff` into the login request
+// apply the handoff to the login request
+let options = options
+    .presentation_locale(handoff["presentation_locale"].clone())
+    .presentation_theme_mode(ThemeMode::Dark);
 ~~~
+
+A handoff carries only values the application explicitly set, so it never
+clears a stored preference the application did not mean to touch. The theme is
+a typed `ThemeMode`, so a value outside the server allowlist cannot reach the
+login URL. These are presentation hints, not authorization or tenant
+parameters: the server persists them as the authenticated user's preference
+only after a successful authentication.
 
 `SnaplinkClient` is async-first and accepts an injectable `Transport` through
 `with_transport`, so applications can supply their configured HTTP client,

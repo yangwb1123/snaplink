@@ -631,12 +631,13 @@
       "id": "preferences.handoff",
       "layer": "preferences",
       "summary": "Presentation preferences such as locale and theme survive a handoff into and out of hosted login.",
-      "parity": "divergent",
+      "parity": "parity",
       "languages": {
         "go": {
-          "status": "missing",
-          "note": "No preference handoff helper.",
-          "plan": "W2 Entitlement: port preferences.py and preferences.ts to the remaining SDKs."
+          "status": "present",
+          "file": "sdks/go/preferences.go",
+          "symbol": "func BuildLoginPreferenceHandoff(",
+          "note": "W2: the handoff feeds LoginOptions.PresentationLocale/PresentationThemeMode, which buildLoginURL emits; the typed read and write go through the session's bearer."
         },
         "typescript": {
           "status": "present",
@@ -649,15 +650,16 @@
           "symbol": "def build_login_preference_handoff("
         },
         "php": {
-          "status": "missing",
-          "note": "No preference handoff helper.",
-          "plan": "W2 Entitlement: port preferences.py and preferences.ts to the remaining SDKs."
+          "status": "present",
+          "file": "sdks/php/src/PresentationPreferences.php",
+          "symbol": "public static function buildLoginPreferenceHandoff(",
+          "note": "W2: the handoff is accepted by login() as presentation_locale/presentation_theme_mode, and getMyPreferences/updateMyPreferences use the injected JSON transport."
         },
         "rust": {
           "status": "present",
           "file": "sdks/rust/src/preferences.rs",
           "symbol": "pub fn build_login_preference_handoff(",
-          "note": "W2: includes the legacy sverp:theme_mode alias, matching the Python and TypeScript behaviour."
+          "note": "W2: includes the legacy sverp:theme_mode alias, matching the other SDKs; the handoff is consumed by LoginOptions::presentation_locale/ThemeMode."
         },
         "kotlin": {
           "status": "missing",

@@ -34,7 +34,7 @@ Each capability is a `layer.id` pair with a `parity` and one declaration per
 language.
 
 - `parity: "parity"` — every language must be `present`. A `missing` entry is a
-  gate failure. This is the ratchet: the seven parity capabilities are the floor
+  gate failure. This is the ratchet: the eight parity capabilities are the floor
   that must not erode.
 - `parity: "divergent"` — gaps are permitted, but every `missing` entry must name
   the wave that closes it, so drift has an owner.
@@ -259,7 +259,7 @@ The registry's `missing` entries name the wave that closes each gap.
 | `session.clear` | done | done | done | done | done |
 | `entitlement.typed_keys` | done | done | done | done | done |
 | `entitlement.license_file` | done | done | done | done | done |
-| `preferences.handoff` | missing | done | done | done | missing |
+| `preferences.handoff` | done | done | done | done | done |
 
 This progress table covers the five hosted-login SDKs (Go, TypeScript, Python,
 Rust, and PHP). Kotlin and Swift are registered native SDKs still onboarding;
@@ -287,5 +287,14 @@ The envelope, the algorithm and version gate, the key-id lookup, the
 no-downgrade policy, and the three-state classification are identical everywhere
 and are what the fixtures pin.
 
-The remaining W2 gap is `preferences.handoff` in Go and PHP, which is cosmetic
-next to the session work.
+The presentation handoff is complete across all five hosted-login SDKs. Each one
+builds the same `presentation_locale` / `presentation_theme_mode` pair from an
+explicitly changed patch, and each hosted-login builder accepts that pair on the
+login request while replacing a stale value inherited from the login-page URL.
+An omitted field stays omitted, so a handoff never clears a stored preference the
+application did not mean to touch.
+
+The W2 wave is therefore closed for the five hosted-login SDKs. The remaining
+declared gaps are the W4 transport seam and native async composition for Python
+and PHP; both need a design decision rather than a port, and the registry keeps
+them visible.

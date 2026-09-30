@@ -42,9 +42,12 @@ fn account_from_fixture(value: &serde_json::Value) -> AccountContext {
 }
 
 fn cases() -> Vec<serde_json::Value> {
-    let document: serde_json::Value = serde_json::from_str(&fixture_text())
-        .expect("the shared fixture must be valid JSON");
-    document["cases"].as_array().expect("cases must be an array").clone()
+    let document: serde_json::Value =
+        serde_json::from_str(&fixture_text()).expect("the shared fixture must be valid JSON");
+    document["cases"]
+        .as_array()
+        .expect("cases must be an array")
+        .clone()
 }
 
 #[test]
@@ -59,7 +62,9 @@ fn every_case_classifies_as_the_contract_requires() {
         let now = case["now"].as_i64().unwrap_or(REFERENCE_NOW);
         let context = account_from_fixture(&case["entitlement"]);
         let state = context.state_at(now);
-        let expected = case["expect_state"].as_str().expect("every case needs a state");
+        let expected = case["expect_state"]
+            .as_str()
+            .expect("every case needs a state");
 
         let actual = match state {
             LicenseState::NotActivated => "not_activated",
@@ -71,7 +76,10 @@ fn every_case_classifies_as_the_contract_requires() {
         if let Some(reason) = case.get("expect_inactive_reason").and_then(|r| r.as_str()) {
             assert_eq!(
                 reason,
-                state.inactive_reason().expect("an inactive state needs a reason").as_str(),
+                state
+                    .inactive_reason()
+                    .expect("an inactive state needs a reason")
+                    .as_str(),
                 "case {id} reported the wrong inactive reason"
             );
         }
@@ -105,7 +113,9 @@ fn the_expiry_boundary_is_exclusive() {
         .into_iter()
         .find(|case| case["id"] == "exactly_at_expiry")
         .expect("the boundary case must exist");
-    let expires_at = case["entitlement"]["expires_at"].as_i64().expect("an expiry");
+    let expires_at = case["entitlement"]["expires_at"]
+        .as_i64()
+        .expect("an expiry");
     let context = account_from_fixture(&case["entitlement"]);
     assert!(
         context.state_at(expires_at - 1).is_active(),
@@ -161,10 +171,20 @@ fn limit_lookups_match_the_contract() {
                 );
                 continue;
             };
-            assert_eq!(want["soft"].as_i64().unwrap_or_default(), grant.soft, "case {id} limit {key}");
-            assert_eq!(want["hard"].as_i64().unwrap_or_default(), grant.hard, "case {id} limit {key}");
             assert_eq!(
-                want.get("unlimited").and_then(|v| v.as_bool()).unwrap_or(false),
+                want["soft"].as_i64().unwrap_or_default(),
+                grant.soft,
+                "case {id} limit {key}"
+            );
+            assert_eq!(
+                want["hard"].as_i64().unwrap_or_default(),
+                grant.hard,
+                "case {id} limit {key}"
+            );
+            assert_eq!(
+                want.get("unlimited")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
                 grant.is_unlimited(),
                 "case {id} limit {key}"
             );
@@ -181,7 +201,10 @@ fn an_absent_entitlement_is_never_unlimited() {
     };
     assert_eq!(LicenseState::NotActivated, context.state_at(REFERENCE_NOW));
     assert!(!context.has_at(Feature::CoreSso, REFERENCE_NOW));
-    assert!(!context.entitlement.as_ref().is_some_and(|e| e.has(Feature::CoreSso, REFERENCE_NOW)));
+    assert!(!context
+        .entitlement
+        .as_ref()
+        .is_some_and(|e| e.has(Feature::CoreSso, REFERENCE_NOW)));
 }
 
 #[test]
@@ -192,7 +215,11 @@ fn every_defined_key_resolves_both_ways() {
     for limit in Limit::ALL {
         assert_eq!(Some(limit), Limit::from_key(limit.as_str()));
     }
-    assert_eq!(Feature::ALL.len(), 10, "the server defines ten feature keys");
+    assert_eq!(
+        Feature::ALL.len(),
+        10,
+        "the server defines ten feature keys"
+    );
     assert_eq!(Limit::ALL.len(), 6, "the server defines six limit keys");
 }
 
@@ -208,9 +235,19 @@ fn an_unrecognised_key_is_preserved_but_grants_nothing() {
         "effective_at": 1_600_000_000, "generated_at": 1_600_000_000,
     }))
     .expect("an unknown key must not fail the parse");
-    assert_eq!(1, entitlement.unknown_features().count(), "the unknown key must be visible");
-    assert!(entitlement.has(Feature::CoreSso, REFERENCE_NOW), "known keys still resolve");
-    assert!(Feature::from_key("telemetry_magic").is_none(), "an unknown key is not a Feature");
+    assert_eq!(
+        1,
+        entitlement.unknown_features().count(),
+        "the unknown key must be visible"
+    );
+    assert!(
+        entitlement.has(Feature::CoreSso, REFERENCE_NOW),
+        "known keys still resolve"
+    );
+    assert!(
+        Feature::from_key("telemetry_magic").is_none(),
+        "an unknown key is not a Feature"
+    );
 }
 
 #[test]
@@ -233,7 +270,10 @@ fn rfc3339_and_unix_seconds_parse_identically() {
     .expect("Unix seconds must parse");
     assert_eq!(wire.effective_at, numeric.effective_at);
     assert_eq!(wire.expires_at, numeric.expires_at);
-    assert_eq!(wire.state_at(1_699_999_999), numeric.state_at(1_699_999_999));
+    assert_eq!(
+        wire.state_at(1_699_999_999),
+        numeric.state_at(1_699_999_999)
+    );
 }
 
 #[test]
@@ -242,5 +282,8 @@ fn an_unparseable_timestamp_is_rejected_rather_than_defaulted() {
         "tenant_id": "t", "subscription_id": "s", "active": true,
         "features": {}, "limits": {}, "effective_at": "not-a-timestamp",
     }));
-    assert!(result.is_err(), "a malformed timestamp must not silently become zero");
+    assert!(
+        result.is_err(),
+        "a malformed timestamp must not silently become zero"
+    );
 }

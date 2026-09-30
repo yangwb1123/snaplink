@@ -19,12 +19,18 @@ fn patch(locale: Option<&str>, theme: Option<ThemeMode>) -> PresentationPreferen
 #[test]
 fn a_handoff_contains_only_explicitly_set_values() {
     let only_locale = build_login_preference_handoff(&patch(Some("en-US"), None)).expect("valid");
-    assert_eq!(Some(&"en-US".to_owned()), only_locale.get("presentation_locale"));
+    assert_eq!(
+        Some(&"en-US".to_owned()),
+        only_locale.get("presentation_locale")
+    );
     assert!(!only_locale.contains_key("presentation_theme_mode"));
 
     let only_theme =
         build_login_preference_handoff(&patch(None, Some(ThemeMode::Dark))).expect("valid");
-    assert_eq!(Some(&"dark".to_owned()), only_theme.get("presentation_theme_mode"));
+    assert_eq!(
+        Some(&"dark".to_owned()),
+        only_theme.get("presentation_theme_mode")
+    );
     assert!(!only_theme.contains_key("presentation_locale"));
 
     let empty = build_login_preference_handoff(&patch(None, None)).expect("valid");
@@ -51,7 +57,17 @@ fn valid_bcp47_tags_are_accepted() {
 
 #[test]
 fn malformed_locales_are_rejected() {
-    for locale in ["", "e", "english-language-tag", "en_US", "en-", "-US", "en-U", "1n", "en-US-"] {
+    for locale in [
+        "",
+        "e",
+        "english-language-tag",
+        "en_US",
+        "en-",
+        "-US",
+        "en-U",
+        "1n",
+        "en-US-",
+    ] {
         assert_eq!(
             Err(PreferenceError::InvalidLocale),
             build_login_preference_handoff(&patch(Some(locale), None)),

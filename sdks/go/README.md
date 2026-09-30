@@ -57,3 +57,22 @@ the transaction; this is application session storage, not a separate BFF.
 Session lifecycle is explicit: `Refresh` rotates tokens, `Clear` only forgets
 local state, and `Logout` revokes server-side before clearing local state. A
 refresh error is returned to the caller; it is never retried implicitly.
+
+`BuildLoginPreferenceHandoff` turns a preference change into the login hints the
+hosted-login page persists after a successful authentication:
+
+```go
+handoff, err := snaplink.BuildLoginPreferenceHandoff(snaplink.PresentationPreferencesPatch{
+    Locale:    snaplink.PreferenceLocale("en-US"),
+    ThemeMode: snaplink.PreferenceThemeMode("dark"),
+})
+// started, err := client.Login(ctx, snaplink.LoginOptions{
+//     PresentationLocale: handoff["presentation_locale"],
+//     PresentationThemeMode: handoff["presentation_theme_mode"],
+//     ...
+// })
+```
+
+`GetMyPreferences` and `UpdateMyPreferences` read and write the same values
+through the session's bearer. These are presentation hints only: they are never
+authorization or tenant parameters, and the server remains the authority.

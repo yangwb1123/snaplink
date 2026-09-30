@@ -61,7 +61,7 @@ func buildLoginURL(config loginConfig, state, challenge string) (string, error) 
 		return "", err
 	}
 	query := u.Query()
-	for _, key := range []string{"client_id", "redirect_uri", "response_type", "response_mode", "scope", "state", "code_challenge", "code_challenge_method", "resource", "prompt", "max_age", "login_hint", "acr_values", "ui_locales"} {
+	for _, key := range []string{"client_id", "redirect_uri", "response_type", "response_mode", "scope", "state", "code_challenge", "code_challenge_method", "resource", "prompt", "max_age", "login_hint", "acr_values", "ui_locales", "presentation_locale", "presentation_theme_mode"} {
 		query.Del(key)
 	}
 	query.Set("client_id", config.clientID)
@@ -82,6 +82,8 @@ func buildLoginURL(config loginConfig, state, challenge string) (string, error) 
 	setOptional(query, "login_hint", config.options.LoginHint)
 	setOptional(query, "acr_values", config.options.AcrValues)
 	setOptional(query, "ui_locales", config.options.UILocales)
+	setOptional(query, "presentation_locale", config.options.PresentationLocale)
+	setOptional(query, "presentation_theme_mode", config.options.PresentationThemeMode)
 	if config.options.MaxAge != nil {
 		if *config.options.MaxAge < 0 {
 			return "", &Error{Status: 0, Code: "invalid_request", Description: "max_age must be non-negative"}
