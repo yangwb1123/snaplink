@@ -30,40 +30,37 @@ const KID = "k1";
 const NOW_MS = 1_700_000_000_000;
 const NOW_SEC = Math.floor(NOW_MS / 1000);
 
-function b64url(bytes: Uint8Array): string {
+function b64url(bytes) {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-const ECDSA = { name: "ECDSA", namedCurve: "P-256" } as const;
+const ECDSA_CURVE = { name: "ECDSA", namedCurve: "P-256" };
+const ECDSA_SIGN = { name: "ECDSA", hash: "SHA-256" };
 
-async function signingKey(): Promise<CryptoKeyPair> {
-  return (await crypto.subtle.generateKey(ECDSA, true, ["sign", "verify"])) as CryptoKeyPair;
+async function signingKey() {
+  return crypto.subtle.generateKey(ECDSA_CURVE, true, ["sign", "verify"]);
 }
 
-async function publicJwk(key: CryptoKey, kid: string): Promise<JsonWebKey> {
+async function publicJwk(key, kid) {
   const jwk = await crypto.subtle.exportKey("jwk", key);
   return { ...jwk, kid, use: "sig", alg: "ES256" };
 }
 
 /** Mint an ES256 access token stamped the way this authorization server stamps
  * one: `typ: at+jwt`, an asymmetric alg, and the RFC 9068 §2.2 claim set. */
-async function mintToken(
-  key: CryptoKey,
-  claims: Record<string, unknown>,
-  header: Record<string, unknown> = {},
-): Promise<string> {
+async function mintToken(key, claims, header = {}) {
   const protectedHeader = b64url(
     new TextEncoder().encode(JSON.stringify({ alg: "ES256", typ: "at+jwt", kid: KID, ...header })),
   );
   const payload = b64url(new TextEncoder().encode(JSON.stringify(claims)));
   const signingInput = new TextEncoder().encode(`${protectedHeader}.${payload}`);
-  const raw = new Uint8Array(await crypto.subtle.sign(ECDSA, key, signingInput));
+  const raw = new Uint8Array(await crypto.subtle.sign(ECDSA_SIGN, key, signingInput));
   return `${protectedHeader}.${payload}.${b64url(raw)}`;
 }
 
-function baseClaims(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function baseClaims(overrides = {}) {
   return {
     iss: ISSUER,
     sub: "user-1",
@@ -77,10 +74,7 @@ function baseClaims(overrides: Record<string, unknown> = {}): Record<string, unk
   };
 }
 
-function cacheFor(keys: JsonWebKey[], init: Partial<ResponseInit> = {}): {
-  cache: ReturnType<typeof createJWKSCache>;
-  calls: () => number;
-} {
+function cacheFor(keys, init = {}) {
   let calls = 0;
   const cache = createJWKSCache(`${ISSUER}/.well-known/jwks.json`, {
     refreshIntervalMs: 0,
@@ -97,7 +91,7 @@ function cacheFor(keys: JsonWebKey[], init: Partial<ResponseInit> = {}): {
   return { cache, calls: () => calls };
 }
 
-const config = (cache: ReturnType<typeof createJWKSCache>, overrides = {}) => ({
+const config = (cache, overrides = {}) => ({
   issuer: ISSUER,
   jwks: cache,
   expectedAud: "domain-panel-api",
@@ -210,7 +204,7 @@ test("claim gates reject issuer, audience, expiry, nbf and iat", async () => {
   const key = await signingKey();
   const { cache } = cacheFor([await publicJwk(key.publicKey, KID)]);
 
-  const cases: Array<[string, Record<string, unknown>, Record<string, unknown>?]> = [
+  const cases = [
     ["issuer mismatch", { iss: "https://evil.test" }],
     ["audience mismatch", { aud: ["billing-api"] }],
     ["expired", { exp: NOW_SEC - DEFAULT_MAX_CLOCK_SKEW_SEC - 1 }],
