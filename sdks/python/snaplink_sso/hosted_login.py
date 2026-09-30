@@ -179,30 +179,15 @@ class Snaplink:
             self._claim_pending_setup(base_url, client_id)
             return LoginResult(tokens=dict(self._tokens or {}), return_to=return_to)
 
-        state = _random_urlsafe(32)
-        verifier = _random_urlsafe(64)
-        transaction = {
-            "base_url": base_url,
-            "client_id": client_id,
-            "code_verifier": verifier,
-            "created_at": int(time.time()),
-            "redirect_uri": redirect_uri,
-            "return_to": return_to,
-            "state": state,
-        }
-        if self._pending_setup is not None:
-            transaction.update({
-                "activation_ticket": self._pending_setup["activation_ticket"],
-                "product_id": self._pending_setup["product_id"],
-            })
+        transaction = _new_transaction(base_url, client_id, redirect_uri, return_to, self._pending_setup)
         self._store.set(_store_key(client_id), json.dumps(transaction, separators=(",", ":")))
         login_page = options.get("login_page_url") or urllib.parse.urljoin(base_url + "/", "/login/")
         login_url = _build_login_url(
             login_page,
             client_id,
             redirect_uri,
-            state,
-            _pkce_challenge(verifier),
+            transaction["state"],
+            _pkce_challenge(transaction["code_verifier"]),
             options,
             allow_insecure,
         )
@@ -292,19 +277,10 @@ class Snaplink:
     ) -> LoginResult:
         key = _store_key(client_id)
         transaction = _take_transaction(self._store, key)
-        if transaction is None or int(time.time()) - int(transaction["created_at"]) > ttl:
+        if transaction is None:
             raise SSOError(0, "invalid_request", "the hosted-login transaction is missing or expired")
-        if transaction.get("client_id") != client_id or _canonical_url(str(transaction.get("base_url", ""))) != _canonical_url(base_url):
-            raise SSOError(0, "invalid_request", "the hosted-login transaction belongs to another client")
-        if callback.get("state") != transaction["state"]:
-            raise SSOError(0, "invalid_request", "the hosted-login state did not match")
-        if _canonical_url(callback.get("iss", "")) != _canonical_url(base_url):
-            raise SSOError(0, "invalid_request", "the authorization issuer did not match Snaplink")
-        if callback.get("error"):
-            raise SSOError(0, callback["error"], callback.get("error_description"))
-        code = callback.get("code")
-        if not code:
-            raise SSOError(0, "invalid_request", "the authorization response did not contain a code")
+        _validate_callback(transaction, callback, base_url, client_id, ttl)
+        code = callback["code"]
         tokens = self.api.post_token({
             "grant_type": "authorization_code",
             "client_id": transaction["client_id"],
@@ -411,6 +387,69 @@ def _take_transaction(store: StateStore, key: str) -> Optional[Dict[str, Any]]:
     except (TypeError, ValueError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def _new_transaction(
+    base_url: str,
+    client_id: str,
+    redirect_uri: str,
+    return_to: str,
+    pending_setup: Optional[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """Build the short-lived state/verifier record for one authorization.
+
+    Shared by the blocking and the asyncio facades so a transaction can never
+    mean one thing in one surface and another in the other.
+    """
+
+    transaction = {
+        "base_url": base_url,
+        "client_id": client_id,
+        "code_verifier": _random_urlsafe(64),
+        "created_at": int(time.time()),
+        "redirect_uri": redirect_uri,
+        "return_to": return_to,
+        "state": _random_urlsafe(32),
+    }
+    if pending_setup is not None:
+        transaction["activation_ticket"] = pending_setup["activation_ticket"]
+        transaction["product_id"] = pending_setup["product_id"]
+    return transaction
+
+
+def _validate_callback(
+    transaction: Mapping[str, Any],
+    callback: Mapping[str, str],
+    base_url: str,
+    client_id: str,
+    ttl: int,
+) -> str:
+    """Check a consumed transaction against the authorization response.
+
+    Returns the authorization code. Every rejection here is the same
+    ``invalid_request`` regardless of the underlying cause, so a caller cannot
+    use the error to learn whether a transaction, a state, or an issuer was the
+    problem.
+    """
+
+    try:
+        created_at = int(transaction["created_at"])
+    except (KeyError, TypeError, ValueError):
+        raise SSOError(0, "invalid_request", "the hosted-login transaction is missing or expired") from None
+    if int(time.time()) - created_at > ttl:
+        raise SSOError(0, "invalid_request", "the hosted-login transaction is missing or expired")
+    if transaction.get("client_id") != client_id or _canonical_url(str(transaction.get("base_url", ""))) != _canonical_url(base_url):
+        raise SSOError(0, "invalid_request", "the hosted-login transaction belongs to another client")
+    if callback.get("state") != transaction.get("state"):
+        raise SSOError(0, "invalid_request", "the hosted-login state did not match")
+    if _canonical_url(callback.get("iss", "")) != _canonical_url(base_url):
+        raise SSOError(0, "invalid_request", "the authorization issuer did not match Snaplink")
+    if callback.get("error"):
+        raise SSOError(0, str(callback["error"]), callback.get("error_description"))
+    code = callback.get("code")
+    if not code:
+        raise SSOError(0, "invalid_request", "the authorization response did not contain a code")
+    return str(code)
 
 
 def _build_login_url(

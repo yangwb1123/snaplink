@@ -39,6 +39,38 @@ share it. The default `UrllibTransport` refuses to follow redirects: a
 credential endpoint that returned a 30x would otherwise replay an authorization
 code, refresh token, or bearer at another host.
 
+### asyncio
+
+`AsyncSSOClient` exposes the same generated operation surface as coroutines over
+an `AsyncTransport`, and `AsyncSnaplink` is the hosted-login lifecycle to use in
+an async web application. `AsyncioTransport` runs the stdlib request in the
+event loop's executor, so the loop is never blocked; inject your own
+`AsyncTransport` (httpx, aiohttp) for a fully async stack:
+
+```python
+from snaplink_sso import AsyncSnaplink
+
+snaplink = AsyncSnaplink()
+started = await snaplink.login({
+    "base_url": "https://sso.example.com",
+    "client_id": "my-public-app",
+    "redirect_uri": "https://app.example.com/auth/callback",
+})
+# return started.redirect_url as a 302
+completed = await snaplink.login({
+    "base_url": "https://sso.example.com",
+    "client_id": "my-public-app",
+    "redirect_uri": "https://app.example.com/auth/callback",
+    "callback_url": request.url,
+})
+tokens = await snaplink.refresh()
+await snaplink.logout()
+```
+
+`AsyncSnaplink` and the blocking `Snaplink` share the transaction record, the
+callback validation, the login URL, and the activation body; a test asserts both
+send identical wire requests, so the two surfaces cannot drift.
+
 For paid or invited products, call `snaplink.setup({...})` before login. The
 credential is sent in the HTTPS JSON body, while only the short-lived ticket is
 kept in the in-process setup state and copied into the login transaction:

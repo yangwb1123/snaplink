@@ -1,9 +1,22 @@
 {
-  "$comment": "Shared error-taxonomy fixture. Only the TypeScript and Python SDKs currently carry the OAuth error code on their error type, so a Go, Rust, or PHP caller cannot branch on activation_invalid or insufficient_scope at all. These cases pin the classification every SDK error type must expose in W3 Session. The code vocabulary is sourced from docs/error-codes.md and is deliberately a controlled list: a caller branches on the code, never on the description text.",
+  "$comment": "Shared error-taxonomy fixture. All five hosted-login SDKs carry the server error code verbatim on their error type, so a caller in any language can branch on activation_invalid or insufficient_scope. These cases pin the classification every SDK error type must expose, and shape.fallback pins what happens when a response carries no usable code. The code vocabulary is sourced from docs/error-codes.md plus the SDK-originated license and sdk classes: a caller branches on the code, never on the description text.",
   "schema_version": 1,
   "shape": {
-    "fields": ["status", "code", "description"],
-    "rule": "code is the controlled vocabulary; description is human-facing and may be reworded; neither may be empty for a protocol failure."
+    "fields": [
+      "status",
+      "code",
+      "description"
+    ],
+    "rule": "code is the controlled vocabulary; description is human-facing and may be reworded; neither may be empty for a protocol failure.",
+    "fallback": {
+      "code": "sdk_response_unclassified",
+      "class": "sdk",
+      "rule": "A protocol failure whose body carries no usable error code is reported with this SDK-originated code and the response's own HTTP status. The SDK never substitutes a server code for a response that did not carry one, and never leaves the code empty: an unreadable 500 must not look like a terminal invalid_grant to a caller that branches on the code."
+    },
+    "local_validation": {
+      "status": 0,
+      "rule": "A failure the SDK detects before any request keeps code invalid_request with status 0. It is distinguishable from a server code by the zero status. Renaming it would break every existing call site in every language, so the exception is recorded here rather than silently tolerated."
+    }
   },
   "cases": [
     {
@@ -87,9 +100,10 @@
   ],
   "invariants": [
     "Every protocol failure carries the server error code verbatim; the SDK never invents a local code for a server response.",
-    "Codes originating in the SDK are namespaced by class and are distinguishable from server codes.",
+    "A response with no usable code is reported as shape.fallback.code, never as a server code and never as an empty string.",
+    "Codes originating in the SDK are namespaced by class (license, sdk) and are distinguishable from server codes.",
     "Oracle-safe collapsing is preserved end to end: the SDK exposes one classification per wire code, not per internal cause.",
     "A description is never parsed. Callers branch on code only.",
-    "The controlled vocabulary is the union of docs/error-codes.md and the SDK-originated license class; adding a case here is a contract change."
+    "The controlled vocabulary is the union of docs/error-codes.md and the SDK-originated license and sdk classes; adding a case here is a contract change."
   ]
 }

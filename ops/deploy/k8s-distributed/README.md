@@ -66,11 +66,15 @@ kubectl apply -f etcd.yaml -f redis-cluster.yaml
 kubectl -n sv-sso rollout status deployment/etcd
 kubectl -n sv-sso rollout status statefulset/redis-cluster
 
-# Form the Redis Cluster (one-time; run from any redis pod):
+# Form the Redis Cluster (one-time; run from any redis pod). MEET takes an
+# address, never a name; the nodes then gossip the name they announce
+# (--cluster-announce-hostname, fully qualified because pods search with
+# ndots:5) and resolve it on every reconnect, so a pod that comes back on a
+# new IP does not leave the peers with stale addresses:
 kubectl -n sv-sso exec redis-cluster-0 -- redis-cli --cluster create \
-  redis-cluster-0.redis-cluster:6379 \
-  redis-cluster-1.redis-cluster:6379 \
-  redis-cluster-2.redis-cluster:6379 \
+  redis-cluster-0.redis-cluster.sv-sso.svc.cluster.local:6379 \
+  redis-cluster-1.redis-cluster.sv-sso.svc.cluster.local:6379 \
+  redis-cluster-2.redis-cluster.sv-sso.svc.cluster.local:6379 \
   --cluster-replicas 0 --cluster-yes
 # expect: cluster_state:ok on all three nodes
 
@@ -116,6 +120,13 @@ identical (4 kids = 3 replica keys + 1 retiring key), cross-pod validation
   keep `maxmemory-policy noeviction` on masters and leave
   `route_by_latency`/`read_only` off (single-use + replay reads must hit the
   master).
+- **Redis `/data` is a per-pod claim**: `nodes.conf` IS the cluster. A pod that
+  comes back on an emptyDir rejoins with no node id and no slot ownership, the
+  surviving masters then serve `pfail` slots, and every write to those slots
+  fails with `CLUSTERDOWN`. Session, refresh-family, and revocation writes all
+  land there, so the visible symptom is a broken login path rather than a
+  Redis alert. Re-seed after a `CLUSTER RESET HARD`, then re-assign the slot
+  ranges.
 - **Key rotation**: `keys.rotation.grace_period` must be >= the max access
   token TTL; `keys.rotation.coordinated_cutover` retires a demoted kid on
   every replica at the same instant over the bus.

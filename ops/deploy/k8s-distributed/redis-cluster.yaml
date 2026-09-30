@@ -37,13 +37,41 @@ spec:
             # for shard HA (6-node layout).
             - --dir
             - /data
+            # The cluster bus announces a StatefulSet DNS name, never a pod IP.
+            # Pod IPs change whenever a pod is recreated, and a stale IP in
+            # nodes.conf leaves the peers with `disconnected` nodes and pfail
+            # slots: writes to those slots then fail with CLUSTERDOWN, which
+            # breaks session, refresh-family, and revocation writes and with
+            # them the whole login path. The name resolves to the new address.
+            # It must be the fully qualified name: pods search with ndots:5, so
+            # the short form never resolves and Redis silently falls back to
+            # the IP, which is the failure this replaces.
+            - --cluster-announce-hostname
+            - $(HOSTNAME).redis-cluster.sv-sso.svc.cluster.local
+            - --cluster-preferred-endpoint-type
+            - hostname
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef: { fieldPath: metadata.name }
           ports:
             - { containerPort: 6379, name: client }
             - { containerPort: 16379, name: bus }
           volumeMounts:
             - { name: data, mountPath: /data }
-      volumes:
-        - { name: data, emptyDir: {} }
+  # One volume claim per pod. nodes.conf IS the cluster: with an emptyDir a
+  # recreated pod rejoins with no node id and no slot ownership, and the
+  # surviving masters then serve pfail slots until an operator re-seeds the
+  # cluster by hand.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 2Gi
 ---
 apiVersion: v1
 kind: Service

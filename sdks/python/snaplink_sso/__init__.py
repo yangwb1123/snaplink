@@ -1,6 +1,6 @@
 """Public package for the Snaplink HTTP SDK."""
 
-from .client import SSOClient, SSOError
+from .client import AsyncSSOClient, AsyncTransport, AsyncioTransport, SSOClient, SSOError
 from .entitlement import (
     Entitlement,
     Feature,
@@ -16,6 +16,7 @@ from .entitlement import (
     unix_now,
 )
 from .hosted_login import LoginResult, MemoryStateStore, Snaplink, StateStore, snaplink
+from .hosted_login_async import AsyncSnaplink, async_snaplink
 from .license_file import (
     EntitlementFile,
     LicenseError,
@@ -33,12 +34,17 @@ from .preferences import (
 )
 
 __all__ = [
+    "AsyncSnaplink",
+    "AsyncSSOClient",
+    "AsyncTransport",
+    "AsyncioTransport",
     "LoginResult",
     "MemoryStateStore",
     "Snaplink",
     "SSOClient",
     "SSOError",
     "StateStore",
+    "async_snaplink",
     "Entitlement",
     "EntitlementFile",
     "Feature",

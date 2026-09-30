@@ -691,14 +691,15 @@
           "symbol": "async login(options: SnaplinkLoginOptions): Promise<TokenIssuance>"
         },
         "python": {
-          "status": "missing",
-          "note": "The transport seam exists and is injectable, but the client API itself is synchronous, so an event loop still blocks on it.",
-          "plan": "W4: ship an asyncio client (and an asyncio transport) beside the synchronous default, rather than pretending a synchronous facade is event-loop friendly."
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/hosted_login_async.py",
+          "symbol": "class AsyncSnaplink:",
+          "note": "W4: async-first hosted login over AsyncSSOClient, which the generator emits from the same operation table as the blocking client. The transaction record, callback validation, login URL, and activation body are shared with the blocking facade, and a parity test asserts both send the same wire requests."
         },
         "php": {
           "status": "missing",
-          "note": "Synchronous callables; usable in a worker but not in an event loop.",
-          "plan": "W4 Transport: offer an event-loop-friendly transport alongside the synchronous default."
+          "note": "PHP has no native concurrency in the language: a fiber is cooperative and adds no I/O concurrency, so an async surface would mean taking an event-loop dependency this package deliberately does not take.",
+          "plan": "Stay unclaimed unless the package adopts an event loop. transport.injection already lets a caller on ReactPHP or Amp supply their own transport; claiming this capability on that basis would advertise a synchronous facade as async."
         },
         "rust": {
           "status": "present",

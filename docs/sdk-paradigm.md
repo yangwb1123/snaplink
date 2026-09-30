@@ -178,18 +178,27 @@ and friends are refused rather than tolerated.
 
 ## 6. Errors
 
-Every protocol failure carries the server error code verbatim. Only TypeScript
-and Python currently do this; a caller in Go, Rust, or PHP cannot branch on
-`activation_invalid` or `insufficient_scope` at all, which is a defect and not a
-simplification.
+Every protocol failure carries the server error code verbatim in all five
+hosted-login SDKs, so a caller can branch on `activation_invalid` or
+`insufficient_scope` in any of them. A caller branches on `code`, never on
+`description`, which is human-facing and may be reworded. Oracle-safe
+collapsing is preserved end to end: one classification per wire code, not per
+internal cause.
 
-The vocabulary is the controlled union of `docs/error-codes.md` and the
-SDK-originated `license` class, pinned by
-[`errors.json`](../ops/build/sdk-conformance/errors.json). A caller branches on
-`code`, never on `description`, which is human-facing and may be reworded. Codes
-the SDK originates are namespaced by class so they are never confused with server
-codes. Oracle-safe collapsing is preserved end to end: one classification per wire
-code, not per internal cause.
+[`errors.json`](../ops/build/sdk-conformance/errors.json) pins that contract
+and every SDK consumes it. A failure response that carried no usable code is
+reported with the SDK-originated `sdk_response_unclassified` and the response's
+own status: the SDK never invents a server code for such a response, and never
+leaves the code empty, because an unreadable 500 that looked like a terminal
+`invalid_grant` would be a retry decision made on a guess. A failure detected
+before any request keeps the code `invalid_request` with status 0; it is
+distinguishable from a server code by that zero status, and renaming it would
+break every call site in every language, so the exception is recorded in the
+fixture rather than tolerated silently.
+
+The vocabulary is the controlled union of [`docs/error-codes.md`](../docs/error-codes.md)
+plus the SDK-originated `license` and `sdk` classes. Adding a case to the
+fixture is a contract change, not a test-data edit.
 
 ## 7. Conformance fixtures
 
@@ -199,7 +208,7 @@ cross-language contract, consumed by every SDK:
 | Fixture | Pins |
 |---|---|
 | `entitlement.json` | the three states and the second-exact expiry boundary |
-| `errors.json` | the controlled error vocabulary and its classification |
+| `errors.json` | the controlled error vocabulary, the unclassified-response fallback, and the pre-flight exception |
 | `transport.json` | normalized request and response shape |
 | `license_file.json` | signature verification outcomes and the no-downgrade rule |
 
@@ -261,6 +270,7 @@ The registry's `missing` entries name the wave that closes each gap.
 | `entitlement.license_file` | done | done | done | done | done |
 | `preferences.handoff` | done | done | done | done | done |
 | `transport.injection` | done | done | done | done | done |
+| `runtime.native_async` | done | done | done | n/a | done |
 
 This progress table covers the five hosted-login SDKs (Go, TypeScript, Python,
 Rust, and PHP). Kotlin and Swift are registered native SDKs still onboarding;
@@ -300,8 +310,11 @@ them now has a single injectable transport seam. Python's seam is emitted by
 `cmd/gensdk` so the generated client and the hosted-login facade share it, and
 its default implementation refuses to follow redirects.
 
-The remaining declared gaps are `runtime.native_async` for Python and PHP. Both
-need a design decision rather than a port: an asyncio client beside the
-synchronous default, and for PHP a decision about what "event-loop friendly"
-means without an event loop in the language. The registry keeps them visible
-instead of claiming a synchronous facade is async.
+The remaining declared gap is `runtime.native_async` for PHP, and it is a
+reviewed decision rather than an oversight. PHP has no native concurrency in the
+language: a fiber is cooperative and adds no I/O concurrency, so an async
+surface would mean taking an event-loop dependency this package deliberately
+does not take. `transport.injection` already lets a caller on ReactPHP or Amp
+supply their own transport; claiming async on that basis would advertise a
+synchronous facade as an asynchronous one, which is the exact defect the
+capability exists to prevent.

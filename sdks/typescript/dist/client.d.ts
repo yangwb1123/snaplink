@@ -21,6 +21,16 @@ export declare class SSOError extends Error {
     errorDescription?: string | undefined;
     constructor(status: number, error?: string | undefined, errorDescription?: string | undefined);
 }
+/**
+ * SDK-originated code for a failure response that carried no usable error
+ * code.
+ *
+ * A caller that branches on {@link SSOError.error} never receives an empty
+ * value, and a server code is never invented for such a response: an unreadable
+ * 500 must not look like a terminal `invalid_grant`. The `sdk_` prefix keeps it
+ * out of the server vocabulary in `docs/error-codes.md`.
+ */
+export declare const UNCLASSIFIED_ERROR = "sdk_response_unclassified";
 /** One zero-trust conditional-access policy. */
 export interface AccessPolicy {
     /** Deny beats require_step_up beats allow; restrict_scopes and log ride along. */

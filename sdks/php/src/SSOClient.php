@@ -830,9 +830,14 @@ final class SSOClient
 
     private static function oauthError(int $status, array $body): never
     {
+        // A response with no usable code is reported with the SDK-originated
+        // code: never a server code invented for it, because an unreadable 500
+        // must not look like a terminal invalid_grant to a caller that
+        // branches on the code.
+        $code = $body['error'] ?? null;
         throw new SSOError(
             $status,
-            is_string($body['error'] ?? null) ? $body['error'] : 'invalid_grant',
+            is_string($code) && $code !== '' ? $code : 'sdk_response_unclassified',
             is_string($body['error_description'] ?? null) ? $body['error_description'] : null,
         );
     }

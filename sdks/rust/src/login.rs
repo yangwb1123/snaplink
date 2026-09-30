@@ -1036,9 +1036,17 @@ pub(crate) fn parse_oauth_error(status: u16, body: &str) -> SnaplinkError {
         error_description: Option<String>,
     }
     let parsed = serde_json::from_str::<ErrorBody>(body).unwrap_or_default();
+    let code = match parsed.error {
+        Some(code) if !code.is_empty() => code,
+        // A response with no usable code is reported with the SDK-originated
+        // code: a server code is never invented for it, because an unreadable
+        // 500 must not look like a terminal invalid_grant to a caller that
+        // branches on the code.
+        _ => crate::UNCLASSIFIED_ERROR.to_owned(),
+    };
     SnaplinkError::OAuth {
         status,
-        code: parsed.error.unwrap_or_default(),
+        code,
         description: parsed.error_description.unwrap_or_default(),
     }
 }

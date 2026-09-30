@@ -19,16 +19,25 @@ import (
 // dict — `result["access_token"]` type-checks AND matches what's really
 // at runtime; a @dataclass would type-check `result.access_token` while
 // runtime `result` stays a plain dict, which is actively misleading.
+//
+// The same operation table is emitted twice: SSOClient for blocking callers
+// and AsyncSSOClient for event-loop callers. The generator carries no
+// allowlist, so neither class can drift in scope from the other or from the
+// spec.
 func GeneratePython(title, version string, reg *Registry, ops []Operation) string {
 	var b strings.Builder
 	b.WriteString(pyBanner(title, version))
 	b.WriteString(pyRuntimePrelude)
+	b.WriteString(pyAsyncRuntimePrelude)
 	b.WriteString("# ---- Types (generated from components.schemas) ----\n\n")
 	for _, name := range reg.Named() {
 		pyEmitNamedType(&b, name, reg.NamedType(name))
 	}
 	b.WriteString(pyClientHeader)
-	pyEmitMethods(&b, ops)
+	pyEmitMethods(&b, ops, false)
+	b.WriteString("\n")
+	b.WriteString(pyAsyncClientHeader)
+	pyEmitMethods(&b, ops, true)
 	pyEmitExports(&b, reg.Named())
 	return b.String()
 }
@@ -50,6 +59,7 @@ func pyBanner(title, version string) string {
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import urllib.error
@@ -72,6 +82,23 @@ const pyRuntimePrelude = `class SSOError(Exception):
         self.status = status
         self.error = error
         self.error_description = error_description
+
+
+#: SDK-originated code for a failure response that carried no usable error
+#: code. A caller that branches on the error must never receive an empty
+#: string, and a server code is never invented for such a response: an
+#: unreadable 500 must not look like a terminal invalid_grant. The "sdk_"
+#: prefix keeps it out of the vocabulary in docs/error-codes.md.
+UNCLASSIFIED_ERROR = "sdk_response_unclassified"
+
+
+def _protocol_error(status: int, payload: bytes) -> SSOError:
+    """Classify a non-2xx response into the shared error contract."""
+
+    error, description = _parse_error(payload)
+    if not error:
+        error = UNCLASSIFIED_ERROR
+    return SSOError(status, error, description)
 
 
 class HttpRequest(TypedDict, total=False):
@@ -170,6 +197,11 @@ const pyClientHeader = `class SSOClient:
     def access_token(self) -> Optional[str]:
         return self._token
 
+    def set_access_token(self, token: Optional[str]) -> None:
+        """Adopt a token this application persisted itself."""
+
+        self._token = token
+
     def login(
         self,
         username: str,
@@ -249,8 +281,7 @@ const pyClientHeader = `class SSOClient:
         status = int(response["status"])
         body = response["body"] or b""
         if status < 200 or status >= 300:
-            error, error_description = _parse_error(body)
-            raise SSOError(status, error, error_description)
+            raise _protocol_error(status, body) from None
         return _parse_body(status, body)
 
     def _with_client_auth(self, body: Optional[Any], headers: Dict[str, str]) -> Optional[Any]:
@@ -271,16 +302,18 @@ const pyClientHeader = `class SSOClient:
 
 `
 
-func pyEmitMethods(b *strings.Builder, ops []Operation) {
+func pyEmitMethods(b *strings.Builder, ops []Operation, isAsync bool) {
 	tag := ""
 	for _, op := range ops {
 		if op.Tag != tag {
 			tag = op.Tag
 			fmt.Fprintf(b, "    # ---- %s ----\n\n", tag)
 		}
-		pyEmitMethod(b, op)
+		pyEmitMethod(b, op, isAsync)
 	}
-	b.WriteString(pyModuleHelpers)
+	if !isAsync {
+		b.WriteString(pyModuleHelpers)
+	}
 }
 
 // pyModuleHelpers are free functions (not methods) shared by every
@@ -333,20 +366,26 @@ def _parse_error(payload: bytes) -> "tuple[Optional[str], Optional[str]]":
     return parsed.get("error"), parsed.get("error_description")
 `
 
-func pyEmitMethod(b *strings.Builder, op Operation) {
+func pyEmitMethod(b *strings.Builder, op Operation, isAsync bool) {
 	name := pySnakeCase(op.ID)
 	retType := "None"
 	if op.ResultType != nil {
 		retType = pyType(op.ResultType)
 	}
-	fmt.Fprintf(b, "    def %s(%s) -> %s:\n", name, pyMethodParams(op), retType)
+	// The two clients differ only in the coroutine marker and the await on the
+	// single request seam, so the operation table cannot diverge between them.
+	prefix, awaited := "", ""
+	if isAsync {
+		prefix, awaited = "async ", "await "
+	}
+	fmt.Fprintf(b, "    %sdef %s(%s) -> %s:\n", prefix, name, pyMethodParams(op), retType)
 	doc := op.Summary
 	if doc == "" {
 		doc = op.ID
 	}
 	fmt.Fprintf(b, "        \"\"\"%s (operationId: %s)\"\"\"\n", pySafe(doc), op.ID)
 	pyEmitFormBlockedGuard(b, op)
-	fmt.Fprintf(b, "        return self._request(%q, %s", strings.ToUpper(op.Method), pyPathExpr(op.Path))
+	fmt.Fprintf(b, "        return %sself._request(%q, %s", awaited, strings.ToUpper(op.Method), pyPathExpr(op.Path))
 	if len(op.QueryParams) > 0 {
 		b.WriteString(", query=query")
 	}
@@ -398,7 +437,7 @@ func pyUsesClientAuth(operationID string) bool {
 }
 
 func pyEmitExports(b *strings.Builder, names []string) {
-	b.WriteString("\n__all__ = [\n    \"SSOError\",\n    \"SSOClient\",\n    \"HttpRequest\",\n    \"HttpResponse\",\n    \"Transport\",\n    \"UrllibTransport\",\n")
+	b.WriteString("\n__all__ = [\n    \"SSOError\",\n    \"UNCLASSIFIED_ERROR\",\n    \"SSOClient\",\n    \"AsyncSSOClient\",\n    \"HttpRequest\",\n    \"HttpResponse\",\n    \"Transport\",\n    \"UrllibTransport\",\n    \"AsyncTransport\",\n    \"AsyncioTransport\",\n")
 	for _, name := range names {
 		fmt.Fprintf(b, "    %q,\n", name)
 	}

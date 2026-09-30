@@ -97,6 +97,14 @@ type Error struct {
 	Description string
 }
 
+// UnclassifiedErrorCode is the SDK-originated code reported when a failure
+// response carries no usable error code (a non-JSON body, or a JSON body
+// without `error`). It exists so a caller that branches on the code never
+// receives an empty string, and never has a server code invented for it: an
+// unreadable 500 must not look like a terminal invalid_grant. It is namespaced
+// so it can never collide with a code from docs/error-codes.md.
+const UnclassifiedErrorCode = "sdk_response_unclassified"
+
 func (e *Error) Error() string {
 	if e.Description != "" {
 		return e.Description
@@ -326,5 +334,9 @@ func decodeError(resp *http.Response) error {
 		Description string `json:"error_description"`
 	}
 	_ = json.Unmarshal(body, &value)
-	return &Error{Status: resp.StatusCode, Code: value.Error, Description: value.Description}
+	code := value.Error
+	if strings.TrimSpace(code) == "" {
+		code = UnclassifiedErrorCode
+	}
+	return &Error{Status: resp.StatusCode, Code: code, Description: value.Description}
 }

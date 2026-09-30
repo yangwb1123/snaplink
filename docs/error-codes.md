@@ -1273,3 +1273,10 @@ at `/api/v1/admin/threat-policies/*` translate them to HTTP 404 on the wire.
   `TestErrorCodesDocumented` in `docs/docscheck/error_codes_test.go`
   (with its named exceptions); `TestSentinelErrorsDocumented` covers
   sentinel errors.
+- **Scope:** this catalog is the *server's* wire vocabulary. Codes a
+  client SDK originates are not in it: an unclassified failure response
+  is reported by every SDK as `sdk_response_unclassified`, and local
+  entitlement-file verification uses the `license_*` class. Both are
+  specified in `docs/sdk-paradigm.md` and
+  `ops/build/sdk-conformance/errors.json`, and neither is ever emitted
+  by this server.

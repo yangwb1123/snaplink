@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import urllib.error
@@ -31,6 +32,23 @@ class SSOError(Exception):
         self.status = status
         self.error = error
         self.error_description = error_description
+
+
+#: SDK-originated code for a failure response that carried no usable error
+#: code. A caller that branches on the error must never receive an empty
+#: string, and a server code is never invented for such a response: an
+#: unreadable 500 must not look like a terminal invalid_grant. The "sdk_"
+#: prefix keeps it out of the vocabulary in docs/error-codes.md.
+UNCLASSIFIED_ERROR = "sdk_response_unclassified"
+
+
+def _protocol_error(status: int, payload: bytes) -> SSOError:
+    """Classify a non-2xx response into the shared error contract."""
+
+    error, description = _parse_error(payload)
+    if not error:
+        error = UNCLASSIFIED_ERROR
+    return SSOError(status, error, description)
 
 
 class HttpRequest(TypedDict, total=False):
@@ -94,6 +112,28 @@ class UrllibTransport:
             return {"status": exc.code, "body": exc.read()}
 
 
+class AsyncTransport(Protocol):
+    """The event-loop seam. Implement it with any async HTTP client."""
+
+    async def send(self, request: HttpRequest) -> HttpResponse: ...
+
+
+class AsyncioTransport:
+    """Default async transport.
+
+    The stdlib has no async HTTP client, so the blocking call runs in the event
+    loop's executor: the loop is never blocked, and a caller who wants a real
+    async stack injects its own AsyncTransport rather than making this package
+    take a dependency. Redirects are refused for the same reason the blocking
+    transport refuses them.
+    """
+
+    def __init__(self, timeout: Optional[float] = None) -> None:
+        self._delegate = UrllibTransport(timeout)
+
+    async def send(self, request: HttpRequest) -> HttpResponse:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._delegate.send, request)
 # ---- Types (generated from components.schemas) ----
 
 class AccessPolicy(TypedDict, total=False):
@@ -1619,6 +1659,11 @@ class SSOClient:
     def access_token(self) -> Optional[str]:
         return self._token
 
+    def set_access_token(self, token: Optional[str]) -> None:
+        """Adopt a token this application persisted itself."""
+
+        self._token = token
+
     def login(
         self,
         username: str,
@@ -1698,8 +1743,7 @@ class SSOClient:
         status = int(response["status"])
         body = response["body"] or b""
         if status < 200 or status >= 300:
-            error, error_description = _parse_error(body)
-            raise SSOError(status, error, error_description)
+            raise _protocol_error(status, body) from None
         return _parse_body(status, body)
 
     def _with_client_auth(self, body: Optional[Any], headers: Dict[str, str]) -> Optional[Any]:
@@ -3077,13 +3121,1427 @@ def _parse_error(payload: bytes) -> "tuple[Optional[str], Optional[str]]":
         return None, None
     return parsed.get("error"), parsed.get("error_description")
 
+class AsyncSSOClient:
+    """The same operation surface as SSOClient, for asyncio callers.
+
+    Every method is a coroutine and every request goes through an injected
+    AsyncTransport, so no call blocks the event loop.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        get_access_token: Optional[Callable[[], Optional[str]]] = None,
+        *,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
+        request_timeout: Optional[float] = None,
+        transport: Optional[AsyncTransport] = None,
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.request_timeout = request_timeout
+        self.transport: AsyncTransport = transport or AsyncioTransport(request_timeout)
+        self._token: Optional[str] = None
+        self.get_access_token = get_access_token or (lambda: self._token)
+
+    @property
+    def is_logged_in(self) -> bool:
+        return bool(self._token)
+
+    @property
+    def access_token(self) -> Optional[str]:
+        return self._token
+
+    def set_access_token(self, token: Optional[str]) -> None:
+        """Adopt a token this application persisted itself."""
+
+        self._token = token
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        query: Optional[Dict[str, Any]] = None,
+        body: Optional[Any] = None,
+        auth: bool = False,
+        form: bool = False,
+        form_blocked_fields: Optional[List[str]] = None,
+        client_auth: bool = False,
+    ) -> Any:
+        url = self.base_url + path
+        if query:
+            filtered = {k: v for k, v in query.items() if v is not None}
+            if filtered:
+                url += "?" + urllib.parse.urlencode(filtered)
+        headers = {"Accept": "application/json"}
+        authenticated_body = self._with_client_auth(body, headers) if client_auth else body
+        data = None
+        if authenticated_body is not None:
+            if form:
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+                data = _form_encode(authenticated_body, form_blocked_fields).encode("utf-8")
+            else:
+                headers["Content-Type"] = "application/json"
+                data = json.dumps(authenticated_body).encode("utf-8")
+        if auth and self.get_access_token:
+            token = self.get_access_token()
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+        response = await self.transport.send({
+            "method": method,
+            "url": url,
+            "headers": headers,
+            "body": data,
+        })
+        status = int(response["status"])
+        raw = response["body"] or b""
+        if status < 200 or status >= 300:
+            raise _protocol_error(status, raw) from None
+        return _parse_body(status, raw)
+
+    def _with_client_auth(self, body: Optional[Any], headers: Dict[str, str]) -> Optional[Any]:
+        if not self.client_secret:
+            return body
+        body_map = body if isinstance(body, dict) else {}
+        client_id = self.client_id or body_map.get("client_id")
+        if not client_id:
+            raise SSOError(0, "invalid_request", "client_id is required with client_secret")
+        credentials = f"{client_id}:{self.client_secret}".encode("utf-8")
+        headers["Authorization"] = "Basic " + base64.b64encode(credentials).decode("ascii")
+        if not isinstance(body, dict):
+            return body
+        without_credentials = dict(body)
+        without_credentials.pop("client_id", None)
+        without_credentials.pop("client_secret", None)
+        return without_credentials
+
+
+    # ---- admin ----
+
+    async def list_access_policies(self) -> AccessPolicyList:
+        """List the zero-trust conditional-access (CAP) policies (governance view). (operationId: listAccessPolicies)"""
+        return await self._request("GET", "/api/v1/admin/access-policies", auth=True)
+
+    async def converge_access_policy_sessions(self) -> AccessPolicyConvergenceSummary:
+        """Apply current conditional-access policies to active sessions now. (operationId: convergeAccessPolicySessions)"""
+        return await self._request("POST", "/api/v1/admin/access-policies/converge", auth=True)
+
+    async def admin_clear_account_lockout(self, body: Dict[str, Any]) -> None:
+        """Clear a brute-force account lockout (helpdesk unlock). (operationId: adminClearAccountLockout)"""
+        return await self._request("POST", "/api/v1/admin/account-lockout/clear", body=body, auth=True)
+
+    async def get_authz_policy_bundle(self, query: Optional[Dict[str, Any]] = None) -> AuthzPolicyBundle:
+        """Export the authorization policy bundle. (operationId: getAuthzPolicyBundle)"""
+        return await self._request("GET", "/api/v1/admin/authz/policy-bundle", query=query, auth=True)
+
+    async def list_backchannel_logout_failures(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """List exhausted OIDC back-channel logout deliveries. (operationId: listBackchannelLogoutFailures)"""
+        return await self._request("GET", "/api/v1/admin/backchannel-logout/failures", query=query, auth=True)
+
+    async def replay_due_backchannel_logout_failures(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Replay a batch of due OIDC back-channel logout failures. (operationId: replayDueBackchannelLogoutFailures)"""
+        return await self._request("POST", "/api/v1/admin/backchannel-logout/failures/replay", query=query, auth=True)
+
+    async def replay_backchannel_logout_failure(self, id: str) -> Dict[str, Any]:
+        """Replay one OIDC back-channel logout failure. (operationId: replayBackchannelLogoutFailure)"""
+        return await self._request("POST", f"/api/v1/admin/backchannel-logout/failures/{urllib.parse.quote(id)}/replay", auth=True)
+
+    async def trigger_backup(self) -> BackupReport:
+        """Trigger an online VACUUM INTO backup of every registered SQLite source. (operationId: triggerBackup)"""
+        return await self._request("POST", "/api/v1/admin/backup", auth=True)
+
+    async def delete_admin_branding(self, query: Optional[Dict[str, Any]] = None) -> None:
+        """Conditionally clear tenant-specific branding. (operationId: deleteAdminBranding)"""
+        return await self._request("DELETE", "/api/v1/admin/branding", query=query, auth=True)
+
+    async def get_admin_branding(self, query: Optional[Dict[str, Any]] = None) -> TenantBranding:
+        """Get tenant branding. (operationId: getAdminBranding)"""
+        return await self._request("GET", "/api/v1/admin/branding", query=query, auth=True)
+
+    async def update_admin_branding(self, body: Dict[str, Any], query: Optional[Dict[str, Any]] = None) -> None:
+        """Conditionally replace tenant branding. (operationId: updateAdminBranding)"""
+        return await self._request("PUT", "/api/v1/admin/branding", query=query, body=body, auth=True)
+
+    async def admin_list_break_glass(self) -> Dict[str, Any]:
+        """List pending + active break-glass admin sessions. (operationId: adminListBreakGlass)"""
+        return await self._request("GET", "/api/v1/admin/break-glass", auth=True)
+
+    async def admin_create_break_glass(self, body: Dict[str, Any]) -> AdminSession:
+        """Create a break-glass (emergency support) admin session. (operationId: adminCreateBreakGlass)"""
+        return await self._request("POST", "/api/v1/admin/break-glass", body=body, auth=True)
+
+    async def admin_revoke_break_glass(self, id: str) -> BreakGlassRevocationResponse:
+        """Revoke a break-glass admin session. (operationId: adminRevokeBreakGlass)"""
+        return await self._request("DELETE", f"/api/v1/admin/break-glass/{urllib.parse.quote(id)}", auth=True)
+
+    async def admin_approve_break_glass(self, id: str) -> AdminSession:
+        """Approve a pending break-glass admin session (two-person rule). (operationId: adminApproveBreakGlass)"""
+        return await self._request("POST", f"/api/v1/admin/break-glass/{urllib.parse.quote(id)}/approve", auth=True)
+
+    async def admin_impersonate_break_glass(self, id: str) -> Dict[str, Any]:
+        """Mint a live impersonation bearer for a break-glass grant. (operationId: adminImpersonateBreakGlass)"""
+        return await self._request("POST", f"/api/v1/admin/break-glass/{urllib.parse.quote(id)}/impersonate", auth=True)
+
+    async def admin_list_changes(self) -> Dict[str, Any]:
+        """List admin change requests (pending, decided, and applied). (operationId: adminListChanges)"""
+        return await self._request("GET", "/api/v1/admin/changes", auth=True)
+
+    async def admin_propose_change(self, body: Dict[str, Any]) -> ChangeRequest:
+        """Propose a generic admin change requiring a second admin's approval. (operationId: adminProposeChange)"""
+        return await self._request("POST", "/api/v1/admin/changes", body=body, auth=True)
+
+    async def admin_get_change(self, id: str) -> ChangeRequest:
+        """Get one admin change request. (operationId: adminGetChange)"""
+        return await self._request("GET", f"/api/v1/admin/changes/{urllib.parse.quote(id)}", auth=True)
+
+    async def admin_approve_change(self, id: str) -> ChangeRequest:
+        """Approve a pending admin change (two-person rule). (operationId: adminApproveChange)"""
+        return await self._request("POST", f"/api/v1/admin/changes/{urllib.parse.quote(id)}/approve", auth=True)
+
+    async def admin_reject_change(self, id: str) -> ChangeRequest:
+        """Reject a pending admin change. (operationId: adminRejectChange)"""
+        return await self._request("POST", f"/api/v1/admin/changes/{urllib.parse.quote(id)}/reject", auth=True)
+
+    async def admin_client_list(self, query: Optional[Dict[str, Any]] = None) -> ListClientsResponse:
+        """List registered clients. (operationId: adminClientList)"""
+        return await self._request("GET", "/api/v1/admin/clients", query=query, auth=True)
+
+    async def admin_client_create(self, body: AdminClient) -> CreateClientResponse:
+        """Create a client. (operationId: adminClientCreate)"""
+        return await self._request("POST", "/api/v1/admin/clients", body=body, auth=True)
+
+    async def admin_client_delete(self, id: str) -> Dict[str, Any]:
+        """Delete a client. (operationId: adminClientDelete)"""
+        return await self._request("DELETE", f"/api/v1/admin/clients/{urllib.parse.quote(id)}", auth=True)
+
+    async def admin_client_get(self, id: str) -> GetAdminClientResponse:
+        """Fetch a client (secret cleared). (operationId: adminClientGet)"""
+        return await self._request("GET", f"/api/v1/admin/clients/{urllib.parse.quote(id)}", auth=True)
+
+    async def admin_client_update(self, id: str, body: AdminClient) -> UpdateClientResponse:
+        """Update a client. (operationId: adminClientUpdate)"""
+        return await self._request("PUT", f"/api/v1/admin/clients/{urllib.parse.quote(id)}", body=body, auth=True)
+
+    async def admin_client_approve(self, id: str) -> ApproveClientResponse:
+        """Approve a pending client registration. (operationId: adminClientApprove)"""
+        return await self._request("POST", f"/api/v1/admin/clients/{urllib.parse.quote(id)}/approve", auth=True)
+
+    async def admin_client_reject(self, id: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Reject a pending client registration. (operationId: adminClientReject)"""
+        return await self._request("POST", f"/api/v1/admin/clients/{urllib.parse.quote(id)}/reject", body=body, auth=True)
+
+    async def admin_client_rotate_secret(self, id: str, body: Optional[RotateSecretRequest] = None) -> RotateSecretResponse:
+        """Mint a fresh client_secret. (operationId: adminClientRotateSecret)"""
+        return await self._request("POST", f"/api/v1/admin/clients/{urllib.parse.quote(id)}/rotate-secret", body=body, auth=True)
+
+    async def admin_compliance_active_consents(self) -> Dict[str, Any]:
+        """Active OAuth consent grants, system-wide. (operationId: adminComplianceActiveConsents)"""
+        return await self._request("GET", "/api/v1/admin/compliance/consents", auth=True)
+
+    async def admin_compliance_data_map(self) -> Dict[str, Any]:
+        """GDPR Art. 30 data map — the categories of personal data this server processes. (operationId: adminComplianceDataMap)"""
+        return await self._request("GET", "/api/v1/admin/compliance/data-map", auth=True)
+
+    async def admin_trigger_retention_sweep(self, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Trigger one automated data-retention sweep pass on demand. (operationId: adminTriggerRetentionSweep)"""
+        return await self._request("POST", "/api/v1/admin/compliance/retention-sweep", body=body, auth=True)
+
+    async def admin_soc2evidence(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """SOC2 evidence pack — access review, change management, access revocation. (operationId: adminSOC2Evidence)"""
+        return await self._request("GET", "/api/v1/admin/compliance/soc2-evidence", query=query, auth=True)
+
+    async def get_applied_config(self) -> ConfigSnapshotResponse:
+        """Config snapshot as loaded at startup (redacted). (operationId: getAppliedConfig)"""
+        return await self._request("GET", "/api/v1/admin/config/applied", auth=True)
+
+    async def post_config_cluster_diff(self, body: ConfigClusterDiffRequest) -> ConfigDiffResponse:
+        """RFC 6902 JSON Patch from a peer cluster's config to this cluster's running config (redacted). (operationId: postConfigClusterDiff)"""
+        return await self._request("POST", "/api/v1/admin/config/cluster-diff", body=body, auth=True)
+
+    async def get_config_diff(self) -> ConfigDiffResponse:
+        """RFC 6902 JSON Patch from applied to running config (redacted). (operationId: getConfigDiff)"""
+        return await self._request("GET", "/api/v1/admin/config/diff", auth=True)
+
+    async def list_config_history(self, query: Optional[Dict[str, Any]] = None) -> ConfigHistoryResponse:
+        """Runtime-configuration change history (config_history). (operationId: listConfigHistory)"""
+        return await self._request("GET", "/api/v1/admin/config/history", query=query, auth=True)
+
+    async def get_running_config(self) -> ConfigSnapshotResponse:
+        """Current effective config snapshot (redacted). (operationId: getRunningConfig)"""
+        return await self._request("GET", "/api/v1/admin/config/running", auth=True)
+
+    async def admin_list_connections(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """List a tenant's B2B enterprise connections. (operationId: adminListConnections)"""
+        return await self._request("GET", "/api/v1/admin/connections", query=query, auth=True)
+
+    async def admin_upsert_connection(self, body: Connection) -> Connection:
+        """Create or replace a B2B enterprise connection. (operationId: adminUpsertConnection)"""
+        return await self._request("POST", "/api/v1/admin/connections", body=body, auth=True)
+
+    async def admin_delete_connection(self, id: str) -> None:
+        """Delete a B2B enterprise connection. (operationId: adminDeleteConnection)"""
+        return await self._request("DELETE", f"/api/v1/admin/connections/{urllib.parse.quote(id)}", auth=True)
+
+    async def admin_get_connection(self, id: str) -> Connection:
+        """Get a B2B enterprise connection by id. (operationId: adminGetConnection)"""
+        return await self._request("GET", f"/api/v1/admin/connections/{urllib.parse.quote(id)}", auth=True)
+
+    async def admin_list_connection_domains(self, id: str) -> Dict[str, Any]:
+        """List a connection's email-domain ownership claims. (operationId: adminListConnectionDomains)"""
+        return await self._request("GET", f"/api/v1/admin/connections/{urllib.parse.quote(id)}/domains", auth=True)
+
+    async def admin_verify_connection_domain(self, id: str, domain: str) -> Dict[str, Any]:
+        """Verify a claimed email domain via its DNS TXT challenge. (operationId: adminVerifyConnectionDomain)"""
+        return await self._request("POST", f"/api/v1/admin/connections/{urllib.parse.quote(id)}/domains/{urllib.parse.quote(domain)}/verify", auth=True)
+
+    async def admin_get_connection_health(self, id: str) -> ConnectionHealth:
+        """Read a connection's last recorded reachability probe outcome. (operationId: adminGetConnectionHealth)"""
+        return await self._request("GET", f"/api/v1/admin/connections/{urllib.parse.quote(id)}/health", auth=True)
+
+    async def admin_probe_connection(self, id: str) -> ConnectionHealth:
+        """Synchronously test a connection's upstream reachability. (operationId: adminProbeConnection)"""
+        return await self._request("POST", f"/api/v1/admin/connections/{urllib.parse.quote(id)}/probe", auth=True)
+
+    async def get_credential_inventory(self) -> CredentialInventoryResponse:
+        """Credential-rotation governance inventory (type, version, status, next rotation due). (operationId: getCredentialInventory)"""
+        return await self._request("GET", "/api/v1/admin/credentials", auth=True)
+
+    async def admin_compromise_credential(self, type: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Emergency credential compromise-response — force-rotate a leaked credential with no overlap. (operationId: adminCompromiseCredential)"""
+        return await self._request("POST", f"/api/v1/admin/credentials/{urllib.parse.quote(type)}/compromise", body=body, auth=True)
+
+    async def get_crypto_key_inventory(self, query: Optional[Dict[str, Any]] = None) -> CryptoKeyInventoryResponse:
+        """Cryptographic material inventory (signing keys, JWE keys, KMS-backed keys, trust anchors). (operationId: getCryptoKeyInventory)"""
+        return await self._request("GET", "/api/v1/admin/crypto/keys", query=query, auth=True)
+
+    async def admin_report_crypto_key_compromise(self, id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Report a catalogued cryptographic key compromised (inventory bookkeeping, not revocation). (operationId: adminReportCryptoKeyCompromise)"""
+        return await self._request("POST", f"/api/v1/admin/crypto/keys/{urllib.parse.quote(id)}/compromise", body=body, auth=True)
+
+    async def list_admin_devices(self) -> None:
+        """List devices across users. (operationId: listAdminDevices)"""
+        return await self._request("GET", "/api/v1/admin/devices", auth=True)
+
+    async def bulk_revoke_admin_devices(self) -> None:
+        """Revoke a filtered set of devices. (operationId: bulkRevokeAdminDevices)"""
+        return await self._request("POST", "/api/v1/admin/devices/bulk-revoke", auth=True)
+
+    async def get_admin_device_stats(self) -> None:
+        """Return aggregate device-security statistics. (operationId: getAdminDeviceStats)"""
+        return await self._request("GET", "/api/v1/admin/devices/stats", auth=True)
+
+    async def get_admin_device_activity(self, id: str) -> None:
+        """Get security activity for one device. (operationId: getAdminDeviceActivity)"""
+        return await self._request("GET", f"/api/v1/admin/devices/{urllib.parse.quote(id)}/activity", auth=True)
+
+    async def reset_admin_device_trust(self, id: str) -> None:
+        """Reset the trust state for one device. (operationId: resetAdminDeviceTrust)"""
+        return await self._request("POST", f"/api/v1/admin/devices/{urllib.parse.quote(id)}/trust", auth=True)
+
+    async def get_api_docs_ui(self) -> None:
+        """Embedded, self-contained API-documentation viewer (opt-in, sso.WithAPIDocsUI). (operationId: getAPIDocsUI)"""
+        return await self._request("GET", "/api/v1/admin/docs", auth=True)
+
+    async def get_api_docs_spec(self) -> Dict[str, Any]:
+        """This same OpenAPI document, parsed and re-served as JSON. (operationId: getAPIDocsSpec)"""
+        return await self._request("GET", "/api/v1/admin/docs/openapi.json", auth=True)
+
+    async def domain_list(self, query: Optional[Dict[str, Any]] = None) -> ListDomainsResponse:
+        """List domains (hostname → tenant mappings). (operationId: domainList)"""
+        return await self._request("GET", "/api/v1/admin/domains", query=query, auth=True)
+
+    async def domain_create(self, body: Domain) -> CreateDomainResponse:
+        """Create a domain. (operationId: domainCreate)"""
+        return await self._request("POST", "/api/v1/admin/domains", body=body, auth=True)
+
+    async def domain_delete(self, hostname: str) -> Dict[str, Any]:
+        """Delete a domain. (operationId: domainDelete)"""
+        return await self._request("DELETE", f"/api/v1/admin/domains/{urllib.parse.quote(hostname)}", auth=True)
+
+    async def domain_get(self, hostname: str) -> GetDomainResponse:
+        """Fetch a domain. (operationId: domainGet)"""
+        return await self._request("GET", f"/api/v1/admin/domains/{urllib.parse.quote(hostname)}", auth=True)
+
+    async def domain_update(self, hostname: str, body: Domain) -> UpdateDomainResponse:
+        """Update a domain. (operationId: domainUpdate)"""
+        return await self._request("PUT", f"/api/v1/admin/domains/{urllib.parse.quote(hostname)}", body=body, auth=True)
+
+    async def get_degradation_mode(self) -> DegradationMode:
+        """Read the current disaster-recovery degraded-service mode. (operationId: getDegradationMode)"""
+        return await self._request("GET", "/api/v1/admin/dr/mode", auth=True)
+
+    async def set_degradation_mode(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Set the disaster-recovery degraded-service mode. (operationId: setDegradationMode)"""
+        return await self._request("POST", "/api/v1/admin/dr/mode", body=body, auth=True)
+
+    async def get_dr_status(self) -> Dict[str, Any]:
+        """Disaster-recovery readiness status. (operationId: getDRStatus)"""
+        return await self._request("GET", "/api/v1/admin/dr/status", auth=True)
+
+    async def get_admin_endpoints(self) -> Dict[str, Any]:
+        """Runtime endpoint inventory — every route this replica actually registered. (operationId: getAdminEndpoints)"""
+        return await self._request("GET", "/api/v1/admin/endpoints", auth=True)
+
+    async def stream_admin_events(self, query: Optional[Dict[str, Any]] = None) -> None:
+        """Realtime admin event stream (Server-Sent Events). (operationId: streamAdminEvents)"""
+        return await self._request("GET", "/api/v1/admin/events/stream", query=query, auth=True)
+
+    async def get_federation_health(self) -> FederationHealthReport:
+        """Federation peer metadata-health listing (fetch success/failure + TLS cert expiry). (operationId: getFederationHealth)"""
+        return await self._request("GET", "/api/v1/admin/federation/health", auth=True)
+
+    async def admin_key_list(self) -> ListSigningKeysResponse:
+        """List signing keys (public metadata). (operationId: adminKeyList)"""
+        return await self._request("GET", "/api/v1/admin/keys", auth=True)
+
+    async def admin_key_rotate(self, body: Optional[RotateSigningKeyRequest] = None) -> RotateSigningKeyResponse:
+        """Rotate the primary signing key on demand. (operationId: adminKeyRotate)"""
+        return await self._request("POST", "/api/v1/admin/keys/rotate", body=body, auth=True)
+
+    async def admin_local_user_list(self, query: Optional[Dict[str, Any]] = None) -> PaginatedLocalUsersResponse:
+        """List LOCAL (password-authenticated) users. (operationId: adminLocalUserList)"""
+        return await self._request("GET", "/api/v1/admin/local-users", query=query, auth=True)
+
+    async def admin_local_user_create(self, body: CreateLocalUserRequest) -> LocalUserResponse:
+        """Create a LOCAL (password-authenticated) user. (operationId: adminLocalUserCreate)"""
+        return await self._request("POST", "/api/v1/admin/local-users", body=body, auth=True)
+
+    async def admin_local_user_delete(self, id: str) -> None:
+        """Delete a LOCAL user. (operationId: adminLocalUserDelete)"""
+        return await self._request("DELETE", f"/api/v1/admin/local-users/{urllib.parse.quote(id)}", auth=True)
+
+    async def admin_local_user_get(self, id: str) -> LocalUserResponse:
+        """Fetch a LOCAL user. (operationId: adminLocalUserGet)"""
+        return await self._request("GET", f"/api/v1/admin/local-users/{urllib.parse.quote(id)}", auth=True)
+
+    async def admin_local_user_update(self, id: str, body: UpdateLocalUserRequest) -> LocalUserResponse:
+        """Update a LOCAL user's email/display name. (operationId: adminLocalUserUpdate)"""
+        return await self._request("PUT", f"/api/v1/admin/local-users/{urllib.parse.quote(id)}", body=body, auth=True)
+
+    async def post_admin_logout(self) -> Dict[str, Any]:
+        """Revoke the admin bearer token used on this request. (operationId: postAdminLogout)"""
+        return await self._request("POST", "/api/v1/admin/logout", auth=True)
+
+    async def admin_operation_list(self) -> Dict[str, Any]:
+        """List durable multi-step admin operations. (operationId: adminOperationList)"""
+        return await self._request("GET", "/api/v1/admin/operations", auth=True)
+
+    async def admin_operation_get(self, id: str) -> Dict[str, Any]:
+        """Get a durable operation after reconnecting. (operationId: adminOperationGet)"""
+        return await self._request("GET", f"/api/v1/admin/operations/{urllib.parse.quote(id)}", auth=True)
+
+    async def permission_list_assignments(self, client_id: str) -> ListAssignmentsResponse:
+        """List role assignments for a client. (operationId: permissionListAssignments)"""
+        return await self._request("GET", f"/api/v1/admin/permissions/{urllib.parse.quote(client_id)}/assignments", auth=True)
+
+    async def permission_assign_roles(self, client_id: str, user_id: str, body: AssignRolesRequest) -> Dict[str, Any]:
+        """Assign roles to a user (additive). (operationId: permissionAssignRoles)"""
+        return await self._request("POST", f"/api/v1/admin/permissions/{urllib.parse.quote(client_id)}/assignments/{urllib.parse.quote(user_id)}", body=body, auth=True)
+
+    async def permission_unassign_roles(self, client_id: str, user_id: str, body: UnassignRolesRequest) -> Dict[str, Any]:
+        """Unassign roles from a user. (operationId: permissionUnassignRoles)"""
+        return await self._request("POST", f"/api/v1/admin/permissions/{urllib.parse.quote(client_id)}/assignments/{urllib.parse.quote(user_id)}/unassign", body=body, auth=True)
+
+    async def permission_set_menus(self, client_id: str, body: SetMenusRequest) -> Dict[str, Any]:
+        """Set the menu tree for a client. (operationId: permissionSetMenus)"""
+        return await self._request("PUT", f"/api/v1/admin/permissions/{urllib.parse.quote(client_id)}/menus", body=body, auth=True)
+
+    async def permission_list_roles(self, client_id: str, query: Optional[Dict[str, Any]] = None) -> ListRolesResponse:
+        """List roles for a client. (operationId: permissionListRoles)"""
+        return await self._request("GET", f"/api/v1/admin/permissions/{urllib.parse.quote(client_id)}/roles", query=query, auth=True)
+
+    async def permission_add_role(self, client_id: str, body: Role) -> AddRoleResponse:
+        """Add a role to the client's role registry. (operationId: permissionAddRole)"""
+        return await self._request("POST", f"/api/v1/admin/permissions/{urllib.parse.quote(client_id)}/roles", body=body, auth=True)
+
+    async def permission_remove_role(self, client_id: str, role_code: str) -> Dict[str, Any]:
+        """Remove a role. (operationId: permissionRemoveRole)"""
+        return await self._request("DELETE", f"/api/v1/admin/permissions/{urllib.parse.quote(client_id)}/roles/{urllib.parse.quote(role_code)}", auth=True)
+
+    async def permission_update_role(self, client_id: str, role_code: str, body: Role) -> UpdateRoleResponse:
+        """Update a role. (operationId: permissionUpdateRole)"""
+        return await self._request("PUT", f"/api/v1/admin/permissions/{urllib.parse.quote(client_id)}/roles/{urllib.parse.quote(role_code)}", body=body, auth=True)
+
+    async def list_admin_providers(self) -> None:
+        """List registered authentication providers. (operationId: listAdminProviders)"""
+        return await self._request("GET", "/api/v1/admin/providers", auth=True)
+
+    async def create_admin_provider(self) -> None:
+        """Register an authentication provider. (operationId: createAdminProvider)"""
+        return await self._request("POST", "/api/v1/admin/providers", auth=True)
+
+    async def delete_admin_provider(self, id: str) -> None:
+        """Delete one authentication provider. (operationId: deleteAdminProvider)"""
+        return await self._request("DELETE", f"/api/v1/admin/providers/{urllib.parse.quote(id)}", auth=True)
+
+    async def get_admin_provider(self, id: str) -> None:
+        """Get one authentication provider. (operationId: getAdminProvider)"""
+        return await self._request("GET", f"/api/v1/admin/providers/{urllib.parse.quote(id)}", auth=True)
+
+    async def update_admin_provider(self, id: str) -> None:
+        """Replace one authentication provider. (operationId: updateAdminProvider)"""
+        return await self._request("PUT", f"/api/v1/admin/providers/{urllib.parse.quote(id)}", auth=True)
+
+    async def rebac_check(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Evaluate a ReBAC relationship-tuple Check query (operational debugging). (operationId: rebacCheck)"""
+        return await self._request("GET", "/api/v1/admin/rebac/check", query=query, auth=True)
+
+    async def release_list(self) -> ListReleasesResponse:
+        """List registered releases. (operationId: releaseList)"""
+        return await self._request("GET", "/api/v1/admin/releases", auth=True)
+
+    async def release_register(self, body: RegisterReleaseRequest) -> RegisterReleaseResponse:
+        """Register a paired frontend+backend release. (operationId: releaseRegister)"""
+        return await self._request("POST", "/api/v1/admin/releases", body=body, auth=True)
+
+    async def release_delete(self, id: str) -> Dict[str, Any]:
+        """Delete a registered release. (operationId: releaseDelete)"""
+        return await self._request("DELETE", f"/api/v1/admin/releases/{urllib.parse.quote(id)}", auth=True)
+
+    async def release_get(self, id: str) -> GetReleaseResponse:
+        """Fetch a single release by id. (operationId: releaseGet)"""
+        return await self._request("GET", f"/api/v1/admin/releases/{urllib.parse.quote(id)}", auth=True)
+
+    async def release_pin(self, id: str) -> PinReleaseResponse:
+        """Pin (make current) a registered release. (operationId: releasePin)"""
+        return await self._request("POST", f"/api/v1/admin/releases/{urllib.parse.quote(id)}:pin", auth=True)
+
+    async def release_rollback(self, id: str) -> RollbackReleaseResponse:
+        """Rollback to a previously-pinned release. (operationId: releaseRollback)"""
+        return await self._request("POST", f"/api/v1/admin/releases/{urllib.parse.quote(id)}:rollback", auth=True)
+
+    async def release_get_current(self) -> GetCurrentReleaseResponse:
+        """Fetch the currently-pinned release. (operationId: releaseGetCurrent)"""
+        return await self._request("GET", "/api/v1/admin/releases:current", auth=True)
+
+    async def list_admin_security_activity(self) -> None:
+        """List security activity across users and devices. (operationId: listAdminSecurityActivity)"""
+        return await self._request("GET", "/api/v1/admin/security/activity", auth=True)
+
+    async def get_admin_sessions(self) -> Dict[str, Any]:
+        """List every active session. (operationId: getAdminSessions)"""
+        return await self._request("GET", "/api/v1/admin/sessions", auth=True)
+
+    async def get_admin_linked_sessions(self, subject: str) -> Dict[str, Any]:
+        """Cross-protocol session-hub query (every session, every protocol, for one subject). (operationId: getAdminLinkedSessions)"""
+        return await self._request("GET", f"/api/v1/admin/sessions/linked/{urllib.parse.quote(subject)}", auth=True)
+
+    async def snapshot_list(self) -> ListSnapshotsResponse:
+        """List stored snapshots. (operationId: snapshotList)"""
+        return await self._request("GET", "/api/v1/admin/snapshots", auth=True)
+
+    async def snapshot_export(self, body: ExportSnapshotRequest) -> ExportSnapshotResponse:
+        """Export a snapshot of operator-managed state. (operationId: snapshotExport)"""
+        return await self._request("POST", "/api/v1/admin/snapshots", body=body, auth=True)
+
+    async def snapshot_delete(self, id: str) -> Dict[str, Any]:
+        """Delete a stored snapshot. (operationId: snapshotDelete)"""
+        return await self._request("DELETE", f"/api/v1/admin/snapshots/{urllib.parse.quote(id)}", auth=True)
+
+    async def snapshot_get(self, id: str) -> GetSnapshotResponse:
+        """Fetch a single snapshot (header + server-redacted resources). (operationId: snapshotGet)"""
+        return await self._request("GET", f"/api/v1/admin/snapshots/{urllib.parse.quote(id)}", auth=True)
+
+    async def snapshot_restore(self, id: str, body: RestoreSnapshotRequest) -> RestoreSnapshotResponse:
+        """Restore a snapshot. (operationId: snapshotRestore)"""
+        return await self._request("POST", f"/api/v1/admin/snapshots/{urllib.parse.quote(id)}:restore", body=body, auth=True)
+
+    async def get_storage_health(self) -> StorageHealthReport:
+        """Per-store storage-health report (reachability + schema version + latency). (operationId: getStorageHealth)"""
+        return await self._request("GET", "/api/v1/admin/storage-health", auth=True)
+
+    async def tenant_list(self) -> ListTenantsResponse:
+        """List tenants. (operationId: tenantList)"""
+        return await self._request("GET", "/api/v1/admin/tenants", auth=True)
+
+    async def tenant_create(self, body: Tenant) -> CreateTenantResponse:
+        """Create a tenant. (operationId: tenantCreate)"""
+        return await self._request("POST", "/api/v1/admin/tenants", body=body, auth=True)
+
+    async def tenant_delete(self, id: str) -> DeleteTenantResponse:
+        """Delete a tenant. (operationId: tenantDelete)"""
+        return await self._request("DELETE", f"/api/v1/admin/tenants/{urllib.parse.quote(id)}", auth=True)
+
+    async def tenant_get(self, id: str) -> GetTenantResponse:
+        """Fetch a tenant. (operationId: tenantGet)"""
+        return await self._request("GET", f"/api/v1/admin/tenants/{urllib.parse.quote(id)}", auth=True)
+
+    async def tenant_update(self, id: str, body: Tenant) -> UpdateTenantResponse:
+        """Update a tenant (preserves status). (operationId: tenantUpdate)"""
+        return await self._request("PUT", f"/api/v1/admin/tenants/{urllib.parse.quote(id)}", body=body, auth=True)
+
+    async def admin_export_tenant(self, id: str) -> TenantExport:
+        """Export a whole tenant's data (offboarding / environment migration). (operationId: adminExportTenant)"""
+        return await self._request("POST", f"/api/v1/admin/tenants/{urllib.parse.quote(id)}/export", auth=True)
+
+    async def admin_list_invitations(self, id: str) -> Dict[str, Any]:
+        """List a tenant's pending org invitations (no token value). (operationId: adminListInvitations)"""
+        return await self._request("GET", f"/api/v1/admin/tenants/{urllib.parse.quote(id)}/invitations", auth=True)
+
+    async def admin_send_invitation(self, id: str, body: Dict[str, Any]) -> None:
+        """Send an org invitation. (operationId: adminSendInvitation)"""
+        return await self._request("POST", f"/api/v1/admin/tenants/{urllib.parse.quote(id)}/invitations", body=body, auth=True)
+
+    async def admin_revoke_invitation(self, id: str, email: str) -> None:
+        """Revoke every pending invitation for a recipient email. (operationId: adminRevokeInvitation)"""
+        return await self._request("DELETE", f"/api/v1/admin/tenants/{urllib.parse.quote(id)}/invitations/{urllib.parse.quote(email)}", auth=True)
+
+    async def admin_list_tenant_members(self, id: str) -> Dict[str, Any]:
+        """List a tenant's org roster (B2B membership). (operationId: adminListTenantMembers)"""
+        return await self._request("GET", f"/api/v1/admin/tenants/{urllib.parse.quote(id)}/members", auth=True)
+
+    async def admin_remove_tenant_member(self, id: str, user_id: str) -> None:
+        """Remove a user from an org. (operationId: adminRemoveTenantMember)"""
+        return await self._request("DELETE", f"/api/v1/admin/tenants/{urllib.parse.quote(id)}/members/{urllib.parse.quote(user_id)}", auth=True)
+
+    async def admin_put_tenant_member(self, id: str, user_id: str, body: Optional[Dict[str, Any]] = None) -> None:
+        """Add a user to an org or change their org role. (operationId: adminPutTenantMember)"""
+        return await self._request("PUT", f"/api/v1/admin/tenants/{urllib.parse.quote(id)}/members/{urllib.parse.quote(user_id)}", body=body, auth=True)
+
+    async def get_tenant_usage(self, id: str, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Per-tenant usage/metering report. (operationId: getTenantUsage)"""
+        return await self._request("GET", f"/api/v1/admin/tenants/{urllib.parse.quote(id)}/usage", query=query, auth=True)
+
+    async def tenant_set_status(self, id: str, body: SetTenantStatusRequest) -> SetTenantStatusResponse:
+        """Flip a tenant's suspension status. (operationId: tenantSetStatus)"""
+        return await self._request("POST", f"/api/v1/admin/tenants/{urllib.parse.quote(id)}:set-status", body=body, auth=True)
+
+    async def get_admin_threat_policies(self) -> Dict[str, Any]:
+        """Active ITDR threat-policy list. (operationId: getAdminThreatPolicies)"""
+        return await self._request("GET", "/api/v1/admin/threat-policies", auth=True)
+
+    async def delete_admin_threat_policy(self, name: str) -> Dict[str, Any]:
+        """Delete a threat policy by name. (operationId: deleteAdminThreatPolicy)"""
+        return await self._request("DELETE", f"/api/v1/admin/threat-policies/{urllib.parse.quote(name)}", auth=True)
+
+    async def get_admin_threat_policy(self, name: str) -> Dict[str, Any]:
+        """Get a threat policy by name. (operationId: getAdminThreatPolicy)"""
+        return await self._request("GET", f"/api/v1/admin/threat-policies/{urllib.parse.quote(name)}", auth=True)
+
+    async def put_admin_threat_policy(self, name: str, body: ThreatPolicy) -> Dict[str, Any]:
+        """Create or update a threat policy. (operationId: putAdminThreatPolicy)"""
+        return await self._request("PUT", f"/api/v1/admin/threat-policies/{urllib.parse.quote(name)}", body=body, auth=True)
+
+    async def get_admin_token_policies(self) -> Dict[str, Any]:
+        """Active token-policy governance view. (operationId: getAdminTokenPolicies)"""
+        return await self._request("GET", "/api/v1/admin/token-policies", auth=True)
+
+    async def get_admin_token_exchange_chain(self, jti: str) -> Dict[str, Any]:
+        """RFC 8693 token-exchange delegation-chain lookup. (operationId: getAdminTokenExchangeChain)"""
+        return await self._request("GET", f"/api/v1/admin/tokenexchange/chains/{urllib.parse.quote(jti)}", auth=True)
+
+    async def get_admin_tokens(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """List active admin bearer tokens. (operationId: getAdminTokens)"""
+        return await self._request("GET", "/api/v1/admin/tokens", query=query, auth=True)
+
+    async def post_admin_token_bulk_revoke(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Bulk-revoke workflow. (operationId: postAdminTokenBulkRevoke)"""
+        return await self._request("POST", "/api/v1/admin/tokens/bulk-revoke", body=body, auth=True)
+
+    async def get_admin_token_expiring(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Refresh-token expiry calendar. (operationId: getAdminTokenExpiring)"""
+        return await self._request("GET", "/api/v1/admin/tokens/expiring", query=query, auth=True)
+
+    async def get_admin_token_portfolio(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Token portfolio overview. (operationId: getAdminTokenPortfolio)"""
+        return await self._request("GET", "/api/v1/admin/tokens/portfolio", query=query, auth=True)
+
+    async def admin_token_revoke(self, body: AdminTokenRevokeRequest) -> AdminTokenRevokeResponse:
+        """Revoke a token or session. (operationId: adminTokenRevoke)"""
+        return await self._request("POST", "/api/v1/admin/tokens/revoke", body=body, auth=True)
+
+    async def admin_token_list_sessions(self, query: Optional[Dict[str, Any]] = None) -> ListSessionsResponse:
+        """List active session-backed tokens. (operationId: adminTokenListSessions)"""
+        return await self._request("GET", "/api/v1/admin/tokens/sessions", query=query, auth=True)
+
+    async def get_admin_token_subject(self, subject: str, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Per-subject active-token view. (operationId: getAdminTokenSubject)"""
+        return await self._request("GET", f"/api/v1/admin/tokens/subjects/{urllib.parse.quote(subject)}", query=query, auth=True)
+
+    async def get_admin_token_suspicious(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Suspicious-token anomaly list. (operationId: getAdminTokenSuspicious)"""
+        return await self._request("GET", "/api/v1/admin/tokens/suspicious", query=query, auth=True)
+
+    async def admin_token_issue_temp(self, body: IssueTempTokenRequest) -> IssueTempTokenResponse:
+        """Issue a temp token for a user. (operationId: adminTokenIssueTemp)"""
+        return await self._request("POST", "/api/v1/admin/tokens/temp", body=body, auth=True)
+
+    async def get_admin_token_usage(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Aggregated token-usage telemetry. (operationId: getAdminTokenUsage)"""
+        return await self._request("GET", "/api/v1/admin/tokens/usage", query=query, auth=True)
+
+    async def delete_admin_token(self, id: str) -> Dict[str, Any]:
+        """Revoke a single admin bearer token by ID. (operationId: deleteAdminToken)"""
+        return await self._request("DELETE", f"/api/v1/admin/tokens/{urllib.parse.quote(id)}", auth=True)
+
+    async def get_admin_top_tenants(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Top-tenants usage leaderboard. (operationId: getAdminTopTenants)"""
+        return await self._request("GET", "/api/v1/admin/usage/top-tenants", query=query, auth=True)
+
+    async def admin_user_list(self, query: Optional[Dict[str, Any]] = None) -> ListUsersResponse:
+        """List users. (operationId: adminUserList)"""
+        return await self._request("GET", "/api/v1/admin/users", query=query, auth=True)
+
+    async def admin_user_create(self, body: AdminUser) -> CreateUserResponse:
+        """Create a user. (operationId: adminUserCreate)"""
+        return await self._request("POST", "/api/v1/admin/users", body=body, auth=True)
+
+    async def admin_user_delete(self, id: str) -> Dict[str, Any]:
+        """Delete a user. (operationId: adminUserDelete)"""
+        return await self._request("DELETE", f"/api/v1/admin/users/{urllib.parse.quote(id)}", auth=True)
+
+    async def admin_user_get(self, id: str) -> GetAdminUserResponse:
+        """Fetch a user. (operationId: adminUserGet)"""
+        return await self._request("GET", f"/api/v1/admin/users/{urllib.parse.quote(id)}", auth=True)
+
+    async def admin_user_update(self, id: str, body: AdminUser) -> UpdateUserResponse:
+        """Update a user. (operationId: adminUserUpdate)"""
+        return await self._request("PUT", f"/api/v1/admin/users/{urllib.parse.quote(id)}", body=body, auth=True)
+
+    async def admin_user_list_consents(self, id: str) -> Dict[str, Any]:
+        """List a user's consent grants (helpdesk). (operationId: adminUserListConsents)"""
+        return await self._request("GET", f"/api/v1/admin/users/{urllib.parse.quote(id)}/consents", auth=True)
+
+    async def admin_user_revoke_consent(self, id: str, client_id: str) -> None:
+        """Revoke a user's consent for an app (helpdesk). (operationId: adminUserRevokeConsent)"""
+        return await self._request("DELETE", f"/api/v1/admin/users/{urllib.parse.quote(id)}/consents/{urllib.parse.quote(client_id)}", auth=True)
+
+    async def admin_user_revoke_device_secrets(self, id: str) -> Dict[str, Any]:
+        """Revoke a user's Native SSO device secrets (lost-device lockout). (operationId: adminUserRevokeDeviceSecrets)"""
+        return await self._request("DELETE", f"/api/v1/admin/users/{urllib.parse.quote(id)}/device-secrets", auth=True)
+
+    async def list_admin_user_devices(self, id: str) -> None:
+        """List devices for one user. (operationId: listAdminUserDevices)"""
+        return await self._request("GET", f"/api/v1/admin/users/{urllib.parse.quote(id)}/devices", auth=True)
+
+    async def delete_admin_user_device(self, id: str, deviceId: str) -> None:
+        """Revoke one device owned by a user. (operationId: deleteAdminUserDevice)"""
+        return await self._request("DELETE", f"/api/v1/admin/users/{urllib.parse.quote(id)}/devices/{urllib.parse.quote(deviceId)}", auth=True)
+
+    async def admin_user_set_email(self, id: str, body: Dict[str, Any]) -> None:
+        """Force-set a user's email (operational recovery). (operationId: adminUserSetEmail)"""
+        return await self._request("POST", f"/api/v1/admin/users/{urllib.parse.quote(id)}/email", body=body, auth=True)
+
+    async def admin_user_revoke_email_change_tokens(self, id: str) -> Dict[str, Any]:
+        """Revoke a user's pending email-change verification tokens. (operationId: adminUserRevokeEmailChangeTokens)"""
+        return await self._request("DELETE", f"/api/v1/admin/users/{urllib.parse.quote(id)}/email-change-tokens", auth=True)
+
+    async def admin_user_list_email_change_tokens(self, id: str) -> Dict[str, Any]:
+        """List a user's pending email-change tokens (no token value). (operationId: adminUserListEmailChangeTokens)"""
+        return await self._request("GET", f"/api/v1/admin/users/{urllib.parse.quote(id)}/email-change-tokens", auth=True)
+
+    async def admin_user_get_lifecycle(self, id: str) -> Dict[str, Any]:
+        """Get a user's lifecycle state, legal transitions, and history. (operationId: adminUserGetLifecycle)"""
+        return await self._request("GET", f"/api/v1/admin/users/{urllib.parse.quote(id)}/lifecycle", auth=True)
+
+    async def admin_user_transition_lifecycle(self, id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Request a user-lifecycle state transition. (operationId: adminUserTransitionLifecycle)"""
+        return await self._request("POST", f"/api/v1/admin/users/{urllib.parse.quote(id)}/lifecycle", body=body, auth=True)
+
+    async def get_admin_user_login_history(self, id: str) -> None:
+        """List login history for one user. (operationId: getAdminUserLoginHistory)"""
+        return await self._request("GET", f"/api/v1/admin/users/{urllib.parse.quote(id)}/login-history", auth=True)
+
+    async def admin_user_list_mfa(self, id: str) -> Dict[str, Any]:
+        """List a user's registered second factors (helpdesk). (operationId: adminUserListMFA)"""
+        return await self._request("GET", f"/api/v1/admin/users/{urllib.parse.quote(id)}/mfa", auth=True)
+
+    async def admin_user_reset_recovery_codes(self, id: str) -> None:
+        """Reset a user's MFA recovery codes (helpdesk). (operationId: adminUserResetRecoveryCodes)"""
+        return await self._request("POST", f"/api/v1/admin/users/{urllib.parse.quote(id)}/mfa/recovery-codes", auth=True)
+
+    async def admin_user_remove_mfa(self, id: str, factor_id: str) -> None:
+        """Unbind a user's second factor (helpdesk MFA reset). (operationId: adminUserRemoveMFA)"""
+        return await self._request("DELETE", f"/api/v1/admin/users/{urllib.parse.quote(id)}/mfa/{urllib.parse.quote(factor_id)}", auth=True)
+
+    async def admin_user_reset_password(self, id: str, body: Dict[str, Any]) -> None:
+        """Set a user's password (helpdesk reset). (operationId: adminUserResetPassword)"""
+        return await self._request("POST", f"/api/v1/admin/users/{urllib.parse.quote(id)}/password", body=body, auth=True)
+
+    async def admin_user_revoke_password_reset_tokens(self, id: str) -> Dict[str, Any]:
+        """Revoke a user's pending forgot-password tokens. (operationId: adminUserRevokePasswordResetTokens)"""
+        return await self._request("DELETE", f"/api/v1/admin/users/{urllib.parse.quote(id)}/password-reset-tokens", auth=True)
+
+    async def admin_user_list_password_reset_tokens(self, id: str) -> Dict[str, Any]:
+        """List a user's pending forgot-password tokens (no token value). (operationId: adminUserListPasswordResetTokens)"""
+        return await self._request("GET", f"/api/v1/admin/users/{urllib.parse.quote(id)}/password-reset-tokens", auth=True)
+
+    async def admin_user_revoke_refresh_tokens(self, id: str) -> Dict[str, Any]:
+        """Revoke every OAuth 2.0 refresh token a user holds, across all clients. (operationId: adminUserRevokeRefreshTokens)"""
+        return await self._request("DELETE", f"/api/v1/admin/users/{urllib.parse.quote(id)}/refresh-tokens", auth=True)
+
+    async def admin_user_list_sessions(self, id: str) -> ListUserSessionsResponse:
+        """List a user's active sessions. (operationId: adminUserListSessions)"""
+        return await self._request("GET", f"/api/v1/admin/users/{urllib.parse.quote(id)}/sessions", auth=True)
+
+    async def wasm_authz_check(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Evaluate the hosted WASM authorization policy (operational debugging). (operationId: wasmAuthzCheck)"""
+        return await self._request("POST", "/api/v1/admin/wasmauthz/check", body=body, auth=True)
+
+    async def webhook_list_dead_letters(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """List dead-lettered webhook deliveries. (operationId: webhookListDeadLetters)"""
+        return await self._request("GET", "/api/v1/admin/webhooks/deadletters", query=query, auth=True)
+
+    async def webhook_replay_dead_letter(self, id: str) -> Dict[str, Any]:
+        """Replay a dead-lettered webhook delivery. (operationId: webhookReplayDeadLetter)"""
+        return await self._request("POST", f"/api/v1/admin/webhooks/deadletters/{urllib.parse.quote(id)}/replay", auth=True)
+
+    async def webhook_list_subscriptions(self) -> Dict[str, Any]:
+        """List generic event/webhook egress subscriptions. (operationId: webhookListSubscriptions)"""
+        return await self._request("GET", "/api/v1/admin/webhooks/subscriptions", auth=True)
+
+    async def webhook_create_subscription(self, body: WebhookSubscriptionCreateRequest) -> Dict[str, Any]:
+        """Register a webhook egress subscription. (operationId: webhookCreateSubscription)"""
+        return await self._request("POST", "/api/v1/admin/webhooks/subscriptions", body=body, auth=True)
+
+    async def webhook_delete_subscription(self, id: str) -> None:
+        """Delete a webhook egress subscription. (operationId: webhookDeleteSubscription)"""
+        return await self._request("DELETE", f"/api/v1/admin/webhooks/subscriptions/{urllib.parse.quote(id)}", auth=True)
+
+    async def query_audit_events(self, query: Optional[Dict[str, Any]] = None) -> AuditEventList:
+        """Query audit events. (operationId: queryAuditEvents)"""
+        return await self._request("GET", "/api/v1/audit/events", query=query, auth=True)
+
+    async def get_audit_event(self, id: str) -> AuditEvent:
+        """Fetch one audit event by id. (operationId: getAuditEvent)"""
+        return await self._request("GET", f"/api/v1/audit/events/{urllib.parse.quote(id)}", auth=True)
+
+    async def query_audit_facets(self, query: Optional[Dict[str, Any]] = None) -> AuditFacetsResponse:
+        """Aggregate audit-event facet counts. (operationId: queryAuditFacets)"""
+        return await self._request("GET", "/api/v1/audit/facets", query=query, auth=True)
+
+    async def get_client_by_id(self, id: str) -> ClientMetadata:
+        """Fetch one Client record. (operationId: getClientByID)"""
+        return await self._request("GET", f"/api/v1/clients/{urllib.parse.quote(id)}")
+
+    async def erase_subject(self, id: str, body: Optional[Dict[str, Any]] = None) -> ErasureReport:
+        """Erase a subject's data (GDPR Art. 17). (operationId: eraseSubject)"""
+        return await self._request("POST", f"/api/v1/compliance/users/{urllib.parse.quote(id)}/erase", body=body, auth=True)
+
+    async def export_subject(self, id: str) -> Dict[str, Any]:
+        """Export a subject's data (GDPR Art. 15 / 20). (operationId: exportSubject)"""
+        return await self._request("GET", f"/api/v1/compliance/users/{urllib.parse.quote(id)}/export", auth=True)
+
+    async def classify_net_policy(self, query: Optional[Dict[str, Any]] = None) -> ClassifyResponse:
+        """Classify an arbitrary (remote_addr, host) pair. (operationId: classifyNetPolicy)"""
+        return await self._request("GET", "/api/v1/netpolicy/classify", query=query, auth=True)
+
+    async def list_net_policies(self) -> NetPolicyList:
+        """List network policies. (operationId: listNetPolicies)"""
+        return await self._request("GET", "/api/v1/netpolicy/policies", auth=True)
+
+    async def apply_net_policy(self, body: NetPolicy) -> NetPolicyEnvelope:
+        """Apply (create or overwrite) a network policy. (operationId: applyNetPolicy)"""
+        return await self._request("POST", "/api/v1/netpolicy/policies", body=body, auth=True)
+
+    async def delete_net_policy(self, name: str) -> Dict[str, Any]:
+        """Delete a network policy. (operationId: deleteNetPolicy)"""
+        return await self._request("DELETE", f"/api/v1/netpolicy/policies/{urllib.parse.quote(name)}", auth=True)
+
+    async def get_net_policy(self, name: str) -> NetPolicyEnvelope:
+        """Fetch a single network policy. (operationId: getNetPolicy)"""
+        return await self._request("GET", f"/api/v1/netpolicy/policies/{urllib.parse.quote(name)}", auth=True)
+
+    # ---- auth ----
+
+    async def post_activation_prepare(self, body: ActivationPrepareRequest) -> ActivationPrepareResponse:
+        """Prepare a one-time product activation for hosted login. (operationId: postActivationPrepare)"""
+        return await self._request("POST", "/api/v1/activation/prepare", body=body)
+
+    async def get_auth_callback(self, query: Optional[Dict[str, Any]] = None) -> None:
+        """Upstream IdP federation return URL. (operationId: getAuthCallback)"""
+        return await self._request("GET", "/auth/callback", query=query)
+
+    async def forgot_password(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Begin an unauthenticated password reset. (operationId: forgotPassword)"""
+        return await self._request("POST", "/auth/forgot-password", body=body)
+
+    async def home_realm_discovery(self, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """B2B home-realm discovery — resolve an email domain to its IdP. (operationId: homeRealmDiscovery)"""
+        return await self._request("POST", "/auth/home-realm", body=body)
+
+    async def get_login(self, query: Optional[Dict[str, Any]] = None) -> None:
+        """Start a browser-based federated login. (operationId: getLogin)"""
+        return await self._request("GET", "/auth/login", query=query)
+
+    async def post_login(self, body: LoginRequest) -> Union[LoginResponse, AuthorizationCodeResponse, LoginDiscoveryResponse, MFARequiredResponse]:
+        """Authenticate and receive a token. (operationId: postLogin)"""
+        return await self._request("POST", "/auth/login", body=body)
+
+    async def post_mfa_complete(self, body: MFACompleteRequest) -> Union[LoginResponse, AuthorizationCodeResponse]:
+        """Complete an MFA step-up challenge. (operationId: postMFAComplete)"""
+        if body.get("params") is not None:
+            raise SSOError(0, "invalid_request", "params has no application/x-www-form-urlencoded encoding; use code/assertion")
+        return await self._request("POST", "/auth/mfa", body=body, form=True, form_blocked_fields=["params"])
+
+    async def self_register(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Self-service signup (opt-in, default-off). (operationId: selfRegister)"""
+        return await self._request("POST", "/auth/register", body=body)
+
+    async def reset_password(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Complete a password reset with a token. (operationId: resetPassword)"""
+        return await self._request("POST", "/auth/reset-password", body=body)
+
+    async def post_send_code(self, body: SendCodeRequest) -> Dict[str, Any]:
+        """Send a one-time code for the named authenticator. (operationId: postSendCode)"""
+        return await self._request("POST", "/auth/send-code", body=body)
+
+    async def verify_email(self, body: Dict[str, Any]) -> None:
+        """Consume a self-service email verification token. (operationId: verifyEmail)"""
+        return await self._request("POST", "/auth/verify-email", body=body)
+
+    async def post_device_code(self, body: DeviceCodeRequest) -> DeviceCodeResponse:
+        """Device-flow initiation (RFC 8628 §3.1). (operationId: postDeviceCode)"""
+        return await self._request("POST", "/device/code", body=body, form=True)
+
+    async def get_device_verify(self) -> None:
+        """Render the device authorization verification page. (operationId: getDeviceVerify)"""
+        return await self._request("GET", "/device/verify")
+
+    async def post_device_verify(self, body: DeviceVerifyRequest) -> Dict[str, Any]:
+        """User-side device-code approval (RFC 8628 §3.3). (operationId: postDeviceVerify)"""
+        return await self._request("POST", "/device/verify", body=body, form=True, auth=True)
+
+    async def get_end_session(self, query: Optional[Dict[str, Any]] = None) -> None:
+        """OpenID Connect RP-Initiated Logout 1.0. (operationId: getEndSession)"""
+        return await self._request("GET", "/end_session", query=query)
+
+    async def get_login_ui_metadata(self, query: Optional[Dict[str, Any]] = None) -> None:
+        """Return client-specific login UI metadata. (operationId: getLoginUIMetadata)"""
+        return await self._request("GET", "/login-ui/metadata", query=query)
+
+    async def post_logout(self, body: Optional[LogoutRequest] = None) -> Dict[str, Any]:
+        """Revoke the current bearer token and / or named session. (operationId: postLogout)"""
+        return await self._request("POST", "/logout", body=body, auth=True)
+
+    async def post_par(self, body: PARRequest) -> PARResponse:
+        """Pushed Authorization Request (RFC 9126). (operationId: postPAR)"""
+        return await self._request("POST", "/par", body=body, form=True, client_auth=True)
+
+    async def post_register(self, body: DCRRequest) -> DCRResponse:
+        """Dynamic Client Registration (RFC 7591). (operationId: postRegister)"""
+        return await self._request("POST", "/register", body=body, auth=True)
+
+    async def delete_registration(self, client_id: str) -> None:
+        """Deregister the client (RFC 7592 §2.3). (operationId: deleteRegistration)"""
+        return await self._request("DELETE", f"/register/{urllib.parse.quote(client_id)}", auth=True)
+
+    async def get_registration(self, client_id: str) -> DCRResponse:
+        """Read current DCR metadata (RFC 7592 §2.1). (operationId: getRegistration)"""
+        return await self._request("GET", f"/register/{urllib.parse.quote(client_id)}", auth=True)
+
+    async def put_registration(self, client_id: str, body: DCRRequest) -> DCRResponse:
+        """Update DCR metadata (RFC 7592 §2.2). (operationId: putRegistration)"""
+        return await self._request("PUT", f"/register/{urllib.parse.quote(client_id)}", body=body, auth=True)
+
+    async def post_token(self, body: TokenRequest) -> TokenIssuance:
+        """OAuth 2.0 token endpoint (RFC 6749 §3.2). (operationId: postToken)"""
+        return await self._request("POST", "/token", body=body, form=True, client_auth=True)
+
+    async def post_introspect(self, body: IntrospectRequest) -> Union[IntrospectResponse, IntrospectBatchResponse]:
+        """OAuth 2.0 token introspection (RFC 7662). (operationId: postIntrospect)"""
+        return await self._request("POST", "/token/introspect", body=body, form=True, client_auth=True)
+
+    async def post_revoke(self, body: RevokeRequest) -> None:
+        """OAuth 2.0 token revocation (RFC 7009). (operationId: postRevoke)"""
+        return await self._request("POST", "/token/revoke", body=body, form=True, client_auth=True)
+
+    async def post_revoke_all(self) -> Dict[str, Any]:
+        """Bulk revoke every refresh token bound to the bearer's subject. (operationId: postRevokeAll)"""
+        return await self._request("POST", "/token/revoke-all", auth=True)
+
+    # ---- authorization ----
+
+    async def check_authorization(self) -> None:
+        """Check whether a subject has a relation to an object. (operationId: checkAuthorization)"""
+        return await self._request("GET", "/authz/check", auth=True)
+
+    async def expand_authorization_graph(self) -> None:
+        """Reverse-expand an authorization relation graph. (operationId: expandAuthorizationGraph)"""
+        return await self._request("GET", "/authz/graph", auth=True)
+
+    async def delete_authorization_tuple(self) -> None:
+        """Delete an authorization tuple. (operationId: deleteAuthorizationTuple)"""
+        return await self._request("DELETE", "/authz/tuples", auth=True)
+
+    async def list_authorization_tuples(self) -> None:
+        """List authorization tuples. (operationId: listAuthorizationTuples)"""
+        return await self._request("GET", "/authz/tuples", auth=True)
+
+    async def write_authorization_tuple(self) -> None:
+        """Write an authorization tuple. (operationId: writeAuthorizationTuple)"""
+        return await self._request("POST", "/authz/tuples", auth=True)
+
+    async def batch_write_authorization_tuples(self, body: ReBACBatchRequest) -> ReBACBatchResponse:
+        """Atomically apply a batch of authorization tuple mutations. (operationId: batchWriteAuthorizationTuples)"""
+        return await self._request("POST", "/authz/tuples/batch", body=body, auth=True)
+
+    # ---- discovery ----
+
+    async def get_jwks(self) -> JWKS:
+        """JSON Web Key Set for local JWT verification. (operationId: getJWKS)"""
+        return await self._request("GET", "/.well-known/jwks.json")
+
+    async def get_o_auth_authorization_server_metadata(self) -> OpenIDConfiguration:
+        """RFC 8414 OAuth 2.0 Authorization Server Metadata (alias). (operationId: getOAuthAuthorizationServerMetadata)"""
+        return await self._request("GET", "/.well-known/oauth-authorization-server")
+
+    async def protected_resource_metadata(self) -> Dict[str, Any]:
+        """OAuth 2.0 Protected Resource Metadata (RFC 9728). (operationId: protectedResourceMetadata)"""
+        return await self._request("GET", "/.well-known/oauth-protected-resource")
+
+    async def get_open_id_configuration(self) -> OpenIDConfiguration:
+        """OpenID Connect Discovery 1.0 document. (operationId: getOpenIDConfiguration)"""
+        return await self._request("GET", "/.well-known/openid-configuration")
+
+    async def resolve_me_net_policy(self) -> ClassifyResponse:
+        """Classify the caller's own (remote_addr, host). (operationId: resolveMeNetPolicy)"""
+        return await self._request("GET", "/api/v1/netpolicy/resolve-me")
+
+    async def post_setup(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """First-run provisioning (opt-in, public, single-use). (operationId: postSetup)"""
+        return await self._request("POST", "/api/v1/setup", body=body)
+
+    async def get_setup_status(self) -> Dict[str, Any]:
+        """First-run setup status (opt-in, public). (operationId: getSetupStatus)"""
+        return await self._request("GET", "/api/v1/setup/status")
+
+    async def get_api_version_preview(self) -> Dict[str, Any]:
+        """ADR-0008 v2alpha proof-of-mechanism route (opt-in, preview). (operationId: getAPIVersionPreview)"""
+        return await self._request("GET", "/api/v2alpha/version")
+
+    async def get_check_session_iframe(self) -> None:
+        """OpenID Connect Session Management 1.0 OP iframe. (operationId: getCheckSessionIframe)"""
+        return await self._request("GET", "/check_session_iframe")
+
+    async def get_health(self) -> HealthResponse:
+        """Liveness + identity probe. (operationId: getHealth)"""
+        return await self._request("GET", "/health")
+
+    # ---- federation ----
+
+    async def get_federation_entity_configuration(self) -> None:
+        """OpenID Federation 1.0 entity configuration. (operationId: getFederationEntityConfiguration)"""
+        return await self._request("GET", "/.well-known/openid-federation")
+
+    async def get_federation_historical_keys(self) -> None:
+        """Return historical federation verification keys. (operationId: getFederationHistoricalKeys)"""
+        return await self._request("GET", "/.well-known/openid-federation-historical-keys")
+
+    async def list_federation_subordinates(self) -> None:
+        """List configured federation subordinates. (operationId: listFederationSubordinates)"""
+        return await self._request("GET", "/.well-known/openid-federation-list")
+
+    async def resolve_federation_trust_chain(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """OpenID Federation 1.0 §8.3 trust-chain resolution. (operationId: resolveFederationTrustChain)"""
+        return await self._request("GET", "/.well-known/openid-federation-resolve", query=query)
+
+    async def get_federation_trust_mark_status(self, query: Optional[Dict[str, Any]] = None) -> None:
+        """Resolve the status of a federation trust mark. (operationId: getFederationTrustMarkStatus)"""
+        return await self._request("GET", "/.well-known/openid-federation-trust-mark-status", query=query)
+
+    async def get_home_realm(self, query: Optional[Dict[str, Any]] = None) -> None:
+        """Discover the home realm for a browser login identifier. (operationId: getHomeRealm)"""
+        return await self._request("GET", "/auth/home-realm", query=query)
+
+    async def get_federation_fetch(self, query: Optional[Dict[str, Any]] = None) -> None:
+        """OpenID Federation 1.0 §8 Federation Fetch endpoint. (operationId: getFederationFetch)"""
+        return await self._request("GET", "/fetch", query=query)
+
+    # ---- me ----
+
+    async def get_my_account_context(self, query: Optional[Dict[str, Any]] = None) -> ActivationContextResponse:
+        """Read the authenticated subject's product/account context. (operationId: getMyAccountContext)"""
+        return await self._request("GET", "/api/v1/me/account-context", query=query, auth=True)
+
+    async def post_my_activation_claim(self, body: ActivationClaimRequest) -> ActivationContextResponse:
+        """Claim a prepared activation for the authenticated subject. (operationId: postMyActivationClaim)"""
+        return await self._request("POST", "/api/v1/me/activation/claim", body=body, auth=True)
+
+    async def list_my_physical_devices(self) -> Dict[str, Any]:
+        """List physical devices owned by the authenticated subject. (operationId: listMyPhysicalDevices)"""
+        return await self._request("GET", "/me/devices", auth=True)
+
+    async def delete_my_physical_device(self, id: str) -> None:
+        """Delete one physical device and revoke its associated sessions. (operationId: deleteMyPhysicalDevice)"""
+        return await self._request("DELETE", f"/me/devices/{urllib.parse.quote(id)}", auth=True)
+
+    async def get_my_device(self, id: str) -> None:
+        """Get one device owned by the authenticated subject. (operationId: getMyDevice)"""
+        return await self._request("GET", f"/me/devices/{urllib.parse.quote(id)}", auth=True)
+
+    async def patch_my_device(self, id: str, body: Dict[str, Any]) -> None:
+        """Update the display metadata for one owned device. (operationId: patchMyDevice)"""
+        return await self._request("PATCH", f"/me/devices/{urllib.parse.quote(id)}", body=body, auth=True)
+
+    async def get_my_menus(self, query: Optional[Dict[str, Any]] = None) -> MenuTreeResponse:
+        """Menu tree the bearer's subject is authorized to see. (operationId: getMyMenus)"""
+        return await self._request("GET", "/menus/me", query=query, auth=True)
+
+    async def get_my_permissions(self, query: Optional[Dict[str, Any]] = None) -> PermissionListResponse:
+        """Permissions of the bearer's subject for the inferred client. (operationId: getMyPermissions)"""
+        return await self._request("GET", "/permissions/me", query=query, auth=True)
+
+    async def get_my_roles(self, query: Optional[Dict[str, Any]] = None) -> RoleListResponse:
+        """Roles of the bearer's subject for the inferred client. (operationId: getMyRoles)"""
+        return await self._request("GET", "/roles/me", query=query, auth=True)
+
+    # ---- mesh ----
+
+    async def mesh_ext_authz(self) -> None:
+        """Envoy/Istio ext_authz HTTP-mode authorization check (opt-in). (operationId: meshExtAuthz)"""
+        return await self._request("GET", "/mesh/ext-authz", auth=True)
+
+    # ---- operational ----
+
+    async def get_runtime_status(self) -> None:
+        """Return the versioned API status document. (operationId: getRuntimeStatus)"""
+        return await self._request("GET", "/api/v1/status")
+
+    async def get_livez(self) -> LivenessResponse:
+        """Liveness probe. (operationId: getLivez)"""
+        return await self._request("GET", "/livez")
+
+    async def get_readyz(self) -> ReadinessResponse:
+        """Readiness probe — aggregates every registered ReadyCheck. (operationId: getReadyz)"""
+        return await self._request("GET", "/readyz")
+
+    # ---- scim ----
+
+    async def scim_bulk(self, body: Dict[str, Any]) -> None:
+        """SCIM bulk operations (RFC 7644 §3.7). (operationId: scimBulk)"""
+        return await self._request("POST", "/api/v1/scim/v2/Bulk", body=body, auth=True)
+
+    async def scim_list_groups(self, query: Optional[Dict[str, Any]] = None) -> None:
+        """List / search SCIM Groups (RFC 7644 §3.4). (operationId: scimListGroups)"""
+        return await self._request("GET", "/api/v1/scim/v2/Groups", query=query, auth=True)
+
+    async def scim_create_group(self, body: Dict[str, Any]) -> None:
+        """Create a SCIM Group (RFC 7643 §4.2). (operationId: scimCreateGroup)"""
+        return await self._request("POST", "/api/v1/scim/v2/Groups", body=body, auth=True)
+
+    async def scim_delete_group(self, id: str) -> None:
+        """Delete a SCIM Group (RFC 7644 §3.6). (operationId: scimDeleteGroup)"""
+        return await self._request("DELETE", f"/api/v1/scim/v2/Groups/{urllib.parse.quote(id)}", auth=True)
+
+    async def scim_get_group(self, id: str) -> None:
+        """Fetch one SCIM Group. (operationId: scimGetGroup)"""
+        return await self._request("GET", f"/api/v1/scim/v2/Groups/{urllib.parse.quote(id)}", auth=True)
+
+    async def scim_patch_group(self, id: str, body: Dict[str, Any]) -> None:
+        """Patch a SCIM Group (RFC 7644 §3.5.2). (operationId: scimPatchGroup)"""
+        return await self._request("PATCH", f"/api/v1/scim/v2/Groups/{urllib.parse.quote(id)}", body=body, auth=True)
+
+    async def scim_replace_group(self, id: str, body: Dict[str, Any]) -> None:
+        """Replace a SCIM Group (RFC 7644 §3.5.1). (operationId: scimReplaceGroup)"""
+        return await self._request("PUT", f"/api/v1/scim/v2/Groups/{urllib.parse.quote(id)}", body=body, auth=True)
+
+    async def scim_me_delete(self) -> None:
+        """Delete the authenticated subject's own SCIM User (RFC 7644 §3.11). (operationId: scimMeDelete)"""
+        return await self._request("DELETE", "/api/v1/scim/v2/Me", auth=True)
+
+    async def scim_me_get(self) -> None:
+        """The authenticated subject's own SCIM User resource (RFC 7644 §3.11). (operationId: scimMeGet)"""
+        return await self._request("GET", "/api/v1/scim/v2/Me", auth=True)
+
+    async def scim_me_patch(self, body: Dict[str, Any]) -> None:
+        """Modify the authenticated subject's own SCIM User (RFC 7644 §3.11). (operationId: scimMePatch)"""
+        return await self._request("PATCH", "/api/v1/scim/v2/Me", body=body, auth=True)
+
+    async def scim_me_put(self, body: Dict[str, Any]) -> None:
+        """Replace the authenticated subject's own SCIM User (RFC 7644 §3.11). (operationId: scimMePut)"""
+        return await self._request("PUT", "/api/v1/scim/v2/Me", body=body, auth=True)
+
+    async def scim_schemas(self) -> None:
+        """SCIM resource schemas (RFC 7643 §7). (operationId: scimSchemas)"""
+        return await self._request("GET", "/api/v1/scim/v2/Schemas", auth=True)
+
+    async def scim_service_provider_config(self) -> None:
+        """SCIM service-provider configuration (RFC 7643 §5). (operationId: scimServiceProviderConfig)"""
+        return await self._request("GET", "/api/v1/scim/v2/ServiceProviderConfig", auth=True)
+
+    async def scim_list_users(self, query: Optional[Dict[str, Any]] = None) -> None:
+        """List / search SCIM Users (RFC 7644 §3.4). (operationId: scimListUsers)"""
+        return await self._request("GET", "/api/v1/scim/v2/Users", query=query, auth=True)
+
+    async def scim_create_user(self, body: Dict[str, Any]) -> None:
+        """Create a SCIM User (RFC 7644 §3.3). (operationId: scimCreateUser)"""
+        return await self._request("POST", "/api/v1/scim/v2/Users", body=body, auth=True)
+
+    async def scim_delete_user(self, id: str) -> None:
+        """Delete a SCIM User (RFC 7644 §3.6). (operationId: scimDeleteUser)"""
+        return await self._request("DELETE", f"/api/v1/scim/v2/Users/{urllib.parse.quote(id)}", auth=True)
+
+    async def scim_get_user(self, id: str) -> None:
+        """Fetch one SCIM User (RFC 7644 §3.4.1). (operationId: scimGetUser)"""
+        return await self._request("GET", f"/api/v1/scim/v2/Users/{urllib.parse.quote(id)}", auth=True)
+
+    async def scim_patch_user(self, id: str, body: Dict[str, Any]) -> None:
+        """Patch a SCIM User (RFC 7644 §3.5.2). (operationId: scimPatchUser)"""
+        return await self._request("PATCH", f"/api/v1/scim/v2/Users/{urllib.parse.quote(id)}", body=body, auth=True)
+
+    async def scim_replace_user(self, id: str, body: Dict[str, Any]) -> None:
+        """Replace a SCIM User (RFC 7644 §3.5.1). (operationId: scimReplaceUser)"""
+        return await self._request("PUT", f"/api/v1/scim/v2/Users/{urllib.parse.quote(id)}", body=body, auth=True)
+
+    # ---- self-service ----
+
+    async def get_branding(self) -> Dict[str, Any]:
+        """Public per-host white-label branding for the hosted login SPA. (operationId: getBranding)"""
+        return await self._request("GET", "/branding")
+
+    async def list_my_consents(self) -> Dict[str, Any]:
+        """List the authenticated user's consent grants. (operationId: listMyConsents)"""
+        return await self._request("GET", "/consents/me", auth=True)
+
+    async def delete_my_consent(self, client_id: str) -> None:
+        """Revoke the authenticated user's consent for a client. (operationId: deleteMyConsent)"""
+        return await self._request("DELETE", f"/consents/me/{urllib.parse.quote(client_id)}", auth=True)
+
+    async def get_me(self) -> Dict[str, Any]:
+        """Authenticated self-service account overview. (operationId: getMe)"""
+        return await self._request("GET", "/me", auth=True)
+
+    async def patch_me(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Authenticated self-service profile update. (operationId: patchMe)"""
+        return await self._request("PATCH", "/me", body=body, auth=True)
+
+    async def erase_my_account(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Erase the authenticated user's own account (GDPR Art. 17). (operationId: eraseMyAccount)"""
+        return await self._request("POST", "/me/account/erase", body=body, auth=True)
+
+    async def export_my_data(self) -> Dict[str, Any]:
+        """Export the authenticated user's own data (GDPR Art. 15). (operationId: exportMyData)"""
+        return await self._request("GET", "/me/data-export", auth=True)
+
+    async def get_my_device_activity(self, id: str) -> None:
+        """Get activity for one owned device. (operationId: getMyDeviceActivity)"""
+        return await self._request("GET", f"/me/devices/{urllib.parse.quote(id)}/activity", auth=True)
+
+    async def report_my_device_lost(self, id: str) -> None:
+        """Report an owned device lost and revoke its sessions. (operationId: reportMyDeviceLost)"""
+        return await self._request("POST", f"/me/devices/{urllib.parse.quote(id)}/lost", auth=True)
+
+    async def get_my_device_sessions(self, id: str) -> None:
+        """List sessions associated with one owned device. (operationId: getMyDeviceSessions)"""
+        return await self._request("GET", f"/me/devices/{urllib.parse.quote(id)}/sessions", auth=True)
+
+    async def set_my_device_trust(self, id: str) -> None:
+        """Change the trust state of one owned device. (operationId: setMyDeviceTrust)"""
+        return await self._request("POST", f"/me/devices/{urllib.parse.quote(id)}/trust", auth=True)
+
+    async def change_my_email(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Begin a verified email change. (operationId: changeMyEmail)"""
+        return await self._request("POST", "/me/email/change", body=body, auth=True)
+
+    async def verify_my_email(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Complete a verified email change. (operationId: verifyMyEmail)"""
+        return await self._request("POST", "/me/email/verify", body=body, auth=True)
+
+    async def list_my_identities(self) -> Dict[str, Any]:
+        """List the authenticated user's linked external identities. (operationId: listMyIdentities)"""
+        return await self._request("GET", "/me/identities", auth=True)
+
+    async def delete_my_identity(self, id: str) -> None:
+        """Unlink one of the authenticated user's own linked identities. (operationId: deleteMyIdentity)"""
+        return await self._request("DELETE", f"/me/identities/{urllib.parse.quote(id)}", auth=True)
+
+    async def accept_invitation(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Accept an org invitation (join the org). (operationId: acceptInvitation)"""
+        return await self._request("POST", "/me/invitations/accept", body=body, auth=True)
+
+    async def get_my_login_history(self) -> None:
+        """List login history for the authenticated user. (operationId: getMyLoginHistory)"""
+        return await self._request("GET", "/me/login-history", auth=True)
+
+    async def list_my_mfa_factors(self) -> Dict[str, Any]:
+        """List the authenticated user's registered second factors. (operationId: listMyMFAFactors)"""
+        return await self._request("GET", "/me/mfa", auth=True)
+
+    async def count_my_recovery_codes(self) -> Dict[str, Any]:
+        """Count the caller's remaining recovery codes. (operationId: countMyRecoveryCodes)"""
+        return await self._request("GET", "/me/mfa/recovery-codes", auth=True)
+
+    async def regenerate_my_recovery_codes(self) -> Dict[str, Any]:
+        """Regenerate the caller's single-use MFA recovery codes. (operationId: regenerateMyRecoveryCodes)"""
+        return await self._request("POST", "/me/mfa/recovery-codes", auth=True)
+
+    async def begin_my_totp_enrollment(self) -> Dict[str, Any]:
+        """Begin self-service TOTP enrollment. (operationId: beginMyTOTPEnrollment)"""
+        return await self._request("POST", "/me/mfa/totp/begin", auth=True)
+
+    async def confirm_my_totp_enrollment(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Confirm and commit a self-service TOTP factor. (operationId: confirmMyTOTPEnrollment)"""
+        return await self._request("POST", "/me/mfa/totp/confirm", body=body, auth=True)
+
+    async def begin_my_passkey_registration(self, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Begin authenticated self-service passkey registration. (operationId: beginMyPasskeyRegistration)"""
+        return await self._request("POST", "/me/mfa/webauthn/begin", body=body, auth=True)
+
+    async def finish_my_passkey_registration(self, body: Dict[str, Any], query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Finish authenticated self-service passkey registration. (operationId: finishMyPasskeyRegistration)"""
+        return await self._request("POST", "/me/mfa/webauthn/finish", query=query, body=body, auth=True)
+
+    async def delete_my_mfa_factor(self, id: str) -> None:
+        """Unbind one of the authenticated user's second factors. (operationId: deleteMyMFAFactor)"""
+        return await self._request("DELETE", f"/me/mfa/{urllib.parse.quote(id)}", auth=True)
+
+    async def list_my_organizations(self) -> Dict[str, Any]:
+        """List the orgs the authenticated user belongs to. (operationId: listMyOrganizations)"""
+        return await self._request("GET", "/me/organizations", auth=True)
+
+    async def leave_my_organization(self, tenant_id: str) -> None:
+        """Leave an organization (self-service). (operationId: leaveMyOrganization)"""
+        return await self._request("DELETE", f"/me/organizations/{urllib.parse.quote(tenant_id)}", auth=True)
+
+    async def org_admin_list_invitations(self, tenant_id: str) -> Dict[str, Any]:
+        """List pending invitations for an org you administer (no token value). (operationId: orgAdminListInvitations)"""
+        return await self._request("GET", f"/me/organizations/{urllib.parse.quote(tenant_id)}/invitations", auth=True)
+
+    async def org_admin_send_invitation(self, tenant_id: str, body: Dict[str, Any]) -> None:
+        """Send an invitation for an org you administer (delegated org-admin). (operationId: orgAdminSendInvitation)"""
+        return await self._request("POST", f"/me/organizations/{urllib.parse.quote(tenant_id)}/invitations", body=body, auth=True)
+
+    async def org_admin_revoke_invitation(self, tenant_id: str, email: str) -> None:
+        """Revoke every pending invitation for a recipient (delegated org-admin). (operationId: orgAdminRevokeInvitation)"""
+        return await self._request("DELETE", f"/me/organizations/{urllib.parse.quote(tenant_id)}/invitations/{urllib.parse.quote(email)}", auth=True)
+
+    async def org_admin_list_members(self, tenant_id: str) -> Dict[str, Any]:
+        """List the roster of an org you administer (delegated org-admin). (operationId: orgAdminListMembers)"""
+        return await self._request("GET", f"/me/organizations/{urllib.parse.quote(tenant_id)}/members", auth=True)
+
+    async def org_admin_remove_member(self, tenant_id: str, user_id: str) -> None:
+        """Remove a member from an org you administer (delegated org-admin). (operationId: orgAdminRemoveMember)"""
+        return await self._request("DELETE", f"/me/organizations/{urllib.parse.quote(tenant_id)}/members/{urllib.parse.quote(user_id)}", auth=True)
+
+    async def org_admin_put_member(self, tenant_id: str, user_id: str, body: Optional[Dict[str, Any]] = None) -> None:
+        """Change an existing member's org role (delegated org-admin). (operationId: orgAdminPutMember)"""
+        return await self._request("PUT", f"/me/organizations/{urllib.parse.quote(tenant_id)}/members/{urllib.parse.quote(user_id)}", body=body, auth=True)
+
+    async def change_my_password(self, body: Dict[str, Any]) -> None:
+        """Authenticated self-service password change. (operationId: changeMyPassword)"""
+        return await self._request("POST", "/me/password", body=body, auth=True)
+
+    async def get_my_preferences(self) -> MyPreferences:
+        """Get the authenticated user's allowlisted preferences. (operationId: getMyPreferences)"""
+        return await self._request("GET", "/me/preferences", auth=True)
+
+    async def put_my_preferences(self, body: MyPreferencesUpdateRequest) -> PreferenceUpdateResponse:
+        """Update the authenticated user's allowlisted preferences. (operationId: putMyPreferences)"""
+        return await self._request("PUT", "/me/preferences", body=body, auth=True)
+
+    async def get_my_security_activity(self) -> None:
+        """List the authenticated user's security activity. (operationId: getMySecurityActivity)"""
+        return await self._request("GET", "/me/security/activity", auth=True)
+
+    async def get_me_sessions(self) -> None:
+        """List the authenticated user's active sessions. (operationId: getMeSessions)"""
+        return await self._request("GET", "/me/sessions", auth=True)
+
+    async def get_enriched_me_sessions(self) -> None:
+        """List active sessions enriched with device metadata. (operationId: getEnrichedMeSessions)"""
+        return await self._request("GET", "/me/sessions/enriched", auth=True)
+
+    async def revoke_all_me_sessions(self) -> None:
+        """Revoke all sessions owned by the authenticated user. (operationId: revokeAllMeSessions)"""
+        return await self._request("POST", "/me/sessions/revoke-all", auth=True)
+
+    async def delete_me_session(self, id: str) -> None:
+        """Revoke one session owned by the authenticated user. (operationId: deleteMeSession)"""
+        return await self._request("DELETE", f"/me/sessions/{urllib.parse.quote(id)}", auth=True)
+
+    async def list_my_trusted_devices(self) -> Dict[str, Any]:
+        """List the authenticated user's trusted (MFA-skip) devices. (operationId: listMyTrustedDevices)"""
+        return await self._request("GET", "/me/trusted-devices", auth=True)
+
+    async def trust_my_device(self, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Mark the current device trusted, skipping MFA on future logins. (operationId: trustMyDevice)"""
+        return await self._request("POST", "/me/trusted-devices/trust", body=body, auth=True)
+
+    async def revoke_my_trusted_device(self, id: str) -> None:
+        """Revoke one of the authenticated user's trusted-device grants. (operationId: revokeMyTrustedDevice)"""
+        return await self._request("DELETE", f"/me/trusted-devices/{urllib.parse.quote(id)}", auth=True)
+
+    async def revoke_my_sessions(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Sign out everywhere — revoke the user's sessions in bulk. (operationId: revokeMySessions)"""
+        return await self._request("DELETE", "/sessions/me", query=query, auth=True)
+
+    async def list_my_sessions(self) -> Dict[str, Any]:
+        """List the authenticated user's own active sessions. (operationId: listMySessions)"""
+        return await self._request("GET", "/sessions/me", auth=True)
+
+    async def delete_my_session(self, id: str) -> None:
+        """Revoke one of the authenticated user's own sessions. (operationId: deleteMySession)"""
+        return await self._request("DELETE", f"/sessions/me/{urllib.parse.quote(id)}", auth=True)
+
+    # ---- ssf ----
+
+    async def get_ssf_configuration(self) -> None:
+        """Return Shared Signals Framework transmitter metadata. (operationId: getSSFConfiguration)"""
+        return await self._request("GET", "/.well-known/ssf-configuration")
+
+    async def ssf_receive(self, body: Dict[str, Any]) -> None:
+        """OpenID Shared Signals (CAEP/SSF) push-delivery receiver (opt-in). (operationId: ssfReceive)"""
+        return await self._request("POST", "/ssf/receive", body=body)
+
+    async def list_ssf_streams(self) -> None:
+        """List Shared Signals delivery streams. (operationId: listSSFStreams)"""
+        return await self._request("GET", "/ssf/streams", auth=True)
+
+    async def create_ssf_stream(self, body: Dict[str, Any]) -> None:
+        """Create a Shared Signals delivery stream. (operationId: createSSFStream)"""
+        return await self._request("POST", "/ssf/streams", body=body, auth=True)
+
+    async def delete_ssf_stream(self, id: str) -> None:
+        """Delete one Shared Signals delivery stream. (operationId: deleteSSFStream)"""
+        return await self._request("DELETE", f"/ssf/streams/{urllib.parse.quote(id)}", auth=True)
+
+    async def get_ssf_stream(self, id: str) -> None:
+        """Get one Shared Signals delivery stream. (operationId: getSSFStream)"""
+        return await self._request("GET", f"/ssf/streams/{urllib.parse.quote(id)}", auth=True)
+
+    async def update_ssf_stream(self, id: str, body: Dict[str, Any]) -> None:
+        """Replace one Shared Signals delivery stream. (operationId: updateSSFStream)"""
+        return await self._request("PUT", f"/ssf/streams/{urllib.parse.quote(id)}", body=body, auth=True)
+
+    # ---- userinfo ----
+
+    async def get_user_info(self) -> Union[UserInfo, User]:
+        """Fetch the user record for the bearer's subject. (operationId: getUserInfo)"""
+        return await self._request("GET", "/userinfo", auth=True)
+
+    # ---- webauthn ----
+
+    async def post_web_authn_login_begin(self, body: WebAuthnBeginRequest) -> WebAuthnBeginLoginResponse:
+        """Start a WebAuthn login (assertion) ceremony. (operationId: postWebAuthnLoginBegin)"""
+        return await self._request("POST", "/webauthn/login/begin", body=body)
+
+    async def post_web_authn_login_finish(self, body: Dict[str, Any], query: Optional[Dict[str, Any]] = None) -> WebAuthnFinishLoginResponse:
+        """Complete a WebAuthn login — optionally mint a token. (operationId: postWebAuthnLoginFinish)"""
+        return await self._request("POST", "/webauthn/login/finish", query=query, body=body)
+
+    async def post_web_authn_registration_begin(self, body: WebAuthnBeginRequest) -> WebAuthnBeginRegistrationResponse:
+        """Start a WebAuthn registration ceremony. (operationId: postWebAuthnRegistrationBegin)"""
+        return await self._request("POST", "/webauthn/registration/begin", body=body)
+
+    async def post_web_authn_registration_finish(self, body: Dict[str, Any], query: Optional[Dict[str, Any]] = None) -> WebAuthnFinishRegistrationResponse:
+        """Complete a WebAuthn registration ceremony. (operationId: postWebAuthnRegistrationFinish)"""
+        return await self._request("POST", "/webauthn/registration/finish", query=query, body=body)
+
+
 __all__ = [
     "SSOError",
+    "UNCLASSIFIED_ERROR",
     "SSOClient",
+    "AsyncSSOClient",
     "HttpRequest",
     "HttpResponse",
     "Transport",
     "UrllibTransport",
+    "AsyncTransport",
+    "AsyncioTransport",
     "AccessPolicy",
     "AccessPolicyConvergenceSummary",
     "AccessPolicyList",

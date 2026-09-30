@@ -194,6 +194,7 @@ jobs:
         run: |
           php tests/hosted_login_test.php
           php tests/preferences_test.php
+          php tests/errors_conformance_test.php
           php tests/entitlement_test.php
           php tests/license_file_test.php
       - name: Verify offline Composer path installation
