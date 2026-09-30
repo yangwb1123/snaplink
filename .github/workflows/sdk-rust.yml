@@ -54,6 +54,26 @@ jobs:
             exit 1
           fi
 
+      - name: Fail fast when the registry token is absent
+        shell: bash
+        # cargo reports "please provide a non-empty token" and exits 101, which
+        # says nothing about which secret was missing or where it belongs. The
+        # usual cause is a secret added under a different environment name than
+        # the one this job declares, which GitHub silently replaces with an
+        # empty one. The token is never printed; only its presence is checked.
+        run: |
+          if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
+            echo "::error::CARGO_REGISTRY_TOKEN is empty for this job." >&2
+            echo "Add a crates.io API token that may publish new crates as an" >&2
+            echo "environment secret named CARGO_REGISTRY_TOKEN on the 'crates-io'" >&2
+            echo "environment (Settings -> Environments -> crates-io -> Environment" >&2
+            echo "secrets), then re-run this workflow. Do not re-tag: the tag is" >&2
+            echo "already correct." >&2
+            exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
       - name: Publish to crates.io
         run: cargo publish --locked
         env:

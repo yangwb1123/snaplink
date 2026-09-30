@@ -73,6 +73,22 @@ jobs:
             exit 1
           fi
 
+      - name: Fail fast when the registry token is absent
+        shell: bash
+        # An empty NPM_TOKEN surfaces as a bare ENEEDAUTH from npm, with no hint
+        # that the secret was added to the wrong environment. Only the presence
+        # of the token is checked; it is never printed.
+        run: |
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "::error::NODE_AUTH_TOKEN (from secret NPM_TOKEN) is empty for this job." >&2
+            echo "Add an npm automation token that may publish the @snaplink scope" >&2
+            echo "as a secret named NPM_TOKEN on the 'npm' environment (Settings ->" >&2
+            echo "Environments -> npm -> Environment secrets), then re-run." >&2
+            exit 1
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish to npm with provenance
         run: npm publish --provenance --access public
         env:
