@@ -8,11 +8,15 @@ declare(strict_types=1);
 // drift detectable.
 
 require __DIR__ . '/../src/Entitlement.php';
-require __DIR__ . '/../src/SnaplinkClient.php';
+require __DIR__ . '/../src/StateStore.php';
+require __DIR__ . '/../src/MemoryStateStore.php';
+require __DIR__ . '/../src/LoginResult.php';
+require __DIR__ . '/../src/SSOError.php';
+require __DIR__ . '/../src/SSOClient.php';
 
 use Snaplink\MemoryStateStore;
-use Snaplink\SnaplinkClient;
-use Snaplink\SnaplinkError;
+use Snaplink\SSOClient;
+use Snaplink\SSOError;
 
 $fixture = json_decode(
     (string) file_get_contents(__DIR__ . '/../../../ops/build/sdk-conformance/errors.json'),
@@ -39,9 +43,9 @@ function check(string $name, bool $condition, string $detail = ''): void
 }
 
 /** A client whose JSON transport always answers with this status and body. */
-function failingClient(int $status, string $body): SnaplinkClient
+function failingClient(int $status, string $body): SSOClient
 {
-    return new SnaplinkClient(
+    return new SSOClient(
         new MemoryStateStore(),
         static fn(string $endpoint, array $form): array => [
             'access_token' => 'access-1',
@@ -55,7 +59,7 @@ function failingClient(int $status, string $body): SnaplinkClient
 }
 
 /** Log a client in so the account-context call carries a bearer. */
-function login(SnaplinkClient $client): void
+function login(SSOClient $client): void
 {
     $options = [
         'base_url' => 'https://sso.example.test',
@@ -86,7 +90,7 @@ foreach ($fixture['cases'] as $case) {
     try {
         $client->getAccountContext('pro');
         check("code {$case['code']} is reported", false, 'no error was raised');
-    } catch (SnaplinkError $error) {
+    } catch (SSOError $error) {
         check(
             "code {$case['code']} survives verbatim",
             $error->error === $case['code'] && $error->status === $case['status'],
@@ -107,7 +111,7 @@ foreach ([
     try {
         $client->getAccountContext('pro');
         check("$label is reported as unclassified", false, 'no error was raised');
-    } catch (SnaplinkError $error) {
+    } catch (SSOError $error) {
         check(
             "$label is reported as unclassified",
             $error->error === $fallback && $error->error !== 'invalid_grant' && $error->status === 500,
@@ -117,9 +121,9 @@ foreach ([
 }
 
 try {
-    (new SnaplinkClient())->refresh();
+    (new SSOClient())->refresh();
     check('a pre-flight failure keeps the zero status', false, 'no error was raised');
-} catch (SnaplinkError $error) {
+} catch (SSOError $error) {
     check(
         'a pre-flight failure keeps the zero status',
         $error->status === 0 && $error->error === 'login_required',
