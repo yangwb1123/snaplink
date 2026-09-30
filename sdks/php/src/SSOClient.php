@@ -4,68 +4,7 @@ declare(strict_types=1);
 
 namespace Snaplink;
 
-interface StateStore
-{
-    public function take(string $key): ?string;
-
-    public function save(string $key, string $value): void;
-}
-
-final class MemoryStateStore implements StateStore
-{
-    private array $values = [];
-
-    public function take(string $key): ?string
-    {
-        $value = $this->values[$key] ?? null;
-        unset($this->values[$key]);
-        return $value;
-    }
-
-    public function save(string $key, string $value): void
-    {
-        $this->values[$key] = $value;
-    }
-}
-
-final class LoginResult
-{
-    public function __construct(
-        public readonly ?string $redirect_url = null,
-        public readonly ?array $tokens = null,
-        public readonly ?string $return_to = null,
-    ) {
-    }
-
-    public function isComplete(): bool
-    {
-        return $this->tokens !== null;
-    }
-
-    public function redirectUrl(): ?string
-    {
-        return $this->redirect_url;
-    }
-
-    public function accessToken(): ?string
-    {
-        $token = $this->tokens['access_token'] ?? null;
-        return is_string($token) ? $token : null;
-    }
-}
-
-final class SnaplinkError extends \RuntimeException
-{
-    public function __construct(
-        public readonly int $status,
-        public readonly string $error,
-        public readonly ?string $description = null,
-    ) {
-        parent::__construct($description ?: $error);
-    }
-}
-
-final class SnaplinkClient
+final class SSOClient
 {
     private StateStore $store;
     private $transport;
@@ -96,7 +35,7 @@ final class SnaplinkClient
         $callback = self::option($options, 'callback_url', 'callbackUrl');
         if ((!is_string($callback) || $callback === '') && array_key_exists('setup', $options)) {
             if (!is_array($options['setup'])) {
-                throw new SnaplinkError(0, 'invalid_request', 'setup must be an array');
+                throw new SSOError(0, 'invalid_request', 'setup must be an array');
             }
             $this->prepareSetup($resolved['base_url'], $resolved['client_id'], $options['setup']);
         }
@@ -146,17 +85,17 @@ final class SnaplinkClient
     public function getAccountContext(?string $productId = null): array
     {
         if ($this->tokens === null || !is_string($this->tokens['access_token'] ?? null)) {
-            throw new SnaplinkError(401, 'login_required', 'login is required');
+            throw new SSOError(401, 'login_required', 'login is required');
         }
         $product = $productId ?? ($this->accountContext['product_id'] ?? null);
         if (!is_string($product) || trim($product) === '') {
-            throw new SnaplinkError(0, 'invalid_request', 'product_id is required');
+            throw new SSOError(0, 'invalid_request', 'product_id is required');
         }
         $endpoint = rtrim((string) $this->baseUrl, '/') . '/api/v1/me/account-context?product_id=' . rawurlencode($product);
         $response = $this->jsonRequest('GET', $endpoint, null, (string) $this->tokens['access_token']);
         $context = $response['context'] ?? null;
         if (!is_array($context)) {
-            throw new SnaplinkError(0, 'invalid_response', 'account context response was invalid');
+            throw new SSOError(0, 'invalid_response', 'account context response was invalid');
         }
         $this->accountContext = $context;
         return $context;
@@ -238,7 +177,7 @@ final class SnaplinkClient
     {
         $token = $this->accessToken();
         if ($token === null || $token === '' || $this->baseUrl === null) {
-            throw new SnaplinkError(401, 'login_required', 'login is required');
+            throw new SSOError(401, 'login_required', 'login is required');
         }
         return $this->jsonRequest('GET', rtrim($this->baseUrl, '/') . '/me/preferences', null, $token);
     }
@@ -255,7 +194,7 @@ final class SnaplinkClient
     {
         $token = $this->accessToken();
         if ($token === null || $token === '' || $this->baseUrl === null) {
-            throw new SnaplinkError(401, 'login_required', 'login is required');
+            throw new SSOError(401, 'login_required', 'login is required');
         }
         $body = PresentationPreferences::toMyPreferencesUpdateRequest($patch);
         return $this->jsonRequest('PUT', rtrim($this->baseUrl, '/') . '/me/preferences', $body, $token);
@@ -265,10 +204,10 @@ final class SnaplinkClient
     {
         $refreshToken = $this->tokens['refresh_token'] ?? null;
         if (!is_string($refreshToken) || $refreshToken === '') {
-            throw new SnaplinkError(0, 'login_required', 'no refresh token is held');
+            throw new SSOError(0, 'login_required', 'no refresh token is held');
         }
         if ($this->clientId === null || $this->baseUrl === null) {
-            throw new SnaplinkError(0, 'login_required', 'login is required');
+            throw new SSOError(0, 'login_required', 'login is required');
         }
         $tokens = $this->tokenRequest(rtrim($this->baseUrl, '/') . '/token', [
             'grant_type' => 'refresh_token',
@@ -305,39 +244,39 @@ final class SnaplinkClient
         $callback = self::parseCallback($callbackUrl, $options['redirect_uri'], $options['allow_insecure']);
         $raw = $this->store->take(self::storeKey($options['client_id']));
         if ($raw === null) {
-            throw new SnaplinkError(0, 'invalid_request', 'hosted-login transaction is missing or expired');
+            throw new SSOError(0, 'invalid_request', 'hosted-login transaction is missing or expired');
         }
         try {
             $transaction = json_decode($raw, true, 32, JSON_THROW_ON_ERROR);
         } catch (\JsonException) {
-            throw new SnaplinkError(0, 'invalid_request', 'hosted-login transaction is invalid');
+            throw new SSOError(0, 'invalid_request', 'hosted-login transaction is invalid');
         }
         if (!is_array($transaction) || !isset($transaction['created_at'])) {
-            throw new SnaplinkError(0, 'invalid_request', 'hosted-login transaction is invalid');
+            throw new SSOError(0, 'invalid_request', 'hosted-login transaction is invalid');
         }
         if (max(0, time() - (int) $transaction['created_at']) > $options['ttl']) {
-            throw new SnaplinkError(0, 'invalid_request', 'hosted-login transaction is missing or expired');
+            throw new SSOError(0, 'invalid_request', 'hosted-login transaction is missing or expired');
         }
         if (
             ($transaction['client_id'] ?? null) !== $options['client_id']
             || ($transaction['base_url'] ?? null) !== self::canonicalUrl($options['base_url'])
         ) {
-            throw new SnaplinkError(0, 'invalid_request', 'hosted-login transaction belongs to another client');
+            throw new SSOError(0, 'invalid_request', 'hosted-login transaction belongs to another client');
         }
         if (($callback['state'] ?? '') !== ($transaction['state'] ?? '')) {
-            throw new SnaplinkError(0, 'invalid_request', 'hosted-login state did not match');
+            throw new SSOError(0, 'invalid_request', 'hosted-login state did not match');
         }
         if (
             ($callback['iss'] ?? '') === ''
             || self::canonicalUrl((string) $callback['iss']) !== (string) $transaction['base_url']
         ) {
-            throw new SnaplinkError(0, 'invalid_request', 'authorization issuer did not match Snaplink');
+            throw new SSOError(0, 'invalid_request', 'authorization issuer did not match Snaplink');
         }
         if (($callback['code'] ?? null) !== null && ($callback['error'] ?? null) !== null) {
-            throw new SnaplinkError(0, 'invalid_request', 'authorization response contained both code and error');
+            throw new SSOError(0, 'invalid_request', 'authorization response contained both code and error');
         }
         if (($callback['error'] ?? '') !== '') {
-            throw new SnaplinkError(
+            throw new SSOError(
                 0,
                 (string) $callback['error'],
                 isset($callback['error_description']) ? (string) $callback['error_description'] : null,
@@ -345,7 +284,7 @@ final class SnaplinkClient
         }
         $code = $callback['code'] ?? '';
         if (!is_string($code) || $code === '') {
-            throw new SnaplinkError(0, 'invalid_request', 'authorization response did not contain a code');
+            throw new SSOError(0, 'invalid_request', 'authorization response did not contain a code');
         }
         $tokens = $this->exchange($options, $transaction, $code);
         $this->tokens = $tokens;
@@ -385,7 +324,7 @@ final class SnaplinkClient
         $ticket = $response['activation_ticket'] ?? null;
         $product = $response['product_id'] ?? null;
         if (!is_string($ticket) || $ticket === '' || !is_string($product) || $product === '') {
-            throw new SnaplinkError(0, 'invalid_response', 'activation endpoint returned an invalid ticket');
+            throw new SSOError(0, 'invalid_response', 'activation endpoint returned an invalid ticket');
         }
         $this->pendingSetup = [
             'activation_ticket' => $ticket,
@@ -412,7 +351,7 @@ final class SnaplinkClient
     {
         $token = $this->tokens['access_token'] ?? null;
         if (!is_string($token) || $token === '') {
-            throw new SnaplinkError(401, 'login_required', 'login is required');
+            throw new SSOError(401, 'login_required', 'login is required');
         }
         $response = $this->jsonRequest(
             'POST',
@@ -421,7 +360,7 @@ final class SnaplinkClient
             $token,
         );
         if (!is_array($response['context'] ?? null)) {
-            throw new SnaplinkError(0, 'invalid_response', 'activation claim response was invalid');
+            throw new SSOError(0, 'invalid_response', 'activation claim response was invalid');
         }
         $this->accountContext = $response['context'];
         if (
@@ -451,7 +390,7 @@ final class SnaplinkClient
             ? ($this->transport)($endpoint, $form)
             : $this->defaultTokenRequest($endpoint, $form);
         if (!is_array($response)) {
-            throw new SnaplinkError(0, 'network_error', 'token request returned an invalid response');
+            throw new SSOError(0, 'network_error', 'token request returned an invalid response');
         }
         if (array_key_exists('status', $response) && array_key_exists('body', $response)) {
             $status = (int) $response['status'];
@@ -467,7 +406,7 @@ final class SnaplinkClient
             || !is_string($response['access_token'] ?? null)
             || !is_string($response['token_type'] ?? null)
         ) {
-            throw new SnaplinkError(0, 'invalid_response', 'token endpoint returned an invalid token response');
+            throw new SSOError(0, 'invalid_response', 'token endpoint returned an invalid token response');
         }
         return $response;
     }
@@ -478,7 +417,7 @@ final class SnaplinkClient
             ? ($this->jsonTransport)($method, $endpoint, $body, $bearer)
             : $this->defaultJsonRequest($method, $endpoint, $body, $bearer);
         if (!is_array($response)) {
-            throw new SnaplinkError(0, 'network_error', 'JSON request returned an invalid response');
+            throw new SSOError(0, 'network_error', 'JSON request returned an invalid response');
         }
         if (array_key_exists('status', $response) && array_key_exists('body', $response)) {
             $status = (int) $response['status'];
@@ -489,7 +428,7 @@ final class SnaplinkClient
             $response = $decoded;
         }
         if (!is_array($response)) {
-            throw new SnaplinkError(0, 'invalid_response', 'JSON endpoint returned an invalid response');
+            throw new SSOError(0, 'invalid_response', 'JSON endpoint returned an invalid response');
         }
         return $response;
     }
@@ -517,7 +456,7 @@ final class SnaplinkClient
             $status = (int) $matches[1];
         }
         if ($bodyValue === false) {
-            throw new SnaplinkError($status, 'network_error', 'JSON request failed');
+            throw new SSOError($status, 'network_error', 'JSON request failed');
         }
         return ['status' => $status, 'body' => $bodyValue];
     }
@@ -541,7 +480,7 @@ final class SnaplinkClient
             $status = (int) $matches[1];
         }
         if ($body === false) {
-            throw new SnaplinkError($status, 'network_error', 'token request failed');
+            throw new SSOError($status, 'network_error', 'token request failed');
         }
         return ['status' => $status, 'body' => $body];
     }
@@ -557,7 +496,7 @@ final class SnaplinkClient
             ? $redirect
             : self::normalizeUrl((string) $returnToValue, 'return_to', true, true, $allowInsecure);
         if (self::origin($returnTo) !== self::origin($redirect)) {
-            throw new SnaplinkError(0, 'invalid_request', 'return_to must use the redirect URI origin');
+            throw new SSOError(0, 'invalid_request', 'return_to must use the redirect URI origin');
         }
         $loginPageValue = self::option($options, 'login_page_url', 'loginPageUrl');
         $loginPage = $loginPageValue === null
@@ -567,11 +506,11 @@ final class SnaplinkClient
         $resource = self::values(self::option($options, 'resource'), [], 'resource', false);
         $ttlValue = self::option($options, 'transaction_ttl_seconds', 'transactionTtlSeconds') ?? 600;
         if (!is_int($ttlValue) || $ttlValue <= 0) {
-            throw new SnaplinkError(0, 'invalid_request', 'transaction_ttl_seconds must be positive');
+            throw new SSOError(0, 'invalid_request', 'transaction_ttl_seconds must be positive');
         }
         $maxAge = self::option($options, 'max_age', 'maxAge');
         if ($maxAge !== null && (!is_int($maxAge) || $maxAge < 0)) {
-            throw new SnaplinkError(0, 'invalid_request', 'max_age must be non-negative');
+            throw new SSOError(0, 'invalid_request', 'max_age must be non-negative');
         }
         return [
             'base_url' => $base,
@@ -609,7 +548,7 @@ final class SnaplinkClient
             return null;
         }
         if (!is_string($value) || $value === '' || preg_match('/\s/', $value) === 1) {
-            throw new SnaplinkError(0, 'invalid_request', 'presentation hints must be non-empty single values');
+            throw new SSOError(0, 'invalid_request', 'presentation hints must be non-empty single values');
         }
         return $value;
     }
@@ -618,7 +557,7 @@ final class SnaplinkClient
     {
         $parts = parse_url($options['login_page_url']);
         if ($parts === false) {
-            throw new SnaplinkError(0, 'invalid_request', 'login_page_url is invalid');
+            throw new SSOError(0, 'invalid_request', 'login_page_url is invalid');
         }
         $managed = [
             'client_id', 'redirect_uri', 'response_type', 'response_mode', 'scope',
@@ -664,7 +603,7 @@ final class SnaplinkClient
     {
         $callback = self::normalizeUrl($raw, 'callback_url', true, false, $allowInsecure);
         if (self::canonicalUrl($callback) !== self::canonicalUrl($redirect)) {
-            throw new SnaplinkError(0, 'invalid_request', 'callback_url does not match redirect_uri');
+            throw new SSOError(0, 'invalid_request', 'callback_url does not match redirect_uri');
         }
         $parts = parse_url($callback);
         $values = [];
@@ -682,26 +621,26 @@ final class SnaplinkClient
         bool $allowInsecure,
     ): string {
         if (trim($raw) === '') {
-            throw new SnaplinkError(0, 'invalid_request', $name . ' is required');
+            throw new SSOError(0, 'invalid_request', $name . ' is required');
         }
         $parts = parse_url($raw);
         if ($parts === false || !isset($parts['scheme'], $parts['host'])) {
-            throw new SnaplinkError(0, 'invalid_request', $name . ' must be an absolute HTTP(S) URL');
+            throw new SSOError(0, 'invalid_request', $name . ' must be an absolute HTTP(S) URL');
         }
         $scheme = strtolower((string) $parts['scheme']);
         $host = strtolower((string) $parts['host']);
         if (isset($parts['user']) || isset($parts['pass'])) {
-            throw new SnaplinkError(0, 'invalid_request', $name . ' must not contain credentials');
+            throw new SSOError(0, 'invalid_request', $name . ' must not contain credentials');
         }
         $loopbackHttp = $scheme === 'http' && self::isLoopback($host);
         if ($scheme !== 'https' && !($loopbackHttp || ($allowInsecure && $scheme === 'http'))) {
-            throw new SnaplinkError(0, 'invalid_request', $name . ' must use HTTPS or loopback HTTP');
+            throw new SSOError(0, 'invalid_request', $name . ' must use HTTPS or loopback HTTP');
         }
         if (!$allowQuery && isset($parts['query'])) {
-            throw new SnaplinkError(0, 'invalid_request', $name . ' must not contain a query');
+            throw new SSOError(0, 'invalid_request', $name . ' must not contain a query');
         }
         if (!$allowFragment && isset($parts['fragment'])) {
-            throw new SnaplinkError(0, 'invalid_request', $name . ' must not contain a fragment');
+            throw new SSOError(0, 'invalid_request', $name . ' must not contain a fragment');
         }
         $parts['scheme'] = $scheme;
         $parts['host'] = $host;
@@ -768,12 +707,12 @@ final class SnaplinkClient
             $value = preg_split('/\s+/', trim($value), -1, PREG_SPLIT_NO_EMPTY);
         }
         if (!is_array($value) || ($required && $value === [])) {
-            throw new SnaplinkError(0, 'invalid_request', $name . ' must contain values');
+            throw new SSOError(0, 'invalid_request', $name . ' must contain values');
         }
         $result = [];
         foreach ($value as $item) {
             if (!is_string($item) || $item === '' || preg_match('/\s/', $item) === 1) {
-                throw new SnaplinkError(0, 'invalid_request', $name . ' values must be non-empty and whitespace-free');
+                throw new SSOError(0, 'invalid_request', $name . ' values must be non-empty and whitespace-free');
             }
             $result[] = $item;
         }
@@ -792,14 +731,14 @@ final class SnaplinkClient
             $result = self::values($value, [], 'option', true);
             return implode(' ', $result);
         }
-        throw new SnaplinkError(0, 'invalid_request', 'optional login values must be strings or arrays');
+        throw new SSOError(0, 'invalid_request', 'optional login values must be strings or arrays');
     }
 
     private static function required(array $options, string $snake, string $camel): string
     {
         $value = self::option($options, $snake, $camel);
         if (!is_string($value) || trim($value) === '') {
-            throw new SnaplinkError(0, 'invalid_request', $snake . ' is required');
+            throw new SSOError(0, 'invalid_request', $snake . ' is required');
         }
         return $value;
     }
@@ -812,7 +751,7 @@ final class SnaplinkClient
         $licenseKey = is_string($licenseKey) ? $licenseKey : '';
         $invitationCode = is_string($invitationCode) ? $invitationCode : '';
         if (($licenseKey === '') === ($invitationCode === '')) {
-            throw new SnaplinkError(0, 'invalid_request', 'exactly one of license_key or invitation_code is required');
+            throw new SSOError(0, 'invalid_request', 'exactly one of license_key or invitation_code is required');
         }
         $body = ['client_id' => $clientId, 'product_id' => $productId];
         if ($licenseKey !== '') {
@@ -891,7 +830,7 @@ final class SnaplinkClient
 
     private static function oauthError(int $status, array $body): never
     {
-        throw new SnaplinkError(
+        throw new SSOError(
             $status,
             is_string($body['error'] ?? null) ? $body['error'] : 'invalid_grant',
             is_string($body['error_description'] ?? null) ? $body['error_description'] : null,

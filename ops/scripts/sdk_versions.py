@@ -40,13 +40,13 @@ MANIFEST_SPECS = (
     ManifestSpec(
         "python",
         Path("sdks/python/pyproject.toml"),
-        "snaplink-sso",
+        "snaplink-sso-client",
         "toml:project",
     ),
     ManifestSpec(
         "rust",
         Path("sdks/rust/Cargo.toml"),
-        "snaplink-sso",
+        "snaplink-sso-client",
         "toml:package",
     ),
     ManifestSpec(
@@ -58,7 +58,7 @@ MANIFEST_SPECS = (
     ManifestSpec(
         "kotlin",
         Path("sdks/kotlin/build.gradle.kts"),
-        "com.snaplink:snaplink-sso",
+        "com.snaplink:sso-client",
         "gradle",
     ),
     ManifestSpec(

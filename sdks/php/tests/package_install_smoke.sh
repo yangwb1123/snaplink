@@ -31,9 +31,24 @@ file_put_contents(
 )
 php -r '
 require $argv[1];
-if (!class_exists("Snaplink\\SnaplinkClient")) {
-    fwrite(STDERR, "Composer autoload did not expose SnaplinkClient.\n");
+// Every shipped type must be reachable through PSR-4 on its own. A class that
+// only loads because another file happened to require it first is not part of
+// the published surface, so the check autoloads each name independently.
+$types = preg_split("/\s+/", trim($argv[2] ?? ""), -1, PREG_SPLIT_NO_EMPTY);
+if ($types === false || $types === []) {
+    fwrite(STDERR, "smoke check received no class names\n");
     exit(1);
 }
-' "${consumer_dir}/vendor/autoload.php"
+$missing = [];
+foreach ($types as $type) {
+    if (!class_exists($type) && !interface_exists($type)) {
+        $missing[] = $type;
+    }
+}
+if ($missing !== []) {
+    fwrite(STDERR, "Composer autoload did not expose: " . implode(", ", $missing) . "\n");
+    exit(1);
+}
+' "${consumer_dir}/vendor/autoload.php" \
+    "$(cd "${package_dir}/src" && printf '%s\n' *.php | sed 's/\.php$//; s#^#Snaplink\\#' | tr '\n' ' ')"
 echo "PASS: local Composer path install (${package_name} ${package_version})"

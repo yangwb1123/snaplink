@@ -1,5 +1,12 @@
 # snaplink/sso-client — PHP SDK
 
+The Composer package is `snaplink/sso-client`: the vendor is the Snaplink brand
+and the package is the capability, per the naming scheme in
+[`../README.md`](../README.md). The PSR-4 root is `Snaplink\`, and the client
+types carry no brand stutter — the client is `Snaplink\SSOClient` and its
+failure is `Snaplink\SSOError`, never `Snaplink\SnaplinkClient`. Each type ships
+in its own file, so every one of them autoloads on its own.
+
 This package provides a framework-neutral hosted-login facade for a public
 Snaplink client. It uses the existing Console /login/ page, Authorization
 Code + S256 PKCE, and an atomic short-lived state transaction. It does not
@@ -60,9 +67,9 @@ call validates state and issuer, exchanges the code, and keeps the token in
 the client instance:
 
 ~~~php
-use Snaplink\SnaplinkClient;
+use Snaplink\SSOClient;
 
-$snaplink = new SnaplinkClient();
+$snaplink = new SSOClient();
 
 $started = $snaplink->login([
     'base_url' => 'https://sso.example.com',

@@ -3,7 +3,7 @@
 > **Scope:** generated client for the full documented API surface of
 > `docs/openapi.yaml`, plus a framework-neutral hosted-login facade. The
 > installable package under `sdks/python` is published to PyPI as
-> `snaplink-sso`; this generated directory remains vendorable and does not
+> `snaplink-sso-client`; this generated directory remains vendorable and does not
 > ship a login page, self-service, setup, developer-portal, or admin-console UI.
 > `sso-server` is a pure API backend; browser applications and consoles are
 > separate frontend projects.
@@ -14,7 +14,8 @@
 generated module is also written to `sdks/python/snaplink_sso/client.py` so
 applications can install and import the repository's `snaplink_sso` package.
 
-Install the package with `pip install snaplink-sso`. Releases run the protected
+Install the package with `pip install snaplink-sso-client`; the import name is
+`snaplink_sso`. Releases run the protected
 `sdk-py-v<version>` workflow after the package tests, wheel/source build, and
 tag/version check pass.
 

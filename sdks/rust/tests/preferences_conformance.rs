@@ -4,7 +4,7 @@
 //! `sdks/typescript/preferences.test.mjs` so the three implementations
 //! agree on validation, the legacy theme alias, and what a handoff contains.
 
-use snaplink_sso::{
+use snaplink_sso_client::{
     build_login_preference_handoff, from_stored_preferences, to_update_request, PreferenceError,
     PresentationPreferences, PresentationPreferencesPatch, ThemeMode,
 };

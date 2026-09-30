@@ -1,4 +1,4 @@
-# snaplink-sso — Rust SDK
+# snaplink-sso-client — Rust SDK
 
 This crate provides framework-neutral hosted login for a public Snaplink
 client. The first login call returns the existing Console /login/ URL; the
@@ -7,7 +7,7 @@ with S256 PKCE. A web framework only needs to issue the redirect and pass the
 callback URL back to the same client. No BFF or client secret is required.
 
 ~~~rust
-use snaplink_sso::{LoginOptions, LoginResult, SnaplinkClient};
+use snaplink_sso_client::{LoginOptions, LoginResult, SnaplinkClient};
 
 let mut snaplink = SnaplinkClient::new();
 let options = LoginOptions::new(
@@ -41,7 +41,7 @@ credential only in the HTTPS request body and the callback claims the returned
 short-lived ticket with the bearer:
 
 ~~~rust
-let setup = snaplink_sso::SetupOptions::new(
+let setup = snaplink_sso_client::SetupOptions::new(
     "https://sso.example.com", "my-public-app", "pro",
 )
 .license_key("license-from-your-checkout");
@@ -58,7 +58,7 @@ never the presence of the field: a subscription whose window has closed is still
 present in the response and grants nothing.
 
 ~~~rust
-use snaplink_sso::{Feature, LicenseState};
+use snaplink_sso_client::{Feature, LicenseState};
 
 let account = snaplink.get_account_context("pro").await?;
 match account.state() {
@@ -85,11 +85,11 @@ licensing service on a login path. `EntitlementFile` verifies such a file
 entirely locally, with no network I/O on any path including login.
 
 ~~~rust
-use snaplink_sso::{EntitlementFile, Feature, LicenseTrust};
+use snaplink_sso_client::{EntitlementFile, Feature, LicenseTrust};
 
 let trust = LicenseTrust::from_key("vendor-2026", PUBLIC_KEY)?;
 let file = EntitlementFile::verify(&std::fs::read("license.json")?, &trust)?;
-if file.entitlement.has(Feature::Scim, snaplink_sso::unix_now()) {
+if file.entitlement.has(Feature::Scim, snaplink_sso_client::unix_now()) {
     // enable the paid feature
 }
 ~~~
@@ -110,7 +110,7 @@ carries only explicitly set values, so it never clears a preference the
 application did not mean to touch.
 
 ~~~rust
-use snaplink_sso::{PresentationPreferencesPatch, ThemeMode, build_login_preference_handoff};
+use snaplink_sso_client::{PresentationPreferencesPatch, ThemeMode, build_login_preference_handoff};
 
 let handoff = build_login_preference_handoff(&PresentationPreferencesPatch {
     locale: Some("en-US".into()),

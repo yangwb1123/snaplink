@@ -13,7 +13,7 @@ VALIDATION_POSTGRES_DSN := postgres://validation@postgres.invalid/snaplink?sslmo
 
 CLI = python cli.py
 
-.PHONY: help test ai-dev-test race bench vet fmt build configure build-profile build-prototype build-minimal build-full build-production build-small modules-list modules-plan modules-check modules-smoke capabilities-check capabilities-generate sdk-surface-check sdk-drift-check sdk-paradigm-check sdk-paradigm-list sdk-surface-diff docker docker-stripe-adapter ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve route-contract proto-openapi-parity adapters-check release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff helm-render docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
+.PHONY: help test ai-dev-test race bench vet fmt build configure build-profile build-prototype build-minimal build-full build-production build-small modules-list modules-plan modules-check modules-smoke capabilities-check capabilities-generate sdk-surface-check sdk-drift-check sdk-paradigm-check sdk-paradigm-list sdk-naming-check sdk-naming-list sdk-surface-diff docker docker-stripe-adapter ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve route-contract proto-openapi-parity adapters-check release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff helm-render docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -133,6 +133,12 @@ sdk-paradigm-check: ## Validate the hand-written SDK-layer capability registry a
 
 sdk-paradigm-list: ## Print the SDK capability matrix across all registered languages.
 	$(CLI) sdk-paradigm list
+
+sdk-naming-check: ## Validate SDK package names against the canonical scheme and platform rules.
+	$(CLI) sdk-naming check
+
+sdk-naming-list: ## Print the canonical SDK package name for every platform.
+	$(CLI) sdk-naming list
 
 sdk-surface-diff: ## Compare operation and components.schemas surface with SDK_SURFACE_BASELINE_REF (required; local git ref).
 	@test -n "$(SDK_SURFACE_BASELINE_REF)" || { echo "SDK_SURFACE_BASELINE_REF is required (for example: make sdk-surface-diff SDK_SURFACE_BASELINE_REF=HEAD^)" >&2; exit 1; }
@@ -278,7 +284,7 @@ ci-modules: ## Build + test all nested modules.
 	cd cmd/sso-mcp && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd cmd/sso-operator && $(GO) build ./... && $(GO) test -race -count=1 ./...
 
-ci: fmt vet race build examples proto-lint ci-modules config-validate-all modules-check modules-smoke route-contract proto-openapi-parity capabilities-check sdk-surface-check sdk-drift-check sdk-paradigm-check profiles-evidence adapters-check ## Run CI checks.
+ci: fmt vet race build examples proto-lint ci-modules config-validate-all modules-check modules-smoke route-contract proto-openapi-parity capabilities-check sdk-surface-check sdk-drift-check sdk-paradigm-check sdk-naming-check profiles-evidence adapters-check ## Run CI checks.
 
 ci-full: ci terraform-validate k8s-render ## Run all CI checks including IaC validation (requires kustomize + terraform).
 

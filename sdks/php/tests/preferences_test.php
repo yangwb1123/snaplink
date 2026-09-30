@@ -8,12 +8,16 @@ declare(strict_types=1);
 // change in every language.
 
 require __DIR__ . '/../src/PresentationPreferences.php';
-require __DIR__ . '/../src/SnaplinkClient.php';
+require __DIR__ . '/../src/StateStore.php';
+require __DIR__ . '/../src/MemoryStateStore.php';
+require __DIR__ . '/../src/LoginResult.php';
+require __DIR__ . '/../src/SSOError.php';
+require __DIR__ . '/../src/SSOClient.php';
 
 use Snaplink\MemoryStateStore;
 use Snaplink\PresentationPreferences;
-use Snaplink\SnaplinkClient;
-use Snaplink\SnaplinkError;
+use Snaplink\SSOClient;
+use Snaplink\SSOError;
 
 $failures = 0;
 $checks = 0;
@@ -35,7 +39,7 @@ function rejects(string $name, callable $action, string $expected): void
     try {
         $action();
         check($name, false, 'no error was raised');
-    } catch (SnaplinkError $error) {
+    } catch (SSOError $error) {
         check($name, $error->error === $expected, $error->error . ' ' . (string) $error);
     }
 }
@@ -101,7 +105,7 @@ rejects(
 );
 
 $jsonCalls = [];
-$client = new SnaplinkClient(
+$client = new SSOClient(
     new MemoryStateStore(),
     static fn(string $endpoint, array $form): array => [
         'access_token' => 'access-1',
@@ -151,7 +155,7 @@ check(
 
 // A login URL is only built while no session is held, so the hint checks use a
 // client that has not completed login.
-$hintClient = new SnaplinkClient(new MemoryStateStore());
+$hintClient = new SSOClient(new MemoryStateStore());
 $hintStarted = $hintClient->login($loginOptions + $handoff);
 parse_str((string) (parse_url((string) $hintStarted->redirectUrl())['query'] ?? ''), $hintQuery);
 check(
@@ -175,7 +179,7 @@ rejects(
     static fn() => $hintClient->login($loginOptions + ['presentation_locale' => 'en US']),
     'invalid_request'
 );
-$anonymous = new SnaplinkClient(new MemoryStateStore());
+$anonymous = new SSOClient(new MemoryStateStore());
 rejects('reading preferences without a session is refused', static fn() => $anonymous->getMyPreferences(), 'login_required');
 rejects(
     'writing preferences without a session is refused',

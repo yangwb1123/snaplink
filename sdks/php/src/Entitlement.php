@@ -58,7 +58,7 @@ final class Entitlement
     public static function fromWire(mixed $raw): self
     {
         if (!is_array($raw)) {
-            throw new SnaplinkError(0, 'invalid_response', 'entitlement must be an object');
+            throw new SSOError(0, 'invalid_response', 'entitlement must be an object');
         }
         $features = [];
         foreach (($raw['features'] ?? []) as $key => $flag) {

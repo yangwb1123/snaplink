@@ -81,9 +81,11 @@ def _compare_files(expected_path: Path, actual_path: Path, root: Path, context: 
 
 
 def _status_errors(root: Path) -> list[str]:
-    # Native SDK governance is maintained by hand, not by cmd/gensdk. The
-    # TypeScript dist/ tree is likewise separate from generated source; local
-    # npm builds must not make this generator-output cleanliness check fail.
+    # cmd/gensdk owns .ts/.py output only, so the cleanliness leg polices
+    # generated artifacts and stray files, not the hand-maintained Markdown that
+    # ships beside them. The regeneration leg still byte-compares every
+    # generator-owned file, so excluding Markdown costs no drift coverage; the
+    # TypeScript dist/ tree is likewise separate from generated source.
     try:
         result = run_git(
             [
@@ -93,7 +95,8 @@ def _status_errors(root: Path) -> list[str]:
                 "--",
                 "docs/sdks/",
                 "sdks/typescript/",
-                ":(exclude)docs/sdks/native.md",
+                ":(exclude,glob)docs/sdks/**/*.md",
+                ":(exclude,glob)sdks/typescript/**/*.md",
                 ":(exclude)sdks/typescript/dist/",
             ],
             root,

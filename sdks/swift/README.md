@@ -1,5 +1,11 @@
 # Snaplink Swift SDK (experimental, 0.3.0)
 
+The package name follows the naming scheme in [`../README.md`](../README.md).
+SwiftPM has no namespace slot, so brand and capability share one PascalCase
+module name and the `Client` role token is dropped: `SnaplinkSSO` is the
+Apple-idiomatic rendering of `snaplink` + `sso-client`, and it does not stutter
+against the `SnaplinkAuthClient` type inside it.
+
 This Swift Package implements native public-client hosted login using
 Authorization Code + PKCE S256, one-use state and issuer validation, Keychain
 token storage, serialized refresh, and token revocation. It uses

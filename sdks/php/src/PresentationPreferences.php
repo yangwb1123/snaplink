@@ -98,7 +98,7 @@ final class PresentationPreferences
         $generic = $raw['theme_mode'] ?? null;
         $legacy = $raw[self::LEGACY_THEME_MODE_KEY] ?? null;
         if ($generic !== null && $legacy !== null && $generic !== $legacy) {
-            throw new SnaplinkError(0, 'invalid_response', 'conflicting theme preference aliases');
+            throw new SSOError(0, 'invalid_response', 'conflicting theme preference aliases');
         }
         $value = $generic ?? $legacy;
         return $value === null ? null : self::requireThemeMode($value, false);
@@ -112,7 +112,7 @@ final class PresentationPreferences
     private static function requireLocale(mixed $value, bool $allowEmpty): string
     {
         if (!is_string($value)) {
-            throw new SnaplinkError(0, 'invalid_request', 'locale must be a string');
+            throw new SSOError(0, 'invalid_request', 'locale must be a string');
         }
         if ($allowEmpty && $value === '') {
             return '';
@@ -124,7 +124,7 @@ final class PresentationPreferences
             $invalid = $invalid || strlen($part) < 2 || strlen($part) > 8 || !self::isAlphaNumeric($part);
         }
         if ($invalid) {
-            throw new SnaplinkError(0, 'invalid_request', 'locale must be a valid BCP 47 language tag');
+            throw new SSOError(0, 'invalid_request', 'locale must be a valid BCP 47 language tag');
         }
         return $value;
     }
@@ -132,13 +132,13 @@ final class PresentationPreferences
     private static function requireThemeMode(mixed $value, bool $allowEmpty): string
     {
         if (!is_string($value)) {
-            throw new SnaplinkError(0, 'invalid_request', 'theme_mode must be a string');
+            throw new SSOError(0, 'invalid_request', 'theme_mode must be a string');
         }
         if ($allowEmpty && $value === '') {
             return '';
         }
         if (!in_array($value, self::THEME_MODES, true)) {
-            throw new SnaplinkError(0, 'invalid_request', 'theme_mode must be light, dark, or auto');
+            throw new SSOError(0, 'invalid_request', 'theme_mode must be light, dark, or auto');
         }
         return $value;
     }

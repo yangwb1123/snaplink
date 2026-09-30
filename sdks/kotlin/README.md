@@ -1,5 +1,14 @@
 # Snaplink Android SDK (experimental, 0.3.0)
 
+The published coordinate follows the naming scheme in
+[`../README.md`](../README.md): the Gradle project is `:sso-client`, so the
+Maven coordinate is `com.snaplink:sso-client` — the reverse-DNS group carries the
+brand and the artifactId carries the capability. The Android namespace
+(`com.snaplink.sso`) is the code package, not the published artifact name.
+Maven Central additionally requires a domain-verified `groupId`; `com.snaplink`
+presumes control of `snaplink.com`, and publication stays unconfigured until
+that is settled.
+
 This Android library provides the public-client hosted-login vertical slice:
 Authorization Code + PKCE S256, state and issuer validation, encrypted token
 storage, serialized refresh, and RFC 7009 revocation. It uses the system browser
@@ -22,7 +31,7 @@ tenant isolation, or client permissions.
 
 ```kotlin
 dependencies {
-    implementation(project(":snaplink-sso")) // local checkout / included build
+    implementation(project(":sso-client")) // local checkout / included build
 }
 ```
 
@@ -117,7 +126,7 @@ credentials even if the network call fails.
 
 ```bash
 cd sdks
-./gradlew :snaplink-sso:testDebugUnitTest :snaplink-sso:assembleRelease
+./gradlew :sso-client:testDebugUnitTest :sso-client:assembleRelease
 ```
 
 The Gradle workspace lives at `sdks/`. Kotlin package declarations remain

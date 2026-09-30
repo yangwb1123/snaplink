@@ -2,16 +2,20 @@
 
 declare(strict_types=1);
 
-require __DIR__ . '/../src/SnaplinkClient.php';
+require __DIR__ . '/../src/StateStore.php';
+require __DIR__ . '/../src/MemoryStateStore.php';
+require __DIR__ . '/../src/LoginResult.php';
+require __DIR__ . '/../src/SSOError.php';
+require __DIR__ . '/../src/SSOClient.php';
 
 use Snaplink\MemoryStateStore;
-use Snaplink\SnaplinkClient;
-use Snaplink\SnaplinkError;
+use Snaplink\SSOClient;
+use Snaplink\SSOError;
 
 $captured = [];
 $logoutCalls = [];
 $logoutStatus = 200;
-$client = new SnaplinkClient(
+$client = new SSOClient(
     new MemoryStateStore(),
     static function (string $endpoint, array $form) use (&$captured): array {
         $captured = [$endpoint, $form];
@@ -75,9 +79,9 @@ if (
     throw new RuntimeException('refresh request did not use the isolated refresh-token grant');
 }
 try {
-    (new SnaplinkClient())->refresh();
+    (new SSOClient())->refresh();
     throw new RuntimeException('refresh without a session was accepted');
-} catch (SnaplinkError $error) {
+} catch (SSOError $error) {
     if ($error->error !== 'login_required') {
         throw $error;
     }
@@ -118,13 +122,13 @@ $logoutStatus = 500;
 try {
     $client->logout();
     throw new RuntimeException('failed server logout was hidden');
-} catch (SnaplinkError $error) {
+} catch (SSOError $error) {
     if ($error->error !== 'server_error' || $client->isLoggedIn()) {
         throw $error;
     }
 }
 
-$mismatch = new SnaplinkClient(new MemoryStateStore(), static fn(): array => []);
+$mismatch = new SSOClient(new MemoryStateStore(), static fn(): array => []);
 $mismatch->login($options);
 try {
     $mismatch->login($options + [
@@ -132,14 +136,14 @@ try {
             . '?code=code-1&state=wrong&iss=' . rawurlencode($options['base_url']),
     ]);
     throw new RuntimeException('state mismatch was accepted');
-} catch (SnaplinkError $error) {
+} catch (SSOError $error) {
     if ($error->error !== 'invalid_request') {
         throw $error;
     }
 }
 
 $activationCalls = [];
-$activationClient = new SnaplinkClient(
+$activationClient = new SSOClient(
     new MemoryStateStore(),
     static fn(string $endpoint, array $form): array => [
         'access_token' => 'access-setup',

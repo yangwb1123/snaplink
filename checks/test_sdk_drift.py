@@ -171,6 +171,30 @@ def test_native_sdk_governance_doc_is_not_generated_drift(
     assert "OK (regen 2/2, deploy 3/3)" in capsys.readouterr().out
 
 
+def test_hand_written_sdk_documentation_is_not_generated_drift(
+    tree: dict[str, Path], capsys: pytest.CaptureFixture[str]
+):
+    """A name or install-command edit in a hand-maintained README is not drift."""
+    readme = tree["root"] / "docs/sdks/python/README.md"
+    readme.parent.mkdir(parents=True, exist_ok=True)
+    readme.write_text("pip install snaplink-sso-client\n")
+    (tree["root"] / "sdks/typescript/README.md").write_text("# @snaplink/sso-client\n")
+
+    assert sdk_drift.run(["check"]) == 0
+    assert "OK (regen 2/2, deploy 3/3)" in capsys.readouterr().out
+
+
+def test_a_committed_rename_of_a_generated_file_still_fails(
+    tree: dict[str, Path], capsys: pytest.CaptureFixture[str]
+):
+    """Markdown is excluded, never the generated .ts/.py payloads."""
+    tree["ts"].unlink()
+    tree["ts"].write_bytes(b"export const generated = 'renamed';\n")
+
+    assert sdk_drift.run(["check"]) == 1
+    assert "sdks/typescript/client.ts" in capsys.readouterr().out
+
+
 def test_stray_file_under_docs_sdks_fails(tree: dict[str, Path], capsys: pytest.CaptureFixture[str]):
     stray = tree["root"] / "docs/sdks/stray.txt"
     stray.write_text("not generated")

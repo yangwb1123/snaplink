@@ -13,7 +13,11 @@ declare(strict_types=1);
 // so name the typed entitlement classes explicitly.
 require __DIR__ . '/../src/Entitlement.php';
 require __DIR__ . '/../src/LicenseState.php';
-require __DIR__ . '/../src/SnaplinkClient.php';
+require __DIR__ . '/../src/StateStore.php';
+require __DIR__ . '/../src/MemoryStateStore.php';
+require __DIR__ . '/../src/LoginResult.php';
+require __DIR__ . '/../src/SSOError.php';
+require __DIR__ . '/../src/SSOClient.php';
 
 use Snaplink\Entitlement;
 use Snaplink\LicenseState;
