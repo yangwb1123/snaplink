@@ -84,7 +84,7 @@ jobs:
           mkdir -p .trends
           make trend
       
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: trend-snapshot
           path: .trends/
@@ -107,7 +107,7 @@ jobs:
       - name: Coverage check
         run: make coverage-check
       
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: /tmp/cover.out
