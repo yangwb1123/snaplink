@@ -108,6 +108,125 @@ test("login redirects to Console and completes the same flow with code + PKCE", 
   assert.equal(h.location.href, "https://app.example.test/callback");
 });
 
+test("refresh is explicit, clear is local, and logout revokes server-side", async () => {
+  const calls = [];
+  let logoutStatus = 200;
+  const h = harness(async (input, init) => {
+    calls.push({ input: String(input), init });
+    if (String(input).endsWith("/token")) {
+      const form = new URLSearchParams(init.body);
+      return response(200, {
+        access_token: form.get("grant_type") === "refresh_token" ? "access-2" : "access-1",
+        expires_in: 900,
+        ...(form.get("grant_type") === "authorization_code" ? { refresh_token: "refresh-1" } : {}),
+        token_type: "Bearer",
+      });
+    }
+    if (String(input).endsWith("/logout")) {
+      return response(logoutStatus, logoutStatus < 300 ? {} : { error: "server_error" });
+    }
+    return response(200, {});
+  });
+  const client = new SnaplinkBrowserClient();
+  const first = options(h);
+  let loginURL;
+  await assert.rejects(
+    client.login({ ...first, navigate(url) { loginURL = new URL(url); throw new RedirectStarted(url); } }),
+    (error) => error instanceof RedirectStarted,
+  );
+  h.location.href = `https://app.example.test/callback?code=code-session&state=${encodeURIComponent(loginURL.searchParams.get("state"))}&iss=${encodeURIComponent("https://sso.example.test")}`;
+  await client.login(first);
+
+  const refreshed = await client.refresh();
+  const refreshForm = new URLSearchParams(calls.at(-1).init.body);
+  assert.equal(refreshed.access_token, "access-2");
+  assert.equal(client.accessToken, "access-2");
+  assert.equal(refreshed.refresh_token, "refresh-1");
+  assert.equal(refreshForm.get("grant_type"), "refresh_token");
+  assert.equal(refreshForm.get("refresh_token"), "refresh-1");
+  assert.equal(refreshForm.get("code_verifier"), null);
+  assert.equal(refreshForm.get("client_secret"), null);
+
+  client.clear();
+  assert.equal(client.isLoggedIn, false);
+  assert.equal(calls.some((call) => call.input.endsWith("/logout")), false);
+
+  let secondLoginURL;
+  await assert.rejects(
+    client.login({ ...first, navigate(url) { secondLoginURL = new URL(url); throw new RedirectStarted(url); } }),
+    (error) => error instanceof RedirectStarted,
+  );
+  h.location.href = `https://app.example.test/callback?code=code-logout&state=${encodeURIComponent(secondLoginURL.searchParams.get("state"))}&iss=${encodeURIComponent("https://sso.example.test")}`;
+  await client.login(first);
+  await client.logout();
+  const logout = calls.find((call) => call.input.endsWith("/logout"));
+  assert.equal(logout.init.headers.Authorization, "Bearer access-1");
+  assert.equal(client.isLoggedIn, false);
+
+  let failedLogoutURL;
+  await assert.rejects(
+    client.login({ ...first, navigate(url) { failedLogoutURL = new URL(url); throw new RedirectStarted(url); } }),
+    (error) => error instanceof RedirectStarted,
+  );
+  h.location.href = `https://app.example.test/callback?code=code-logout-failure&state=${encodeURIComponent(failedLogoutURL.searchParams.get("state"))}&iss=${encodeURIComponent("https://sso.example.test")}`;
+  await client.login(first);
+  logoutStatus = 500;
+  await assert.rejects(client.logout(), (error) => error instanceof SSOError && error.error === "server_error");
+  assert.equal(client.isLoggedIn, false);
+});
+
+test("refresh without a session returns login_required", async () => {
+  await assert.rejects(
+    new SnaplinkBrowserClient().refresh(),
+    (error) => error instanceof SSOError && error.error === "login_required",
+  );
+});
+
+test("automatic refresh during login is opt-in", async () => {
+  const calls = [];
+  const h = harness(async (input, init) => {
+    calls.push({ input: String(input), init });
+    if (String(input).endsWith("/token")) {
+      const form = new URLSearchParams(init.body);
+      return response(200, {
+        access_token: form.get("grant_type") === "refresh_token" ? "access-refreshed" : "access-short",
+        expires_in: 1,
+        refresh_token: "refresh-1",
+        token_type: "Bearer",
+      });
+    }
+    return response(200, {});
+  });
+  const client = new SnaplinkBrowserClient();
+  const first = options(h);
+  const originalNow = Date.now;
+  let now = originalNow();
+  Date.now = () => now;
+  try {
+    let loginURL;
+    await assert.rejects(
+      client.login({ ...first, navigate(url) { loginURL = new URL(url); throw new RedirectStarted(url); } }),
+      (error) => error instanceof RedirectStarted,
+    );
+    h.location.href = `https://app.example.test/callback?code=code-expiry&state=${encodeURIComponent(loginURL.searchParams.get("state"))}&iss=${encodeURIComponent("https://sso.example.test")}`;
+    await client.login(first);
+    now += 2_000;
+
+    let reauthURL;
+    await assert.rejects(
+      client.login({ ...first, navigate(url) { reauthURL = new URL(url); throw new RedirectStarted(url); } }),
+      (error) => error instanceof RedirectStarted,
+    );
+    assert.equal(calls.filter((call) => call.input.endsWith("/token")).length, 1);
+
+    const tokens = await client.login({ ...first, autoRefresh: true });
+    assert.equal(tokens.access_token, "access-refreshed");
+    assert.equal(new URLSearchParams(calls.at(-1).init.body).get("grant_type"), "refresh_token");
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
 test("callback state and issuer are validated before the token exchange", async () => {
   const h = harness(async () => response(200, { access_token: "should-not-be-issued" }));
   const client = new SnaplinkBrowserClient();

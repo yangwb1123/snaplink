@@ -65,7 +65,9 @@ export class SnaplinkBrowserClient {
             await this.claimPendingSetup(resolved);
             return this.tokens;
         }
-        const refreshed = await this.tryRefresh(resolved);
+        const refreshed = resolved.options.autoRefresh === true
+            ? await this.tryRefresh()
+            : undefined;
         if (refreshed) {
             await this.claimPendingSetup(resolved);
             return refreshed;
@@ -126,15 +128,36 @@ export class SnaplinkBrowserClient {
         this.activationContext = response.context;
         return response.context;
     }
-    /** Best-effort server logout followed by local token removal. */
+    /** Renew tokens explicitly, preserving a refresh token the server omits. */
+    async refresh() {
+        const current = this.tokens;
+        const clientId = this.apiConfig?.clientId;
+        if (!current?.refresh_token || !clientId) {
+            throw new SSOError(0, "login_required", "no refresh token is held");
+        }
+        const tokens = await this.api.postToken({
+            grant_type: "refresh_token",
+            client_id: clientId,
+            refresh_token: current.refresh_token,
+        });
+        if (!tokens.refresh_token)
+            tokens.refresh_token = current.refresh_token;
+        this.setTokens(tokens, Date.now());
+        return tokens;
+    }
+    /** Forget local tokens and account context without contacting Snaplink. */
+    clear() {
+        this.clearTokens();
+        this.activationContext = undefined;
+    }
+    /** Revoke server-side state, then clear local tokens even when the request fails. */
     async logout() {
         try {
             if (this.tokens && this.apiClient)
                 await this.apiClient.postLogout({});
         }
         finally {
-            this.clearTokens();
-            this.activationContext = undefined;
+            this.clear();
         }
     }
     /**
@@ -235,22 +258,16 @@ export class SnaplinkBrowserClient {
             this.tokens !== undefined &&
             !this.accessTokenExpired();
     }
-    async tryRefresh(options) {
+    async tryRefresh() {
         if (!this.tokens?.refresh_token || !this.accessTokenExpired())
             return undefined;
         try {
-            const refreshed = await this.api.postToken({
-                grant_type: "refresh_token",
-                client_id: options.clientId,
-                refresh_token: this.tokens.refresh_token,
-            });
-            this.setTokens(refreshed, Date.now());
-            return refreshed;
+            return await this.refresh();
         }
         catch (error) {
             if (!(error instanceof SSOError) || (error.status !== 400 && error.status !== 401))
                 throw error;
-            this.clearTokens();
+            this.clear();
             return undefined;
         }
     }

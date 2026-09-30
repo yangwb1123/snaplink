@@ -5,9 +5,9 @@
 is emitted for TypeScript and Python only. This module governs everything the
 generator never sees: the transport, session, entitlement, preferences, and
 runtime behaviour that each SDK hand-writes. Without it the hosted-login layer
-drifts silently, which is exactly what happened before this registry existed:
-Rust had no logout, four of five SDKs had no refresh, Python had no transport
-seam, and no SDK could read an entitlement with its time semantics intact.
+drifts silently. The registry now makes remaining divergences explicit, such as
+the Python transport seam and Go/PHP preference handoff, rather than hiding them
+behind package-local tests.
 
 The registry is the only source of truth. The checker never infers a capability
 from source: every ``present`` entry names the exact file and symbol that

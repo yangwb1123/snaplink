@@ -226,6 +226,27 @@ final class SnaplinkClient
         return $this->accessToken() !== null && $this->accessToken() !== '';
     }
 
+    public function refresh(): array
+    {
+        $refreshToken = $this->tokens['refresh_token'] ?? null;
+        if (!is_string($refreshToken) || $refreshToken === '') {
+            throw new SnaplinkError(0, 'login_required', 'no refresh token is held');
+        }
+        if ($this->clientId === null || $this->baseUrl === null) {
+            throw new SnaplinkError(0, 'login_required', 'login is required');
+        }
+        $tokens = $this->tokenRequest(rtrim($this->baseUrl, '/') . '/token', [
+            'grant_type' => 'refresh_token',
+            'client_id' => $this->clientId,
+            'refresh_token' => $refreshToken,
+        ]);
+        if (!is_string($tokens['refresh_token'] ?? null) || $tokens['refresh_token'] === '') {
+            $tokens['refresh_token'] = $refreshToken;
+        }
+        $this->tokens = $tokens;
+        return $tokens;
+    }
+
     public function clear(): void
     {
         $this->tokens = null;
@@ -234,7 +255,14 @@ final class SnaplinkClient
 
     public function logout(): void
     {
-        $this->clear();
+        try {
+            $token = $this->accessToken();
+            if ($token !== null && $token !== '' && $this->baseUrl !== null) {
+                $this->jsonRequest('POST', rtrim($this->baseUrl, '/') . '/logout', null, $token);
+            }
+        } finally {
+            $this->clear();
+        }
     }
 
     private function finish(array $options, string $callbackUrl): LoginResult
@@ -379,7 +407,11 @@ final class SnaplinkClient
             'code_verifier' => (string) $transaction['code_verifier'],
             'redirect_uri' => (string) $transaction['redirect_uri'],
         ];
-        $endpoint = rtrim($options['base_url'], '/') . '/token';
+        return $this->tokenRequest(rtrim($options['base_url'], '/') . '/token', $form);
+    }
+
+    private function tokenRequest(string $endpoint, array $form): array
+    {
         $response = $this->transport !== null
             ? ($this->transport)($endpoint, $form)
             : $this->defaultTokenRequest($endpoint, $form);

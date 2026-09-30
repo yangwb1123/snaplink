@@ -1,36 +1,30 @@
 # Rust SDK 服务端接入设计：Aero IM 采纳（Proposal）
 
-> 状态：提案。本文只解决 `docs/proposals/sdk-paradigm.md` 未覆盖的**服务端**维度，
-> 以及 Rust 侧 W3/W4/W6 的可执行规格。范式总纲、跨语言治理、能力矩阵以
-> `sdk-paradigm.md` + `ops/build/sdk-paradigm.json` 为准，本文不重复定义。
+> 状态：SDK W3/W4 已在本地实现并通过 Rust 定向门禁；W6 crates.io 发布与 Aero IM
+> 采纳仍待完成。本文只解决 `docs/proposals/sdk-paradigm.md` 未覆盖的**服务端**维度，
+> 范式总纲、跨语言治理、能力矩阵以 `sdk-paradigm.md` + `ops/build/sdk-paradigm.json` 为准。
 
 ## 0. 结论先行
 
-采纳 Aero IM **不需要**重写 SDK 的状态层。Aero IM 已有的 flow cookie 存储
-（加密、作用域化、可清除）天然满足 `StateStore` 契约。真正阻塞的只有三项：
+采纳 Aero IM **不需要**重写 SDK 的状态层接口，但服务端尚需实现 cookie-backed `StateStore`。当前 Aero IM 已有 state-scoped、HttpOnly/Secure cookie 模式（cookie 值并未加密），可作为适配起点，不能直接宣称满足原子消费契约。
 
-| 缺口 | 现有状态 | 阻塞 Aero IM 的原因 |
+| 项目 | 现状 | 后续 |
 |---|---|---|
-| **W4 Transport** | `reqwest::blocking::Client` 硬编码为类型别名 | 在 Tokio worker 上阻塞网络 I/O，Aero IM 是 `tokio = { features = ["full"] }` 的 axum 服务 |
-| **W3 Session** | 无 `refresh()` / `logout()` | access token 过期即掉线；无服务端注销 |
-| **W6 Publish** | `sdks/rust` 全部为未提交改动，未上 crates.io | 引用它等于把未发布代码绑进线上镜像 |
+| **W4 Transport** | async 注入、默认 `ReqwestTransport`、可选 `BlockingTransport` 已在本地实现 | 发布后由 Aero IM 按 crates.io 版本引用 |
+| **W3 Session** | async `refresh()` / `logout()` 已实现；明确区分 `clear()` | 本地测试覆盖旋转、注销与 credential no-store headers |
+| **W6 Publish** | `snaplink-sso@0.4.0` 尚未发布；本机未配置 crates.io 凭据 | 需完成授权发布后才能按计划采纳 |
+| **OIDC 验证边界** | SDK 返回原始 ID token 和本次 flow 的 nonce，不验证 JWT 签名 | Aero IM 必须保留 issuer/audience/JWKS/nonce 验证 |
 
-状态层（`StateStore`）**不是缺口** —— 见 §3。
+状态层接口已具备；Aero IM 适配器仍待实现与验证。
 
 ## 1. 现状事实（已核实）
 
-- `sdks/rust/src/lib.rs` 单文件 1353 行，同时承载 login / token / StateStore / error / client。
-- 传输层：`use reqwest::blocking::Client as HttpClient;` —— 是具体类型别名，
-  `with_http_client` 接受该具体类型，调用方**无法**传入异步客户端。
-- `StateStore` 是同步 trait（`fn take` / `fn save`，非 `async fn`），
-  值是 `Vec<u8>`；`MemoryStateStore` 是进程内 `HashMap`，注释自述
-  "for development and single-process examples"。
-- token 交换只发 `grant_type` / `client_id` / `code` / `code_verifier` / `redirect_uri`，
-  **不发 `client_secret`** —— 公共客户端专用，README 明言 "No BFF or client secret is required"。
-- `cargo test` 当前 41 个测试全绿（3 + 11 + 13 + 14）。
-- `python3 ops/scripts/sdk_paradigm.py check` 当前**已失败**，两条既有 symbol 漂移：
-  `session.clear.go`、`session.clear.rust`。与本次工作无关，但会让"门禁转绿"这件事
-  不能被单独归因给 W3/W4。采纳前需先确认这两条的处理方式。
+- `lib.rs` 现在只声明模块并 re-export；login、session、transport、state、error 分属独立模块。
+- `SnaplinkClient` 持有 `Arc<dyn Transport>`；默认走 async reqwest，`blocking` feature 通过 `spawn_blocking` 执行。
+- `StateStore` 是同步 trait（`fn take` / `fn save`），值为 `Vec<u8>`；内置 `MemoryStateStore` 仅适合单进程。登录事务键现在按 client 与随机 state 区分并行 flow。
+- token 交换不发 `client_secret`。SDK 在事务中生成 OIDC nonce，callback 结果通过 `LoginResult::nonce()` 返回；ID-token 签名仍由 relying party 验证。
+- Rust SDK 默认 58 项测试、启用 `blocking` 59 项测试全绿；`cargo package` 与 `cargo publish --dry-run --allow-dirty` 验证通过。dry-run 警告 lockfile 含已撤销的 `chacha20 0.10.1`。
+- `sdk_paradigm.py check` 已通过。全仓 `make ci` 被两个既有 `.pi-batch/worktrees` Go 格式问题阻断；全量 Rust Clippy 另被未修改的 entitlement conformance 测试 lint 阻断。
 
 ## 2. W4 Transport：async 优先，阻塞降级为 feature
 
@@ -39,9 +33,10 @@
 ```rust
 #[async_trait]
 pub trait Transport: Send + Sync {
-    async fn post_form(&self, url: &str, form: &[(&str, &str)]) -> Result<TransportResponse, TransportError>;
-    async fn post_json_auth(&self, url: &str, body: &serde_json::Value, bearer: &str)
-        -> Result<TransportResponse, TransportError>;
+    async fn send(
+        &self,
+        request: TransportRequest,
+    ) -> Result<TransportResponse, TransportError>;
 }
 
 pub struct TransportResponse { pub status: u16, pub body: String }
@@ -51,9 +46,8 @@ pub struct TransportResponse { pub status: u16, pub body: String }
 
 1. `SnaplinkClient` 只持有 `Arc<dyn Transport>`，**不再引用任何 reqwest 具体类型**。
 2. 默认 feature 提供 `ReqwestTransport`（`reqwest` **async**，无 `blocking` feature）。
-3. `feature = "blocking"` 单独提供 `BlockingTransport` 适配器（`spawn_blocking` 包装），
-   供 CLI/脚本使用。`blocking` 与 async 二者**不同时启用**，用编译期 cfg 拒绝。
-4. `Cargo.toml` 移除 `features = ["blocking"]`，改为默认 async；`blocking` 移入可选 feature。
+3. 可选 `feature = "blocking"` 提供 `BlockingTransport`；它仍实现 async seam，并把 reqwest blocking I/O 放入 Tokio `spawn_blocking` 池。调用方通过注入选择 backend。
+4. 默认构建只启用 async reqwest；`blocking` 是 opt-in feature，使用时仍需 Tokio runtime。
 5. 超时与重试是**调用方责任**（在 Transport 实现里配置），SDK 不内置重试 ——
    登录链路重试会造成重复 code 交换。
 
@@ -61,17 +55,16 @@ pub struct TransportResponse { pub status: u16, pub body: String }
 
 ## 3. 状态层：不需要改 SDK
 
-`StateStore` 的契约（`take` / `save` 字节）已经足够。Aero IM 现有的 flow cookie
-实现就是参考实现：
+`StateStore` 的契约（同步 `take` / `save` 字节）已存在。Aero IM 现有的 scoped
+HttpOnly/Secure flow cookie 可作为适配基础，但值是明文 cookie 内容（非加密）：
 
 | SDK 需求 | Aero IM 现有资产 |
 |---|---|
-| `save(key, bytes)` | `flow_cookie` + `scoped_flow_cookie_value`（加密、作用域化） |
-| `take(key)` | `flow_from_cookies` |
-| 事务后清除 | `append_clear_flow_cookies` |
+| `save(key, bytes)` | 生成按 SDK state key 命名的 HttpOnly/Secure cookie，限制编码后大小 |
+| `take(key)` | 由 callback state 定位 cookie 并恢复 SDK 事务字节 |
+| 事务后清除 | 复用 `append_clear_flow_cookies` 的 scoped 清理策略 |
 
-因此 Aero IM 侧只需实现一个 `CookieStateStore`，把 `key` 映射到既有 cookie 名，
-`value` 用既有加密封装 —— **SDK 侧零改动**。
+Aero IM 侧仍需实现和测试 `CookieStateStore`；不能把客户端 cookie 误称为服务器端原子存储。授权码单次消费由 Snaplink token endpoint 强制，cookie 需保留短 TTL、SameSite=Lax 与 callback 清理。
 
 设计约束（写进 SDK 文档）：
 
@@ -81,7 +74,7 @@ pub struct TransportResponse { pub status: u16, pub body: String }
 
 ## 4. W3 Session：补 `refresh()` / `logout()`
 
-按 `sdk-paradigm.md` §5.2（显式生命周期，不用隐藏状态）：
+按 `sdk-paradigm.md` §5.2（显式生命周期，不用隐藏状态），Rust SDK 已实现：
 
 ```rust
 impl SnaplinkClient {
@@ -91,8 +84,8 @@ impl SnaplinkClient {
 }
 ```
 
-- `clear()` 语义收窄为"本地重置"，文档注明不触发服务端撤销。
-- 不提供 `AutoRefreshingSession` 默认行为；如需自动续期由调用方显式装饰。
+- `clear()` 仅清 SDK 实例的内存状态；SDK 不持久化 token，调用方还须清除自己的 token 副本。
+- 不提供 `AutoRefreshingSession` 默认行为；自动续期由调用方显式编排。
 
 ## 5. 模块边界
 
@@ -106,14 +99,12 @@ sdks/rust/src/
   session.rs          refresh() / logout() / clear() / access_token()
   state.rs            StateStore trait、MemoryStateStore
   error.rs            SnaplinkError
-  entitlement.rs      （现状已合格，feature = "entitlement" 隔离）
-  license_file.rs     （同上）
-  preferences.rs      （同上）
+  entitlement.rs      typed entitlement model
+  license_file.rs     offline signature verification
+  preferences.rs      preference handoff
 ```
 
-`entitlement` / `license_file` / `preferences` 属于 L3 商业能力，与登录无依赖关系，
-用 feature 隔离，让只做登录的服务（如 Aero IM）不必编译它们及其依赖
-（`ed25519-dalek`、`sha2` 仅校验时需要，可归入 entitlement feature）。
+商业模块已按文件拆分；feature-gating 及可选化 `chrono` / `ed25519-dalek` 依赖尚未实现，作为独立的后续瘦身工作，不阻挡当前登录 SDK 采纳。
 
 ## 6. 安全边界（本次决策）
 
@@ -138,19 +129,20 @@ sdks/rust/src/
 
 | 门禁 | 判据 |
 |---|---|
-| `cargo test` | 现有 41 个不回归；新增 `refresh`/`logout`/async transport 测试 |
-| `python3 ops/scripts/sdk_paradigm.py check` | 4 条 `missing` 翻为 `present`（transport seam、refresh、logout、blocking feature），且**先解决既有 2 条漂移** |
+| `cargo test` | 默认与 `blocking` feature 测试均通过；覆盖 refresh/logout、nonce、state-keyed transaction 和 async transport |
+| `python3 ops/scripts/sdk_paradigm.py check` | Rust capability symbols 指向拆分后的真实模块；检查通过 |
 | 跨 SDK fixture | `login` / `refresh` / `logout` 三条 fixture 五语言同构（§6.2） |
 | 发布 | `cargo publish` 成功，`sdks/rust` 从未提交状态转为 tag `sdk-rs-v0.4.0` |
 
 ## 8. 采纳顺序（Aero IM）
 
-1. W4 Transport + W3 Session 落地，`lib.rs` 拆分，本地测试通过。
-2. 发布 crates.io，Aero IM 用版本依赖（非 path/git）引入。
+1. W4 Transport + W3 Session、模块拆分和本地测试已完成。
+2. 授权发布至 crates.io；Aero IM 只能使用版本依赖（非 path/git）。
 3. Snaplink 侧 `aero-im` 改公共客户端（先 `--validate-only` 过再替换 Secret）。
-4. `sso.rs` 用 SDK 重写 OIDC 段：删除 `authorization_url`、
-   `exchange_authorization_code`、`verify_authorization_issuer`、`verify_nonce`、
-   `oidc_jwks_provider`；保留既有 `CookieStateStore` 资产。
+4. `sso.rs` 用 SDK 接管 authorization redirect、state/PKCE transaction 与 code exchange；
+   SDK callback 结果提供生成的 nonce。**保留** `validate_id_token`、`oidc_jwks_provider` 和
+   nonce 比对：SDK 不验证 ID-token 签名，Aero IM 必须继续按 issuer/audience/JWKS 校验后
+   才能 JIT provision。适配器复用现有 scoped HttpOnly/Secure cookie 边界。
 5. 重建 `aero-im` 镜像、导入 containerd、滚动更新，用无头浏览器验证
    登录起点 → Snaplink → 回调 → 会话落地全链路。
 
@@ -160,6 +152,6 @@ sdks/rust/src/
 |---|---|
 | 公开客户端弱于机密客户端 | PKCE S256 + 精确 redirect URI 强制；secret 本就存于同一集群，不构成隔离 |
 | SDK 未发布即被引用 | §7 要求先发布再引用，禁止 path 依赖进生产镜像 |
-| paradigm 门禁已被既有漂置弄红 | 先清 `session.clear.*` 两条，否则无法归因 |
-| 阻塞 SDK 残留 | 移除 `reqwest` 的 `blocking` feature；cfg 拒绝同时启用 |
+| crates.io 尚未发布 | 发布前不得将本地/path 依赖并入 Aero IM 部署构建 |
+| OIDC token 误信 | Aero IM 保留 `validate_id_token`、JWKS issuer/audience 与 SDK nonce 比对 |
 | 多副本下 `MemoryStateStore` 失效 | 文档标注仅单进程；Aero IM 提供 cookie 实现 |

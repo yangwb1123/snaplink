@@ -53,3 +53,7 @@ plan, features, and limits.
 `MemoryStateStore` is for development. Production applications should provide
 a tenant/session-backed `StateStore` whose `Take` operation atomically removes
 the transaction; this is application session storage, not a separate BFF.
+
+Session lifecycle is explicit: `Refresh` rotates tokens, `Clear` only forgets
+local state, and `Logout` revokes server-side before clearing local state. A
+refresh error is returned to the caller; it is never retried implicitly.

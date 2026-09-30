@@ -13,12 +13,24 @@ class FakeClient:
     def __init__(self, _base_url, *, client_id, get_access_token):
         self.client_id = client_id
         self.get_access_token = get_access_token
+        self.logout_calls = 0
+        self.logout_error = None
 
     def post_token(self, body):
         FakeClient.last_body = body
-        return {"access_token": "access-1", "expires_in": 900, "token_type": "Bearer"}
+        if body["grant_type"] == "refresh_token":
+            return {"access_token": "access-2", "expires_in": 900, "token_type": "Bearer"}
+        return {
+            "access_token": "access-1",
+            "expires_in": 900,
+            "refresh_token": "refresh-1",
+            "token_type": "Bearer",
+        }
 
     def post_logout(self, _body):
+        self.logout_calls += 1
+        if self.logout_error is not None:
+            raise self.logout_error
         return {}
 
     def post_activation_prepare(self, body):
@@ -35,6 +47,22 @@ class FakeClient:
 
 
 class HostedLoginTest(unittest.TestCase):
+    @staticmethod
+    def complete_login(sdk):
+        options = {
+            "base_url": "https://sso.example.test",
+            "client_id": "spa-client",
+            "redirect_uri": "https://app.example.test/auth/callback",
+        }
+        initial = sdk.login(options)
+        query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(initial.redirect_url).query))
+        return sdk.login({
+            **options,
+            "callback_url": options["redirect_uri"] + "?code=code-1&state="
+            + urllib.parse.quote(query["state"])
+            + "&iss=https%3A%2F%2Fsso.example.test",
+        })
+
     def test_non_loopback_http_requires_explicit_development_opt_in(self):
         sdk = Snaplink(MemoryStateStore(), client_factory=FakeClient)
         options = {
@@ -96,6 +124,48 @@ class HostedLoginTest(unittest.TestCase):
                 },
             })
         self.assertEqual(raised.exception.error, "invalid_request")
+
+    def test_refresh_without_a_refresh_token_requires_login(self):
+        sdk = Snaplink(MemoryStateStore(), client_factory=FakeClient)
+        with self.assertRaises(SSOError) as raised:
+            sdk.refresh()
+        self.assertEqual(raised.exception.error, "login_required")
+
+    def test_refresh_uses_explicit_refresh_grant_and_preserves_unrotated_token(self):
+        sdk = Snaplink(MemoryStateStore(), client_factory=FakeClient)
+        self.complete_login(sdk)
+
+        tokens = sdk.refresh()
+
+        self.assertEqual(tokens["access_token"], "access-2")
+        self.assertEqual(tokens["refresh_token"], "refresh-1")
+        self.assertEqual(FakeClient.last_body, {
+            "grant_type": "refresh_token",
+            "client_id": "spa-client",
+            "refresh_token": "refresh-1",
+        })
+        self.assertNotIn("code_verifier", FakeClient.last_body)
+        self.assertEqual(sdk.access_token, "access-2")
+
+    def test_clear_is_local_only_and_logout_revokes_then_clears_on_failure(self):
+        sdk = Snaplink(MemoryStateStore(), client_factory=FakeClient)
+        self.complete_login(sdk)
+        api = sdk.api
+        sdk._activation_context = {"product_id": "pro"}
+
+        sdk.clear()
+        self.assertFalse(sdk.is_logged_in)
+        self.assertIsNone(sdk.account_context)
+        self.assertIs(sdk.api, api)
+        self.assertEqual(api.logout_calls, 0)
+
+        self.complete_login(sdk)
+        api = sdk.api
+        api.logout_error = RuntimeError("offline")
+        with self.assertRaisesRegex(RuntimeError, "offline"):
+            sdk.logout()
+        self.assertFalse(sdk.is_logged_in)
+        self.assertEqual(api.logout_calls, 1)
 
     def test_setup_claims_ticket_after_login_without_persisting_key(self):
         store = MemoryStateStore()

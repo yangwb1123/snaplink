@@ -3,8 +3,8 @@
 //! Refresh is an explicit call rather than something that happens behind the
 //! scenes. An implicit renewal makes "which request fired, and when"
 //! unobservable, which costs both test determinism and debuggability, so a
-//! caller renews when it decides to. Every SDK in the paradigm registry exposes
-//! the same three operations with the same meaning:
+//! caller renews when it decides to. Every hosted-login SDK exposes these three
+//! operations with the same meaning; native mobile refresh remains implicit.
 //!
 //! - [`SnaplinkClient::refresh`] renews the access token and rotates the refresh
 //!   token.
@@ -41,10 +41,11 @@ impl SnaplinkClient {
         client_id: &str,
         tokens: TokenResponse,
     ) -> Result<Self, SnaplinkError> {
-        let base_url = Url::parse(base_url)
-            .map_err(|_| SnaplinkError::InvalidRequest("base_url is not a valid URL".to_owned()))?;
+        let base_url = crate::login::validate_url(base_url, "base_url", false, false, false)?;
         if client_id.trim().is_empty() {
-            return Err(SnaplinkError::InvalidRequest("client_id is required".to_owned()));
+            return Err(SnaplinkError::InvalidRequest(
+                "client_id is required".to_owned(),
+            ));
         }
         if tokens.access_token.is_empty() {
             return Err(SnaplinkError::InvalidRequest(
@@ -53,9 +54,7 @@ impl SnaplinkClient {
         }
         Ok(Self::with_transport(
             Arc::new(MemoryStateStore::new()),
-            Arc::new(ReqwestTransport::new().map_err(|_| {
-                SnaplinkError::Http(crate::TransportError::new("transport init failed"))
-            })?),
+            Arc::new(ReqwestTransport::new()),
         )
         .with_resumed(base_url, client_id, tokens))
     }
@@ -69,26 +68,24 @@ impl SnaplinkClient {
         tokens: TokenResponse,
         transport: Arc<dyn Transport>,
     ) -> Result<Self, SnaplinkError> {
-        let base_url = Url::parse(base_url)
-            .map_err(|_| SnaplinkError::InvalidRequest("base_url is not a valid URL".to_owned()))?;
+        let base_url = crate::login::validate_url(base_url, "base_url", false, false, false)?;
         if client_id.trim().is_empty() {
-            return Err(SnaplinkError::InvalidRequest("client_id is required".to_owned()));
+            return Err(SnaplinkError::InvalidRequest(
+                "client_id is required".to_owned(),
+            ));
         }
         if tokens.access_token.is_empty() {
             return Err(SnaplinkError::InvalidRequest(
                 "an access token is required to resume a session".to_owned(),
             ));
         }
-        Ok(Self::with_transport(Arc::new(MemoryStateStore::new()), transport)
-            .with_resumed(base_url, client_id, tokens))
+        Ok(
+            Self::with_transport(Arc::new(MemoryStateStore::new()), transport)
+                .with_resumed(base_url, client_id, tokens),
+        )
     }
 
-    fn with_resumed(
-        mut self,
-        base_url: Url,
-        client_id: &str,
-        tokens: TokenResponse,
-    ) -> Self {
+    fn with_resumed(mut self, base_url: Url, client_id: &str, tokens: TokenResponse) -> Self {
         self.base_url = Some(base_url);
         self.client_id = Some(client_id.to_owned());
         self.tokens = Some(tokens);
@@ -103,10 +100,11 @@ impl SnaplinkClient {
             .is_some_and(|tokens| tokens.refresh_token.is_some())
     }
 
-    /// How long the current access token remains valid, or zero when unknown.
+    /// The server-reported token lifetime, or zero when unknown.
     ///
-    /// This is a duration rather than an absolute deadline so a caller can
-    /// compare it against its own clock instead of trusting this crate's.
+    /// This is the original `expires_in` duration, not a decreasing countdown.
+    /// Callers that need the remaining lifetime should record when the token
+    /// response was received and compare that instant against this duration.
     pub fn expires_in(&self) -> Duration {
         self.tokens
             .as_ref()
@@ -133,14 +131,16 @@ impl SnaplinkClient {
         // The refresh grant is form-encoded and carries no code verifier, so it
         // goes straight through the transport rather than request_json (which
         // speaks JSON for the activation and account-context endpoints).
-        let request = TransportRequest::new(crate::transport::Method::Post, token_endpoint(&base_url))
-            .header("Accept", "application/json")
-            .header("Cache-Control", "no-store")
-            .form([
-                ("grant_type", "refresh_token".to_owned()),
-                ("client_id", client_id),
-                ("refresh_token", refresh_token.clone()),
-            ]);
+        let request =
+            TransportRequest::new(crate::transport::Method::Post, token_endpoint(&base_url))
+                .header("Accept", "application/json")
+                .header("Cache-Control", "no-store")
+                .header("Pragma", "no-cache")
+                .form([
+                    ("grant_type", "refresh_token".to_owned()),
+                    ("client_id", client_id),
+                    ("refresh_token", refresh_token.clone()),
+                ]);
         let response = self.transport.send(request).await?;
         let mut tokens: crate::TokenResponse = crate::decode_token(response)?;
         if tokens.refresh_token.is_none() {
@@ -154,22 +154,23 @@ impl SnaplinkClient {
 
     /// Revokes the server-side session, then clears local state.
     ///
-    /// The server call is best-effort: local state is cleared even when the
-    /// request fails, because a caller asking to log out must end up logged out
-    /// locally regardless. The returned error reports the server outcome.
+    /// The server call is best-effort: this client's in-memory state is cleared
+    /// even when the request fails, because a caller asking to log out must end
+    /// up logged out locally regardless. The returned error reports the server
+    /// outcome. Callers that persist tokens themselves must delete that copy too.
     pub async fn logout(&mut self) -> Result<(), SnaplinkError> {
         let outcome = self.revoke_session().await;
         self.clear();
         outcome
     }
 
-    /// Drops the in-memory session without contacting the server.
+    /// Drops this client's in-memory session without contacting the server.
     ///
     /// Use this when the local copy must be forgotten but the server session
-    /// should survive. Use [`SnaplinkClient::logout`] when it should end.
+    /// should survive. Use [`SnaplinkClient::logout`] when it should end. The
+    /// caller remains responsible for deleting any tokens it persisted itself.
     pub fn clear(&mut self) {
         self.tokens = None;
-        self.pending_setup = None;
         self.account_context = None;
     }
 

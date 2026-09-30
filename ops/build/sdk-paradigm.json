@@ -77,7 +77,7 @@
         },
         "rust": {
           "status": "present",
-          "note": "W4: replaced the concrete reqwest::blocking type alias with an async trait; ReqwestTransport is the default.",
+          "note": "W4: async Transport is the default; ReqwestTransport uses reqwest async, and the optional blocking feature adapts reqwest through spawn_blocking.",
           "file": "sdks/rust/src/transport.rs",
           "symbol": "pub trait Transport: Send + Sync"
         },
@@ -121,9 +121,9 @@
         },
         "rust": {
           "status": "present",
-          "file": "sdks/rust/src/lib.rs",
+          "file": "sdks/rust/src/login.rs",
           "symbol": "pub async fn login(&mut self, options: &LoginOptions) -> Result<LoginResult, SnaplinkError>",
-          "note": "W4 made the hosted-login surface async over an injected Transport."
+          "note": "Async injected transport; transactions are state-scoped and the generated OIDC nonce is returned for relying-party validation."
         },
         "kotlin": {
           "status": "present",
@@ -165,7 +165,7 @@
         },
         "rust": {
           "status": "present",
-          "file": "sdks/rust/src/lib.rs",
+          "file": "sdks/rust/src/state.rs",
           "symbol": "pub trait StateStore: Send + Sync"
         },
         "kotlin": {
@@ -209,7 +209,7 @@
         },
         "rust": {
           "status": "present",
-          "file": "sdks/rust/src/lib.rs",
+          "file": "sdks/rust/src/state.rs",
           "symbol": "pub struct MemoryStateStore"
         },
         "kotlin": {
@@ -252,7 +252,7 @@
         },
         "rust": {
           "status": "present",
-          "file": "sdks/rust/src/lib.rs",
+          "file": "sdks/rust/src/login.rs",
           "symbol": "pub fn access_token(&self) -> Option<&str>"
         },
         "kotlin": {
@@ -295,7 +295,7 @@
         },
         "rust": {
           "status": "present",
-          "file": "sdks/rust/src/lib.rs",
+          "file": "sdks/rust/src/login.rs",
           "symbol": "pub fn is_logged_in(&self) -> bool"
         },
         "kotlin": {
@@ -322,14 +322,14 @@
           "symbol": "func (c *Client) Clear()"
         },
         "typescript": {
-          "status": "missing",
-          "note": "clearTokens exists but is private and only reached from logout and refresh failure.",
-          "plan": "W3 Session: make the local reset reachable, mirroring clear() elsewhere."
+          "status": "present",
+          "file": "sdks/typescript/browser-login.ts",
+          "symbol": "clear(): void"
         },
         "python": {
-          "status": "missing",
-          "note": "logout() is the only path that drops token state.",
-          "plan": "W3 Session: add clear() so logout and local reset are separable."
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/hosted_login.py",
+          "symbol": "def clear(self) -> None:"
         },
         "php": {
           "status": "present",
@@ -357,7 +357,7 @@
       "id": "session.logout",
       "layer": "session",
       "summary": "Ending a session notifies the authorization server so refresh tokens and server-side sessions are revoked, not merely forgotten.",
-      "parity": "divergent",
+      "parity": "parity",
       "languages": {
         "go": {
           "status": "present",
@@ -400,7 +400,7 @@
     {
       "id": "session.refresh",
       "layer": "session",
-      "summary": "An expired access token is renewed with the refresh token so a session survives token expiry.",
+      "summary": "A refresh-token grant renews access; hosted-login SDKs expose it explicitly while native SDKs refresh on access.",
       "parity": "divergent",
       "languages": {
         "go": {
@@ -411,17 +411,18 @@
         "typescript": {
           "status": "present",
           "file": "sdks/typescript/browser-login.ts",
-          "symbol": "private async tryRefresh(options: ResolvedLoginOptions): Promise<TokenIssuance | undefined>"
+          "symbol": "async refresh(): Promise<TokenIssuance>",
+          "note": "Explicit refresh is public; login-time automatic renewal requires autoRefresh: true."
         },
         "python": {
-          "status": "missing",
-          "note": "access expiry forces a full re-login.",
-          "plan": "W3 Session: add refresh() and keep automatic renewal as an opt-in decorator."
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/hosted_login.py",
+          "symbol": "def refresh(self) -> Dict[str, Any]:"
         },
         "php": {
-          "status": "missing",
-          "note": "access expiry forces a full re-login.",
-          "plan": "W3 Session: add refresh() performing the refresh_token grant."
+          "status": "present",
+          "file": "sdks/php/src/SnaplinkClient.php",
+          "symbol": "public function refresh(): array"
         },
         "rust": {
           "status": "present",
@@ -433,13 +434,13 @@
           "status": "present",
           "file": "sdks/kotlin/main/SnaplinkAuthClient.kt",
           "symbol": "val response = transport.refresh(refreshToken)",
-          "note": "Refresh is performed implicitly by accessToken() under a single-flight lock rather than through an explicit call. That is a deliberate divergence from the hosted-login SDKs: a mobile call site wants a valid bearer, and forcing every caller to check expiry is worse ergonomics. The cost is that the refresh grant is not observable from the call site, which is why the single-flight lock exists."
+          "note": "Refresh remains implicit in accessToken() under a single-flight lock; this is the documented native-mobile divergence from explicit hosted-login refresh."
         },
         "swift": {
           "status": "present",
           "file": "sdks/swift/Sources/SnaplinkAuthClient.swift",
           "symbol": "Task { try await transport.refresh(refreshToken) }",
-          "note": "Refresh is performed implicitly by accessToken() under a single-flight lock rather than through an explicit call. That is a deliberate divergence from the hosted-login SDKs: a mobile call site wants a valid bearer, and forcing every caller to check expiry is worse ergonomics. The cost is that the refresh grant is not observable from the call site, which is why the single-flight lock exists."
+          "note": "Refresh remains implicit in accessToken() under a single-flight lock; this is the documented native-mobile divergence from explicit hosted-login refresh."
         }
       }
     },
@@ -471,7 +472,7 @@
         },
         "rust": {
           "status": "present",
-          "file": "sdks/rust/src/lib.rs",
+          "file": "sdks/rust/src/login.rs",
           "symbol": "pub async fn setup(",
           "note": "W4 made the hosted-login surface async; the symbols moved from the login path to an async transport."
         },
@@ -515,7 +516,7 @@
         },
         "rust": {
           "status": "present",
-          "file": "sdks/rust/src/lib.rs",
+          "file": "sdks/rust/src/login.rs",
           "symbol": "pub async fn get_account_context("
         },
         "kotlin": {
@@ -699,7 +700,7 @@
         "rust": {
           "status": "present",
           "note": "W4: async by default, which is why the crate is 0.4.0 rather than 0.3.0.",
-          "file": "sdks/rust/src/lib.rs",
+          "file": "sdks/rust/src/login.rs",
           "symbol": "pub async fn login(&mut self, options: &LoginOptions) -> Result<LoginResult, SnaplinkError>"
         },
         "kotlin": {

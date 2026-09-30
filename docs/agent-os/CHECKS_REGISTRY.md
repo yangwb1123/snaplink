@@ -101,14 +101,15 @@ Run `python cli.py check-test` for check-module tests and
   `SDK_SURFACE_BASELINE_REF`; it is intentionally not a `make ci` prerequisite, so
   a shallow or parentless local checkout cannot create a false baseline result.
 - `sdk-paradigm` governs what the generator never sees: the hand-written
-  transport, session, entitlement, preferences, and runtime behaviour of all five
-  SDKs, which `sdk-surface` deliberately does not cover because only TypeScript
-  and Python receive generated clients. The registry is the only source of
+  transport, session, entitlement, preferences, and runtime behaviour of the five
+  hosted-login SDKs plus the registered Kotlin and Swift native SDKs. Kotlin and
+  Swift remain in onboarding; `sdk-surface` deliberately covers only generated
+  TypeScript and Python clients. The registry is the only source of
   truth; the checker never infers a capability from source. A `present` entry
   must name a real file and a symbol the checker finds in it, so renaming a
   symbol fails until the registry is edited deliberately. A `missing` entry must
   name the wave that closes it and may not name a file or symbol. A capability
-  declared `parity` must be present in every language, so the six parity
+  declared `parity` must be present in every language, so the seven parity
   capabilities cannot erode; downgrading one to `divergent` is a contract change
   requiring a minor bump and a CHANGELOG entry. Every package in
   `sdk_versions.MANIFEST_SPECS` must declare a language, so a newly published SDK

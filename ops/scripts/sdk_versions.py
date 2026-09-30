@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read and validate the four committed SDK package manifests.
+"""Read and validate the six committed SDK package manifests.
 
 The production entry point has no path arguments: every manifest path and
 parser is fixed here. TOML parsing lives in :mod:`sdk_toml` so this module
@@ -110,7 +110,7 @@ class PackageVersion:
 
 @dataclass(frozen=True)
 class VersionReport:
-    """Deterministic result for all four package manifests."""
+    """Deterministic result for all six package manifests."""
 
     packages: tuple[PackageVersion, ...]
     consistency_error: str | None = None

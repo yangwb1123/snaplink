@@ -14,8 +14,8 @@ import (
 // Refresh is an explicit call rather than something that happens behind the
 // scenes. An implicit renewal makes "which request fired, and when"
 // unobservable, which costs both test determinism and debuggability, so a
-// caller renews when it decides to. Every SDK in the registry exposes the same
-// three operations with the same meaning:
+// caller renews when it decides to. Every hosted-login SDK exposes these three
+// operations with the same meaning; native mobile refresh remains implicit.
 //
 //   - Refresh renews the access token and rotates the refresh token.
 //   - Logout revokes server-side state and then drops local state.

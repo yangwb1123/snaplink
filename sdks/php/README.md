@@ -104,6 +104,11 @@ The one-call form is `login([... 'setup' => ['product_id' => 'pro',
 derives the tenant, plan, features, and limits; credentials are never put in a
 URL or OAuth state.
 
+The client exposes the explicit lifecycle shared by the hosted-login SDKs:
+`refresh()` performs the refresh-token grant, `clear()` only forgets local
+state, and `logout()` calls the server before clearing local state even when
+revocation fails.
+
 Use a durable StateStore implementation for multi-worker deployments;
 MemoryStateStore is intended for development and single-process examples.
 The default token transport uses PHP's standard-library HTTP streams. Tests

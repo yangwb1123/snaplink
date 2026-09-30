@@ -68,6 +68,8 @@ export interface SnaplinkLoginOptions {
     transactionTtlMs?: number;
     /** Optional paid license/invitation activation performed before hosted login. */
     setup?: SnaplinkLoginSetup;
+    /** Refresh an expired session during login(); disabled unless explicitly enabled. */
+    autoRefresh?: boolean;
     /** SSR/test seams; normal browser callers do not need these. */
     storage?: SnaplinkStorage;
     location?: SnaplinkLocation;
@@ -105,7 +107,11 @@ export declare class SnaplinkBrowserClient {
     setup(options: SnaplinkSetupOptions): Promise<ActivationPreparation>;
     /** Fetch server-derived plan, feature, and quota information for a product. */
     getAccountContext(productId?: string): Promise<AccountContext>;
-    /** Best-effort server logout followed by local token removal. */
+    /** Renew tokens explicitly, preserving a refresh token the server omits. */
+    refresh(): Promise<TokenIssuance>;
+    /** Forget local tokens and account context without contacting Snaplink. */
+    clear(): void;
+    /** Revoke server-side state, then clear local tokens even when the request fails. */
     logout(): Promise<void>;
     /**
      * The latest entitlement as a typed value, or undefined if never activated.

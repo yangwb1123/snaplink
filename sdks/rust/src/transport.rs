@@ -1,9 +1,9 @@
 //! L0 Transport — the single seam every network call goes through.
 //!
-//! The seam is **async by default**. A blocking client cannot be called from an
-//! async handler: it parks a runtime worker thread, and under load that starves
-//! every other task on the executor. `BlockingTransport` exists only behind the
-//! `blocking` feature for CLIs and scripts, where there is no runtime to starve.
+//! The seam is **async by default**. `BlockingTransport` is an optional backend
+//! for environments that need reqwest's blocking client; it dispatches network
+//! work to Tokio's blocking pool so it does not park an executor worker. It still
+//! requires a Tokio runtime to drive the async SDK API.
 //!
 //! Timeout and retry policy deliberately stay with the caller. The SDK performs
 //! one-shot token exchanges; a retry inside the SDK would replay an
@@ -132,10 +132,7 @@ impl std::error::Error for TransportError {}
 /// makes the shape portable across the five SDKs.
 #[async_trait::async_trait]
 pub trait Transport: Send + Sync {
-    async fn send(
-        &self,
-        request: TransportRequest,
-    ) -> Result<TransportResponse, TransportError>;
+    async fn send(&self, request: TransportRequest) -> Result<TransportResponse, TransportError>;
 }
 
 /// Default backend: `reqwest`'s async client over rustls.
@@ -144,26 +141,33 @@ pub struct ReqwestTransport {
 }
 
 impl ReqwestTransport {
-    /// Build with reqwest defaults. reqwest's own constructor is infallible;
-    /// the `Result` is kept so a future TLS-backend failure has somewhere to go
-    /// without another breaking change.
-    pub fn new() -> Result<Self, TransportError> {
-        Ok(Self::with_client(reqwest::Client::new()))
+    /// Build with reqwest defaults. Use [`Self::with_client`] when the
+    /// embedding application needs custom timeouts, proxies, or pool limits.
+    pub fn new() -> Self {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("reqwest default client configuration must be valid");
+        Self::with_client(client)
     }
 
     /// Adopt a caller-configured client so timeouts, proxies, and connection
-    /// pools are owned by the embedding application.
+    /// pools are owned by the embedding application. Configure it not to follow
+    /// redirects: authorization codes and bearer tokens must remain on-origin.
     pub fn with_client(client: reqwest::Client) -> Self {
         Self { client }
     }
 }
 
+impl Default for ReqwestTransport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl Transport for ReqwestTransport {
-    async fn send(
-        &self,
-        request: TransportRequest,
-    ) -> Result<TransportResponse, TransportError> {
+    async fn send(&self, request: TransportRequest) -> Result<TransportResponse, TransportError> {
         let method = match request.method {
             Method::Get => reqwest::Method::GET,
             Method::Post => reqwest::Method::POST,
@@ -194,8 +198,9 @@ impl Transport for ReqwestTransport {
     }
 }
 
-/// Blocking adapter for CLIs and scripts. **Never** call this from an async
-/// context — it parks the calling thread. Behind the `blocking` feature only.
+/// Optional reqwest blocking backend for CLI and script integrations. Calls
+/// execute on Tokio's blocking pool; a Tokio runtime is still required to drive
+/// this async transport. Behind the `blocking` feature only.
 #[cfg(feature = "blocking")]
 pub struct BlockingTransport {
     client: reqwest::blocking::Client,
@@ -203,20 +208,27 @@ pub struct BlockingTransport {
 
 #[cfg(feature = "blocking")]
 impl BlockingTransport {
-    pub fn new() -> Result<Self, TransportError> {
-        Ok(Self {
-            client: reqwest::blocking::Client::new(),
-        })
+    pub fn new() -> Self {
+        Self {
+            client: reqwest::blocking::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("reqwest default client configuration must be valid"),
+        }
+    }
+}
+
+#[cfg(feature = "blocking")]
+impl Default for BlockingTransport {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[cfg(feature = "blocking")]
 #[async_trait::async_trait]
 impl Transport for BlockingTransport {
-    async fn send(
-        &self,
-        request: TransportRequest,
-    ) -> Result<TransportResponse, TransportError> {
+    async fn send(&self, request: TransportRequest) -> Result<TransportResponse, TransportError> {
         let method = match request.method {
             Method::Get => reqwest::Method::GET,
             Method::Post => reqwest::Method::POST,

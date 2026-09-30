@@ -16,7 +16,7 @@ transport, session, entitlement, preferences, and runtime behaviour of each SDK
 | Layer | Scope | Registry | Languages | Gate |
 |---|---|---|---|---|
 | **L1 ApiClient** | 321 operations in 13 groups | `ops/build/sdk-surface.json` | TypeScript, Python | `cli.py sdk-surface check` |
-| **L0–L3 hand-written** | transport, session, entitlement, preferences, runtime | `ops/build/sdk-paradigm.json` | all five | `cli.py sdk-paradigm check` |
+| **L0–L3 hand-written** | transport, session, entitlement, preferences, runtime | `ops/build/sdk-paradigm.json` | five hosted-login SDKs; Kotlin and Swift are registered native SDKs still onboarding | `cli.py sdk-paradigm check` |
 
 A language is released as a package only if it appears in
 `ops/scripts/sdk_versions.py`; the paradigm gate requires every such package to
@@ -34,7 +34,7 @@ Each capability is a `layer.id` pair with a `parity` and one declaration per
 language.
 
 - `parity: "parity"` — every language must be `present`. A `missing` entry is a
-  gate failure. This is the ratchet: the six parity capabilities are the floor
+  gate failure. This is the ratchet: the seven parity capabilities are the floor
   that must not erode.
 - `parity: "divergent"` — gaps are permitted, but every `missing` entry must name
   the wave that closes it, so drift has an owner.
@@ -73,16 +73,17 @@ site is greppable back to `docs/openapi.yaml`.
 
 ### L2 Session
 
-Explicit lifecycle: start, refresh, logout. `refresh` is a first-class operation
-in every SDK, because an access token that cannot be renewed forces a full
-re-login on expiry. Automatic renewal is an opt-in decorator, never the default:
-an implicit refresh makes "which request fired, and when" unobservable, which
-costs both test determinism and debuggability.
+Explicit lifecycle: start, refresh, logout, and local clear. All five hosted-login
+SDKs expose `refresh()` as a caller-controlled refresh-token grant; TypeScript
+login-time renewal is disabled unless `autoRefresh: true` is requested. Kotlin
+and Swift retain single-flight refresh from `accessToken()` and are documented as
+the native-mobile interface divergence in the registry.
 
 `logout` notifies the authorization server so refresh tokens and server-side
-sessions are revoked. It is distinct from `clear`, which only drops local state.
-An SDK that offers only one of the two is a defect: the caller must be able to
-forget a token locally without pretending the server session ended.
+sessions are revoked, then clears local state even if the request fails. It is
+distinct from `clear`, which only drops local tokens and account context. The
+caller can therefore forget a local copy without claiming the server session
+ended.
 
 The short-lived login transaction is persisted through a caller-suppliable
 state store. The shipped in-memory store is for development and single-process
@@ -233,8 +234,9 @@ workflows and that package's matching version tag. SDK package versions are
 independent: this gate validates each manifest's SemVer and local lockfile
 consistency without requiring a synchronized release train. They are separate
 from the Snaplink server/module version and the OAuth/OIDC protocol version.
-`cli.py sdk-surface versions` reads the four published-package manifests and
-runs inside `sdk-surface check` and `make ci`.
+`cli.py sdk-surface versions` reads the six committed SDK package manifests;
+the Go SDK is versioned by the root module. It runs inside `sdk-surface check`
+and `make ci`.
 
 ## 10. Implementation waves
 
@@ -244,7 +246,7 @@ The registry's `missing` entries name the wave that closes each gap.
 |---|---|
 | W1 | this document, the registry, the parity gate, the four fixtures |
 | W2 | L3 Entitlement: typed `LicenseState` and entitlement keys, local entitlement-file verification, preference handoff for the remaining SDKs |
-| W3 | L2 Session: `refresh` and `logout` in every SDK, explicit session objects, layered options |
+| W3 | L2 Session: explicit `refresh` and `logout` across hosted-login SDKs; local-only `clear`; mobile refresh remains documented separately |
 | W4 | L0 Transport: one injectable async-first seam, native async composition |
 | W5 | L1 ApiClient: extend the generator to the remaining SDKs |
 
@@ -252,13 +254,20 @@ The registry's `missing` entries name the wave that closes each gap.
 
 | Capability | go | TypeScript | Python | Rust | PHP |
 |---|---|---|---|---|---|
+| `session.refresh` | done | done | done | done | done |
+| `session.logout` | done | done | done | done | done |
+| `session.clear` | done | done | done | done | done |
 | `entitlement.typed_keys` | done | done | done | done | done |
 | `entitlement.license_file` | done | done | done | done | done |
 | `preferences.handoff` | missing | done | done | done | missing |
 
+This progress table covers the five hosted-login SDKs (Go, TypeScript, Python,
+Rust, and PHP). Kotlin and Swift are registered native SDKs still onboarding;
+their refresh-on-access behavior is intentionally distinct for now.
+
 `python cli.py sdk-paradigm list` is the live version of this table.
 
-The whole L3 entitlement layer is complete across all five SDKs and verified
+The whole L3 entitlement layer is complete across all five hosted-login SDKs and verified
 against one shared fixture per contract, so the expiry boundary, the
 inactive-lookups-grant-nothing rule, and the never-downgrade-a-rejected-file
 rule cannot drift between implementations.

@@ -131,7 +131,7 @@ sdk-drift-check: ## Regenerate SDKs in a temporary tree and sweep deploy copies.
 sdk-paradigm-check: ## Validate the hand-written SDK-layer capability registry and cross-language conformance fixtures.
 	$(CLI) sdk-paradigm check
 
-sdk-paradigm-list: ## Print the SDK capability matrix across all five languages.
+sdk-paradigm-list: ## Print the SDK capability matrix across all registered languages.
 	$(CLI) sdk-paradigm list
 
 sdk-surface-diff: ## Compare operation and components.schemas surface with SDK_SURFACE_BASELINE_REF (required; local git ref).

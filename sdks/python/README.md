@@ -48,6 +48,12 @@ For trusted local-network development only, set
 `allow_insecure_http_for_development: True`; production integrations must use
 HTTPS.
 
+The hosted-login client exposes the same explicit session lifecycle as the
+other server-side SDKs. `refresh()` performs a refresh-token grant and preserves
+a refresh token if the server does not rotate it; `clear()` forgets local tokens
+without a server request; `logout()` revokes server-side and clears local state
+even if revocation fails.
+
 For shared presentation settings, wrap the generated client with
 `SnaplinkUserPreferencesClient`. It exposes `locale` and `theme_mode`, writes the application-neutral
 `theme_mode` wire key, reads the legacy `sverp:theme_mode` alias during

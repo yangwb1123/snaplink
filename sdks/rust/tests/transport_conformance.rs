@@ -10,11 +10,16 @@
 //! 2. Every request the SDK issues carries the no-store cache headers the
 //!    credential endpoints require.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    io::{Read, Write},
+    net::TcpListener,
+    sync::{Arc, Mutex},
+    thread,
+};
 
 use snaplink_sso::{
-    LoginOptions, Method, SnaplinkClient, Transport, TransportError, TransportRequest,
-    TransportResponse,
+    LoginOptions, Method, ReqwestTransport, SnaplinkClient, Transport, TransportError,
+    TransportRequest, TransportResponse,
 };
 
 #[derive(Default)]
@@ -24,12 +29,15 @@ struct Recorder {
 
 #[async_trait::async_trait]
 impl Transport for Recorder {
-    async fn send(
-        &self,
-        request: TransportRequest,
-    ) -> Result<TransportResponse, TransportError> {
-        self.requests.lock().expect("recorder").push(request.clone());
-        Ok(TransportResponse::new(200, r#"{"access_token":"a","token_type":"Bearer"}"#))
+    async fn send(&self, request: TransportRequest) -> Result<TransportResponse, TransportError> {
+        self.requests
+            .lock()
+            .expect("recorder")
+            .push(request.clone());
+        Ok(TransportResponse::new(
+            200,
+            r#"{"access_token":"a","token_type":"Bearer"}"#,
+        ))
     }
 }
 
@@ -55,8 +63,7 @@ fn logged_in(recorder: Arc<Recorder>) -> SnaplinkClient {
 #[tokio::test]
 async fn a_caller_supplied_transport_receives_every_request() {
     let recorder = Arc::new(Recorder::default());
-    let store: Arc<dyn snaplink_sso::StateStore> =
-        Arc::new(snaplink_sso::MemoryStateStore::new());
+    let store: Arc<dyn snaplink_sso::StateStore> = Arc::new(snaplink_sso::MemoryStateStore::new());
     let mut client = SnaplinkClient::with_transport(store, recorder.clone());
 
     // login() with no callback URL returns a redirect and performs no I/O.
@@ -66,17 +73,45 @@ async fn a_caller_supplied_transport_receives_every_request() {
         "https://app.example.test/callback",
     );
     let started = client.login(&options).await.expect("start");
-    assert!(matches!(started, snaplink_sso::LoginResult::Redirect { .. }));
+    assert!(matches!(
+        started,
+        snaplink_sso::LoginResult::Redirect { .. }
+    ));
 
     // Starting a login is local-only, so nothing has been sent yet.
     assert!(recorder.requests.lock().expect("recorder").is_empty());
 
     // A call that needs the network goes through the injected transport.
-    let _ = logged_in(Arc::clone(&recorder)).get_account_context("pro").await;
+    let _ = logged_in(Arc::clone(&recorder))
+        .get_account_context("pro")
+        .await;
     let requests = recorder.requests.lock().expect("recorder").clone();
     assert_eq!(requests.len(), 1, "exactly one request expected");
     assert_eq!(requests[0].method, Method::Get);
     assert!(requests[0].url.contains("/api/v1/me/account-context"));
+}
+
+#[tokio::test]
+async fn default_reqwest_transport_does_not_follow_token_endpoint_redirects() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let endpoint = format!("http://{}/token", listener.local_addr().expect("address"));
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request).expect("read request");
+        stream
+            .write_all(
+                b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/steal\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .expect("write redirect");
+    });
+
+    let response = ReqwestTransport::new()
+        .send(TransportRequest::new(Method::Post, endpoint).form([("code", "authorization-code")]))
+        .await
+        .expect("the transport should return the redirect response, not follow it");
+    assert_eq!(302, response.status);
+    server.join().expect("server");
 }
 
 #[tokio::test]
@@ -116,13 +151,8 @@ async fn a_bearer_token_is_attached_when_the_session_has_one() {
     );
 }
 
+#[cfg(feature = "blocking")]
 #[test]
-fn the_default_build_does_not_expose_a_blocking_transport() {
-    // A blocking client parks a runtime worker. The adapter exists only behind
-    // the `blocking` feature so it cannot be reached by accident.
-    #[cfg(not(feature = "blocking"))]
-    {
-        // Nothing to assert at runtime; the cfg below is the assertion.
-        let _: Option<&str> = None;
-    }
+fn blocking_transport_implements_the_async_seam_when_enabled() {
+    let _: Arc<dyn Transport> = Arc::new(snaplink_sso::BlockingTransport::default());
 }

@@ -148,6 +148,17 @@ route, the SDK uses a one-time `sessionStorage` handoff to return there; the
 access token is then held in memory and is not written to `localStorage`.
 The authorization transaction expires after ten minutes by default.
 
+The browser facade exposes explicit `refresh()`, local-only `clear()`, and
+server-revoking `logout()` operations. `login()` does not refresh behind the
+caller by default; set `autoRefresh: true` to opt into refresh during login
+when an access token has expired. A failed logout still clears local state.
+
+```ts
+const tokens = await snaplink.refresh();
+snaplink.clear(); // local-only removal; no network request
+// Alternatively, call `await snaplink.logout()` instead of clear().
+```
+
 ### Shared presentation preferences
 
 `SnaplinkUserPreferencesClient` exposes application-facing `locale` and

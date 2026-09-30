@@ -9,14 +9,24 @@ use Snaplink\SnaplinkClient;
 use Snaplink\SnaplinkError;
 
 $captured = [];
+$logoutCalls = [];
+$logoutStatus = 200;
 $client = new SnaplinkClient(
     new MemoryStateStore(),
     static function (string $endpoint, array $form) use (&$captured): array {
         $captured = [$endpoint, $form];
         return [
-            'access_token' => 'access-1',
+            'access_token' => ($form['grant_type'] ?? '') === 'refresh_token' ? 'access-2' : 'access-1',
             'expires_in' => 900,
+            'refresh_token' => ($form['grant_type'] ?? '') === 'refresh_token' ? null : 'refresh-1',
             'token_type' => 'Bearer',
+        ];
+    },
+    static function (string $method, string $endpoint, ?array $body, ?string $bearer) use (&$logoutCalls, &$logoutStatus): array {
+        $logoutCalls[] = [$method, $endpoint, $body, $bearer];
+        return [
+            'status' => $logoutStatus,
+            'body' => $logoutStatus < 300 ? '{}' : '{"error":"server_error"}',
         ];
     },
 );
@@ -47,6 +57,71 @@ if (($captured[1]['grant_type'] ?? '') !== 'authorization_code' || isset($captur
 }
 if (!isset($captured[1]['code_verifier']) || strlen($captured[1]['code_verifier']) < 43) {
     throw new RuntimeException('token request did not contain PKCE');
+}
+
+$refreshed = $client->refresh();
+if (
+    $refreshed['access_token'] !== 'access-2'
+    || $refreshed['refresh_token'] !== 'refresh-1'
+    || $client->accessToken() !== 'access-2'
+) {
+    throw new RuntimeException('refresh did not adopt access token or retain the unrotated refresh token');
+}
+if (
+    ($captured[1]['grant_type'] ?? '') !== 'refresh_token'
+    || isset($captured[1]['code_verifier'])
+    || isset($captured[1]['client_secret'])
+) {
+    throw new RuntimeException('refresh request did not use the isolated refresh-token grant');
+}
+try {
+    (new SnaplinkClient())->refresh();
+    throw new RuntimeException('refresh without a session was accepted');
+} catch (SnaplinkError $error) {
+    if ($error->error !== 'login_required') {
+        throw $error;
+    }
+}
+$client->clear();
+if ($client->isLoggedIn() || $logoutCalls !== []) {
+    throw new RuntimeException('clear must forget local state without contacting Snaplink');
+}
+
+$logoutStarted = $client->login($options);
+$logoutLogin = parse_url((string) $logoutStarted->redirectUrl());
+parse_str((string) ($logoutLogin['query'] ?? ''), $logoutQuery);
+$client->login($options + [
+    'callback_url' => $options['redirect_uri']
+        . '?code=code-logout&state=' . rawurlencode((string) $logoutQuery['state'])
+        . '&iss=' . rawurlencode($options['base_url']),
+]);
+$client->logout();
+if (
+    $client->isLoggedIn()
+    || count($logoutCalls) !== 1
+    || $logoutCalls[0][0] !== 'POST'
+    || !str_ends_with($logoutCalls[0][1], '/logout')
+    || $logoutCalls[0][2] !== null
+    || $logoutCalls[0][3] !== 'access-1'
+) {
+    throw new RuntimeException('logout did not revoke server-side and clear local state');
+}
+$logoutStarted = $client->login($options);
+$logoutLogin = parse_url((string) $logoutStarted->redirectUrl());
+parse_str((string) ($logoutLogin['query'] ?? ''), $logoutQuery);
+$client->login($options + [
+    'callback_url' => $options['redirect_uri']
+        . '?code=code-logout-failure&state=' . rawurlencode((string) $logoutQuery['state'])
+        . '&iss=' . rawurlencode($options['base_url']),
+]);
+$logoutStatus = 500;
+try {
+    $client->logout();
+    throw new RuntimeException('failed server logout was hidden');
+} catch (SnaplinkError $error) {
+    if ($error->error !== 'server_error' || $client->isLoggedIn()) {
+        throw $error;
+    }
 }
 
 $mismatch = new SnaplinkClient(new MemoryStateStore(), static fn(): array => []);

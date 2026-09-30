@@ -17,17 +17,24 @@ let options = LoginOptions::new(
 )
 .return_to("https://app.example.com/dashboard");
 
-let started = snaplink.login(&options)?;
+// Call from an async runtime (Tokio, async-std, etc.).
+let started = snaplink.login(&options).await?;
 if let LoginResult::Redirect { url, .. } = started {
     return redirect(url);
 }
 
-// On the registered callback route:
+// On the registered callback route, use the same shared StateStore:
 let completed = snaplink.login(
     &options.clone().callback_url(request.uri().to_string()),
-)?;
+).await?;
 let access_token = completed.tokens().unwrap().access_token.clone();
 ~~~
+
+The SDK generates and persists an OIDC nonce with the PKCE transaction; after
+callback completion, read it with `LoginResult::nonce()`. The SDK does not verify
+ID-token signatures. A relying party must validate the ID token against its
+configured issuer, audience, and JWKS, then compare the validated token's nonce
+with `LoginResult::nonce()` before accepting the identity.
 
 Prepare a paid or invited product before starting login. `setup` sends the
 credential only in the HTTPS request body and the callback claims the returned
@@ -38,10 +45,10 @@ let setup = snaplink_sso::SetupOptions::new(
     "https://sso.example.com", "my-public-app", "pro",
 )
 .license_key("license-from-your-checkout");
-snaplink.setup(&setup)?;
-let started = snaplink.login(&options)?;
+snaplink.setup(&setup).await?;
+let started = snaplink.login(&options).await?;
 // The callback login performs the activation claim.
-let account = snaplink.get_account_context("pro")?;
+let account = snaplink.get_account_context("pro").await?;
 ~~~
 
 ## Commercial entitlements
@@ -53,7 +60,7 @@ present in the response and grants nothing.
 ~~~rust
 use snaplink_sso::{Feature, LicenseState};
 
-let account = snaplink.get_account_context("pro")?;
+let account = snaplink.get_account_context("pro").await?;
 match account.state() {
     LicenseState::Active(_) if account.has(Feature::Scim) => { /* scim is available */ }
     LicenseState::Active(_) => { /* plan does not include scim */ }
@@ -112,7 +119,14 @@ let handoff = build_login_preference_handoff(&PresentationPreferencesPatch {
 // spread `handoff` into the login request
 ~~~
 
-Use `MemoryStateStore` for development and single-process examples. Provide a
-durable implementation of the atomic StateStore trait for multi-worker
-deployments. The blocking HTTP client is intentionally easy to replace with
-SnaplinkClient::with_http_client.
+`SnaplinkClient` is async-first and accepts an injectable `Transport` through
+`with_transport`, so applications can supply their configured HTTP client,
+timeouts, and proxy policy. The default reqwest backend refuses redirects; custom
+transports must keep authorization codes and bearer tokens on-origin too.
+`MemoryStateStore` is suitable for development and
+single-process examples; multi-worker deployments must provide a durable
+implementation of the atomic `StateStore` trait. Tokens are never persisted by
+the SDK: callers must save refreshed tokens and delete their saved copy on
+logout. `refresh().await` explicitly rotates tokens, `logout().await` revokes the
+server session and clears this client's in-memory state, and `clear()` only
+forgets local state.

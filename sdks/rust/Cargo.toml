@@ -26,8 +26,8 @@ url = "2"
 
 [features]
 default = []
-# Blocking adapter for CLIs and scripts only. Enabling it inside an async
-# context is a footgun — see `transport::BlockingTransport`.
+# Optional reqwest blocking backend. SDK calls remain async and the adapter
+# runs requests on Tokio's blocking pool.
 blocking = ["reqwest/blocking", "tokio/rt"]
 
 # Signing is a test-only concern: the SDK verifies, it never signs. The dev

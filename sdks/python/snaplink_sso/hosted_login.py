@@ -229,17 +229,40 @@ class Snaplink:
         self._activation_context = dict(context)
         return dict(context)
 
+    def refresh(self) -> Dict[str, Any]:
+        """Renew tokens explicitly, preserving a refresh token the server omits."""
+
+        refresh_token = (self._tokens or {}).get("refresh_token")
+        if not isinstance(refresh_token, str) or not refresh_token:
+            raise SSOError(0, "login_required", "no refresh token is held")
+        if not self._client_id:
+            raise SSOError(0, "login_required", "login is required")
+        tokens = dict(self.api.post_token({
+            "grant_type": "refresh_token",
+            "client_id": self._client_id,
+            "refresh_token": refresh_token,
+        }))
+        if not isinstance(tokens.get("access_token"), str) or not tokens["access_token"]:
+            raise SSOError(0, "invalid_response", "token endpoint returned an invalid token response")
+        if not tokens.get("refresh_token"):
+            tokens["refresh_token"] = refresh_token
+        self._tokens = tokens
+        return dict(tokens)
+
+    def clear(self) -> None:
+        """Forget local tokens and account context without contacting Snaplink."""
+
+        self._tokens = None
+        self._activation_context = None
+
     def logout(self) -> None:
+        """Revoke server-side state, then clear local tokens even on failure."""
+
         try:
             if self._tokens and self._client:
                 self._client.post_logout({})
         finally:
-            self._tokens = None
-            self._client = None
-            self._client_id = None
-            self._base_url = None
-            self._pending_setup = None
-            self._activation_context = None
+            self.clear()
 
     def _configure_client(self, base_url: str, client_id: str) -> None:
         if self._client and self._base_url == base_url and self._client_id == client_id:

@@ -18,6 +18,8 @@ use url::form_urlencoded;
 struct Captured {
     path: String,
     authorization: String,
+    cache_control: String,
+    pragma: String,
     form: HashMap<String, String>,
 }
 
@@ -57,7 +59,7 @@ fn serve(responses: Vec<(&'static str, u16, &'static str)>) -> Harness {
         .expect("listener must support non-blocking accept");
     let handle = thread::spawn(move || {
         for (body, status, payload) in responses {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
             let mut accepted = None;
             while std::time::Instant::now() < deadline {
                 match listener.accept() {
@@ -71,11 +73,19 @@ fn serve(responses: Vec<(&'static str, u16, &'static str)>) -> Harness {
                     Err(_) => return,
                 }
             }
-            let Some((mut stream, _)) = accepted else { return };
+            let Some((mut stream, _)) = accepted else {
+                return;
+            };
             let mut buffer = [0_u8; 8192];
-            let Ok(size) = stream.read(&mut buffer) else { return };
+            let Ok(size) = stream.read(&mut buffer) else {
+                return;
+            };
             let request = String::from_utf8_lossy(&buffer[..size]).to_string();
-            let head = request.split("\r\n\r\n").next().unwrap_or_default().to_string();
+            let head = request
+                .split("\r\n\r\n")
+                .next()
+                .unwrap_or_default()
+                .to_string();
             let raw_body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
             let path = head
                 .lines()
@@ -83,17 +93,27 @@ fn serve(responses: Vec<(&'static str, u16, &'static str)>) -> Harness {
                 .and_then(|line| line.split_whitespace().nth(1))
                 .unwrap_or_default()
                 .to_string();
-            let authorization = head
-                .lines()
-                .find(|line| line.to_ascii_lowercase().starts_with("authorization:"))
-                .map(|line| line[14..].trim().to_string())
-                .unwrap_or_default();
+            let header_value = |name: &str| {
+                head.lines()
+                    .find(|line| {
+                        line.split_once(':')
+                            .is_some_and(|(key, _)| key.eq_ignore_ascii_case(name))
+                    })
+                    .and_then(|line| line.split_once(':'))
+                    .map(|(_, value)| value.trim().to_owned())
+                    .unwrap_or_default()
+            };
+            let authorization = header_value("authorization");
+            let cache_control = header_value("cache-control");
+            let pragma = header_value("pragma");
             let form = form_urlencoded::parse(raw_body.as_bytes())
                 .into_owned()
                 .collect::<HashMap<_, _>>();
             writer.lock().expect("sink").push(Captured {
                 path,
                 authorization,
+                cache_control,
+                pragma,
                 form,
             });
             let reason = if status == 200 { "OK" } else { "Bad Request" };
@@ -104,7 +124,11 @@ fn serve(responses: Vec<(&'static str, u16, &'static str)>) -> Harness {
             );
         }
     });
-    Harness { base_url, sink, handle: Some(handle) }
+    Harness {
+        base_url,
+        sink,
+        handle: Some(handle),
+    }
 }
 
 impl Harness {
@@ -126,8 +150,7 @@ impl Harness {
     }
 }
 
-const ROTATED: &str =
-    r#"{"access_token":"access-2","refresh_token":"refresh-2","expires_in":900,"token_type":"Bearer"}"#;
+const ROTATED: &str = r#"{"access_token":"access-2","refresh_token":"refresh-2","expires_in":900,"token_type":"Bearer"}"#;
 
 #[tokio::test]
 async fn refresh_renews_the_access_token_and_rotates_the_refresh_token() {
@@ -149,13 +172,24 @@ async fn refresh_sends_the_grant_without_a_code_verifier() {
 
     let request = harness.requests().first().cloned().expect("one request");
     assert_eq!("/token", request.path);
-    assert_eq!(Some("refresh_token"), request.form.get("grant_type").map(String::as_str));
-    assert_eq!(Some("refresh-1"), request.form.get("refresh_token").map(String::as_str));
-    assert_eq!(Some("spa-client"), request.form.get("client_id").map(String::as_str));
+    assert_eq!(
+        Some("refresh_token"),
+        request.form.get("grant_type").map(String::as_str)
+    );
+    assert_eq!(
+        Some("refresh-1"),
+        request.form.get("refresh_token").map(String::as_str)
+    );
+    assert_eq!(
+        Some("spa-client"),
+        request.form.get("client_id").map(String::as_str)
+    );
     assert!(
         !request.form.contains_key("code_verifier"),
         "a refresh must never carry a code verifier"
     );
+    assert_eq!("no-store", request.cache_control);
+    assert_eq!("no-cache", request.pragma);
 }
 
 #[tokio::test]
@@ -165,7 +199,10 @@ async fn refresh_keeps_the_previous_token_when_the_server_does_not_rotate() {
     let mut client = harness.client();
 
     client.refresh().await.expect("refresh must succeed");
-    assert!(client.can_refresh(), "a non-rotating response must not lose the ability to refresh");
+    assert!(
+        client.can_refresh(),
+        "a non-rotating response must not lose the ability to refresh"
+    );
 }
 
 #[tokio::test]
@@ -173,7 +210,10 @@ async fn refresh_without_a_refresh_token_makes_no_request() {
     let harness = serve(vec![]);
     let mut client = harness.client();
     client.clear();
-    assert!(client.refresh().await.is_err(), "a session without a refresh token cannot refresh");
+    assert!(
+        client.refresh().await.is_err(),
+        "a session without a refresh token cannot refresh"
+    );
     assert!(harness.requests().is_empty());
 }
 
@@ -182,9 +222,16 @@ async fn refresh_surfaces_an_invalid_grant() {
     let body = r#"{"error":"invalid_grant","error_description":"unknown refresh token"}"#;
     let harness = serve(vec![(body, 400, body)]);
     let mut client = harness.client();
-    // A refresh token the server does not know exercises the terminal branch.
-    client.clear();
-    assert!(client.refresh().await.is_err());
+    // Keep a valid local session but let the server reject its refresh token.
+    let error = client
+        .refresh()
+        .await
+        .expect_err("unknown refresh token must fail");
+    assert!(matches!(
+        error,
+        snaplink_sso::SnaplinkError::OAuth { status: 400, ref code, .. }
+            if code == "invalid_grant"
+    ));
 }
 
 #[tokio::test]
@@ -201,7 +248,11 @@ async fn logout_revokes_server_side_then_clears_local_state() {
 
 #[tokio::test]
 async fn logout_clears_local_state_even_when_the_server_call_fails() {
-    let harness = serve(vec![(r#"{"error":"server_error"}"#, 500, r#"{"error":"server_error"}"#)]);
+    let harness = serve(vec![(
+        r#"{"error":"server_error"}"#,
+        500,
+        r#"{"error":"server_error"}"#,
+    )]);
     let mut client = harness.client();
 
     assert!(
@@ -219,7 +270,10 @@ async fn logout_without_a_session_is_a_no_op() {
     let harness = serve(vec![]);
     let mut client = harness.client();
     client.clear();
-    client.logout().await.expect("logout without a session must succeed");
+    client
+        .logout()
+        .await
+        .expect("logout without a session must succeed");
     assert!(harness.requests().is_empty());
 }
 
@@ -234,6 +288,23 @@ fn clear_is_local_only_and_distinct_from_logout() {
         harness.requests().is_empty(),
         "clear must not contact the server; that is what logout is for"
     );
+}
+
+#[test]
+fn resume_rejects_cleartext_remote_issuers_before_retaining_tokens() {
+    let tokens = TokenResponse {
+        access_token: "access-1".into(),
+        refresh_token: Some("refresh-1".into()),
+        expires_in: Some(900),
+        id_token: None,
+        scope: None,
+        token_type: "Bearer".into(),
+    };
+
+    assert!(matches!(
+        SnaplinkClient::resume("http://sso.example.test", "spa-client", tokens),
+        Err(snaplink_sso::SnaplinkError::InvalidRequest(_))
+    ));
 }
 
 #[test]
