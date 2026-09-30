@@ -7,6 +7,7 @@ declare(strict_types=1);
 // come from the shared fixture rather than a local list, which is what makes
 // drift detectable.
 
+require __DIR__ . '/conformance_corpus.php';
 require __DIR__ . '/../src/Entitlement.php';
 require __DIR__ . '/../src/StateStore.php';
 require __DIR__ . '/../src/MemoryStateStore.php';
@@ -18,8 +19,10 @@ use Snaplink\MemoryStateStore;
 use Snaplink\SSOClient;
 use Snaplink\SSOError;
 
+snaplinkSkipWithoutConformanceCorpus('error taxonomy conformance');
+
 $fixture = json_decode(
-    (string) file_get_contents(__DIR__ . '/../../../ops/build/sdk-conformance/errors.json'),
+    (string) file_get_contents(snaplinkConformanceFixture('errors.json')),
     true,
 );
 if (!is_array($fixture) || !isset($fixture['cases'], $fixture['shape']['fallback']['code'])) {

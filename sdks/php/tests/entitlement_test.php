@@ -18,6 +18,7 @@ require __DIR__ . '/../src/MemoryStateStore.php';
 require __DIR__ . '/../src/LoginResult.php';
 require __DIR__ . '/../src/SSOError.php';
 require __DIR__ . '/../src/SSOClient.php';
+require __DIR__ . '/conformance_corpus.php';
 
 use Snaplink\Entitlement;
 use Snaplink\LicenseState;
@@ -41,7 +42,7 @@ function check(string $name, bool $condition, string $detail = ''): void
 
 function fixturePath(): string
 {
-    return __DIR__ . '/../../../ops/build/sdk-conformance/entitlement.json';
+    return snaplinkConformanceFixture('entitlement.json');
 }
 
 function loadFixture(): array
@@ -76,6 +77,8 @@ function findCase(array $cases, string $id): array
     }
     throw new RuntimeException("the fixture must contain {$id}");
 }
+
+snaplinkSkipWithoutConformanceCorpus('entitlement conformance');
 
 $fixture = loadFixture();
 $cases = $fixture['cases'];
