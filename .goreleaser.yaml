@@ -568,8 +568,8 @@ release:
 # Requires GITHUB_TOKEN with packages:write scope (already set in release.yml).
 dockers:
   - image_templates:
-      - "ghcr.io/snaplink/sso-server:{{ .Version }}"
-      - "ghcr.io/snaplink/sso-server:latest"
+      - "ghcr.io/yangwb1123/sso-server:{{ .Version }}"
+      - "ghcr.io/yangwb1123/sso-server:latest"
     dockerfile: Dockerfile
     build_flag_templates:
       - "--platform=linux/amd64,linux/arm64"
@@ -585,8 +585,8 @@ dockers:
       - "--build-arg=BUILD_MODIFIED={{ .IsGitDirty }}"
 
   - image_templates:
-      - "ghcr.io/snaplink/sso-mcp:{{ .Version }}"
-      - "ghcr.io/snaplink/sso-mcp:latest"
+      - "ghcr.io/yangwb1123/sso-mcp:{{ .Version }}"
+      - "ghcr.io/yangwb1123/sso-mcp:latest"
     dockerfile: Dockerfile
     build_flag_templates:
       - "--platform=linux/amd64,linux/arm64"
@@ -597,8 +597,8 @@ dockers:
       - "--label=org.opencontainers.image.source={{ .GitURL }}"
 
   - image_templates:
-      - "ghcr.io/snaplink/snaplink-billing:{{ .Version }}"
-      - "ghcr.io/snaplink/snaplink-billing:latest"
+      - "ghcr.io/yangwb1123/snaplink-billing:{{ .Version }}"
+      - "ghcr.io/yangwb1123/snaplink-billing:latest"
     dockerfile: Dockerfile
     build_flag_templates:
       - "--platform=linux/amd64,linux/arm64"
@@ -609,8 +609,8 @@ dockers:
       - "--label=org.opencontainers.image.source={{ .GitURL }}"
 
   - image_templates:
-      - "ghcr.io/snaplink/snaplink-stripe-adapter:{{ .Version }}"
-      - "ghcr.io/snaplink/snaplink-stripe-adapter:latest"
+      - "ghcr.io/yangwb1123/snaplink-stripe-adapter:{{ .Version }}"
+      - "ghcr.io/yangwb1123/snaplink-stripe-adapter:latest"
     dockerfile: Dockerfile
     build_flag_templates:
       - "--platform=linux/amd64,linux/arm64"
@@ -621,8 +621,8 @@ dockers:
       - "--label=org.opencontainers.image.source={{ .GitURL }}"
 
   - image_templates:
-      - "ghcr.io/snaplink/snaplink-audit-provisioner:{{ .Version }}"
-      - "ghcr.io/snaplink/snaplink-audit-provisioner:latest"
+      - "ghcr.io/yangwb1123/snaplink-audit-provisioner:{{ .Version }}"
+      - "ghcr.io/yangwb1123/snaplink-audit-provisioner:latest"
     dockerfile: Dockerfile
     build_flag_templates:
       - "--platform=linux/amd64,linux/arm64"
@@ -648,7 +648,7 @@ signs:
 
 # Container image signing — cosign signs each pushed image with the
 # OIDC token from the release workflow (keyless mode). Verification:
-#   cosign verify ghcr.io/snaplink/sso-server:{{ .Version }}
+#   cosign verify ghcr.io/yangwb1123/sso-server:{{ .Version }}
 docker_signs:
   - cmd: cosign
     artifacts: all

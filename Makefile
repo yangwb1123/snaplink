@@ -396,7 +396,7 @@ release: ## Build + publish to GitHub Releases (requires git tag).
 
 docker-push: ## Build + push multi-arch Docker image (requires git tag).
 	docker buildx build --platform linux/amd64,linux/arm64 \
-		-t ghcr.io/snaplink/sso-server:latest \
+		-t ghcr.io/yangwb1123/sso-server:latest \
 		--push .
 
 docker-multiarch: ## Build local multi-arch manifest (no push).

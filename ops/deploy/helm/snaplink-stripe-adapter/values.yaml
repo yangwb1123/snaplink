@@ -2,7 +2,7 @@ replicaCount: 3
 externalRevision: ""
 
 image:
-  repository: ghcr.io/snaplink/snaplink-stripe-adapter
+  repository: ghcr.io/yangwb1123/snaplink-stripe-adapter
   tag: latest
   digest: ""
   pullPolicy: IfNotPresent
