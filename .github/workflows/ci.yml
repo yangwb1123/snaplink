@@ -75,6 +75,12 @@ jobs:
           go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
           go install github.com/uudashr/gocognit/cmd/gocognit@latest
 
+      # checks/config.py reads engineering.yaml and exits hard when PyYAML is
+      # missing, so the harness gate cannot run at all on a runner that does
+      # not ship it. The root pyproject already declares the dependency.
+      - name: Install declared Python dependencies
+        run: python -m pip install --disable-pip-version-check "PyYAML>=6.0"
+
       - name: Engineering gates (harness)
         run: make harness
       - name: gofmt
