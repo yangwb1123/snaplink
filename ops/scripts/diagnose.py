@@ -44,8 +44,12 @@ def run() -> int:
     )
     for line in result.stdout.strip().split("\n"):
         parts = line.strip().split()
-        if len(parts) == 2 and parts[0].isdigit() and int(parts[0]) > 2000:
-            pc(f"Files >2000 lines: {parts[1]}")
+        # `wc -l {} +` ends with a `total` line whose shape is indistinguishable
+        # from a file entry, so it was reported as the worst offender literally
+        # named "total". Only real .go paths are file health findings.
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].endswith(".go"):
+            if int(parts[0]) > 2000:
+                pc(f"Files >2000 lines: {parts[1]}")
 
     print("\n--- 2. Test Coverage ---")
     for pkg in ["core", "oauth", "oidc", "security", "defaultimpl"]:
