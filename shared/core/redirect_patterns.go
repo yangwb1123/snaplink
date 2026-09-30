@@ -146,32 +146,8 @@ func compilePatternSegments(path string) ([]redirectSegment, error) {
 	if err != nil {
 		return nil, err
 	}
-	wildcards := 0
-	for i, raw := range parts {
-		if raw == "." || raw == ".." {
-			return nil, fmt.Errorf("dot segments are not allowed in a pattern")
-		}
-		if raw == "*" {
-			if i == 0 || i == len(parts)-1 {
-				return nil, fmt.Errorf("the wildcard must be an interior path segment")
-			}
-			wildcards++
-			if wildcards > 1 {
-				return nil, fmt.Errorf("at most one wildcard segment per pattern")
-			}
-			continue
-		}
-		if strings.Contains(raw, "*") {
-			return nil, fmt.Errorf("partial-segment wildcards are not allowed")
-		}
-		for _, r := range raw {
-			if !strings.ContainsRune(literalChars, r) {
-				return nil, fmt.Errorf("invalid character %q in path segment", r)
-			}
-		}
-	}
-	if wildcards != 1 {
-		return nil, fmt.Errorf("a pattern must contain exactly one wildcard segment")
+	if err := validatePatternSegments(parts); err != nil {
+		return nil, err
 	}
 	out := make([]redirectSegment, 0, len(parts))
 	for _, raw := range parts {
@@ -182,6 +158,52 @@ func compilePatternSegments(path string) ([]redirectSegment, error) {
 		out = append(out, redirectSegment{literal: raw})
 	}
 	return out, nil
+}
+
+// validatePatternSegments checks the whole segment list before any of it is
+// compiled. Validating in one pass and building in another keeps a rejected
+// pattern from ever producing a partially built matcher, and keeps each rule in
+// its own guard so a failure names the rule it broke.
+func validatePatternSegments(parts []string) error {
+	wildcards := 0
+	for i, raw := range parts {
+		if raw == "." || raw == ".." {
+			return fmt.Errorf("dot segments are not allowed in a pattern")
+		}
+		if raw == "*" {
+			if i == 0 || i == len(parts)-1 {
+				return fmt.Errorf("the wildcard must be an interior path segment")
+			}
+			wildcards++
+			if wildcards > 1 {
+				return fmt.Errorf("at most one wildcard segment per pattern")
+			}
+			continue
+		}
+		if strings.Contains(raw, "*") {
+			return fmt.Errorf("partial-segment wildcards are not allowed")
+		}
+		if err := validateLiteralSegment(raw); err != nil {
+			return err
+		}
+	}
+	if wildcards != 1 {
+		return fmt.Errorf("a pattern must contain exactly one wildcard segment")
+	}
+	return nil
+}
+
+// validateLiteralSegment rejects any rune outside the pchar set. A literal is
+// compared byte-for-byte against a request path later, so a segment carrying
+// anything else — a percent sign, a space, a separator — would be unreachable
+// or ambiguous rather than merely unusual.
+func validateLiteralSegment(segment string) error {
+	for _, r := range segment {
+		if !strings.ContainsRune(literalChars, r) {
+			return fmt.Errorf("invalid character %q in path segment", r)
+		}
+	}
+	return nil
 }
 
 // compileRedirectCandidate parses + validates a CANDIDATE redirect URI (the

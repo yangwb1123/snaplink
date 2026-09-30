@@ -13,12 +13,10 @@ import (
 	"github.com/yangwb1123/snaplink/shared/security"
 )
 
-// ClientAuthWorkloadIdentity requires a verified cloud workload token instead
-// of a client secret or private_key_jwt assertion.
+// ClientAuthWorkloadIdentity requires a verified cloud workload token rather than a client secret.
 const ClientAuthWorkloadIdentity = "workload_identity"
 
-// ClientAssertionTypeWorkloadIdentity selects cloud-provider assertion
-// verification rather than verification against Client.JWKS.
+// ClientAssertionTypeWorkloadIdentity selects cloud-provider assertion verification.
 const ClientAssertionTypeWorkloadIdentity = "urn:snaplink:params:oauth:client-assertion-type:workload-identity"
 
 type tokenClientAuthKind uint8
@@ -120,7 +118,7 @@ func inspectTokenClientAuth(r *http.Request, req *oauth.TokenRequest) (tokenClie
 }
 
 // resolveAssertedClientID verifies the selected RFC 7521 assertion. A
-// private_key_jwt sub becomes ClientID; workload assertions retain the form
+// private_key_jwt sub becomes ClientID; workload assertions keep the form
 // ClientID because the cloud subject is mapped through client registration.
 func (s *Server) resolveAssertedClientID(ctx HandlerContext, req *oauth.TokenRequest) bool {
 	if req.ClientAssertion == "" && req.ClientAssertionType == "" {
@@ -352,7 +350,7 @@ func (s *Server) mtlsCertRevoked(ctx context.Context, client *Client, cert *x509
 	return revoked
 }
 
-// --- Token validation -------------------------------------------------
+// --- Token validation -----------------------------------------------
 
 func (s *Server) ValidateToken(ctx context.Context, token string) (*TokenClaims, error) {
 	claims, _, err := s.validateAnyToken(ctx, token)
@@ -363,7 +361,7 @@ func (s *Server) ValidateToken(ctx context.Context, token string) (*TokenClaims,
 }
 
 // validateTokenPreChecks applies size and signing-algorithm bounds before an
-// issuer performs expensive token parsing or signature verification.
+// issuer parses the token or verifies a signature.
 func (s *Server) validateTokenPreChecks(token string) error {
 	if s.maxTokenBytes > 0 && len(token) > s.maxTokenBytes {
 		return fmt.Errorf("token exceeds max_token_bytes (%d)", s.maxTokenBytes)
@@ -399,6 +397,9 @@ func (s *Server) validateAnyTokenMode(ctx context.Context, token string, checkEl
 		}
 		claims, err := issuer.Validate(ctx, token)
 		if err != nil {
+			// An issuer that rejected the token says the token is bad; one
+			// that failed says nothing about it. Keeping them apart is what
+			// lets anyTokenError stay honest about which happened.
 			if errors.Is(err, core.ErrTokenValidationRejected) {
 				rejectedErr = err
 			} else {
@@ -407,50 +408,56 @@ func (s *Server) validateAnyTokenMode(ctx context.Context, token string, checkEl
 			continue
 		}
 		if checkEligibility {
-			if err := s.checkTenantNotSuspended(ctx, claims); err != nil {
-				return nil, "", err
-			}
-			if err := s.lifecycleClaimsError(ctx, claims); err != nil {
+			if err := s.checkAnyTokenEligibility(ctx, claims); err != nil {
 				return nil, "", err
 			}
 		}
 		return claims, name, nil
 	}
+	return nil, "", anyTokenError(operationalErr, rejectedErr, len(s.tokenIssuers) > 0)
+}
+
+// checkAnyTokenEligibility applies the gates a normal token check applies.
+// Revocation reuses this path with them skipped, so a user who became
+// ineligible can still log out; nothing else about the token is relaxed.
+func (s *Server) checkAnyTokenEligibility(ctx context.Context, claims *TokenClaims) error {
+	if err := s.checkTenantNotSuspended(ctx, claims); err != nil {
+		return err
+	}
+	return s.lifecycleClaimsError(ctx, claims)
+}
+
+// anyTokenError picks the single error a caller sees after every issuer has
+// been asked. An operational failure outranks a rejection: "we could not
+// check" and "this token is invalid" are different facts, and conflating them
+// lets a caller retry, or trust, the wrong conclusion.
+func anyTokenError(operationalErr, rejectedErr error, anyIssuers bool) error {
 	if operationalErr != nil {
-		return nil, "", operationalErr
+		return operationalErr
 	}
 	if rejectedErr != nil {
-		return nil, "", rejectedErr
+		return rejectedErr
 	}
-	if len(s.tokenIssuers) > 0 {
-		return nil, "", core.ErrTokenValidationRejected
+	if anyIssuers {
+		return core.ErrTokenValidationRejected
 	}
-	return nil, "", fmt.Errorf("no token issuers registered")
+	return fmt.Errorf("no token issuers registered")
 }
 
 // revokeAcrossIssuers asks every registered issuer to revoke the token.
-// Revoke is expected to be tolerant of unknown tokens (the issuer that
-// doesn't own the token returns ErrNoSuchToken or similar — that's a
-// no-op, not a failure). Returns:
-//
-//   - revoked: names of issuers whose Revoke returned nil.
-//   - failed: names of issuers whose Revoke returned a non-nil, non-
-//     "unknown token" error — these are the ones where the bearer
-//     may still work and the caller should audit
-//     `partial_revoke_failure`.
-//
-// The split lets the caller distinguish "no issuer owned this token"
-// (revoked empty, failed empty — benign) from "an issuer that DOES
-// own this token failed to revoke" (revoked empty, failed non-empty
-// — bug or infra issue that violates the logout-everywhere promise).
+// Revoke is expected to be tolerant of unknown tokens (an issuer that does not
+// own it returns ErrNoSuchToken or similar — a no-op, not a failure). It
+// returns two lists so the caller can tell them apart: revoked holds issuers
+// whose Revoke returned nil, and failed holds issuers that returned a real
+// error — those are the ones where the bearer may still work and the caller
+// should audit `partial_revoke_failure`. "No issuer owned this token" leaves
+// both empty (benign), which a failure also does not, so the split is the only
+// way to keep logout-everywhere honest.
 func (s *Server) revokeAcrossIssuers(ctx context.Context, token string) (revoked, failed []string) {
 	for name, ti := range s.tokenIssuers {
-		// Honor the same shape-skip the validate path uses. An
-		// issuer whose TokenFormatHinter rejects the inbound token
-		// can't possibly own it, so asking it to Revoke would either
-		// (a) return a not-found error we ignore anyway, or (b)
-		// return an infra error we'd misclassify as a partial
-		// revoke failure. Skip cleanly.
+		// Same shape-skip the validate path uses: an issuer that rejects the
+		// inbound token format cannot own it, so asking it to Revoke would
+		// only misclassify a not-found as a partial revoke failure.
 		if h, ok := ti.(TokenFormatHinter); ok && !h.AcceptsTokenFormat(token) {
 			continue
 		}
@@ -464,21 +471,14 @@ func (s *Server) revokeAcrossIssuers(ctx context.Context, token string) (revoked
 			failed = append(failed, name)
 		}
 	}
-	// Best-effort: evict any cached /token/introspect result for this exact
-	// token immediately rather than waiting out the cache TTL (AGENTS.md §3
-	// Oracle-Leak Hardening — a revoked token must not keep reporting
-	// active:true to a caller who introspects it right after this call).
-	// This unexported method is the SINGLE choke point every revocation path
-	// in this codebase funnels through: the exported RevokeAcrossIssuers
-	// wraps it (used by /token/revoke, /logout, /token/revoke-all's
-	// presented bearer, and the admin gRPC revoke), and the cross-replica
-	// ApplyTokenRevocation adoption arm calls this method directly — so
-	// instrumenting here covers all of them from one place. Fires
-	// regardless of whether any issuer actually owned the token, matching
-	// RFC 7009 §2.2's anti-enumeration contract (a caller can't tell
-	// found-and-revoked from unknown, so this can't leak that either).
-	// No-op when caching is unwired or the backend doesn't support
-	// point-eviction — see oauth.InvalidateIntrospectionCache.
+	// Evict the cached /token/introspect result for this exact token now
+	// rather than waiting out the TTL: a revoked token must not keep
+	// reporting active:true to a caller who introspects it right after
+	// (AGENTS.md §3 Oracle-Leak Hardening). This unexported method is the
+	// SINGLE choke point every revocation path funnels through, so
+	// instrumenting here covers all of them. It fires regardless of whether
+	// an issuer owned the token, matching RFC 7009 §2.2's anti-enumeration
+	// contract, and is a no-op when caching is unwired.
 	oauth.InvalidateIntrospectionCache(s.introspectionCache, token)
 	return revoked, failed
 }

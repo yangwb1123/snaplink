@@ -43,40 +43,54 @@ var (
 // surfaces Version="(devel)" without VCS fields, which operators
 // can still read as a meaningful "this is a dev build" signal.
 func ReadBuildInfo() BuildInfo {
-	buildInfoOnce.Do(func() {
-		buildInfoVal = BuildInfo{
-			Version:     BuildVersion,
-			VCSRevision: GitHash,
-			BuildTime:   BuildTime,
-			VCSModified: BuildModified == "true",
-		}
-		info, ok := debug.ReadBuildInfo()
-		if !ok {
-			if buildInfoVal.Version == "" {
-				buildInfoVal.Version = "(unknown)"
-			}
-			return
-		}
-		if buildInfoVal.Version == "" {
-			buildInfoVal.Version = info.Main.Version
-		}
-		if buildInfoVal.Version == "" {
-			buildInfoVal.Version = "(devel)"
-		}
-		for _, s := range info.Settings {
-			switch s.Key {
-			case "vcs.revision":
-				if buildInfoVal.VCSRevision == "" {
-					buildInfoVal.VCSRevision = s.Value
-				}
-			case "vcs.time":
-				buildInfoVal.VCSTime = s.Value
-			case "vcs.modified":
-				if BuildModified == "" {
-					buildInfoVal.VCSModified = s.Value == "true"
-				}
-			}
-		}
-	})
+	buildInfoOnce.Do(func() { buildInfoVal = collectBuildInfo() })
 	return buildInfoVal
+}
+
+// collectBuildInfo resolves the build identity from the linker defaults and
+// then, when the binary carries module build info, lets it fill the gaps. The
+// order matters: a linker-injected version always wins over the module's own,
+// because that is the value an operator set deliberately.
+func collectBuildInfo() BuildInfo {
+	collected := BuildInfo{
+		Version:     BuildVersion,
+		VCSRevision: GitHash,
+		BuildTime:   BuildTime,
+		VCSModified: BuildModified == "true",
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		if collected.Version == "" {
+			collected.Version = "(unknown)"
+		}
+		return collected
+	}
+	if collected.Version == "" {
+		collected.Version = info.Main.Version
+	}
+	if collected.Version == "" {
+		collected.Version = "(devel)"
+	}
+	for _, setting := range info.Settings {
+		applyBuildSetting(&collected, setting.Key, setting.Value)
+	}
+	return collected
+}
+
+// applyBuildSetting folds one VCS setting into the collected info. A value the
+// linker already provided is never overwritten: `BuildModified` is baked in
+// at link time, so a `vcs.modified` setting must not second-guess it.
+func applyBuildSetting(collected *BuildInfo, key, value string) {
+	switch key {
+	case "vcs.revision":
+		if collected.VCSRevision == "" {
+			collected.VCSRevision = value
+		}
+	case "vcs.time":
+		collected.VCSTime = value
+	case "vcs.modified":
+		if BuildModified == "" {
+			collected.VCSModified = value == "true"
+		}
+	}
 }
