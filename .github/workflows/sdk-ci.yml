@@ -119,10 +119,32 @@ jobs:
           gradle-version: "8.13"
       - name: Run Kotlin unit tests, lint, and release build
         run: ./gradlew :snaplink:testDebugUnitTest :snaplink:lintDebug :snaplink:assembleRelease
+      - name: Report the Android emulator prerequisites
+        # The Keystore instrumentation test needs a real emulator, so a missing
+        # KVM is a hard prerequisite, not something to discover as a bare
+        # "adb: could not connect to TCP port 5554" from the action's teardown.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -e /dev/kvm ]]; then
+            echo "::error::/dev/kvm is absent, so no Android emulator can run."
+            echo "The Keystore instrumentation test cannot be executed on this runner."
+            exit 1
+          fi
+          echo "KVM present: $(ls -l /dev/kvm)"
       - name: Run Android Keystore instrumentation test
+        # api-level 34 with the google_apis x86_64 image is the combination
+        # verified to run this test; the emulator action's teardown masks a
+        # failed boot as an adb connection error, so the job is kept on the
+        # image that is known to work rather than a newer one.
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel
+          disable-animations: true
+          emulator-boot-timeout: 900
           script: cd sdks && ./gradlew :snaplink:connectedDebugAndroidTest
 
   swift:
