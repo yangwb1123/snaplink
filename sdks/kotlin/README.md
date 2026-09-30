@@ -26,6 +26,23 @@ tenant isolation, or client permissions.
 - Android API 23 or newer
 - JDK 21 (the version used by the Android SDK CI)
 - Gradle 8.13
+- **Core library desugaring enabled in the consuming app.** The package targets
+  API 23 but uses `java.time` and `java.util.Base64`, which the platform only
+  provides from API 26. The AAR records this requirement, so the app that
+  depends on it must enable desugaring too:
+
+  ```kotlin
+  compileOptions {
+      isCoreLibraryDesugaringEnabled = true
+  }
+  dependencies {
+      coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+  }
+  ```
+
+  That is the deliberate trade for keeping `minSdk` at 23; the alternative is
+  raising `minSdk` to 26 and dropping every device below it. An app that already
+  requires API 26 or newer can set `minSdk = 26` instead and ignore this.
 
 ## Add the SDK
 
@@ -105,6 +122,153 @@ lock. `clear()` removes local tokens and pending login state without a network
 call. `logout()` is distinct: it attempts server revocation and clears local
 credentials even if the network call fails.
 
+## Commercial entitlements
+
+A paid or invited product is prepared before the redirect, and the pending
+ticket is claimed automatically by the next successful callback:
+
+```kotlin
+client.setup(SnaplinkSetupOptions(productId = "pro", licenseKey = "license-from-your-checkout"))
+
+val authorization = client.beginAuthorization()
+// ... Custom Tab round trip ...
+client.handleAuthorizationCallback(callbackUri)
+
+val account = client.accountContext("pro")
+```
+
+The credential is sent only in the HTTPS JSON body of the activation request.
+The SDK stores just the opaque, short-lived ticket, and the callback claims it
+with the bearer, so a license key never reaches a URL, OAuth `state`, or
+encrypted storage. `setup` requires exactly one of `licenseKey` or
+`invitationCode`.
+
+`SnaplinkEntitlement`, `SnaplinkFeature`, and `SnaplinkLimit` mirror the
+server's commerce vocabulary, and the three-state classification is the same one
+the online path uses:
+
+```kotlin
+val state = account.licenseStateAt(Instant.now())
+when (state.kind) {
+    SnaplinkLicenseStateKind.ACTIVE -> state.entitlement?.has(SnaplinkFeature.SCIM, Instant.now())
+    SnaplinkLicenseStateKind.INACTIVE -> showExpired(state.reason) // presentation only
+    SnaplinkLicenseStateKind.NOT_ACTIVATED -> promptForLicenseKey()
+}
+```
+
+`licenseStateAt` reports `NOT_ACTIVATED` when the context carries no
+entitlement, so an absent binding and a lapsed one are both reachable without
+inspecting `null` first. An inactive entitlement grants nothing whatever its
+stored feature map says, and `unknownFeatures` reports keys this build cannot
+yet gate. The server remains the authority on every authorization decision.
+
+## Presentation preferences
+
+The self-service preferences API is a default-deny projection: only `locale`,
+`zoneinfo`, and the application-neutral `theme_mode` (plus its legacy
+`sverp:theme_mode` alias) are readable or writable.
+
+```kotlin
+val stored = client.presentationPreferences()
+client.updatePresentationPreferences(
+    SnaplinkPresentationPreferencesPatch(locale = "zh-CN", themeMode = SnaplinkThemeMode.DARK),
+)
+```
+
+An empty `locale` in a patch deletes that stored value. The wire keys stay
+inside the SDK: the legacy alias is resolved for you, and a response whose two
+theme aliases disagree is refused rather than resolved by precedence.
+
+A handoff carries presentation hints into hosted login; the server persists
+them as the authenticated user's preference only after a successful
+authentication, so they are not an authorization or tenant parameter:
+
+```kotlin
+val handoff = SnaplinkPresentationPreferencesCodec.buildLoginHandoff(
+    SnaplinkPresentationPreferencesPatch(locale = "zh-CN", themeMode = SnaplinkThemeMode.DARK),
+)
+// presentation_locale=zh-CN, presentation_theme_mode=dark
+```
+
+## Offline licensing
+
+A private or air-gapped deployment gates paid features from a signed file
+instead of the account-context route, so authentication never calls a vendor
+licensing service on a login path. Verification is local and network-free:
+
+```kotlin
+val trust = SnaplinkLicenseTrust.ofKey("vendor-2026", pinnedPublicKey)
+val file = SnaplinkLicenseFileVerifier.verify(licenseJson, trust)
+if (file.entitlement.has(SnaplinkFeature.SCIM, Instant.now())) {
+    // enable the paid feature
+}
+```
+
+Only Ed25519 envelope version 1 is accepted, and the declared algorithm is
+checked before any signature work, so `none` is refused rather than tolerated. A
+verification failure throws `SnaplinkLicenseException` and is never downgraded to
+an active or free-tier entitlement.
+
+**Platform requirement:** the Android platform only exposes Ed25519 through the
+JCA from API 33. On an older device `SnaplinkLicenseFileVerifier.isSupported()`
+returns false and verification fails closed with
+`license_verifier_unavailable`; an unverifiable file is never treated as
+verified. This package ships no vendor trust root, and the signing private key
+never enters this package, the repository, or CI.
+
+## Transport seam
+
+Every request is built as a normalized `SnaplinkHttpRequest` by
+`SnaplinkRequestFactory`, which is a pure function of its inputs and performs no
+I/O. Header names are canonicalized and matched case-insensitively, form fields
+use deterministic key ordering, JSON bodies are UTF-8 with no trailing newline,
+and credential endpoints always carry `Cache-Control: no-store`. Endpoint
+construction is testable without a transport:
+
+```kotlin
+val request = SnaplinkRequestFactory.credentialForm(
+    baseURL = configuration.issuerBaseUrl,
+    path = "token",
+    fields = mapOf("grant_type" to "client_credentials", "client_id" to "my-client"),
+)
+request.canonical()           // byte-comparable across SDKs
+request.redactedDescription() // safe to log: Authorization and credentials redacted
+```
+
+`redactedDescription` never echoes an `Authorization`, `DPoP`, or cookie header
+nor a credential form field (`code`, `code_verifier`, `refresh_token`,
+`client_secret`, `license_key`, `invitation_code`, `activation_ticket`), so a
+request can be logged without leaking a secret. Timeouts, redirect refusal, and
+the response size cap live in the transport, not the client, so both are
+substitutable in one place.
+
+## Error taxonomy
+
+Every SDK failure classifies the same way, so auth, commerce, and license errors
+share one `catch`:
+
+```kotlin
+try {
+    // ...
+} catch (error: SnaplinkClassifiedError) {
+    when (error.classification.errorClass) {
+        SnaplinkErrorClass.ACTIVATION, SnaplinkErrorClass.COMMERCE -> promptForActivation()
+        SnaplinkErrorClass.OAUTH,
+        SnaplinkErrorClass.AUTHENTICATION,
+        SnaplinkErrorClass.AUTHORIZATION -> signInAgain()
+        SnaplinkErrorClass.LICENSE -> showLicenseProblem()
+        SnaplinkErrorClass.SDK -> reportDeviceProblem()
+    }
+    // error.wireCode is the server's code verbatim
+    // error.classification.recovery is TERMINAL / RETRY_WITH_BACKOFF /
+    //   REAUTHENTICATE / RECREATE_CEREMONY / FIX_REQUEST
+}
+```
+
+A code the server sends that this build does not recognise is still surfaced
+verbatim; it simply carries no known class. A local license failure is never
+remapped onto a network error.
+
 ## Security boundary
 
 - Android Keystore AES-GCM encrypts both pending PKCE transactions and tokens;
@@ -118,6 +282,14 @@ credentials even if the network call fails.
   Do not enable that development path in a release build.
 - `SnaplinkSession.accessToken` is a bearer credential: never log it, place it
   in an intent/query parameter, or persist it outside the SDK's secure store.
+- Activation and self-service requests carry `Cache-Control: no-store`, send no
+  cookies, and refuse redirects, so a credential or a bearer cannot be replayed
+  onto a host the SDK did not choose.
+- A license key or invitation code is never persisted; only the short-lived
+  activation ticket is, and it is deleted once claimed or found expired.
+- Offline license verification is local and network-free, accepts only Ed25519
+  envelope version 1, and never downgrades a failed verification to a free or
+  active entitlement.
 - DPoP, account/tenant selection, and the complete generated REST surface are
   not part of this initial package. Add them only against approved server
   contracts and security review.
@@ -126,7 +298,7 @@ credentials even if the network call fails.
 
 ```bash
 cd sdks
-./gradlew :sso:testDebugUnitTest :sso:assembleRelease
+./gradlew :sso:testDebugUnitTest :sso:lintDebug :sso:assembleRelease
 ```
 
 The Gradle workspace lives at `sdks/`. Kotlin package declarations remain
@@ -135,5 +307,10 @@ flat `kotlin/main`, `kotlin/test`, and `kotlin/androidTest` source roots to fit
 the repository's directory-depth budget.
 
 The unit suite covers PKCE construction, callback state/issuer binding, token
-exchange, concurrent refresh, local clear/logout cleanup, and configuration
-validation.
+exchange, concurrent refresh, local clear/logout cleanup, configuration
+validation, activation and the account context (both at the wire level through
+a real OkHttp stack and at the client level), presentation preferences, and all
+four shared cross-language contracts in `ops/build/sdk-conformance/`: transport
+seam, entitlement semantics, the error taxonomy, and offline license-file
+verification. Keystore encryption is verified separately on a device by the
+instrumentation suite in `kotlin/androidTest`.

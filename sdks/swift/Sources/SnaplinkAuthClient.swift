@@ -6,9 +6,11 @@ public actor SnaplinkAuthClient {
     private let configuration: SnaplinkConfiguration
     private let secureStore: any SnaplinkSecureStore
     private let transport: any OAuthTransport
+    private let commerceTransport: any SnaplinkCommerceTransport
     private let clock: @Sendable () -> Date
     private let transactionAccount: String
     private let tokenAccount: String
+    private let activationAccount: String
     private var refreshTask: Task<OAuthTokenResponse, Error>?
     private var sessionRevision: UInt64 = 0
     private var authorizationRevision: UInt64 = 0
@@ -17,12 +19,13 @@ public actor SnaplinkAuthClient {
 
     /// Uses Keychain storage and a cookie-free URLSession transport by default.
     public init(configuration: SnaplinkConfiguration) {
-        self.configuration = configuration
-        self.secureStore = KeychainSecureStore()
-        self.transport = URLSessionOAuthTransport(configuration: configuration)
-        self.clock = { Date() }
-        self.transactionAccount = Self.storageAccount(configuration: configuration, kind: "transaction")
-        self.tokenAccount = Self.storageAccount(configuration: configuration, kind: "tokens")
+        self.init(
+            configuration: configuration,
+            secureStore: KeychainSecureStore(),
+            transport: URLSessionOAuthTransport(configuration: configuration),
+            commerceTransport: URLSessionCommerceTransport(configuration: configuration),
+            clock: { Date() }
+        )
     }
 
     init(
@@ -31,12 +34,104 @@ public actor SnaplinkAuthClient {
         transport: any OAuthTransport,
         clock: @escaping @Sendable () -> Date
     ) {
+        self.init(
+            configuration: configuration,
+            secureStore: secureStore,
+            transport: transport,
+            commerceTransport: URLSessionCommerceTransport(configuration: configuration),
+            clock: clock
+        )
+    }
+
+    init(
+        configuration: SnaplinkConfiguration,
+        secureStore: any SnaplinkSecureStore,
+        transport: any OAuthTransport,
+        commerceTransport: any SnaplinkCommerceTransport,
+        clock: @escaping @Sendable () -> Date
+    ) {
         self.configuration = configuration
         self.secureStore = secureStore
         self.transport = transport
+        self.commerceTransport = commerceTransport
         self.clock = clock
         self.transactionAccount = Self.storageAccount(configuration: configuration, kind: "transaction")
         self.tokenAccount = Self.storageAccount(configuration: configuration, kind: "tokens")
+        self.activationAccount = Self.storageAccount(configuration: configuration, kind: "activation")
+    }
+
+    /// Prepares a one-time product activation before hosted login.
+    ///
+    /// Safe to call repeatedly before redirecting; each call replaces the pending
+    /// ticket. The ticket is claimed automatically by the next successful
+    /// ``handleAuthorizationCallback(_:)``, so a license key or invitation code
+    /// never has to outlive the request that carried it.
+    @discardableResult
+    public func setup(_ options: SnaplinkSetupOptions) async throws -> SnaplinkActivationPreparation {
+        let productID = options.productID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let licenseKey = options.licenseKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let invitationCode = options.invitationCode?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !productID.isEmpty else {
+            throw SnaplinkAuthError(
+                code: "invalid_request",
+                message: "productID is required to prepare an activation"
+            )
+        }
+        let hasLicense = licenseKey?.isEmpty == false
+        let hasInvitation = invitationCode?.isEmpty == false
+        guard hasLicense != hasInvitation else {
+            throw SnaplinkAuthError(
+                code: "invalid_request",
+                message: "exactly one of licenseKey or invitationCode is required"
+            )
+        }
+        let preparation = try await commerceTransport.prepareActivation(
+            SnaplinkActivationPrepareRequest(
+                clientID: configuration.clientID,
+                productID: productID,
+                licenseKey: hasLicense ? licenseKey : nil,
+                invitationCode: hasInvitation ? invitationCode : nil,
+                tenantHint: options.tenantHint,
+                locale: options.locale,
+                appVersion: options.appVersion
+            )
+        )
+        let pending = PendingActivation(
+            productID: preparation.productID,
+            ticket: preparation.ticket,
+            expiresAt: clock().addingTimeInterval(preparation.expiresIn)
+        )
+        try save(pending, account: activationAccount)
+        return preparation
+    }
+
+    /// Returns the server-derived account context for a product binding.
+    public func accountContext(productID: String) async throws -> SnaplinkAccountContext {
+        let bearer = try await accessToken()
+        let product = productID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !product.isEmpty else {
+            throw SnaplinkAuthError(
+                code: "invalid_request",
+                message: "productID is required to read the account context"
+            )
+        }
+        return try await commerceTransport.accountContext(productID: product, bearer: bearer)
+    }
+
+    /// Returns the caller's stored allowlisted presentation preferences.
+    public func presentationPreferences() async throws -> SnaplinkPresentationPreferences {
+        let bearer = try await accessToken()
+        let raw = try await commerceTransport.myPreferences(bearer: bearer)
+        return try SnaplinkPresentationPreferencesCodec.fromStored(raw)
+    }
+
+    /// Merges presentation preferences. An empty patch is an accepted no-op.
+    public func updatePresentationPreferences(
+        _ patch: SnaplinkPresentationPreferencesPatch
+    ) async throws {
+        let body = try SnaplinkPresentationPreferencesCodec.toUpdateRequest(patch)
+        let bearer = try await accessToken()
+        try await commerceTransport.putMyPreferences(body, bearer: bearer)
     }
 
     /// Creates a short-lived one-use transaction and returns the hosted-login URL.
@@ -112,7 +207,38 @@ public actor SnaplinkAuthClient {
         refreshTask = nil
         sessionRevision &+= 1
         authorizationRevision &+= 1
+        _ = try await claimPendingActivation(bearer: tokens.accessToken)
         return tokens.session
+    }
+
+    /// Claims a prepared activation with the freshly minted bearer, if one is
+    /// still pending for this client.
+    ///
+    /// The local session is already stored when this runs, so a claim failure
+    /// leaves the user signed in; read the outcome later with
+    /// ``accountContext(productID:)``. A ticket the server already accepted is
+    /// not retried: the pending record is dropped either way, because the claim
+    /// route is idempotent per subject and a stale ticket must not linger in
+    /// Keychain.
+    @discardableResult
+    private func claimPendingActivation(bearer: String) async throws -> SnaplinkAccountContext? {
+        guard let pending: PendingActivation = try load(account: activationAccount) else { return nil }
+        guard pending.expiresAt > clock() else {
+            try secureStore.delete(account: activationAccount)
+            return nil
+        }
+        do {
+            let context = try await commerceTransport.claimActivation(
+                ticket: pending.ticket,
+                productID: pending.productID,
+                bearer: bearer
+            )
+            try secureStore.delete(account: activationAccount)
+            return context
+        } catch {
+            try? secureStore.delete(account: activationAccount)
+            throw error
+        }
     }
 
     /// Returns a non-expired bearer token, refreshing with per-instance single-flight behavior.
@@ -244,7 +370,7 @@ public actor SnaplinkAuthClient {
 
     private func clearLocalCredentials() throws {
         var firstError: Error?
-        for account in [tokenAccount, transactionAccount] {
+        for account in [tokenAccount, transactionAccount, activationAccount] {
             do {
                 try secureStore.delete(account: account)
             } catch {
@@ -296,6 +422,14 @@ private struct AuthorizationTransaction: Codable, Sendable {
     let state: String
     let verifier: String
     let createdAt: Date
+}
+
+/// A prepared activation awaiting the post-login claim. It holds only the
+/// opaque ticket, never the license key or invitation code.
+private struct PendingActivation: Codable, Sendable {
+    let productID: String
+    let ticket: String
+    let expiresAt: Date
 }
 
 struct StoredTokenSet: Codable, Sendable {

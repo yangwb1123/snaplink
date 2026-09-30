@@ -463,6 +463,194 @@ final class SnaplinkAuthClientTests: XCTestCase {
         ))
     }
 
+    func testSetupSendsOnlyTheCredentialAndStoresTheTicket() async throws {
+        let setup = try fixture()
+        let preparation = try await setup.client.setup(SnaplinkSetupOptions(
+            productID: "pro",
+            licenseKey: "lic-secret",
+            locale: "en-US"
+        ))
+        XCTAssertEqual(preparation.ticket, "ticket-1")
+
+        let (prepareCount, fields) = await setup.commerce.prepareAccessors()
+        XCTAssertEqual(prepareCount, 1)
+        XCTAssertEqual(fields["client_id"], "ios-public-client")
+        XCTAssertEqual(fields["product_id"], "pro")
+        XCTAssertEqual(fields["license_key"], "lic-secret")
+        XCTAssertEqual(fields["locale"], "en-US")
+        XCTAssertNil(fields["invitation_code"])
+
+        let stored = try XCTUnwrap(setup.store.onlyStoredValue())
+        let payload = try XCTUnwrap(String(data: stored.data, encoding: .utf8))
+        XCTAssertTrue(payload.contains("ticket-1"))
+        XCTAssertFalse(payload.contains("lic-secret"))
+    }
+
+    func testSetupRejectsMissingOrAmbiguousCredentials() async throws {
+        let setup = try fixture()
+        for options in [
+            SnaplinkSetupOptions(productID: "pro"),
+            SnaplinkSetupOptions(productID: "pro", licenseKey: "lic", invitationCode: "invite"),
+            SnaplinkSetupOptions(productID: "  ", licenseKey: "lic")
+        ] {
+            do {
+                _ = try await setup.client.setup(options)
+                XCTFail("setup must reject \(options.productID)")
+            } catch let error as SnaplinkAuthError {
+                XCTAssertEqual(error.code, "invalid_request")
+            }
+        }
+        let (prepareCount, _) = await setup.commerce.prepareAccessors()
+        XCTAssertEqual(prepareCount, 0)
+    }
+
+    func testCallbackClaimsAPendingActivationWithTheNewBearer() async throws {
+        let setup = try fixture()
+        _ = try await setup.client.setup(SnaplinkSetupOptions(productID: "pro", licenseKey: "lic"))
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "code"))
+
+        let (claimCount, ticket, bearer) = await setup.commerce.claimAccessors()
+        XCTAssertEqual(claimCount, 1)
+        XCTAssertEqual(ticket, "ticket-1")
+        XCTAssertEqual(bearer, "access-initial")
+        XCTAssertFalse(setup.store.storedPayloads().contains { $0.contains("ticket-1") })
+    }
+
+    func testExpiredTicketIsDroppedWithoutAClaim() async throws {
+        let setup = try fixture()
+        await setup.commerce.setPreparedResponse(productID: "pro", ticket: "ticket-1", expiresIn: 30)
+        _ = try await setup.client.setup(SnaplinkSetupOptions(productID: "pro", licenseKey: "lic"))
+        setup.clock.advance(60)
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "code"))
+
+        let (claimCount, _, _) = await setup.commerce.claimAccessors()
+        XCTAssertEqual(claimCount, 0)
+    }
+
+    func testFailedClaimKeepsTheSessionAndClearsTheTicket() async throws {
+        let setup = try fixture()
+        _ = try await setup.client.setup(SnaplinkSetupOptions(productID: "pro", licenseKey: "lic"))
+        await setup.commerce.setClaimFailure(true)
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        do {
+            _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "code"))
+            XCTFail("a rejected claim must be reported")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.code, "invalid_request")
+        }
+        let token = try await setup.client.accessToken()
+        XCTAssertEqual(token, "access-initial")
+    }
+
+    func testAccountContextUsesTheCurrentBearerAndRequiresLogin() async throws {
+        let setup = try fixture()
+        do {
+            _ = try await setup.client.accountContext(productID: "pro")
+            XCTFail("account context requires a session")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.code, "login_required")
+        }
+
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "code"))
+        let context = try await setup.client.accountContext(productID: "pro")
+        XCTAssertEqual(context.tenantID, "tenant-1")
+        XCTAssertEqual(context.entitlement?.has(.coreSSO, at: setup.clock.now), true)
+        let (contextCount, bearer) = await setup.commerce.contextAccessors()
+        XCTAssertEqual(contextCount, 1)
+        XCTAssertEqual(bearer, "access-initial")
+    }
+
+    func testLogoutDropsAPendingActivation() async throws {
+        let setup = try fixture()
+        _ = try await setup.client.setup(SnaplinkSetupOptions(productID: "pro", licenseKey: "lic"))
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "code"))
+        _ = try await setup.client.setup(SnaplinkSetupOptions(productID: "pro", licenseKey: "lic"))
+        XCTAssertTrue(setup.store.storedPayloads().contains { $0.contains("ticket-1") })
+
+        try await setup.client.logout()
+
+        XCTAssertFalse(setup.store.storedPayloads().contains { $0.contains("ticket-1") })
+        XCTAssertFalse(setup.store.storedPayloads().contains { $0.contains("access-initial") })
+    }
+
+    func testPresentationPreferencesReadUsesTheSessionBearer() async throws {
+        let setup = try fixture()
+        do {
+            _ = try await setup.client.presentationPreferences()
+            XCTFail("preferences require a session")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.code, "login_required")
+        }
+
+        await setup.commerce.setStoredPreferences(#"{"locale":"zh-CN","theme_mode":"dark"}"#)
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "code"))
+        let stored = try await setup.client.presentationPreferences()
+
+        XCTAssertEqual(stored.locale, "zh-CN")
+        XCTAssertEqual(stored.themeMode, .dark)
+        let (reads, bearer) = await setup.commerce.preferencesRead()
+        XCTAssertEqual(reads, 1)
+        XCTAssertEqual(bearer, "access-initial")
+    }
+
+    func testUpdatePresentationPreferencesSendsOnlyTheSetFields() async throws {
+        let setup = try fixture()
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "code"))
+
+        try await setup.client.updatePresentationPreferences(
+            SnaplinkPresentationPreferencesPatch(locale: "en-US", themeMode: .auto)
+        )
+        let (writes, body) = await setup.commerce.preferencesWrite()
+        XCTAssertEqual(writes, 1)
+        XCTAssertEqual(body, ["locale": "en-US", "theme_mode": "auto"])
+    }
+
+    func testUpdatePresentationPreferencesValidatesBeforeTheNetwork() async throws {
+        let setup = try fixture()
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "code"))
+
+        do {
+            try await setup.client.updatePresentationPreferences(
+                SnaplinkPresentationPreferencesPatch(locale: "not a locale")
+            )
+            XCTFail("an invalid locale must be refused")
+        } catch {
+            XCTAssertEqual(error as? SnaplinkPreferenceError, .invalidLocale)
+        }
+        let (writes, _) = await setup.commerce.preferencesWrite()
+        XCTAssertEqual(writes, 0)
+    }
+
+    func testProfileLookupFailureIsSurfaced() async throws {
+        let setup = try fixture()
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "code"))
+        await setup.commerce.setPreferencesFailure(true)
+
+        do {
+            _ = try await setup.client.presentationPreferences()
+            XCTFail("a profile lookup failure must be surfaced")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.statusCode, 500)
+        }
+    }
+
     private func fixture() throws -> Fixture {
         let configuration = try SnaplinkConfiguration(
             issuerBaseURL: URL(string: "https://sso.example.test")!,
@@ -478,14 +666,16 @@ final class SnaplinkAuthClientTests: XCTestCase {
         )
         let store = MemorySecureStore()
         let transport = FakeOAuthTransport()
+        let commerce = FakeCommerceTransport()
         let clock = TestClock()
         let client = SnaplinkAuthClient(
             configuration: configuration,
             secureStore: store,
             transport: transport,
+            commerceTransport: commerce,
             clock: { clock.now }
         )
-        return Fixture(client: client, transport: transport, clock: clock, store: store)
+        return Fixture(client: client, transport: transport, commerce: commerce, clock: clock, store: store)
     }
 
     private func queryItems(_ url: URL) throws -> [String: String] {
@@ -515,6 +705,7 @@ final class SnaplinkAuthClientTests: XCTestCase {
     private struct Fixture {
         let client: SnaplinkAuthClient
         let transport: FakeOAuthTransport
+        let commerce: FakeCommerceTransport
         let clock: TestClock
         let store: MemorySecureStore
     }
@@ -530,6 +721,14 @@ private final class MemorySecureStore: SnaplinkSecureStore, @unchecked Sendable 
         defer { lock.unlock() }
         guard values.count == 1, let value = values.first else { return nil }
         return (account: value.key, data: value.value)
+    }
+
+    /// Every stored record as JSON text, so a test can assert that a specific
+    /// secret or ticket is absent without assuming a record count.
+    func storedPayloads() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return values.values.compactMap { String(data: $0, encoding: .utf8) }
     }
 
     func replace(_ data: Data, account: String) {
@@ -628,6 +827,112 @@ private actor FakeOAuthTransport: OAuthTransport {
         if shouldFailRevocation {
             throw SnaplinkAuthError(code: "network_error", message: "unavailable")
         }
+    }
+}
+
+private actor FakeCommerceTransport: SnaplinkCommerceTransport {
+    private var prepareCount = 0
+    private var claimCount = 0
+    private var contextCount = 0
+    private var preparedProductID = "pro"
+    private var preparedTicket = "ticket-1"
+    private var preparedExpiry: TimeInterval = 300
+    private var shouldFailClaim = false
+    private var lastClaimTicket: String?
+    private var lastClaimBearer: String?
+    private var lastContextBearer: String?
+    private var lastPreparedFields: [String: String] = [:]
+    private var storedPreferences = "{}"
+    private var shouldFailPreferences = false
+    private var preferencesReadCount = 0
+    private var preferencesWriteCount = 0
+    private var lastPreferencesBearer: String?
+    private var lastPreferencesBody: [String: String] = [:]
+
+    func setStoredPreferences(_ json: String) { storedPreferences = json }
+    func setPreferencesFailure(_ fail: Bool) { shouldFailPreferences = fail }
+    func preferencesRead() -> (Int, String?) { (preferencesReadCount, lastPreferencesBearer) }
+    func preferencesWrite() -> (Int, [String: String]) { (preferencesWriteCount, lastPreferencesBody) }
+
+    func setPreparedResponse(productID: String, ticket: String, expiresIn: TimeInterval) {
+        preparedProductID = productID
+        preparedTicket = ticket
+        preparedExpiry = expiresIn
+    }
+
+    func setClaimFailure(_ fail: Bool) { shouldFailClaim = fail }
+
+    func prepareAccessors() -> (Int, [String: String]) { (prepareCount, lastPreparedFields) }
+
+    func claimAccessors() -> (Int, String?, String?) { (claimCount, lastClaimTicket, lastClaimBearer) }
+
+    func contextAccessors() -> (Int, String?) { (contextCount, lastContextBearer) }
+
+    func prepareActivation(
+        _ request: SnaplinkActivationPrepareRequest
+    ) async throws -> SnaplinkActivationPreparation {
+        prepareCount += 1
+        lastPreparedFields = request.jsonFields
+        return SnaplinkActivationPreparation(
+            ticket: preparedTicket,
+            productID: preparedProductID,
+            expiresIn: preparedExpiry
+        )
+    }
+
+    func claimActivation(
+        ticket: String,
+        productID: String,
+        bearer: String
+    ) async throws -> SnaplinkAccountContext {
+        claimCount += 1
+        lastClaimTicket = ticket
+        lastClaimBearer = bearer
+        if shouldFailClaim {
+            throw SnaplinkAuthError(code: "invalid_request", message: "ticket expired")
+        }
+        return Self.context(productID: productID)
+    }
+
+    func accountContext(
+        productID: String,
+        bearer: String
+    ) async throws -> SnaplinkAccountContext {
+        contextCount += 1
+        lastContextBearer = bearer
+        return Self.context(productID: productID)
+    }
+
+    func myPreferences(bearer: String) async throws -> Data {
+        preferencesReadCount += 1
+        lastPreferencesBearer = bearer
+        if shouldFailPreferences {
+            throw SnaplinkAuthError(code: "internal_error", message: "profile lookup failed", statusCode: 500)
+        }
+        return Data(storedPreferences.utf8)
+    }
+
+    func putMyPreferences(_ body: [String: String], bearer: String) async throws {
+        preferencesWriteCount += 1
+        lastPreferencesBearer = bearer
+        lastPreferencesBody = body
+    }
+
+    private static func context(productID: String) -> SnaplinkAccountContext {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let entitlement = SnaplinkEntitlement(
+            tenantID: "tenant-1",
+            subscriptionID: "sub-1",
+            plan: SnaplinkPlanRef(id: "pro", version: 1),
+            revision: 1,
+            active: true,
+            features: ["core_sso": true],
+            limits: [:],
+            effectiveAt: now.addingTimeInterval(-60),
+            expiresAt: now.addingTimeInterval(3600),
+            generatedAt: now
+        )
+        return SnaplinkAccountContext(productID: productID, tenantID: "tenant-1", entitlement: entitlement)
     }
 }
 

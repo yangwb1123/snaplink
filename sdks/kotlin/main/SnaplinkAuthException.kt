@@ -6,7 +6,12 @@ public class SnaplinkAuthException(
     message: String,
     public val httpStatus: Int? = null,
     cause: Throwable? = null,
-) : Exception(message, cause)
+) : Exception(message, cause), SnaplinkClassifiedError {
+    override val wireCode: String get() = errorCode
+    override val status: Int? get() = httpStatus
+    override val classification: SnaplinkErrorClassification
+        get() = SnaplinkErrorClassification.of(errorCode, httpStatus)
+}
 
 /** A successfully authenticated native public-client session. */
 public data class SnaplinkSession(

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct SnaplinkAuthError: Error, Sendable, Equatable, LocalizedError {
+public struct SnaplinkAuthError: Error, Sendable, Equatable, LocalizedError, SnaplinkClassifiedError {
     public let code: String
     public let message: String
     public let statusCode: Int?
@@ -12,6 +12,13 @@ public struct SnaplinkAuthError: Error, Sendable, Equatable, LocalizedError {
     }
 
     public var errorDescription: String? { message }
+
+    public var status: Int? { statusCode }
+
+    /// The server's code verbatim, with its class from the shared taxonomy.
+    public var classification: SnaplinkErrorClassification {
+        SnaplinkErrorClassification(code: code, status: statusCode)
+    }
 }
 
 public struct SnaplinkSession: Sendable, Equatable {

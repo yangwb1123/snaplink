@@ -25,10 +25,12 @@ public class SnaplinkAuthClient internal constructor(
     private val secureStore: SnaplinkSecureStore,
     private val transport: OAuthTransport,
     private val clockMillis: () -> Long,
+    private val commerceTransport: SnaplinkCommerceTransport,
 ) {
     private val sessionMutex = Mutex()
     private val pendingTransactionKey = storageKey("transaction")
     private val tokenSetKey = storageKey("tokens")
+    private val pendingActivationKey = storageKey("activation")
     private val storeLock = Any()
     private val sessionRevision = AtomicLong()
     private val authorizationRevision = AtomicLong()
@@ -41,7 +43,88 @@ public class SnaplinkAuthClient internal constructor(
         AndroidSecureStore(context.applicationContext),
         HttpOAuthTransport(configuration),
         System::currentTimeMillis,
+        HttpCommerceTransport(configuration),
     )
+
+    internal constructor(
+        configuration: SnaplinkConfiguration,
+        secureStore: SnaplinkSecureStore,
+        transport: OAuthTransport,
+        clockMillis: () -> Long,
+    ) : this(configuration, secureStore, transport, clockMillis, FailingCommerceTransport)
+
+    /**
+     * Prepares a one-time product activation before hosted login.
+     *
+     * Safe to call repeatedly before redirecting; each call replaces the pending
+     * ticket. The ticket is claimed automatically by the next successful
+     * [handleAuthorizationCallback], so a license key or invitation code never
+     * has to outlive the request that carried it.
+     */
+    public suspend fun setup(options: SnaplinkSetupOptions): SnaplinkActivationPreparation {
+        val productId = options.productId.trim()
+        if (productId.isEmpty()) {
+            throw SnaplinkAuthException("invalid_request", "productId is required to prepare an activation")
+        }
+        val licenseKey = options.licenseKey?.trim()?.takeIf(String::isNotEmpty)
+        val invitationCode = options.invitationCode?.trim()?.takeIf(String::isNotEmpty)
+        if ((licenseKey == null) == (invitationCode == null)) {
+            throw SnaplinkAuthException(
+                "invalid_request",
+                "exactly one of licenseKey or invitationCode is required",
+            )
+        }
+        val preparation = commerceTransport.prepareActivation(
+            SnaplinkActivationPrepareRequest(
+                clientId = configuration.clientId,
+                productId = productId,
+                licenseKey = licenseKey,
+                invitationCode = invitationCode,
+                tenantHint = options.tenantHint,
+                locale = options.locale,
+                appVersion = options.appVersion,
+            ),
+        )
+        withContext(Dispatchers.IO) {
+            synchronized(storeLock) {
+                secureStore.write(
+                    pendingActivationKey,
+                    encodePendingActivation(
+                        PendingActivation(
+                            productId = preparation.productId,
+                            ticket = preparation.ticket,
+                            expiresAtEpochSeconds = nowSeconds() + preparation.expiresInSeconds,
+                        ),
+                    ),
+                )
+            }
+        }
+        return preparation
+    }
+
+    /** Returns the server-derived account context for a product binding. */
+    public suspend fun accountContext(productId: String): SnaplinkAccountContext {
+        val bearer = accessToken()
+        val product = productId.trim()
+        if (product.isEmpty()) {
+            throw SnaplinkAuthException("invalid_request", "productID is required to read the account context")
+        }
+        return commerceTransport.accountContext(product, bearer)
+    }
+
+    /** Returns the caller's stored allowlisted presentation preferences. */
+    public suspend fun presentationPreferences(): SnaplinkPresentationPreferences {
+        val raw = commerceTransport.myPreferences(accessToken())
+        return SnaplinkPresentationPreferencesCodec.fromStored(raw)
+    }
+
+    /** Merges presentation preferences. An empty patch is an accepted no-op. */
+    public suspend fun updatePresentationPreferences(patch: SnaplinkPresentationPreferencesPatch) {
+        // Validate before the network: a malformed value must never reach the
+        // server as a request.
+        val fields = SnaplinkPresentationPreferencesCodec.toUpdateRequest(patch)
+        commerceTransport.putMyPreferences(fields, accessToken())
+    }
 
     /** Creates a one-use PKCE transaction and opens hosted login in a Custom Tab. */
     public suspend fun authorize(activity: Activity): URI {
@@ -117,6 +200,7 @@ public class SnaplinkAuthClient internal constructor(
                     authorizationRevision.incrementAndGet()
                 }
             }
+            claimPendingActivation(tokens.accessToken)
             tokens.toSession()
         }
     }
@@ -171,6 +255,7 @@ public class SnaplinkAuthClient internal constructor(
                                 secureStore.delete(tokenSetKey)
                             } finally {
                                 secureStore.delete(pendingTransactionKey)
+                                secureStore.delete(pendingActivationKey)
                             }
                         }
                     }
@@ -197,7 +282,10 @@ public class SnaplinkAuthClient internal constructor(
                     withContext(Dispatchers.IO) { secureStore.delete(tokenSetKey) }
                 } finally {
                     withContext(Dispatchers.IO) {
-                        synchronized(storeLock) { secureStore.delete(pendingTransactionKey) }
+                        synchronized(storeLock) {
+                            secureStore.delete(pendingTransactionKey)
+                            secureStore.delete(pendingActivationKey)
+                        }
                     }
                 }
                 val tokens = tokenResult.getOrThrow()
@@ -209,6 +297,39 @@ public class SnaplinkAuthClient internal constructor(
             }
         } finally {
             synchronized(storeLock) { logoutInProgress = false }
+        }
+    }
+
+    /** Returns the persisted session after ensuring its access token is not expired. */
+    public suspend fun currentSession(): SnaplinkSession {
+        accessToken()
+        val current = withContext(Dispatchers.IO) { readTokenSet() }
+            ?: throw SnaplinkAuthException("login_required", "native login is required")
+        return current.toSession()
+    }
+
+    /**
+     * Claims a prepared activation with the freshly minted bearer, if one is
+     * still pending for this client.
+     *
+     * The local session is already stored when this runs, so a claim failure
+     * leaves the user signed in; read the outcome later with [accountContext].
+     * A ticket the server already accepted is not retried: the pending record is
+     * dropped either way, because the claim route is idempotent per subject and
+     * a stale ticket must not linger in encrypted storage.
+     */
+    private suspend fun claimPendingActivation(bearer: String) {
+        val pending = withContext(Dispatchers.IO) { readPendingActivation() } ?: return
+        if (pending.expiresAtEpochSeconds <= nowSeconds()) {
+            withContext(Dispatchers.IO) { secureStore.delete(pendingActivationKey) }
+            return
+        }
+        try {
+            commerceTransport.claimActivation(pending.ticket, pending.productId, bearer)
+            withContext(Dispatchers.IO) { secureStore.delete(pendingActivationKey) }
+        } catch (error: Exception) {
+            withContext(Dispatchers.IO) { runCatching { secureStore.delete(pendingActivationKey) } }
+            throw error
         }
     }
 
@@ -265,6 +386,36 @@ public class SnaplinkAuthClient internal constructor(
         val encoded = secureStore.read(pendingTransactionKey) ?: return@synchronized null
         secureStore.delete(pendingTransactionKey)
         decodeTransaction(encoded)
+    }
+
+    private fun readPendingActivation(): PendingActivation? = synchronized(storeLock) {
+        secureStore.read(pendingActivationKey)?.let(::decodePendingActivation)
+    }
+
+    private data class PendingActivation(
+        val productId: String,
+        val ticket: String,
+        val expiresAtEpochSeconds: Long,
+    )
+
+    private fun encodePendingActivation(pending: PendingActivation): String = encodeBinary { output ->
+        output.writeInt(STORAGE_VERSION)
+        output.writeUTF(RECORD_ACTIVATION)
+        output.writeUTF(pending.productId)
+        output.writeUTF(pending.ticket)
+        output.writeLong(pending.expiresAtEpochSeconds)
+    }
+
+    private fun decodePendingActivation(encoded: String): PendingActivation = decodeBinary(encoded) { input ->
+        requireVersion(input)
+        if (input.readUTF() != RECORD_ACTIVATION) {
+            throw SnaplinkAuthException("secure_storage_error", "unsupported SDK secure-storage record")
+        }
+        PendingActivation(
+            productId = input.readUTF(),
+            ticket = input.readUTF(),
+            expiresAtEpochSeconds = input.readLong(),
+        )
     }
 
     private fun storageKey(kind: String): String {
@@ -362,6 +513,7 @@ public class SnaplinkAuthClient internal constructor(
 
     public companion object {
         private const val STORAGE_VERSION = 1
+        private const val RECORD_ACTIVATION = "activation"
         private const val REFRESH_SKEW_SECONDS = 60
         private const val MAX_TOKEN_LIFETIME_SECONDS = 31_536_000L
         private const val MAX_OAUTH_ERROR_CODE = 64

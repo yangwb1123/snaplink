@@ -4,15 +4,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonObject
-import okhttp3.FormBody
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okio.Buffer
-import okio.BufferedSource
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -41,11 +34,13 @@ internal class HttpOAuthTransport(
     override suspend fun revoke(token: String, tokenTypeHint: String) {
         withContext(Dispatchers.IO) {
             val response = post(
-                "${config.issuerBaseUrl}/token/revoke",
-                listOf(
-                    "client_id" to config.clientId,
-                    "token" to token,
-                    "token_type_hint" to tokenTypeHint,
+                credentialRequest(
+                    "token/revoke",
+                    listOf(
+                        "client_id" to config.clientId,
+                        "token" to token,
+                        "token_type_hint" to tokenTypeHint,
+                    ),
                 ),
             )
             if (!response.isSuccessful) throw decodeError(response.code, response.body)
@@ -53,44 +48,35 @@ internal class HttpOAuthTransport(
     }
 
     private suspend fun requestToken(form: List<Pair<String, String>>): OAuthTokenResponse = withContext(Dispatchers.IO) {
-        val response = post("${config.issuerBaseUrl}/token", form)
+        val response = post(credentialRequest("token", form))
         if (!response.isSuccessful) throw decodeError(response.code, response.body)
         decodeTokenResponse(response.body)
     }
 
-    private fun post(endpoint: String, values: List<Pair<String, String>>): BoundedResponse {
-        val form = FormBody.Builder().apply { values.forEach { (key, value) -> add(key, value) } }.build()
-        val request = Request.Builder()
-            .url(endpoint)
-            .header("Accept", "application/json")
-            .header("Cache-Control", "no-store")
-            .header("Pragma", "no-cache")
-            .post(form)
-            .build()
-        return try {
-            client.newCall(request).execute().use { response ->
-                val body = response.body?.source()?.let(::readBounded).orEmpty()
-                BoundedResponse(response.code, response.isSuccessful, body)
-            }
-        } catch (error: IOException) {
-            throw SnaplinkAuthException("network_error", "Snaplink request failed", cause = error)
+    private fun post(request: SnaplinkHttpRequest): BoundedResponse = try {
+        client.newCall(request.toOkHttp()).execute().use { response ->
+            val body = response.body?.source()?.let(SnaplinkHttp::readBounded).orEmpty()
+            BoundedResponse(response.code, response.isSuccessful, body)
         }
+    } catch (error: IOException) {
+        throw SnaplinkHttp.networkError(error)
     }
 
-    private fun readBounded(source: BufferedSource): String {
-        val buffer = Buffer()
-        while (!source.exhausted()) {
-            source.read(buffer, minOf(4096L, MAX_RESPONSE_BYTES + 1L - buffer.size))
-            if (buffer.size > MAX_RESPONSE_BYTES) {
-                throw SnaplinkAuthException("invalid_response", "Snaplink response exceeded the SDK size limit")
-            }
-        }
-        return buffer.readUtf8()
-    }
+    /**
+     * Builds a credential request through the normalized factory so the form
+     * ordering, header canonicalization, and no-store policy are applied in one
+     * place for every credential call.
+     */
+    private fun credentialRequest(path: String, fields: List<Pair<String, String>>) =
+        SnaplinkRequestFactory.credentialForm(
+            baseURL = config.issuerBaseUrl,
+            path = path,
+            fields = fields.toMap(),
+        )
 
     private fun decodeTokenResponse(raw: String): OAuthTokenResponse {
         try {
-            val wire = json.decodeFromString<TokenWire>(raw)
+            val wire = SnaplinkHttp.json.decodeFromString<TokenWire>(raw)
             if (wire.accessToken.isBlank() || !wire.tokenType.equals("Bearer", ignoreCase = true) ||
                 wire.expiresInSeconds <= 0 || wire.expiresInSeconds > MAX_TOKEN_LIFETIME_SECONDS
             ) {
@@ -110,20 +96,8 @@ internal class HttpOAuthTransport(
         }
     }
 
-    private fun decodeError(status: Int, raw: String): SnaplinkAuthException {
-        val body = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
-        val code = (body?.get("error") as? JsonPrimitive)
-            ?.takeIf { it.isString }
-            ?.contentOrNull
-            ?.takeIf(String::isNotBlank)
-            ?: "http_error"
-        val description = (body?.get("error_description") as? JsonPrimitive)
-            ?.takeIf { it.isString }
-            ?.contentOrNull
-            ?.takeIf(String::isNotBlank)
-            ?: "Snaplink request failed with HTTP $status"
-        return SnaplinkAuthException(code, description.take(MAX_ERROR_TEXT), status)
-    }
+    private fun decodeError(status: Int, raw: String): SnaplinkAuthException =
+        SnaplinkHttp.decodeError(status, raw)
 
     @Serializable
     private data class TokenWire(
@@ -137,10 +111,7 @@ internal class HttpOAuthTransport(
     private data class BoundedResponse(val code: Int, val isSuccessful: Boolean, val body: String)
 
     private companion object {
-        const val MAX_RESPONSE_BYTES = 64 * 1024L
-        const val MAX_ERROR_TEXT = 512
         const val MAX_TOKEN_LIFETIME_SECONDS = 31_536_000L
-        val json = Json { ignoreUnknownKeys = true }
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .cookieJar(okhttp3.CookieJar.NO_COOKIES)

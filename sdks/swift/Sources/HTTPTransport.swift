@@ -2,22 +2,11 @@ import Foundation
 
 struct URLSessionOAuthTransport: OAuthTransport, @unchecked Sendable {
     private let configuration: SnaplinkConfiguration
-    private let session: URLSession
+    private let sender: SnaplinkHTTPSender
 
     init(configuration: SnaplinkConfiguration, session: URLSession? = nil) {
         self.configuration = configuration
-        if let session {
-            self.session = session
-        } else {
-            let delegate = RejectRedirects()
-            let sessionConfiguration = URLSessionConfiguration.ephemeral
-            sessionConfiguration.httpCookieStorage = nil
-            sessionConfiguration.httpShouldSetCookies = false
-            sessionConfiguration.urlCache = nil
-            sessionConfiguration.timeoutIntervalForRequest = Self.requestTimeout
-            sessionConfiguration.timeoutIntervalForResource = Self.requestTimeout
-            self.session = URLSession(configuration: sessionConfiguration, delegate: delegate, delegateQueue: nil)
-        }
+        self.sender = SnaplinkHTTPSender(session: session)
     }
 
     func exchangeCode(_ code: String, verifier: String) async throws -> OAuthTokenResponse {
@@ -39,15 +28,16 @@ struct URLSessionOAuthTransport: OAuthTransport, @unchecked Sendable {
     }
 
     func revoke(_ token: String, tokenTypeHint: String) async throws {
-        _ = try await post("token/revoke", form: [
+        let request = try credentialRequest(path: "token/revoke", fields: [
             "client_id": configuration.clientID,
             "token": token,
             "token_type_hint": tokenTypeHint
         ])
+        _ = try await sender.send(request)
     }
 
-    private func tokenRequest(_ form: [String: String]) async throws -> OAuthTokenResponse {
-        let data = try await post("token", form: form)
+    private func tokenRequest(_ fields: [String: String]) async throws -> OAuthTokenResponse {
+        let data = try await sender.send(try credentialRequest(path: "token", fields: fields))
         do {
             let response = try JSONDecoder().decode(OAuthTokenResponse.self, from: data)
             guard !response.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -74,90 +64,11 @@ struct URLSessionOAuthTransport: OAuthTransport, @unchecked Sendable {
         }
     }
 
-    private func post(_ path: String, form: [String: String]) async throws -> Data {
-        var endpoint = configuration.issuerBaseURL
-        for component in path.split(separator: "/") {
-            endpoint.appendPathComponent(String(component))
-        }
-        var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: Self.requestTimeout)
-        request.httpMethod = "POST"
-        request.httpBody = encodeForm(form)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
-        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
-        do {
-            let (bytes, response) = try await session.bytes(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw SnaplinkAuthError(code: "invalid_response", message: "Snaplink returned a non-HTTP response")
-            }
-            var data = Data()
-            data.reserveCapacity(4096)
-            for try await byte in bytes {
-                data.append(byte)
-                guard data.count <= Self.maximumResponseBytes else {
-                    throw SnaplinkAuthError(code: "invalid_response", message: "Snaplink response exceeded the SDK size limit")
-                }
-            }
-            guard (200..<300).contains(http.statusCode) else {
-                throw decodeError(data, status: http.statusCode)
-            }
-            return data
-        } catch let error as SnaplinkAuthError {
-            throw error
-        } catch {
-            throw SnaplinkAuthError(code: "network_error", message: "Snaplink request failed")
-        }
-    }
-
-    private func encodeForm(_ values: [String: String]) -> Data {
-        var components = URLComponents()
-        components.queryItems = values.keys.sorted().map { URLQueryItem(name: $0, value: values[$0] ?? "") }
-        let encoded = (components.percentEncodedQuery ?? "")
-            .replacingOccurrences(of: "+", with: "%2B")
-            .replacingOccurrences(of: "%20", with: "+")
-        return Data(encoded.utf8)
-    }
-
-    private func decodeError(_ data: Data, status: Int) -> SnaplinkAuthError {
-        struct ErrorBody: Decodable {
-            let error: String?
-            let errorDescription: String?
-
-            enum CodingKeys: String, CodingKey {
-                case error
-                case errorDescription = "error_description"
-            }
-
-            init(from decoder: Decoder) throws {
-                let container = try decoder.container(keyedBy: CodingKeys.self)
-                error = try? container.decode(String.self, forKey: .error)
-                errorDescription = try? container.decode(String.self, forKey: .errorDescription)
-            }
-        }
-        let body = try? JSONDecoder().decode(ErrorBody.self, from: data)
-        let code = body?.error.flatMap {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
-        } ?? "http_error"
-        let message = body?.errorDescription.flatMap {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : String($0.prefix(Self.maximumErrorText))
-        } ?? "Snaplink request failed with HTTP \(status)"
-        return SnaplinkAuthError(code: code, message: message, statusCode: status)
-    }
-
-    private static let requestTimeout: TimeInterval = 15
-    private static let maximumResponseBytes = 64 * 1024
-    private static let maximumErrorText = 512
-}
-
-private final class RejectRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        willPerformHTTPRedirection response: HTTPURLResponse,
-        newRequest request: URLRequest,
-        completionHandler: @escaping (URLRequest?) -> Void
-    ) {
-        completionHandler(nil)
+    private func credentialRequest(path: String, fields: [String: String]) throws -> SnaplinkHTTPRequest {
+        try SnaplinkRequestBuilder.credentialForm(
+            baseURL: configuration.issuerBaseURL,
+            path: path,
+            fields: fields
+        )
     }
 }
