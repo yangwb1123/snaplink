@@ -44,8 +44,9 @@ func pyBanner(title, version string) string {
 # snake_case; the original is kept in each method's docstring) so a call
 # site is traceable back to its docs/openapi.yaml operation.
 #
-# Stdlib only: urllib.request for transport, typing.TypedDict for wire
-# shapes -- no "requests", no third-party dependency of any kind.
+# Stdlib only: typing.TypedDict for wire shapes and a stdlib urllib transport
+# behind an injectable seam -- no "requests", no third-party dependency of any
+# kind.
 
 from __future__ import annotations
 
@@ -54,7 +55,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Callable, Dict, List, Optional, TypedDict, Union
+from typing import Any, Callable, Dict, List, Optional, Protocol, TypedDict, Union
 
 
 `, title, version)
@@ -71,6 +72,67 @@ const pyRuntimePrelude = `class SSOError(Exception):
         self.status = status
         self.error = error
         self.error_description = error_description
+
+
+class HttpRequest(TypedDict, total=False):
+    """One outbound request. Header names use canonical HTTP capitalization."""
+
+    method: str
+    url: str
+    headers: Dict[str, str]
+    body: Optional[bytes]
+
+
+class HttpResponse(TypedDict):
+    """One inbound response. Every status reaches the caller, including 4xx/5xx."""
+
+    status: int
+    body: bytes
+
+
+class Transport(Protocol):
+    """The single seam every generated method performs I/O through.
+
+    Supply an implementation to configure a proxy, share a connection pool, or
+    substitute a test double. A transport must not follow redirects: a
+    credential endpoint that redirects would forward an authorization code,
+    refresh token, or bearer to another host, and a 30x is a configuration
+    error to surface, not to chase.
+    """
+
+    def send(self, request: HttpRequest) -> HttpResponse: ...
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Turns every redirect into an error rather than replaying the request."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
+class UrllibTransport:
+    """Default stdlib transport; the package still has no dependencies."""
+
+    def __init__(self, timeout: Optional[float] = None) -> None:
+        self.timeout = timeout
+        self._opener = urllib.request.build_opener(_NoRedirectHandler)
+
+    def send(self, request: HttpRequest) -> HttpResponse:
+        call = urllib.request.Request(
+            request["url"],
+            data=request.get("body"),
+            headers=dict(request.get("headers") or {}),
+            method=request["method"],
+        )
+        try:
+            if self.timeout is None:
+                response = self._opener.open(call)
+            else:
+                response = self._opener.open(call, timeout=self.timeout)
+            with response as opened:
+                return {"status": opened.status, "body": opened.read()}
+        except urllib.error.HTTPError as exc:
+            return {"status": exc.code, "body": exc.read()}
 
 
 `
@@ -90,11 +152,13 @@ const pyClientHeader = `class SSOClient:
         client_id: Optional[str] = None,
         client_secret: Optional[str] = None,
         request_timeout: Optional[float] = None,
+        transport: Optional[Transport] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.client_id = client_id
         self.client_secret = client_secret
         self.request_timeout = request_timeout
+        self.transport: Transport = transport or UrllibTransport(request_timeout)
         self._token: Optional[str] = None
         self.get_access_token = get_access_token or (lambda: self._token)
 
@@ -176,19 +240,18 @@ const pyClientHeader = `class SSOClient:
             token = self.get_access_token()
             if token:
                 headers["Authorization"] = f"Bearer {token}"
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
-        try:
-            opener = urllib.request.urlopen
-            if self.request_timeout is None:
-                response = opener(req)
-            else:
-                response = opener(req, timeout=self.request_timeout)
-            with response as resp:
-                return _parse_body(resp.status, resp.read())
-        except urllib.error.HTTPError as exc:
-            payload = exc.read()
-            error, error_description = _parse_error(payload)
-            raise SSOError(exc.code, error, error_description) from exc
+        response = self.transport.send({
+            "method": method,
+            "url": url,
+            "headers": headers,
+            "body": data,
+        })
+        status = int(response["status"])
+        body = response["body"] or b""
+        if status < 200 or status >= 300:
+            error, error_description = _parse_error(body)
+            raise SSOError(status, error, error_description)
+        return _parse_body(status, body)
 
     def _with_client_auth(self, body: Optional[Any], headers: Dict[str, str]) -> Optional[Any]:
         if not self.client_secret:
@@ -335,7 +398,7 @@ func pyUsesClientAuth(operationID string) bool {
 }
 
 func pyEmitExports(b *strings.Builder, names []string) {
-	b.WriteString("\n__all__ = [\n    \"SSOError\",\n    \"SSOClient\",\n")
+	b.WriteString("\n__all__ = [\n    \"SSOError\",\n    \"SSOClient\",\n    \"HttpRequest\",\n    \"HttpResponse\",\n    \"Transport\",\n    \"UrllibTransport\",\n")
 	for _, name := range names {
 		fmt.Fprintf(b, "    %q,\n", name)
 	}

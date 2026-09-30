@@ -80,9 +80,13 @@ class Snaplink:
         store: Optional[StateStore] = None,
         *,
         client_factory: Callable[..., SSOClient] = SSOClient,
+        transport: Optional[Any] = None,
     ) -> None:
         self._store = store or MemoryStateStore()
         self._client_factory = client_factory
+        # One seam for the whole facade: the token exchange, activation, and
+        # account-context calls all run through the injected transport.
+        self._transport = transport
         self._client: Optional[SSOClient] = None
         self._tokens: Optional[Dict[str, Any]] = None
         self._client_id: Optional[str] = None
@@ -276,6 +280,7 @@ class Snaplink:
             base_url,
             client_id=client_id,
             get_access_token=lambda: self.access_token,
+            **({"transport": self._transport} if self._transport is not None else {}),
         )
 
     def _finish_login(
