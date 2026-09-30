@@ -260,6 +260,7 @@ The registry's `missing` entries name the wave that closes each gap.
 | `entitlement.typed_keys` | done | done | done | done | done |
 | `entitlement.license_file` | done | done | done | done | done |
 | `preferences.handoff` | done | done | done | done | done |
+| `transport.injection` | done | done | done | done | done |
 
 This progress table covers the five hosted-login SDKs (Go, TypeScript, Python,
 Rust, and PHP). Kotlin and Swift are registered native SDKs still onboarding;
@@ -294,7 +295,13 @@ login request while replacing a stale value inherited from the login-page URL.
 An omitted field stays omitted, so a handoff never clears a stored preference the
 application did not mean to touch.
 
-The W2 wave is therefore closed for the five hosted-login SDKs. The remaining
-declared gaps are the W4 transport seam and native async composition for Python
-and PHP; both need a design decision rather than a port, and the registry keeps
-them visible.
+The W2 wave is therefore closed for the five hosted-login SDKs, and every one of
+them now has a single injectable transport seam. Python's seam is emitted by
+`cmd/gensdk` so the generated client and the hosted-login facade share it, and
+its default implementation refuses to follow redirects.
+
+The remaining declared gaps are `runtime.native_async` for Python and PHP. Both
+need a design decision rather than a port: an asyncio client beside the
+synchronous default, and for PHP a decision about what "event-loop friendly"
+means without an event loop in the language. The registry keeps them visible
+instead of claiming a synchronous facade is async.

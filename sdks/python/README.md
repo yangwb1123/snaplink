@@ -21,6 +21,22 @@ Python 3.9 and newer and is intended for applications that want a normal
 `snaplink_sso` import; consumers that vendor one file may use
 `docs/sdks/python/client.py` instead.
 
+Every request runs through one injectable `Transport` seam, so an application
+can supply a proxy-aware client, a shared connection pool, or a test double
+without touching the generated methods:
+
+```python
+from snaplink_sso import SSOClient
+
+client = SSOClient("https://sso.example.com", client_id="my-public-app", transport=my_transport)
+```
+
+`Snaplink(..., transport=my_transport)` applies the same transport to hosted
+login, so the authorization-code exchange, activation, and account-context reads
+share it. The default `UrllibTransport` refuses to follow redirects: a
+credential endpoint that returned a 30x would otherwise replay an authorization
+code, refresh token, or bearer at another host.
+
 For paid or invited products, call `snaplink.setup({...})` before login. The
 credential is sent in the HTTPS JSON body, while only the short-lived ticket is
 kept in the in-process setup state and copied into the login transaction:

@@ -71,9 +71,10 @@
           "symbol": "?callable $transport = null"
         },
         "python": {
-          "status": "missing",
-          "note": "SSOClient calls urllib.request.urlopen directly; hosted_login has no seam either.",
-          "plan": "W4 Transport: introduce a Transport Protocol mirroring FetchLike and route both modules through it."
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/client.py",
+          "symbol": "class Transport(Protocol):",
+          "note": "W4: the seam is emitted by cmd/gensdk, so the generated client and the hosted-login facade share it. The default UrllibTransport refuses redirects, so a credential endpoint can never replay an authorization code, refresh token, or bearer at another host."
         },
         "rust": {
           "status": "present",
@@ -691,8 +692,8 @@
         },
         "python": {
           "status": "missing",
-          "note": "Synchronous urllib calls; usable in a worker but not in an event loop.",
-          "plan": "W4 Transport: offer an asyncio transport alongside the synchronous default."
+          "note": "The transport seam exists and is injectable, but the client API itself is synchronous, so an event loop still blocks on it.",
+          "plan": "W4: ship an asyncio client (and an asyncio transport) beside the synchronous default, rather than pretending a synchronous facade is event-loop friendly."
         },
         "php": {
           "status": "missing",
