@@ -29,14 +29,15 @@ description falls back to an HTTP-status message. Omitted refresh scope/token
 fields retain the previous values.
 
 These packages currently target Android API 23+ / iOS 17+; the Swift package
-also builds for macOS 14+. They are not published or production-approved. The
-iOS minimum exists to support verified HTTPS callbacks with
-`ASWebAuthenticationSession`; confirm it against the approved device-support
-matrix before release. Callback URIs and OAuth client IDs must
-be registered before application integration. Production use additionally
-requires platform-device acceptance, independent identity/security review, and
-the SVERP production release gate. This package work does not authorize a SVERP
-release, native-client rollout, or PostgreSQL cutover.
+also builds for macOS 14+. Swift's host/path-bound HTTPS callback API requires
+iOS 17.4 or macOS 14.4; older supported systems can use a registered custom
+URI scheme. The packages are not published or production-approved. Confirm the
+minimum versions against the approved device-support matrix before release.
+Callback URIs and OAuth client IDs must be registered before application
+integration. Production use additionally requires platform-device acceptance,
+independent identity/security review, and the SVERP production release gate.
+This package work does not authorize a SVERP release, native-client rollout,
+or PostgreSQL cutover.
 
 Scope intentionally excludes DPoP, app-specific account selection, and generated
 business API clients until their contracts and platform behavior are approved.

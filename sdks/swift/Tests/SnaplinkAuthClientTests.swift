@@ -218,6 +218,91 @@ final class SnaplinkAuthClientTests: XCTestCase {
         XCTAssertEqual(accessToken, "access-initial")
     }
 
+    func testCurrentSessionRestoresPersistedSessionWithoutRefreshing() async throws {
+        let setup = try fixture()
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        let original = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "code"))
+
+        let restored = try await setup.client.currentSession()
+        let refreshCount = await setup.transport.refreshCount
+        XCTAssertEqual(restored, original)
+        XCTAssertEqual(refreshCount, 0)
+    }
+
+    func testCurrentSessionRefreshesExpiredPersistedSession() async throws {
+        let setup = try fixture()
+        await setup.transport.setInitialResponse(OAuthTokenResponse(
+            accessToken: "access-old",
+            tokenType: "Bearer",
+            expiresIn: 1,
+            refreshToken: "refresh-one",
+            scope: "openid"
+        ))
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "code"))
+        setup.clock.advance(2)
+
+        let current = try await setup.client.currentSession()
+        let refreshCount = await setup.transport.refreshCount
+        XCTAssertEqual(current.accessToken, "access-refreshed")
+        XCTAssertEqual(current.expiresAt, setup.clock.now.addingTimeInterval(900))
+        XCTAssertEqual(refreshCount, 1)
+    }
+
+    func testShortLivedSessionDoesNotRefreshImmediately() async throws {
+        let setup = try fixture()
+        await setup.transport.setInitialResponse(OAuthTokenResponse(
+            accessToken: "access-short-lived",
+            tokenType: "Bearer",
+            expiresIn: 30,
+            refreshToken: "refresh-one",
+            scope: "openid"
+        ))
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "code"))
+
+        let immediateToken = try await setup.client.accessToken()
+        let initialRefreshCount = await setup.transport.refreshCount
+        XCTAssertEqual(immediateToken, "access-short-lived")
+        XCTAssertEqual(initialRefreshCount, 0)
+
+        setup.clock.advance(28)
+        let refreshedToken = try await setup.client.accessToken()
+        let finalRefreshCount = await setup.transport.refreshCount
+        XCTAssertEqual(refreshedToken, "access-refreshed")
+        XCTAssertEqual(finalRefreshCount, 1)
+    }
+
+    func testLegacyStoredSessionWithoutRefreshAtCanBeRestored() async throws {
+        let setup = try fixture()
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "code"))
+        let stored = try XCTUnwrap(setup.store.onlyStoredValue())
+        var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: stored.data) as? [String: Any])
+        payload.removeValue(forKey: "refreshAt")
+        let legacyPayload = try JSONSerialization.data(withJSONObject: payload)
+        setup.store.replace(legacyPayload, account: stored.account)
+
+        let session = try await setup.client.currentSession()
+        let refreshCount = await setup.transport.refreshCount
+        XCTAssertEqual(session.accessToken, "access-initial")
+        XCTAssertEqual(refreshCount, 0)
+    }
+
+    func testCurrentSessionRequiresLoginWhenNoSessionIsStored() async throws {
+        let setup = try fixture()
+        do {
+            _ = try await setup.client.currentSession()
+            XCTFail("missing session must require login")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.code, "login_required")
+        }
+    }
+
     func testConcurrentExpiredTokenCallsShareOneRefresh() async throws {
         let setup = try fixture()
         await setup.transport.setInitialResponse(OAuthTokenResponse(
@@ -439,6 +524,19 @@ private final class MemorySecureStore: SnaplinkSecureStore, @unchecked Sendable 
     private let lock = NSLock()
     private var values: [String: Data] = [:]
     private var failDelete = false
+
+    func onlyStoredValue() -> (account: String, data: Data)? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard values.count == 1, let value = values.first else { return nil }
+        return (account: value.key, data: value.value)
+    }
+
+    func replace(_ data: Data, account: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        values[account] = data
+    }
 
     func setFailDelete(_ fail: Bool) {
         lock.lock()

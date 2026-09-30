@@ -123,7 +123,8 @@ public actor SnaplinkAuthClient {
         guard let current: StoredTokenSet = try load(account: tokenAccount) else {
             throw SnaplinkAuthError(code: "login_required", message: "native login is required")
         }
-        if current.expiresAt.timeIntervalSince(clock()) > Self.refreshSkew {
+        let now = clock()
+        if current.expiresAt > now && current.effectiveRefreshAt > now {
             return current.accessToken
         }
         guard let refreshToken = current.refreshToken, !refreshToken.isEmpty else {
@@ -177,6 +178,15 @@ public actor SnaplinkAuthClient {
         refreshTask = nil
         defer { logoutInProgress = false }
         try clearLocalCredentials()
+    }
+
+    /// Returns the persisted session after ensuring its access token is not expired.
+    public func currentSession() async throws -> SnaplinkSession {
+        _ = try await accessToken()
+        guard let current: StoredTokenSet = try load(account: tokenAccount) else {
+            throw SnaplinkAuthError(code: "login_required", message: "native login is required")
+        }
+        return current.session
     }
 
     /// Revokes the refresh token when present and always clears local credentials first.
@@ -276,7 +286,6 @@ public actor SnaplinkAuthClient {
         return "snaplink.sso.v1." + digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    private static let refreshSkew: TimeInterval = 60
     private static let maximumStoredBytes = 64 * 1024
 }
 
@@ -293,6 +302,7 @@ struct StoredTokenSet: Codable, Sendable {
     let accessToken: String
     let refreshToken: String?
     let expiresAt: Date
+    let refreshAt: Date?
     let scope: String?
 
     init(
@@ -304,10 +314,19 @@ struct StoredTokenSet: Codable, Sendable {
         accessToken = response.accessToken
         refreshToken = response.refreshToken.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
             ?? previousRefreshToken
+        let lifetime = TimeInterval(response.expiresIn)
         let epochSeconds = now.timeIntervalSince1970.rounded(.down)
-        expiresAt = Date(timeIntervalSince1970: epochSeconds + TimeInterval(response.expiresIn))
+        let issuedAt = Date(timeIntervalSince1970: epochSeconds)
+        expiresAt = issuedAt.addingTimeInterval(lifetime)
+        refreshAt = issuedAt.addingTimeInterval(lifetime - min(Self.maximumRefreshLead, lifetime / 10))
         scope = response.scope ?? previousScope
     }
 
+    var effectiveRefreshAt: Date {
+        min(refreshAt ?? expiresAt.addingTimeInterval(-Self.maximumRefreshLead), expiresAt)
+    }
+
     var session: SnaplinkSession { SnaplinkSession(accessToken: accessToken, expiresAt: expiresAt) }
+
+    private static let maximumRefreshLead: TimeInterval = 60
 }

@@ -17,10 +17,12 @@ permissions, and tenant boundaries remain authoritative.
 - Swift 5.9+
 - A public Snaplink OAuth client with a pre-registered callback URI
 
-The current minimum OS version enables `ASWebAuthenticationSession` HTTPS
-Universal Link callbacks. An application may instead register a unique custom
-URI scheme. The minimum version is an initial SDK decision and should be
-reviewed against the SVERP device-support matrix before distribution.
+Registered custom-URI callbacks work at the package deployment minimums.
+`ASWebAuthenticationSession`'s host/path-bound HTTPS callback API requires
+iOS 17.4 or macOS 14.4; on older supported systems the SDK rejects HTTPS
+callbacks and applications must use a registered custom URI scheme. The
+minimum versions are initial SDK decisions and should be reviewed against the
+SVERP device-support matrix before distribution.
 
 ## Add the package
 
@@ -66,6 +68,12 @@ let session = try await snaplink.handleAuthorizationCallback(callbackURL)
 let accessToken = session.accessToken
 ```
 
+`SnaplinkSystemBrowser` allows one active authorization at a time. If the host
+UI abandons login, call `cancelAuthorization()` on the main actor; the pending
+`authorize` call then fails with `authorization_cancelled`. Cancelling the Swift
+`Task` awaiting `authorize` also cancels the browser session and throws
+`CancellationError`.
+
 A custom-scheme callback uses the same flow; register the scheme in the app's
 URL Types and at Snaplink. Never treat callback parameters as credentials by
 themselves: the SDK validates the saved state, exact redirect target, and
@@ -74,8 +82,11 @@ Snaplink `iss` before exchanging the code.
 The authorization options `prompt`, `loginHint`, `acrValues`, `uiLocales`, and
 non-negative `maxAge` map to the corresponding Go SDK `LoginOptions` fields.
 They are omitted by default, and stale copies in `loginPageURL` are removed.
-`accessToken()` returns a non-expired bearer and refreshes when needed. Refresh
-requests are single-flight inside one SDK actor instance; they are not
+`accessToken()` returns a non-expired bearer and refreshes when needed;
+`currentSession()` restores the persisted session and returns its updated
+expiration after any required refresh. Tokens are proactively refreshed up to
+60 seconds early, capped at 10% of the token lifetime for short-lived tokens.
+Refresh requests are single-flight inside one SDK actor instance; they are not
 coordinated across app processes or devices. `clear()` removes local Keychain
 tokens and pending login state without a network call. `logout()` is distinct:
 it clears local credentials before attempting server revocation, so a network

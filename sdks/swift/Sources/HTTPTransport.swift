@@ -113,7 +113,9 @@ struct URLSessionOAuthTransport: OAuthTransport, @unchecked Sendable {
     private func encodeForm(_ values: [String: String]) -> Data {
         var components = URLComponents()
         components.queryItems = values.keys.sorted().map { URLQueryItem(name: $0, value: values[$0] ?? "") }
-        let encoded = (components.percentEncodedQuery ?? "").replacingOccurrences(of: "%20", with: "+")
+        let encoded = (components.percentEncodedQuery ?? "")
+            .replacingOccurrences(of: "+", with: "%2B")
+            .replacingOccurrences(of: "%20", with: "+")
         return Data(encoded.utf8)
     }
 

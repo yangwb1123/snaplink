@@ -152,9 +152,25 @@ private final class RequestCapture: @unchecked Sendable {
     private var request: URLRequest?
 
     func store(_ request: URLRequest) {
+        var captured = request
+        if captured.httpBody == nil, let stream = captured.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var body = Data()
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while true {
+                let count = buffer.withUnsafeMutableBufferPointer { pointer -> Int in
+                    guard let baseAddress = pointer.baseAddress else { return 0 }
+                    return stream.read(baseAddress, maxLength: pointer.count)
+                }
+                guard count > 0 else { break }
+                body.append(contentsOf: buffer.prefix(count))
+            }
+            captured.httpBody = body
+        }
         lock.lock()
         defer { lock.unlock() }
-        self.request = request
+        self.request = captured
     }
 
     func load() -> URLRequest? {

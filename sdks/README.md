@@ -10,12 +10,13 @@ beside their package where the language uses them:
 | PHP | [`php/`](php/) | [`php/README.md`](php/README.md) |
 | Python | [`python/`](python/) | [`python/README.md`](python/README.md), [`docs/sdks/python/README.md`](../docs/sdks/python/README.md) |
 | Rust | [`rust/`](rust/) | [`rust/README.md`](rust/README.md) |
-| Swift (iOS, experimental) | [`swift/`](swift/) | [`swift/README.md`](swift/README.md) |
+| Swift (iOS/macOS, experimental) | [`swift/`](swift/) | [`swift/README.md`](swift/README.md), [`docs/sdks/native.md`](../docs/sdks/native.md) |
 | TypeScript | [`typescript/`](typescript/) | [`docs/sdks/typescript/README.md`](../docs/sdks/typescript/README.md) |
 
 The Kotlin and Swift packages are experimental native hosted-login clients;
 they are not published or production-approved and do not replace generated
-business API clients. See [`docs/sdks/native.md`](../docs/sdks/native.md).
+business API clients. The full OpenAPI-generated REST clients are TypeScript
+and Python. See [`docs/sdks/native.md`](../docs/sdks/native.md).
 
 The embeddable Go server API is the separate `interfaces/sso` package; it stays
 in the layered server library rather than moving under this client-package tree.
