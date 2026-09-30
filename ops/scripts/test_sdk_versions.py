@@ -27,7 +27,7 @@ NAMES = (
     "snaplink-sso",
     "snaplink-sso",
     "snaplink/sso",
-    "com.snaplink:sso",
+    "site.ywbsd.sso:snaplink",
     "SnaplinkSSO",
 )
 
@@ -108,15 +108,15 @@ example-dependency = "77.77.77"
         root,
         "sdks/settings.gradle.kts",
         '''rootProject.name = "snaplink-native-sdks"
-include(":sso")
-project(":sso").projectDir = file("kotlin")
+include(":snaplink")
+project(":snaplink").projectDir = file("kotlin")
 ''',
     )
     _write(
         root,
         "sdks/kotlin/build.gradle.kts",
         f'''plugins {{ id("com.android.library") }}
-group = "com.snaplink"
+group = "site.ywbsd.sso"
 version = "{kotlin_version}"
 
 android {{ namespace = "com.snaplink.sso" }}
@@ -209,13 +209,13 @@ class SDKVersionGateTests(unittest.TestCase):
         self.assertTrue(output.endswith("verdict: FAIL"))
 
     def test_the_gradle_coordinate_follows_the_project_not_the_directory(self) -> None:
-        """`:sso-client` builds from `kotlin/`, so the published coordinate
+        """`:sso` builds from `kotlin/`, so the published coordinate
         must be read from the settings script rather than the folder name."""
         manifest = Path("sdks/kotlin/build.gradle.kts")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _write_fixtures(root)
-            self.assertEqual("sso", sdk_versions._gradle_project_name(root, manifest))
+            self.assertEqual("snaplink", sdk_versions._gradle_project_name(root, manifest))
             _write(root, "sdks/settings.gradle.kts", 'include(":kotlin")\n')
             self.assertEqual("kotlin", sdk_versions._gradle_project_name(root, manifest))
             (root / "sdks/settings.gradle.kts").unlink()
@@ -223,7 +223,7 @@ class SDKVersionGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _write_fixtures(root)
-            _write(root, "sdks/settings.gradle.kts", 'include(":sso")\n')
+            _write(root, "sdks/settings.gradle.kts", 'include(":snaplink")\n')
             with self.assertRaises(sdk_versions.SDKVersionError):
                 sdk_versions._gradle_project_name(root, manifest)
 
@@ -368,7 +368,7 @@ class SDKVersionGateTests(unittest.TestCase):
                     'package id="python" name="snaplink-sso" version="0.3.0" status=PASS',
                     'package id="rust" name="snaplink-sso" version="0.3.0" status=PASS',
                     'package id="php" name="snaplink/sso" version="0.3.0" status=PASS',
-                    'package id="kotlin" name="com.snaplink:sso" version="0.3.0" status=PASS',
+                    'package id="kotlin" name="site.ywbsd.sso:snaplink" version="0.3.0" status=PASS',
                 'package id="swift" name="SnaplinkSSO" version="<unavailable>" status=PASS',
                     "verdict: PASS",
                 ]

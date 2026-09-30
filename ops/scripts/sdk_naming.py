@@ -3,16 +3,18 @@
 
 The name of a published package is the one identifier that cannot be changed
 after release, and four registries spell the same product four different ways
-(`@snaplink/sso`, `snaplink-sso`, `snaplink/sso`, `com.snaplink:sso`). Every
+(`@snaplink/sso`, `snaplink-sso`, `snaplink/sso`, `site.ywbsd.sso:snaplink`). Every
 platform also has its own rules for what a legal name looks like, and a name
 that satisfies the house scheme can still be rejected by the registry. This gate
 holds both properties at once:
 
 1. Scheme — the brand token ``snaplink`` owns the platform's namespace slot
-   (npm scope, Composer vendor, Maven groupId) and the product token ``sso``
-   fills the name slot. Platforms with no namespace slot carry the brand as the
-   name prefix. The token is the product name itself: Snaplink ships an SSO
-   server, so a client library published under its own brand is named for the
+   (npm scope, Composer vendor) and the product token ``sso`` fills the name
+   slot. Platforms with no namespace slot carry the brand as the name prefix.
+   The one exception is Maven, where the namespace slot must be a domain the
+   publisher controls, so the product host owns the groupId and the brand moves
+   into the artifactId. The token is the product name itself: Snaplink ships an
+   SSO server, so a client library published under its own brand is named for the
    product, not for the role it plays. A `client` suffix would be redundant on
    registries where a library is a client by definition, and the server side is
    the Go module rather than anything published to these registries.
@@ -49,6 +51,14 @@ CAPABILITY = "sso"
 #: `SnaplinkSSO` and stays identical to the canonical name.
 SWIFT_MODULE = "SnaplinkSSO"
 
+#: The Maven groupId. Maven Central verifies a groupId against a domain the
+#: publisher controls, so this is the reverse-DNS form of the project's own
+#: product host rather than a brand name. `com.snaplink` would assert a
+#: `snaplink.com` this project does not control, and an unverifiable groupId is
+#: rejected at publication — the worst possible moment to discover it. The
+#: product host is `sso.ywbsd.site`, so the group is `site.ywbsd.sso`.
+MAVEN_GROUP = "site.ywbsd.sso"
+
 
 @dataclass(frozen=True)
 class Convention:
@@ -60,6 +70,12 @@ class Convention:
     pattern: re.Pattern[str]
     rule: str
     namespace_slot: str
+    #: True when the platform's namespace slot must be a domain the publisher
+    #: controls, so it cannot hold the brand token. Maven Central verifies a
+    #: groupId against a domain, so there the domain owns the groupId and the
+    #: brand moves into the artifactId. The scheme is therefore stated per
+    #: platform rather than as one global sentence.
+    namespace_is_domain: bool = False
 
 
 #: npm scopes are lowercase and a package name may not repeat the scope. The
@@ -80,7 +96,12 @@ _PACKAGIST = re.compile(r"^[a-z0-9]([_.-]?[a-z0-9]+)*/[a-z0-9]+(-[a-z0-9]+)*$")
 
 #: Maven splits a reverse-DNS group from an artifactId; Central's grammar is
 #: permissive, and the gate holds the reverse-DNS shape instead.
-_MAVEN = re.compile(r"^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+:[a-z][a-z0-9]*(-[a-z0-9]+)*$")
+#: Maven splits a reverse-DNS group from an artifactId. The group must be a
+#: domain the publisher controls; the artifact carries the brand identifier, so
+#: the product token is already spoken for by the group.
+_MAVEN = re.compile(
+    r"^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+:[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+)
 
 #: SwiftPM module names are Swift identifiers; PascalCase is the house rule.
 _SWIFT = re.compile(r"^[A-Z][A-Za-z0-9]*$")
@@ -122,10 +143,11 @@ CONVENTIONS = (
     Convention(
         id="kotlin",
         manifest=Path("sdks/kotlin/build.gradle.kts"),
-        expected=f"com.{BRAND}:{CAPABILITY}",
+        expected=f"{MAVEN_GROUP}:{BRAND}",
         pattern=_MAVEN,
-        rule="reverse-DNS groupId:artifactId",
+        rule="reverse-DNS groupId:artifactId, groupId is a controlled domain",
         namespace_slot="Maven groupId",
+        namespace_is_domain=True,
     ),
     Convention(
         id="swift",

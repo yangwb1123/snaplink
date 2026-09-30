@@ -4,7 +4,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-group = "com.snaplink"
+group = "site.ywbsd.sso"
 version = "0.3.0"
 
 android {

@@ -15,5 +15,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "snaplink-native-sdks"
-include(":sso")
-project(":sso").projectDir = file("kotlin")
+include(":snaplink")
+project(":snaplink").projectDir = file("kotlin")

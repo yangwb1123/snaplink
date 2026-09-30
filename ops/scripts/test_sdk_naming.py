@@ -30,7 +30,7 @@ class SchemeTests(unittest.TestCase):
         self.assertEqual("sso", sdk_naming.CAPABILITY)
 
     def test_namespaces_own_the_brand_and_names_own_the_capability(self):
-        """A platform that has a namespace slot must not repeat the brand in the name."""
+        """A namespace slot holds the brand unless the platform needs a domain."""
         for convention in sdk_naming.CONVENTIONS:
             namespace, _, name_slot = convention.expected.rpartition("/")
             if convention.id == "kotlin":
@@ -39,9 +39,22 @@ class SchemeTests(unittest.TestCase):
                 self.assertEqual("", namespace, convention.id)
                 self.assertTrue(convention.expected.lower().startswith("snaplink"), convention.id)
                 continue
+            if convention.namespace_is_domain:
+                # Maven Central verifies the group against a domain, so the brand
+                # moves into the artifactId instead of the groupId.
+                self.assertNotIn("snaplink", namespace, convention.id)
+                self.assertEqual("snaplink", name_slot, convention.id)
+                continue
             self.assertIn("snaplink", namespace, convention.id)
             self.assertNotIn("snaplink", name_slot, convention.id)
-            self.assertEqual("sso", name_slot, convention.id)
+            self.assertEqual(sdk_naming.CAPABILITY, name_slot, convention.id)
+
+    def test_the_maven_group_is_the_reverse_dns_product_host(self):
+        """A Central groupId must name a host the publisher controls."""
+        group = sdk_naming.MAVEN_GROUP
+        self.assertEqual("sso.ywbsd.site", ".".join(reversed(group.split("."))))
+        self.assertEqual(f"{group}:snaplink", CONVENTIONS["kotlin"].expected)
+        self.assertTrue(CONVENTIONS["kotlin"].namespace_is_domain)
 
     def test_the_swift_module_keeps_the_brand_and_drops_the_client_token(self):
         self.assertTrue(sdk_naming.SWIFT_MODULE.startswith("Snaplink"))
@@ -75,10 +88,11 @@ class PlatformGrammarTests(unittest.TestCase):
         self.assertRejected("php", "snaplink")
 
     def test_maven_requires_a_reverse_dns_group(self):
-        self.assertRejected("kotlin", "sso")
-        self.assertRejected("kotlin", "snaplink:sso")
-        self.assertRejected("kotlin", "com.snaplink:Sso")
-        self.assertEqual([], sdk_naming.check_name(CONVENTIONS["kotlin"], "com.snaplink:sso"))
+        self.assertRejected("kotlin", "snaplink")
+        self.assertRejected("kotlin", "snaplink:snaplink")
+        self.assertRejected("kotlin", "site.ywbsd:snaplink")
+        self.assertRejected("kotlin", "site.ywbsd.sso:SNAPLINK")
+        self.assertEqual([], sdk_naming.check_name(CONVENTIONS["kotlin"], "site.ywbsd.sso:snaplink"))
 
     def test_swift_requires_pascal_case(self):
         self.assertRejected("swift", "snaplinkSSO")

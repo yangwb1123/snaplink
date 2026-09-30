@@ -120,7 +120,7 @@ done
 
 1. **企业采购中的「集成清单」**：在企业 SSO 采购评估中，支持哪些预构建应用集成（Slack、GitHub、Jira、Datadog、AWS、GCP 等）是 CISO 和 IT 团队的 Top-3 决策因素。没有集成目录，每次 PoC 都需要开发团队手工配置。
 
-2. **开发者体验的最后一公里**：SDK 生成在 `docs/sdks/` 目录中，但未发布到 npm/PyPI，开发者需要从 GitHub clone 后自行引用。对于 TypeScript SDK，从 GitHub 复制文件 vs `npm install @snaplink/sso-client` 的体验差异是决定性的。
+2. **开发者体验的最后一公里**：SDK 生成在 `docs/sdks/` 目录中，但未发布到 npm/PyPI，开发者需要从 GitHub clone 后自行引用。对于 TypeScript SDK，从 GitHub 复制文件 vs `npm install @snaplink/sso` 的体验差异是决定性的。
 
 3. **调试工具的缺失**：OAuth 流程的调试（「为什么这个 token 无效？」「scope 里有什么？」「token 的 aud 是什么？」）目前需要开发者手动解析 JWT payload。一个 `/tools/debug-token` 端点或类似的调试 UI 能将调试时间从分钟级降到秒级。
 

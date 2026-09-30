@@ -1,13 +1,15 @@
 # Snaplink Android SDK (experimental, 0.3.0)
 
 The published coordinate follows the naming scheme in
-[`../README.md`](../README.md): the Gradle project is `:sso`, so the
-Maven coordinate is `com.snaplink:sso` — the reverse-DNS group carries the brand
-and the artifactId carries the product it serves. The Android namespace
-(`com.snaplink.sso`) is the code package, not the published artifact name.
-Maven Central additionally requires a domain-verified `groupId`; `com.snaplink`
-presumes control of `snaplink.com`, and publication stays unconfigured until
-that is settled.
+[`../README.md`](../README.md): the Gradle project is `:snaplink`, so the Maven
+coordinate is `site.ywbsd.sso:snaplink`. Maven Central verifies a `groupId`
+against a domain the publisher controls, so the group is the reverse-DNS form of
+the product host `sso.ywbsd.site` and the brand sits in the artifactId; a
+`com.snaplink` group would assert a domain this project does not own. Before the
+first release that host must serve Central's verification token (or publish the
+matching `token` TXT record) and keep resolving. The Android namespace
+(`com.snaplink.sso`) is the code package, not the published artifact name, and
+is not domain-verified. Maven publishing stays unconfigured.
 
 This Android library provides the public-client hosted-login vertical slice:
 Authorization Code + PKCE S256, state and issuer validation, encrypted token
@@ -48,7 +50,7 @@ tenant isolation, or client permissions.
 
 ```kotlin
 dependencies {
-    implementation(project(":sso")) // local checkout / included build
+    implementation(project(":snaplink")) // local checkout / included build
 }
 ```
 
@@ -298,7 +300,7 @@ remapped onto a network error.
 
 ```bash
 cd sdks
-./gradlew :sso:testDebugUnitTest :sso:lintDebug :sso:assembleRelease
+./gradlew :snaplink:testDebugUnitTest :snaplink:lintDebug :snaplink:assembleRelease
 ```
 
 The Gradle workspace lives at `sdks/`. Kotlin package declarations remain

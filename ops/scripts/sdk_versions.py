@@ -58,7 +58,7 @@ MANIFEST_SPECS = (
     ManifestSpec(
         "kotlin",
         Path("sdks/kotlin/build.gradle.kts"),
-        "com.snaplink:sso",
+        "site.ywbsd.sso:snaplink",
         "gradle",
     ),
     ManifestSpec(

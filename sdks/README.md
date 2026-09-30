@@ -15,7 +15,7 @@ namespace slot; the product token fills the name slot:
 | PyPI | `snaplink-sso` | PEP 503 normalized flat name | `snaplink_sso` |
 | crates.io | `snaplink-sso` | lowercase, single dash | `snaplink_sso` |
 | Packagist | `snaplink/sso` | lowercase `vendor/package` | `Snaplink\…` |
-| Maven | `com.snaplink:sso` | reverse-DNS `groupId:artifactId` | `com.snaplink.sso` |
+| Maven | `site.ywbsd.sso:snaplink` | reverse-DNS `groupId:artifactId`, group is a controlled domain | `com.snaplink.sso` |
 | SwiftPM | `SnaplinkSSO` | PascalCase module | `SnaplinkSSO` |
 | Go | root Go module `github.com/yangwb1123/snaplink` | import path is the repository path | `snaplink` |
 
@@ -36,9 +36,17 @@ Notes on the deliberate exceptions:
   `Snaplink\SSOClient`, never `Snaplink\SnaplinkClient`.
 - **Go** cannot be renamed independently — the import path is the repository
   path, and the SDK ships with the root module.
-- **Kotlin/Maven** additionally require a domain-verified `groupId`;
-  `com.snaplink` presumes control of `snaplink.com`. If that domain is not
-  controlled, `com.snaplink` is not publishable and the group must change first.
+- **Maven is the one platform where the namespace slot cannot hold the brand.**
+  Central verifies a `groupId` against a domain the publisher controls, so the
+  group is the reverse-DNS form of the product host `sso.ywbsd.site` and the
+  brand moves into the artifactId: `site.ywbsd.sso:snaplink`. `com.snaplink`
+  would assert a `snaplink.com` this project does not control, and an
+  unverifiable `groupId` is rejected at publication. Before the first Android
+  release, the domain must serve Central's verification token (or publish the
+  matching `token` TXT record); the host must keep resolving and serving
+  `https://sso.ywbsd.site/`. The Android code package stays
+  `com.snaplink.sso` — a namespace is a code package, not an artifact name, and
+  it is not domain-verified.
 
 `python cli.py sdk-naming check` holds this scheme and each registry's grammar
 fail-closed; `make sdk-naming-list` prints the table above from the gate itself,
@@ -53,7 +61,7 @@ so a rename cannot drift in one manifest only.
 | Python | PyPI, `snaplink-sso` | `sdk-py-v<package-version>` | `.github/workflows/sdk-python.yml` tests, builds, checks the tag, and uses PyPI trusted publishing |
 | Rust | crates.io, `snaplink-sso` | `sdk-rs-v<package-version>` | `.github/workflows/sdk-rust.yml` tests, packages, checks the tag, and publishes |
 | PHP | Packagist target, `snaplink/sso` (not listed publicly) | `sdk-php-v<package-version>` | CI validates/builds an archive and proves an offline install; a protected subtree-split release workflow is configured but needs a target repository, Packagist registration, and protected-environment credentials |
-| Kotlin | Maven Central candidate, `com.snaplink:sso` | Not configured | Experimental and unpublished; platform/security acceptance, Maven publishing setup, and a domain-verified `groupId` are outstanding |
+| Kotlin | Maven Central candidate, `site.ywbsd.sso:snaplink` | Not configured | Experimental and unpublished; platform/security acceptance and Maven publishing setup are outstanding, and the `groupId` still needs Central's domain token |
 | Swift | Swift Package Manager, `SnaplinkSSO` | Plain SemVer Git tag, e.g. `0.3.0` | Experimental and unpublished; root `Package.swift` targets `sdks/swift/`; no release workflow |
 
 Package SemVer is independent across SDKs and from the server/module and

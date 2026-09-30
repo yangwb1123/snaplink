@@ -101,12 +101,12 @@ jobs:
         with:
           gradle-version: "8.13"
       - name: Run Kotlin unit tests, lint, and release build
-        run: ./gradlew :sso:testDebugUnitTest :sso:lintDebug :sso:assembleRelease
+        run: ./gradlew :snaplink:testDebugUnitTest :snaplink:lintDebug :snaplink:assembleRelease
       - name: Run Android Keystore instrumentation test
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
-          script: cd sdks && ./gradlew :sso:connectedDebugAndroidTest
+          script: cd sdks && ./gradlew :snaplink:connectedDebugAndroidTest
 
   swift:
     name: Swift SDK

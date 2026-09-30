@@ -32,6 +32,17 @@ export class SSOError extends Error {
   }
 }
 
+/**
+ * SDK-originated code for a failure response that carried no usable error
+ * code.
+ *
+ * A caller that branches on {@link SSOError.error} never receives an empty
+ * value, and a server code is never invented for such a response: an unreadable
+ * 500 must not look like a terminal ` + "`invalid_grant`" + `. The ` + "`sdk_`" + ` prefix keeps it
+ * out of the server vocabulary in ` + "`docs/error-codes.md`" + `.
+ */
+export const UNCLASSIFIED_ERROR = "sdk_response_unclassified";
+
 interface requestOptions {
   query?: Record<string, string | number | boolean | readonly (string | number | boolean)[] | undefined>;
   body?: unknown;
@@ -208,9 +219,9 @@ const tsClientHeader = `export class SSOClient {
         error = parsed?.error;
         errorDescription = parsed?.error_description;
       } catch {
-        // non-JSON error body; SSOError falls back to a generic message.
+        // non-JSON error body; the fallback code below classifies it.
       }
-      throw new SSOError(res.status, error, errorDescription);
+      throw new SSOError(res.status, error || UNCLASSIFIED_ERROR, errorDescription);
     }
     if (res.status === 204) return undefined as T;
     const text = await res.text();
