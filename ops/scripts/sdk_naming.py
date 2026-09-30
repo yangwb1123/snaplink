@@ -3,15 +3,19 @@
 
 The name of a published package is the one identifier that cannot be changed
 after release, and four registries spell the same product four different ways
-(`@snaplink/sso-client`, `snaplink-sso`, `snaplink/sso-client`,
-`com.snaplink:snaplink-sso`). Every platform also has its own rules for what a
-legal name looks like, and a name that satisfies the house scheme can still be
-rejected by the registry. This gate holds both properties at once:
+(`@snaplink/sso`, `snaplink-sso`, `snaplink/sso`, `com.snaplink:sso`). Every
+platform also has its own rules for what a legal name looks like, and a name
+that satisfies the house scheme can still be rejected by the registry. This gate
+holds both properties at once:
 
 1. Scheme — the brand token ``snaplink`` owns the platform's namespace slot
-   (npm scope, Composer vendor, Maven groupId) and the capability token
-   ``sso-client`` fills the name slot. Platforms with no namespace slot carry
-   the brand as the name prefix.
+   (npm scope, Composer vendor, Maven groupId) and the product token ``sso``
+   fills the name slot. Platforms with no namespace slot carry the brand as the
+   name prefix. The token is the product name itself: Snaplink ships an SSO
+   server, so a client library published under its own brand is named for the
+   product, not for the role it plays. A `client` suffix would be redundant on
+   registries where a library is a client by definition, and the server side is
+   the Go module rather than anything published to these registries.
 2. Platform rules — the rendered name matches that registry's own grammar.
 
 It is deliberately a pure name check. It never inspects versions, build output,
@@ -34,15 +38,15 @@ ROOT = Path(__file__).resolve().parents[2]
 #: name that spells the brand differently is a scheme violation, not a variant.
 BRAND = "snaplink"
 
-#: The capability token. It names what the package is (a client for the Snaplink
-#: SSO surface) and stays identical across every platform so the same logical
-#: artifact is recognizable on npm, PyPI, crates.io, Packagist, and Maven.
-CAPABILITY = "sso-client"
+#: The product token. Snaplink is an SSO server, so a client library published
+#: under the same brand is named for the product itself. The `Client` role word
+#: is redundant on every registry that carries this SDK, and the server side is
+#: the Go module, not a package on these registries.
+CAPABILITY = "sso"
 
 #: The SwiftPM module name. Swift modules are PascalCase and a single name
-#: carries both brand and capability, so the `Client` role token is dropped:
-#: `SnaplinkSSO` is the Apple-idiomatic rendering of the same logical name and
-#: `SnaplinkSSOClient` would be a stutter against `SnaplinkAuthClient`.
+#: carries both brand and product token, so the same `sso` token is rendered
+#: `SnaplinkSSO` and stays identical to the canonical name.
 SWIFT_MODULE = "SnaplinkSSO"
 
 
@@ -128,7 +132,7 @@ CONVENTIONS = (
         manifest=Path("Package.swift"),
         expected=SWIFT_MODULE,
         pattern=_SWIFT,
-        rule="PascalCase SwiftPM module; brand and capability in one slot",
+        rule="PascalCase SwiftPM module; brand and product token in one slot",
         namespace_slot="none",
     ),
 )
@@ -208,7 +212,7 @@ def check_name(convention: Convention, name: str) -> list[str]:
         errors.append(
             f"id={convention.id} name={name!r} does not match the canonical name "
             f"{convention.expected!r}; the brand token {BRAND!r} belongs in the "
-            f"{convention.namespace_slot} and the capability token "
+            f"{convention.namespace_slot} and the product token "
             f"{CAPABILITY!r} in the name slot"
         )
     return errors
@@ -244,7 +248,7 @@ def run(args: list[str]) -> int:
         for error in errors:
             print(f"  {error}")
         return 1
-    print(f"sdk-naming: OK ({len(CONVENTIONS)} packages, brand={BRAND}, capability={CAPABILITY})")
+    print(f"sdk-naming: OK ({len(CONVENTIONS)} packages, brand={BRAND}, product={CAPABILITY})")
     return 0
 
 

@@ -34,31 +34,31 @@ MANIFEST_SPECS = (
     ManifestSpec(
         "typescript",
         Path("sdks/typescript/package.json"),
-        "@snaplink/sso-client",
+        "@snaplink/sso",
         "json",
     ),
     ManifestSpec(
         "python",
         Path("sdks/python/pyproject.toml"),
-        "snaplink-sso-client",
+        "snaplink-sso",
         "toml:project",
     ),
     ManifestSpec(
         "rust",
         Path("sdks/rust/Cargo.toml"),
-        "snaplink-sso-client",
+        "snaplink-sso",
         "toml:package",
     ),
     ManifestSpec(
         "php",
         Path("sdks/php/composer.json"),
-        "snaplink/sso-client",
+        "snaplink/sso",
         "json",
     ),
     ManifestSpec(
         "kotlin",
         Path("sdks/kotlin/build.gradle.kts"),
-        "com.snaplink:sso-client",
+        "com.snaplink:sso",
         "gradle",
     ),
     ManifestSpec(

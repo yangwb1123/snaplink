@@ -2,7 +2,7 @@
 
 > **Scope:** generated client for the full documented API surface of
 > `docs/openapi.yaml`, plus browser hosted-login orchestration. It is
-> publishable to npm as `@snaplink/sso-client` and does not ship a login page,
+> publishable to npm as `@snaplink/sso` and does not ship a login page,
 > self-service portal, setup UI, developer portal, or admin console.
 > `sso-server` is a pure API backend; those browser experiences are separate
 > frontend projects.
@@ -99,7 +99,7 @@ the Console redirects back, the same call validates the callback, exchanges
 the code, and keeps the access token in memory:
 
 ```ts
-import snaplink from "@snaplink/sso-client";
+import snaplink from "@snaplink/sso";
 
 const session = await snaplink.login({
   baseUrl: "https://sso.example.com",
@@ -174,7 +174,7 @@ import {
   SSOClient,
   SnaplinkUserPreferencesClient,
   buildLoginPreferenceHandoff,
-} from "@snaplink/sso-client";
+} from "@snaplink/sso";
 
 const api = new SSOClient({
   baseUrl: "https://sso.example.com",
@@ -200,7 +200,7 @@ by `buildHostedLoginURL`. The verifier and confidential client secret stay in
 the BFF and are never accepted by the URL helper.
 
 ```ts
-import { buildHostedLoginURL } from "@snaplink/sso-client";
+import { buildHostedLoginURL } from "@snaplink/sso";
 
 const location = buildHostedLoginURL({
   loginPageUrl: "https://sso.example.com/login/",
@@ -235,7 +235,7 @@ For a frontend that owns its own login form and just wants tokens back —
 set `clientId` once, call `login(username, password)`:
 
 ```ts
-import { SSOClient } from "@snaplink/sso-client";
+import { SSOClient } from "@snaplink/sso";
 
 const client = new SSOClient({ baseUrl: "https://sso.example.com", clientId: "my-app" });
 
@@ -253,7 +253,7 @@ await client.logout();
 ### Authorization-code exchange + manual token storage
 
 ```ts
-import { SSOClient, SSOError } from "@snaplink/sso-client";
+import { SSOClient, SSOError } from "@snaplink/sso";
 
 let accessToken: string | undefined;
 const clientSecret = process.env.SNAPLINK_CLIENT_SECRET;

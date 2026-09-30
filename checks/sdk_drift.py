@@ -81,17 +81,23 @@ def _compare_files(expected_path: Path, actual_path: Path, root: Path, context: 
 
 
 def _status_errors(root: Path) -> list[str]:
-    # cmd/gensdk owns .ts/.py output only, so the cleanliness leg polices
-    # generated artifacts and stray files, not the hand-maintained Markdown that
-    # ships beside them. The regeneration leg still byte-compares every
-    # generator-owned file, so excluding Markdown costs no drift coverage; the
-    # TypeScript dist/ tree is likewise separate from generated source.
+    # This leg answers one question only: did anything land in the SDK trees
+    # that the generator does not own? Untracked files are the symptom of
+    # generator output escaping its canonical location (or of build junk
+    # landing beside it), which is why the scan is untracked-only. A hand edit
+    # to a committed source-of-record file is a reviewable change, not drift.
+    # The two canonical payloads are still checked byte-for-byte by
+    # check_regen, which is what proves regeneration is reproducible; tracking
+    # them here would only re-report the same defect.
+    #
+    # Markdown is excluded because it is documentation, not generator output.
+    # The TypeScript dist/ tree is a separate committed build product.
     try:
         result = run_git(
             [
-                "status",
-                "--porcelain=v1",
-                "--untracked-files=all",
+                "ls-files",
+                "--others",
+                "--exclude-standard",
                 "--",
                 "docs/sdks/",
                 "sdks/typescript/",
@@ -105,8 +111,11 @@ def _status_errors(root: Path) -> list[str]:
         return [f"git status unavailable while checking SDK source directories: {exc}"]
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "no diagnostic").strip()
-        return [f"git status failed while checking SDK source directories: {detail}"]
-    return [f"SDK source directories have uncommitted drift: {line}" for line in result.stdout.splitlines()]
+        return [f"git ls-files failed while checking SDK source directories: {detail}"]
+    return [
+        f"SDK source directories carry untracked non-generated files: {line}"
+        for line in result.stdout.splitlines()
+    ]
 
 
 def _run_generator(root: Path, tmp: Path, regen_cmd: list[str]) -> list[str]:

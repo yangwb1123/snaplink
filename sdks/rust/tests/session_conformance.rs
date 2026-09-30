@@ -5,7 +5,7 @@
 //! grant, the absence of a code verifier, the bearer on logout, and the fact
 //! that logout clears local state even when the server call fails.
 
-use snaplink_sso_client::{SnaplinkClient, TokenResponse};
+use snaplink_sso::{SnaplinkClient, TokenResponse};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -229,7 +229,7 @@ async fn refresh_surfaces_an_invalid_grant() {
         .expect_err("unknown refresh token must fail");
     assert!(matches!(
         error,
-        snaplink_sso_client::SnaplinkError::OAuth { status: 400, ref code, .. }
+        snaplink_sso::SnaplinkError::OAuth { status: 400, ref code, .. }
             if code == "invalid_grant"
     ));
 }
@@ -303,7 +303,7 @@ fn resume_rejects_cleartext_remote_issuers_before_retaining_tokens() {
 
     assert!(matches!(
         SnaplinkClient::resume("http://sso.example.test", "spa-client", tokens),
-        Err(snaplink_sso_client::SnaplinkError::InvalidRequest(_))
+        Err(snaplink_sso::SnaplinkError::InvalidRequest(_))
     ));
 }
 

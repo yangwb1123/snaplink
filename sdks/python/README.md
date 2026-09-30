@@ -1,4 +1,4 @@
-# snaplink-sso-client Python package
+# snaplink-sso Python package
 
 This package is the installable form of the generated Snaplink Python SDK.
 The source module is generated from `docs/openapi.yaml` and the SDK-surface
@@ -18,9 +18,9 @@ python cli.py sdk-surface generate
 
 The package uses only Python's standard library at runtime. It supports
 Python 3.9 and newer and is intended for applications that want a normal
-`snaplink_sso` import (the PyPI distribution is `snaplink-sso-client`;
-the import name is deliberately shorter, as with `scikit-learn`/`sklearn`);
-consumers that vendor one file may use
+`snaplink_sso` import (the PyPI distribution is `snaplink-sso`, named for the
+product rather than the client role it plays); consumers that vendor one file
+may use
 `docs/sdks/python/client.py` instead.
 
 Every request runs through one injectable `Transport` seam, so an application

@@ -16,7 +16,7 @@ from sdk_versions import SDKVersionError, validate_semver
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_PATH = Path("sdks/php/composer.json")
-PACKAGE_NAME = "snaplink/sso-client"
+PACKAGE_NAME = "snaplink/sso"
 SUBTREE_PREFIX = "sdks/php"
 _SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z", re.ASCII)
 

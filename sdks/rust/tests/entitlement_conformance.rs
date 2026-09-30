@@ -5,7 +5,7 @@
 //! changes what every SDK is held to, rather than letting each implementation
 //! assert whatever it happens to do.
 
-use snaplink_sso_client::{AccountContext, Entitlement, Feature, LicenseState, Limit};
+use snaplink_sso::{AccountContext, Entitlement, Feature, LicenseState, Limit};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 

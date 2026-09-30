@@ -1,11 +1,11 @@
 [package]
-name = "snaplink-sso-client"
+name = "snaplink-sso"
 version = "0.4.0"
 edition = "2021"
 description = "Snaplink public-client hosted login SDK"
 license = "Apache-2.0"
 readme = "README.md"
-documentation = "https://docs.rs/snaplink-sso-client"
+documentation = "https://docs.rs/snaplink-sso"
 
 [dependencies]
 async-trait = "0.1"

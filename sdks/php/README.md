@@ -1,7 +1,7 @@
-# snaplink/sso-client — PHP SDK
+# snaplink/sso — PHP SDK
 
-The Composer package is `snaplink/sso-client`: the vendor is the Snaplink brand
-and the package is the capability, per the naming scheme in
+The Composer package is `snaplink/sso`: the vendor is the Snaplink brand
+and the package is the product it serves, per the naming scheme in
 [`../README.md`](../README.md). The PSR-4 root is `Snaplink\`, and the client
 types carry no brand stutter — the client is `Snaplink\SSOClient` and its
 failure is `Snaplink\SSOError`, never `Snaplink\SnaplinkClient`. Each type ships
@@ -32,7 +32,7 @@ version:
 After adding the repository entry, run:
 
 ~~~sh
-composer require snaplink/sso-client:0.3.0
+composer require snaplink/sso:0.3.0
 ~~~
 
 PHP CI runs this installation flow in a temporary consumer with Packagist
@@ -42,7 +42,7 @@ Once a Packagist release exists, consumers can install it without the path
 repository:
 
 ~~~sh
-composer require snaplink/sso-client
+composer require snaplink/sso
 ~~~
 
 ## Packagist release preparation

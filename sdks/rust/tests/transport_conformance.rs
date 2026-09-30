@@ -17,7 +17,7 @@ use std::{
     thread,
 };
 
-use snaplink_sso_client::{
+use snaplink_sso::{
     LoginOptions, Method, ReqwestTransport, SnaplinkClient, Transport, TransportError,
     TransportRequest, TransportResponse,
 };
@@ -47,7 +47,7 @@ fn logged_in(recorder: Arc<Recorder>) -> SnaplinkClient {
     SnaplinkClient::resume_with_transport(
         "https://sso.example.test",
         "spa-client",
-        snaplink_sso_client::TokenResponse {
+        snaplink_sso::TokenResponse {
             access_token: "access-1".to_owned(),
             expires_in: None,
             id_token: None,
@@ -63,7 +63,7 @@ fn logged_in(recorder: Arc<Recorder>) -> SnaplinkClient {
 #[tokio::test]
 async fn a_caller_supplied_transport_receives_every_request() {
     let recorder = Arc::new(Recorder::default());
-    let store: Arc<dyn snaplink_sso_client::StateStore> = Arc::new(snaplink_sso_client::MemoryStateStore::new());
+    let store: Arc<dyn snaplink_sso::StateStore> = Arc::new(snaplink_sso::MemoryStateStore::new());
     let mut client = SnaplinkClient::with_transport(store, recorder.clone());
 
     // login() with no callback URL returns a redirect and performs no I/O.
@@ -75,7 +75,7 @@ async fn a_caller_supplied_transport_receives_every_request() {
     let started = client.login(&options).await.expect("start");
     assert!(matches!(
         started,
-        snaplink_sso_client::LoginResult::Redirect { .. }
+        snaplink_sso::LoginResult::Redirect { .. }
     ));
 
     // Starting a login is local-only, so nothing has been sent yet.
@@ -154,5 +154,5 @@ async fn a_bearer_token_is_attached_when_the_session_has_one() {
 #[cfg(feature = "blocking")]
 #[test]
 fn blocking_transport_implements_the_async_seam_when_enabled() {
-    let _: Arc<dyn Transport> = Arc::new(snaplink_sso_client::BlockingTransport::default());
+    let _: Arc<dyn Transport> = Arc::new(snaplink_sso::BlockingTransport::default());
 }

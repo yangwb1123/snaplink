@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "snaplink-sso-client"
+name = "snaplink-sso"
 version = "0.3.0"
 description = "Python SDK for the Snaplink OAuth 2.0 and OpenID Connect API"
 readme = "README.md"

@@ -1,4 +1,4 @@
-# `@snaplink/sso-client`
+# `@snaplink/sso`
 
 TypeScript client SDK for the Snaplink HTTP API and hosted-login redirects.
 This directory is the package root used by npm build, test, and publish

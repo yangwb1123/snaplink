@@ -36,6 +36,10 @@ def _write(path: Path, content: bytes) -> None:
     path.write_bytes(content)
 
 
+def _git_add(root: Path, path: Path) -> None:
+    subprocess.run(["git", "add", "-f", str(path)], cwd=root, check=True)
+
+
 def _git_commit(root: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
@@ -177,8 +181,34 @@ def test_hand_written_sdk_documentation_is_not_generated_drift(
     """A name or install-command edit in a hand-maintained README is not drift."""
     readme = tree["root"] / "docs/sdks/python/README.md"
     readme.parent.mkdir(parents=True, exist_ok=True)
-    readme.write_text("pip install snaplink-sso-client\n")
-    (tree["root"] / "sdks/typescript/README.md").write_text("# @snaplink/sso-client\n")
+    readme.write_text("pip install snaplink-sso\n")
+    (tree["root"] / "sdks/typescript/README.md").write_text("# @snaplink/sso\n")
+
+    assert sdk_drift.run(["check"]) == 0
+    assert "OK (regen 2/2, deploy 3/3)" in capsys.readouterr().out
+
+
+def test_renaming_a_package_manifest_is_not_generated_drift(
+    tree: dict[str, Path], capsys: pytest.CaptureFixture[str]
+):
+    """A package manifest is a source-of-record file, never generator output."""
+    manifest = tree["root"] / "sdks/typescript/package.json"
+    _write(manifest, b'{"name": "@snaplink/sso"}\n')
+    _git_add(tree["root"], manifest)
+    manifest.write_text('{"name": "@snaplink/sso"}\n')
+
+    assert sdk_drift.run(["check"]) == 0
+    assert "OK (regen 2/2, deploy 3/3)" in capsys.readouterr().out
+
+
+def test_a_committed_hand_written_sdk_source_edit_is_not_generated_drift(
+    tree: dict[str, Path], capsys: pytest.CaptureFixture[str]
+):
+    """The hand-written SDK layer is governed by sdk-paradigm, not by this gate."""
+    source = tree["root"] / "sdks/typescript/browser-login.ts"
+    _write(source, b"export const original = true;\n")
+    _git_add(tree["root"], source)
+    source.write_text("export const edited = true;\n")
 
     assert sdk_drift.run(["check"]) == 0
     assert "OK (regen 2/2, deploy 3/3)" in capsys.readouterr().out
@@ -253,7 +283,7 @@ def test_git_failure_is_fail_closed(tree: dict[str, Path], monkeypatch: pytest.M
 
     assert sdk_drift.run(["check"]) == 1
     output = capsys.readouterr().out
-    assert "git status failed" in output
+    assert "git ls-files failed" in output
     assert "not a git repository" in output
 
 

@@ -6,7 +6,7 @@
 //! verification outcome, not the provenance of the trust root.
 
 use ed25519_dalek::Signer;
-use snaplink_sso_client::{EntitlementFile, LicenseError, LicenseTrust};
+use snaplink_sso::{EntitlementFile, LicenseError, LicenseTrust};
 use std::path::PathBuf;
 
 const REFERENCE_NOW: i64 = 1_700_000_000;
@@ -89,7 +89,7 @@ fn a_correctly_signed_file_verifies_offline() {
     assert!(verified.state_at(REFERENCE_NOW).is_active());
     assert!(verified
         .entitlement
-        .has(snaplink_sso_client::Feature::Scim, REFERENCE_NOW));
+        .has(snaplink_sso::Feature::Scim, REFERENCE_NOW));
 }
 
 #[test]
@@ -153,7 +153,7 @@ fn an_expired_file_is_inactive_rather_than_an_error() {
     let state = verified.state_at(1_800_000_001);
     assert!(!state.is_active(), "a lapsed entitlement grants nothing");
     assert_eq!(
-        Some(snaplink_sso_client::InactiveReason::Expired),
+        Some(snaplink_sso::InactiveReason::Expired),
         state.inactive_reason()
     );
     assert!(
@@ -255,7 +255,7 @@ fn verification_performs_no_network_io() {
     );
     assert!(verified
         .entitlement
-        .has(snaplink_sso_client::Feature::HighAvailability, REFERENCE_NOW));
+        .has(snaplink_sso::Feature::HighAvailability, REFERENCE_NOW));
 }
 
 #[test]

@@ -71,7 +71,7 @@ precision notes (P1–P3) refine the design.
   `docs/sdks/typescript/dist/` is built from the stale `client.ts`, so after
   R3 refreshes `client.ts` the committed dist `AdminClient` lacks the three
   optional fields until a maintainer runs `npm run build` and commits. The
-  npm-published `@snaplink/sso-client` (`main: dist/index.js`) therefore ships
+  npm-published `@snaplink/sso` (`main: dist/index.js`) therefore ships
   without the three optional type declarations until then. Additive-optional
   only — no consumer break — but a real, intended gap, deliberately outside
   the gate (non-goal: "no `dist/` staleness check"). The commit message
@@ -218,7 +218,7 @@ precision notes (P1–P3) refine the design.
 9. **Commit** (conventional, imperative; AI co-author trailer):
    `feat(ci): add SDK regeneration-drift and deploy-tree sweep gate`.
    Commit body records the accepted gap: committed `docs/sdks/typescript/dist/`
-   is stale w.r.t. the refreshed `client.ts`, so `@snaplink/sso-client` ships
+   is stale w.r.t. the refreshed `client.ts`, so `@snaplink/sso` ships
    without the three optional `AdminClient` fields until a maintainer runs
    `npm run build` and commits — the gate deliberately excludes `dist/` and
    must not be "fixed" by re-enabling dist checks. Rollback = revert this

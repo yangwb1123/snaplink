@@ -23,11 +23,11 @@ VERSIONS = ("0.3.0", "0.3.0", "0.3.0", "0.3.0", "0.3.0", "")
 #: changes only, which the train rule permits.
 REPOSITORY_VERSIONS = ("0.3.0", "0.3.0", "0.4.0", "0.3.0", "0.3.0", "")
 NAMES = (
-    "@snaplink/sso-client",
-    "snaplink-sso-client",
-    "snaplink-sso-client",
-    "snaplink/sso-client",
-    "com.snaplink:sso-client",
+    "@snaplink/sso",
+    "snaplink-sso",
+    "snaplink-sso",
+    "snaplink/sso",
+    "com.snaplink:sso",
     "SnaplinkSSO",
 )
 
@@ -108,8 +108,8 @@ example-dependency = "77.77.77"
         root,
         "sdks/settings.gradle.kts",
         '''rootProject.name = "snaplink-native-sdks"
-include(":sso-client")
-project(":sso-client").projectDir = file("kotlin")
+include(":sso")
+project(":sso").projectDir = file("kotlin")
 ''',
     )
     _write(
@@ -193,7 +193,7 @@ class SDKVersionGateTests(unittest.TestCase):
             report = sdk_versions.load_version_report(root)
         self.assertTrue(report.ok, report.failure_message())
         output = sdk_versions.format_version_report(report)
-        self.assertIn('id="rust" name="snaplink-sso-client" version="0.4.0"', output)
+        self.assertIn('id="rust" name="snaplink-sso" version="0.4.0"', output)
         self.assertTrue(output.endswith("verdict: PASS"))
 
     def test_a_major_difference_fails_without_normalizing(self) -> None:
@@ -205,7 +205,7 @@ class SDKVersionGateTests(unittest.TestCase):
         self.assertFalse(report.ok)
         self.assertIn("SDK package majors differ", report.failure_message())
         output = sdk_versions.format_version_report(report)
-        self.assertIn('id="rust" name="snaplink-sso-client" version="1.0.0"', output)
+        self.assertIn('id="rust" name="snaplink-sso" version="1.0.0"', output)
         self.assertTrue(output.endswith("verdict: FAIL"))
 
     def test_the_gradle_coordinate_follows_the_project_not_the_directory(self) -> None:
@@ -215,7 +215,7 @@ class SDKVersionGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _write_fixtures(root)
-            self.assertEqual("sso-client", sdk_versions._gradle_project_name(root, manifest))
+            self.assertEqual("sso", sdk_versions._gradle_project_name(root, manifest))
             _write(root, "sdks/settings.gradle.kts", 'include(":kotlin")\n')
             self.assertEqual("kotlin", sdk_versions._gradle_project_name(root, manifest))
             (root / "sdks/settings.gradle.kts").unlink()
@@ -223,7 +223,7 @@ class SDKVersionGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _write_fixtures(root)
-            _write(root, "sdks/settings.gradle.kts", 'include(":sso-client")\n')
+            _write(root, "sdks/settings.gradle.kts", 'include(":sso")\n')
             with self.assertRaises(sdk_versions.SDKVersionError):
                 sdk_versions._gradle_project_name(root, manifest)
 
@@ -364,11 +364,11 @@ class SDKVersionGateTests(unittest.TestCase):
             "\n".join(
                 [
                     "sdk-surface versions",
-                    'package id="typescript" name="@snaplink/sso-client" version="0.3.0" status=PASS',
-                    'package id="python" name="snaplink-sso-client" version="0.3.0" status=PASS',
-                    'package id="rust" name="snaplink-sso-client" version="0.3.0" status=PASS',
-                    'package id="php" name="snaplink/sso-client" version="0.3.0" status=PASS',
-                    'package id="kotlin" name="com.snaplink:sso-client" version="0.3.0" status=PASS',
+                    'package id="typescript" name="@snaplink/sso" version="0.3.0" status=PASS',
+                    'package id="python" name="snaplink-sso" version="0.3.0" status=PASS',
+                    'package id="rust" name="snaplink-sso" version="0.3.0" status=PASS',
+                    'package id="php" name="snaplink/sso" version="0.3.0" status=PASS',
+                    'package id="kotlin" name="com.snaplink:sso" version="0.3.0" status=PASS',
                 'package id="swift" name="SnaplinkSSO" version="<unavailable>" status=PASS',
                     "verdict: PASS",
                 ]

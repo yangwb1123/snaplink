@@ -7,25 +7,25 @@
       {
         "id": "typescript",
         "package": true,
-        "notes": "sdks/typescript; npm @snaplink/sso-client, version gated by sdk-surface versions",
+        "notes": "sdks/typescript; npm @snaplink/sso, version gated by sdk-surface versions",
         "onboarded": true
       },
       {
         "id": "python",
         "package": true,
-        "notes": "sdks/python; PyPI snaplink-sso-client, version gated by sdk-surface versions",
+        "notes": "sdks/python; PyPI snaplink-sso, version gated by sdk-surface versions",
         "onboarded": true
       },
       {
         "id": "rust",
         "package": true,
-        "notes": "sdks/rust; crates.io snaplink-sso-client, version gated by sdk-surface versions",
+        "notes": "sdks/rust; crates.io snaplink-sso, version gated by sdk-surface versions",
         "onboarded": true
       },
       {
         "id": "php",
         "package": true,
-        "notes": "sdks/php; Packagist snaplink/sso-client, version gated by sdk-surface versions",
+        "notes": "sdks/php; Packagist snaplink/sso, version gated by sdk-surface versions",
         "onboarded": true
       },
       {
@@ -37,7 +37,7 @@
       {
         "id": "kotlin",
         "package": true,
-        "notes": "sdks/kotlin; Android/JVM artifact com.snaplink:sso-client, browser-PKCE plus encrypted secure storage",
+        "notes": "sdks/kotlin; Android/JVM artifact com.snaplink:sso, browser-PKCE plus encrypted secure storage",
         "onboarded": false
       },
       {

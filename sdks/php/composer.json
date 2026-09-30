@@ -1,5 +1,5 @@
 {
-    "name": "snaplink/sso-client",
+    "name": "snaplink/sso",
     "version": "0.3.0",
     "description": "Snaplink public-client hosted login SDK",
     "type": "library",
