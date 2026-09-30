@@ -113,6 +113,86 @@ class PlatformGrammarTests(unittest.TestCase):
         self.assertTrue(any("canonical name" in e for e in errors), errors)
 
 
+class UniquenessTests(unittest.TestCase):
+    """One registry allows one owner per name; different registries do not clash."""
+
+    def test_the_canonical_tree_has_no_duplicate_claim(self):
+        self.assertEqual([], sdk_naming.check_uniqueness(sdk_naming.ROOT, self._claims()))
+
+    def _claims(self) -> list[tuple[str, str, str]]:
+        claims = []
+        for convention in sdk_naming.CONVENTIONS:
+            claims.append(
+                (
+                    sdk_naming.REGISTRIES[convention.id],
+                    convention.id,
+                    sdk_naming.declared_name(sdk_naming.ROOT, convention),
+                )
+            )
+        claims.append(
+            ("PyPI", sdk_naming.ENGINEERING_CLI_LABEL, sdk_naming._engineering_cli_name(sdk_naming.ROOT))
+        )
+        return claims
+
+    def test_the_engineering_cli_does_not_squat_on_a_published_name(self):
+        """The bug this exists for: the CLI was named snaplink-sso, like the SDK."""
+        cli = sdk_naming._engineering_cli_name(sdk_naming.ROOT)
+        python_sdk = sdk_naming.declared_name(
+            sdk_naming.ROOT, CONVENTIONS["python"]
+        )
+        self.assertNotEqual(
+            sdk_naming._normalize(cli), sdk_naming._normalize(python_sdk), cli
+        )
+        self.assertTrue(cli.startswith(sdk_naming.BRAND), cli)
+
+    def test_the_same_name_on_two_registries_is_allowed(self):
+        """PyPI and crates.io both carry snaplink-sso; that is not a collision."""
+        self.assertEqual(
+            [],
+            sdk_naming.check_uniqueness(
+                sdk_naming.ROOT,
+                [("PyPI", "python", "snaplink-sso"), ("crates.io", "rust", "snaplink-sso")],
+            ),
+        )
+
+    def test_two_claims_on_one_registry_fail(self):
+        errors = sdk_naming.check_uniqueness(
+            sdk_naming.ROOT,
+            [("PyPI", "engineering-cli", "snaplink-sso"), ("PyPI", "python", "snaplink-sso")],
+        )
+        self.assertEqual(1, len(errors), errors)
+        self.assertIn("PyPI", errors[0])
+        self.assertIn("engineering-cli", errors[0])
+
+    def test_a_three_way_collision_reports_every_claimant(self):
+        errors = sdk_naming.check_uniqueness(
+            sdk_naming.ROOT,
+            [
+                ("PyPI", "engineering-cli", "snaplink-sso"),
+                ("PyPI", "python", "Snaplink_SSO"),
+                ("PyPI", "python-extra", "snaplink.sso"),
+            ],
+        )
+        self.assertEqual(1, len(errors), errors)
+        for label in ("engineering-cli", "python", "python-extra"):
+            self.assertIn(label, errors[0])
+
+    def test_normalization_follows_pep_503_for_equality(self):
+        for spelling in ("Snaplink_SSO", "snaplink.sso", "SNAPLINK--SSO", " snaplink-sso "):
+            self.assertEqual("snaplink-sso", sdk_naming._normalize(spelling), spelling)
+
+    def test_every_sdk_package_declares_its_registry(self):
+        self.assertEqual(
+            sorted(c.id for c in sdk_naming.CONVENTIONS), sorted(sdk_naming.REGISTRIES)
+        )
+
+    def test_the_engineering_cli_is_not_gated_by_the_sdk_scheme(self):
+        """It is a developer tool: uniqueness applies, the registry scheme does not."""
+        cli = sdk_naming._engineering_cli_name(sdk_naming.ROOT)
+        self.assertFalse(cli.endswith(f"-{sdk_naming.CAPABILITY}"), cli)
+        self.assertNotIn(cli, {c.expected for c in sdk_naming.CONVENTIONS}, cli)
+
+
 class CommandTests(unittest.TestCase):
     def test_check_is_zero_on_the_canonical_tree(self):
         self.assertEqual(0, sdk_naming.run(["check"]))

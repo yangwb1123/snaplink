@@ -52,6 +52,16 @@ Notes on the deliberate exceptions:
 fail-closed; `make sdk-naming-list` prints the table above from the gate itself,
 so a rename cannot drift in one manifest only.
 
+The same gate asserts **one owner per name per registry**, across the SDK
+packages and the repository's own engineering CLI (`snaplink-engineering-cli`,
+installed with `pip install -e .` and never published). A name is only scarce
+within a registry, so PyPI and crates.io may both carry `snaplink-sso` without
+conflict, but two PyPI claims on one name are an ambiguous upload and fail. The
+CLI is a developer tool rather than an SDK, so the registry scheme does not
+apply to it — uniqueness does. It was previously named `snaplink-sso`, which
+collided with the Python SDK on PyPI; that is the exact failure the check
+reproduces in reverse.
+
 ## Packages
 
 | Language | Distribution | Release source | Current automation/status |
