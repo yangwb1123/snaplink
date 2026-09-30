@@ -30,8 +30,12 @@
     "dist",
     "browser-login.ts",
     "client.ts",
+    "entitlement.ts",
     "hosted-login.ts",
     "index.ts",
-    "preferences.ts"
+    "jwks.ts",
+    "license-file.ts",
+    "preferences.ts",
+    "resource-server.ts"
   ]
 }
