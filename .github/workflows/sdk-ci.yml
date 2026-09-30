@@ -99,9 +99,21 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - uses: android-actions/setup-android@v3
-      - name: Install pinned Android compile SDK
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Install the pinned Android SDK packages
+        # android-actions/setup-android@v3 cannot be used: it installs a package
+        # literally named `tools`, and Google's SDK repository no longer
+        # publishes one, so the action fails with "Warning: Failed to find
+        # package 'tools'" before a single build step runs. The GitHub runner
+        # already ships the SDK and cmdline-tools, so install exactly what this
+        # build needs and keep accepting licences explicitly.
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager_bin="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          [[ -x "$sdkmanager_bin" ]] || sdkmanager_bin="$(command -v sdkmanager)"
+          yes | "$sdkmanager_bin" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager_bin" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          echo "$(dirname "$sdkmanager_bin")" >> "$GITHUB_PATH"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"

@@ -59,8 +59,18 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
-      - name: Install the pinned Android compile SDK
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Install the pinned Android SDK packages
+        # Same reason as sdk-ci: android-actions/setup-android@v3 installs a
+        # package named `tools` that Google's repository no longer publishes,
+        # so it fails before any build step. The runner already ships the SDK.
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager_bin="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          [[ -x "$sdkmanager_bin" ]] || sdkmanager_bin="$(command -v sdkmanager)"
+          yes | "$sdkmanager_bin" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager_bin" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          echo "$(dirname "$sdkmanager_bin")" >> "$GITHUB_PATH"
       - name: Run unit tests and assemble the release AAR
         working-directory: sdks
         run: ./gradlew :snaplink:testDebugUnitTest :snaplink:assembleRelease
@@ -131,8 +141,18 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
-      - name: Install the pinned Android compile SDK
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Install the pinned Android SDK packages
+        # Same reason as sdk-ci: android-actions/setup-android@v3 installs a
+        # package named `tools` that Google's repository no longer publishes,
+        # so it fails before any build step. The runner already ships the SDK.
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager_bin="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          [[ -x "$sdkmanager_bin" ]] || sdkmanager_bin="$(command -v sdkmanager)"
+          yes | "$sdkmanager_bin" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager_bin" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          echo "$(dirname "$sdkmanager_bin")" >> "$GITHUB_PATH"
       - name: Sign and upload to Maven Central
         working-directory: sdks
         env:
