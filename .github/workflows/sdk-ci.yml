@@ -73,14 +73,19 @@ jobs:
   go:
     name: Go SDK
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # sdks/go is its own module, so it is built from inside its directory
+        # rather than as a path of the root module.
+        working-directory: sdks/go
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test ./sdks/go
-      - run: go vet ./sdks/go
+      - run: go test -race ./...
+      - run: go vet ./...
 
   android:
     name: Android SDK
