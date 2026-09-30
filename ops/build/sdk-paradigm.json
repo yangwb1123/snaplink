@@ -88,7 +88,7 @@
         },
         "swift": {
           "status": "present",
-          "file": "sdks/swift/Sources/SnaplinkSSO/Errors.swift",
+          "file": "sdks/swift/Sources/Errors.swift",
           "symbol": "protocol OAuthTransport: Sendable"
         }
       }
@@ -127,12 +127,12 @@
         },
         "kotlin": {
           "status": "present",
-          "file": "sdks/kotlin/snaplink-sso/src/main/java/com/snaplink/sso/SnaplinkAuthClient.kt",
+          "file": "sdks/kotlin/main/SnaplinkAuthClient.kt",
           "symbol": "public suspend fun beginAuthorization(): URI"
         },
         "swift": {
           "status": "present",
-          "file": "sdks/swift/Sources/SnaplinkSSO/SnaplinkAuthClient.swift",
+          "file": "sdks/swift/Sources/SnaplinkAuthClient.swift",
           "symbol": "public func beginAuthorization() throws -> URL"
         }
       }
@@ -175,7 +175,7 @@
         },
         "swift": {
           "status": "present",
-          "file": "sdks/swift/Sources/SnaplinkSSO/Errors.swift",
+          "file": "sdks/swift/Sources/Errors.swift",
           "symbol": "protocol SnaplinkSecureStore: Sendable",
           "note": "A public protocol, so a caller can supply KeychainSecureStore or a test double."
         }
@@ -257,12 +257,12 @@
         },
         "kotlin": {
           "status": "present",
-          "file": "sdks/kotlin/snaplink-sso/src/main/java/com/snaplink/sso/SnaplinkAuthClient.kt",
+          "file": "sdks/kotlin/main/SnaplinkAuthClient.kt",
           "symbol": "public suspend fun accessToken(): String"
         },
         "swift": {
           "status": "present",
-          "file": "sdks/swift/Sources/SnaplinkSSO/SnaplinkAuthClient.swift",
+          "file": "sdks/swift/Sources/SnaplinkAuthClient.swift",
           "symbol": "public func accessToken() async throws -> String"
         }
       }
@@ -387,12 +387,12 @@
         },
         "kotlin": {
           "status": "present",
-          "file": "sdks/kotlin/snaplink-sso/src/main/java/com/snaplink/sso/SnaplinkAuthClient.kt",
+          "file": "sdks/kotlin/main/SnaplinkAuthClient.kt",
           "symbol": "public suspend fun logout()"
         },
         "swift": {
           "status": "present",
-          "file": "sdks/swift/Sources/SnaplinkSSO/SnaplinkAuthClient.swift",
+          "file": "sdks/swift/Sources/SnaplinkAuthClient.swift",
           "symbol": "public func logout() async throws"
         }
       }
@@ -431,13 +431,13 @@
         },
         "kotlin": {
           "status": "present",
-          "file": "sdks/kotlin/snaplink-sso/src/main/java/com/snaplink/sso/SnaplinkAuthClient.kt",
+          "file": "sdks/kotlin/main/SnaplinkAuthClient.kt",
           "symbol": "val response = transport.refresh(refreshToken)",
           "note": "Refresh is performed implicitly by accessToken() under a single-flight lock rather than through an explicit call. That is a deliberate divergence from the hosted-login SDKs: a mobile call site wants a valid bearer, and forcing every caller to check expiry is worse ergonomics. The cost is that the refresh grant is not observable from the call site, which is why the single-flight lock exists."
         },
         "swift": {
           "status": "present",
-          "file": "sdks/swift/Sources/SnaplinkSSO/SnaplinkAuthClient.swift",
+          "file": "sdks/swift/Sources/SnaplinkAuthClient.swift",
           "symbol": "Task { try await transport.refresh(refreshToken) }",
           "note": "Refresh is performed implicitly by accessToken() under a single-flight lock rather than through an explicit call. That is a deliberate divergence from the hosted-login SDKs: a mobile call site wants a valid bearer, and forcing every caller to check expiry is worse ergonomics. The cost is that the refresh grant is not observable from the call site, which is why the single-flight lock exists."
         }
@@ -704,12 +704,12 @@
         },
         "kotlin": {
           "status": "present",
-          "file": "sdks/kotlin/snaplink-sso/src/main/java/com/snaplink/sso/SnaplinkAuthClient.kt",
+          "file": "sdks/kotlin/main/SnaplinkAuthClient.kt",
           "symbol": "public suspend fun beginAuthorization(): URI"
         },
         "swift": {
           "status": "present",
-          "file": "sdks/swift/Sources/SnaplinkSSO/SnaplinkAuthClient.swift",
+          "file": "sdks/swift/Sources/SnaplinkAuthClient.swift",
           "symbol": "public func accessToken() async throws -> String"
         }
       }

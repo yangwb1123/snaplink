@@ -5,11 +5,55 @@ Snaplink client. It uses the existing Console /login/ page, Authorization
 Code + S256 PKCE, and an atomic short-lived state transaction. It does not
 require a separate BFF and it never accepts a client secret.
 
-Install it with Composer:
+This package is not currently listed on public Packagist. For local development,
+add a path repository to the consuming application's `composer.json` (replace
+the URL with the path to this checkout), then require the checked-in package
+version:
 
-~~~text
+~~~json
+{
+  "repositories": [
+    {
+      "type": "path",
+      "url": "../snaplink/sdks/php",
+      "options": { "symlink": true }
+    }
+  ]
+}
+~~~
+
+After adding the repository entry, run:
+
+~~~sh
+composer require snaplink/sso-client:0.3.0
+~~~
+
+PHP CI runs this installation flow in a temporary consumer with Packagist
+network access disabled.
+
+Once a Packagist release exists, consumers can install it without the path
+repository:
+
+~~~sh
 composer require snaplink/sso-client
 ~~~
+
+## Packagist release preparation
+
+`.github/workflows/sdk-php-release.yml` verifies protected source tags named
+`sdk-php-v<composer-version>`, then waits at the `php-packagist` GitHub
+environment before publishing. The workflow uses `git subtree split` to push
+only `sdks/php` history to a standalone repository and creates the corresponding
+`v<version>` tag there. No package was published by adding this workflow.
+
+Before the first release, create an empty target GitHub repository, configure
+the `php-packagist` environment with required reviewers, set its
+`PHP_SDK_REPOSITORY` variable to `owner/repository`, and add a fine-grained
+`PHP_SDK_PUBLISH_TOKEN` secret with contents write access only to that target.
+Protect the `sdk-php-v*` source tag pattern. Finally, verify ownership of the
+`snaplink` Packagist vendor namespace and configure Packagist to monitor the
+standalone target repository. Until then, local path installation above is the
+supported Composer installation route.
 
 The first call returns a URL for the framework to issue as a 302. The callback
 call validates state and issuer, exchanges the code, and keeps the token in

@@ -22,6 +22,11 @@ A language is released as a package only if it appears in
 `ops/scripts/sdk_versions.py`; the paradigm gate requires every such package to
 declare a language entry, so a new published SDK cannot ship ungoverned. Go is
 declared with `package: false` because it is versioned by the root module.
+The Kotlin and Swift directories contain unpublished identity-only experiments;
+they are inventoried in [`sdks/README.md`](../sdks/README.md) but are not
+language entries in this five-language full-SDK parity gate. They must enter the
+package/version and paradigm gates before release approval, after their mobile
+contracts and platform acceptance are complete.
 
 ## 2. Capability declaration
 
@@ -224,8 +229,12 @@ session object rather than as hidden pending state on a long-lived client.
 | Symbol moved behind a present declaration | no version change; the gate forces the registry edit |
 
 Package publication is an external boundary driven by the per-language SDK
-workflows and a matching version tag. `cli.py sdk-surface versions` reads the
-four package manifests and runs inside `sdk-surface check` and `make ci`.
+workflows and that package's matching version tag. SDK package versions are
+independent: this gate validates each manifest's SemVer and local lockfile
+consistency without requiring a synchronized release train. They are separate
+from the Snaplink server/module version and the OAuth/OIDC protocol version.
+`cli.py sdk-surface versions` reads the four published-package manifests and
+runs inside `sdk-surface check` and `make ci`.
 
 ## 10. Implementation waves
 

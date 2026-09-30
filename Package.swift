@@ -11,7 +11,14 @@ let package = Package(
         .library(name: "SnaplinkSSO", targets: ["SnaplinkSSO"]),
     ],
     targets: [
-        .target(name: "SnaplinkSSO"),
-        .testTarget(name: "SnaplinkSSOTests", dependencies: ["SnaplinkSSO"]),
+        .target(
+            name: "SnaplinkSSO",
+            path: "sdks/swift/Sources"
+        ),
+        .testTarget(
+            name: "SnaplinkSSOTests",
+            dependencies: ["SnaplinkSSO"],
+            path: "sdks/swift/Tests"
+        ),
     ]
 )

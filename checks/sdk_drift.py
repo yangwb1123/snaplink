@@ -81,8 +81,9 @@ def _compare_files(expected_path: Path, actual_path: Path, root: Path, context: 
 
 
 def _status_errors(root: Path) -> list[str]:
-    # dist/ is a separate committed TypeScript build product; local npm builds
-    # must not make this generator-output cleanliness check fail.
+    # Native SDK governance is maintained by hand, not by cmd/gensdk. The
+    # TypeScript dist/ tree is likewise separate from generated source; local
+    # npm builds must not make this generator-output cleanliness check fail.
     try:
         result = run_git(
             [
@@ -92,6 +93,7 @@ def _status_errors(root: Path) -> list[str]:
                 "--",
                 "docs/sdks/",
                 "sdks/typescript/",
+                ":(exclude)docs/sdks/native.md",
                 ":(exclude)sdks/typescript/dist/",
             ],
             root,

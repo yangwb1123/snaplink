@@ -57,13 +57,13 @@ MANIFEST_SPECS = (
     ),
     ManifestSpec(
         "kotlin",
-        Path("sdks/kotlin/snaplink-sso/build.gradle.kts"),
+        Path("sdks/kotlin/build.gradle.kts"),
         "com.snaplink:snaplink-sso",
         "gradle",
     ),
     ManifestSpec(
         "swift",
-        Path("sdks/swift/Package.swift"),
+        Path("Package.swift"),
         "SnaplinkSSO",
         "swift",
     ),
@@ -79,7 +79,7 @@ SDK_MANIFEST_MARKERS = (
     Path("Cargo.toml"),
     Path("composer.json"),
     Path("Package.swift"),
-    Path("snaplink-sso/build.gradle.kts"),
+    Path("build.gradle.kts"),
 )
 
 TYPESCRIPT_LOCK_PATH = Path("sdks/typescript/package-lock.json")
@@ -265,6 +265,14 @@ def _lock_root_version(lock: dict, package_version: str) -> None:
 
 _GRADLE_VERSION = re.compile(r"""^\s*version\s*=\s*["']([^"']+)["']""", re.MULTILINE)
 _GRADLE_GROUP = re.compile(r"""^\s*group\s*=\s*["']([^"']+)["']""", re.MULTILINE)
+#: `include(":name")` plus an optional `project(":name").projectDir = file("dir")`
+#: remap, so the published artifact follows the project rather than the folder.
+_GRADLE_PROJECT = re.compile(
+    r"""^\s*(?:include\(\s*":(?P<name>[^"]+)"\s*\)"""
+    r"""|project\(\s*":(?P<mapped>[^"]+)"\s*\)\.projectDir"""
+    r"""\s*=\s*file\(\s*"(?P<dir>[^"]+)"\s*\))""",
+    re.MULTILINE,
+)
 _SWIFT_NAME = re.compile(r"""\bname\s*:\s*["']([^"']+)["']""", re.MULTILINE)
 _SWIFT_VERSION = re.compile(r"""//\s*version\s*:\s*(\S+)""")
 
@@ -274,8 +282,8 @@ def _parse_gradle(text: str, source: str, artifact: str) -> dict:
 
     Gradle scripts are programs, not a data format, so only the top-level
     `group = "..."` and `version = "..."` assignments are read and nothing is
-    evaluated. The published coordinate is the group joined to the module
-    directory name, which is how Gradle names the artifact.
+    evaluated. The published coordinate is the group joined to the project
+    name, which is how Gradle names the artifact.
     """
     version = _GRADLE_VERSION.search(text)
     if version is None:
@@ -284,6 +292,41 @@ def _parse_gradle(text: str, source: str, artifact: str) -> dict:
     if group is None:
         raise SDKVersionError(f"{source}: group assignment is missing")
     return {"name": f"{group.group(1)}:{artifact}", "version": version.group(1)}
+
+
+def _gradle_project_name(root: Path, manifest: Path) -> str:
+    """Return the Gradle project name that builds *manifest*.
+
+    Gradle names a published artifact after its project, not after the directory
+    holding the build script, and a build is free to remap the two:
+    `sdks/settings.gradle.kts` builds `:snaplink-sso` from the `kotlin/`
+    directory. Reading the directory name would then report drift against a
+    coordinate that is published correctly, so the settings script is consulted
+    when the build declares one. A build whose module directory is the project
+    needs no settings file and keeps the directory name.
+    """
+    build_root = manifest.parent.parent
+    settings = build_root / "settings.gradle.kts"
+    source = settings.as_posix()
+    if not (root / settings).is_file():
+        return manifest.parent.name
+    text = _read_fixed(root, settings)
+    declared: dict[str, str | None] = {}
+    for match in _GRADLE_PROJECT.finditer(text):
+        name = match.group("name") or match.group("mapped")
+        declared[name] = match.group("dir")
+    if not declared:
+        return manifest.parent.name
+    for name, directory in declared.items():
+        if directory is None:
+            if name == manifest.parent.name:
+                return name
+            continue
+        if Path(directory) == manifest.parent.relative_to(build_root):
+            return name
+    raise SDKVersionError(
+        f"{source}: no included project builds {manifest.parent.relative_to(build_root).as_posix()}"
+    )
 
 
 def _parse_swift(text: str, source: str) -> dict:
@@ -311,7 +354,11 @@ def discover_undeclared_sdk_directories(root: Path = ROOT) -> list[str]:
     sdks = root / "sdks"
     if not sdks.is_dir():
         return []
-    declared = {spec.path.parts[1] for spec in MANIFEST_SPECS}
+    declared = {
+        parts[1]
+        for parts in (spec.path.parts for spec in MANIFEST_SPECS)
+        if len(parts) > 1 and parts[0] == "sdks"
+    }
     undeclared: list[str] = []
     for entry in sorted(sdks.iterdir(), key=lambda path: path.name):
         if not entry.is_dir():
@@ -337,7 +384,7 @@ def _load_package(spec: ManifestSpec, root: Path) -> PackageVersion:
             data = _parse_toml(_read_fixed(root, spec.path), source)
             table = "package"
         elif spec.format == "gradle":
-            artifact = spec.path.parent.name
+            artifact = _gradle_project_name(root, spec.path)
             data = _parse_gradle(_read_fixed(root, spec.path), source, artifact)
             table = None
         elif spec.format == "swift":

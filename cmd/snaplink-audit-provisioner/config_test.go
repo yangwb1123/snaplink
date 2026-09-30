@@ -30,6 +30,9 @@ func TestParseRuntimeConfigRejectsUnsafeSecretFile(t *testing.T) {
 	if err := os.WriteFile(secretPath, []byte("secret"), 0o666); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(secretPath, 0o666); err != nil {
+		t.Fatal(err)
+	}
 	env := validConfigEnv()
 	delete(env, "SNAPLINK_AUDIT_PROVISIONER_CLIENT_SECRET")
 	env["SNAPLINK_AUDIT_PROVISIONER_CLIENT_SECRET_FILE"] = secretPath

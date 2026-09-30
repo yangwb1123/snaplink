@@ -6,7 +6,7 @@
 > - `docs/results/expansion-directions-v12-analysis.out.arch.md`（原始分析）  
 > - `docs/results/architect-fresh-code-scan-2026-07-11.out.arch.md`（代码扫描）  
 > - Peer Review 反馈（用户提供的分析报告）  
-> - `docs/tech-lead-analysis-five-directions.md`（前序分析）  
+> - `docs/tech-lead-analysis/expansion-analysis-2026-07-11.md`（前序分析）  
 > **方法：** 代码库 grep 核验 + 工程依赖推演 + 风险与资源评估
 
 ---

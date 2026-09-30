@@ -112,8 +112,15 @@ internal class HttpOAuthTransport(
 
     private fun decodeError(status: Int, raw: String): SnaplinkAuthException {
         val body = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
-        val code = (body?.get("error") as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) ?: "http_error"
-        val description = (body?.get("error_description") as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank)
+        val code = (body?.get("error") as? JsonPrimitive)
+            ?.takeIf { it.isString }
+            ?.contentOrNull
+            ?.takeIf(String::isNotBlank)
+            ?: "http_error"
+        val description = (body?.get("error_description") as? JsonPrimitive)
+            ?.takeIf { it.isString }
+            ?.contentOrNull
+            ?.takeIf(String::isNotBlank)
             ?: "Snaplink request failed with HTTP $status"
         return SnaplinkAuthException(code, description.take(MAX_ERROR_TEXT), status)
     }

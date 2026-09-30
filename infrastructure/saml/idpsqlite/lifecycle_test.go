@@ -323,21 +323,36 @@ func TestIdPSqlite_PruneExpired(t *testing.T) {
 	t.Cleanup(func() { _ = idx.Close() })
 	ctx := context.Background()
 
-	// Override the session TTL to 200ms so we have room to place two rows at
-	// different expiry times.
 	idx.sessionTTL = 200 * time.Millisecond
+	for _, subject := range []string{"short@example.com", "also-short@example.com"} {
+		if err := idx.Record(ctx, subject, row("sp-"+subject)); err != nil {
+			t.Fatalf("record %s: %v", subject, err)
+		}
+		var ttl int64
+		if err := idx.db.QueryRowContext(ctx,
+			`SELECT expires_at - recorded_at FROM saml_session_index WHERE subject = ?`, subject,
+		).Scan(&ttl); err != nil {
+			t.Fatalf("read recorded TTL for %s: %v", subject, err)
+		}
+		if ttl != idx.sessionTTL.Nanoseconds() {
+			t.Fatalf("recorded TTL for %s = %d, want %d", subject, ttl, idx.sessionTTL.Nanoseconds())
+		}
+	}
 
-	_ = idx.Record(ctx, "short@example.com", row("sp-short"))
-	time.Sleep(100 * time.Millisecond)
-
-	// Record a second row 100ms after the first, so its expires_at is 100ms
-	// later than the first row's expires_at.
-	_ = idx.Record(ctx, "also-short@example.com", row("sp-also-short"))
-	time.Sleep(150 * time.Millisecond) // past the first row's TTL, before the second's
-
-	// First row's expires_at was ~100ms ago; second row's expires_at is ~50ms
-	// from now (200ms TTL from its Record call 150ms ago).
-	n, err := idx.PruneExpired(ctx, time.Now())
+	// Pin expiry values around a fixed cutoff instead of relying on sleeps;
+	// scheduler delays must not make the future row expire during the test.
+	cutoff := time.Now()
+	_, err = idx.db.ExecContext(ctx, `
+		UPDATE saml_session_index
+		SET expires_at = CASE subject WHEN ? THEN ? WHEN ? THEN ? END
+		WHERE subject IN (?, ?)
+	`, "short@example.com", cutoff.Add(-time.Hour).UnixNano(),
+		"also-short@example.com", cutoff.Add(time.Hour).UnixNano(),
+		"short@example.com", "also-short@example.com")
+	if err != nil {
+		t.Fatalf("set deterministic expiry values: %v", err)
+	}
+	n, err := idx.PruneExpired(ctx, cutoff)
 	if err != nil {
 		t.Fatalf("prune expired: %v", err)
 	}

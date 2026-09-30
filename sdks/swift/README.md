@@ -24,9 +24,12 @@ reviewed against the SVERP device-support matrix before distribution.
 
 ## Add the package
 
-In Xcode, add this repository as a local Swift Package and select the
-`SnaplinkSSO` product. For a published release, use the package URL and an
-approved version tag.
+The SwiftPM manifest is at the repository root and points to this SDK's source
+and tests under `sdks/swift/`. In Xcode, add the repository root as a local
+Swift Package and select the `SnaplinkSSO` product. Once a release is approved,
+Git-based SwiftPM dependencies use a plain SemVer tag (for example, `0.3.0`);
+custom monorepo tags such as `sdk-swift-v0.3.0` are not the version selector.
+This package remains experimental and unpublished.
 
 ```swift
 import SnaplinkSSO
@@ -73,9 +76,10 @@ non-negative `maxAge` map to the corresponding Go SDK `LoginOptions` fields.
 They are omitted by default, and stale copies in `loginPageURL` are removed.
 `accessToken()` returns a non-expired bearer and refreshes when needed. Refresh
 requests are single-flight inside one SDK actor instance; they are not
-coordinated across app processes or devices. `logout()` clears local Keychain
-credentials before attempting server revocation, so a network failure cannot
-leave the local session active.
+coordinated across app processes or devices. `clear()` removes local Keychain
+tokens and pending login state without a network call. `logout()` is distinct:
+it clears local credentials before attempting server revocation, so a network
+failure cannot leave the local session active.
 
 ## Security boundary
 
@@ -94,11 +98,14 @@ leave the local session active.
 
 ## Verify
 
+Run these commands from the Snaplink repository root:
+
 ```bash
 swift test
 swift build -c release
 ```
 
 The tests cover PKCE generation, callback state/issuer binding, token exchange,
-concurrent refresh, logout cleanup, and configuration validation. Browser UI
-and device Keychain integration still require Apple platform acceptance.
+concurrent refresh, local clear/logout cleanup, and configuration validation.
+Browser UI and device Keychain integration still require Apple platform
+acceptance.

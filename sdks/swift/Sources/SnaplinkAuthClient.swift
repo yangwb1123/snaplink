@@ -42,7 +42,7 @@ public actor SnaplinkAuthClient {
     /// Creates a short-lived one-use transaction and returns the hosted-login URL.
     public func beginAuthorization() throws -> URL {
         guard !logoutInProgress else {
-            throw SnaplinkAuthError(code: "operation_in_progress", message: "logout is still in progress")
+            throw SnaplinkAuthError(code: "operation_in_progress", message: "a session lifecycle operation is in progress")
         }
         let pkce = try OAuthProtocol.createPKCE()
         let state = try OAuthProtocol.randomURLSafe(byteCount: 32)
@@ -67,7 +67,7 @@ public actor SnaplinkAuthClient {
     /// Validates the app-link/custom-scheme callback and performs the code exchange.
     public func handleAuthorizationCallback(_ callbackURL: URL) async throws -> SnaplinkSession {
         guard !logoutInProgress else {
-            throw SnaplinkAuthError(code: "operation_in_progress", message: "logout is still in progress")
+            throw SnaplinkAuthError(code: "operation_in_progress", message: "a session lifecycle operation is in progress")
         }
         let sessionGeneration = sessionRevision
         let authorizationGeneration = authorizationRevision
@@ -83,13 +83,15 @@ public actor SnaplinkAuthClient {
               OAuthProtocol.canonicalIssuer(issuerURL) == OAuthProtocol.canonicalIssuer(configuration.issuerBaseURL) else {
             throw SnaplinkAuthError(code: "invalid_request", message: "authorization issuer did not match Snaplink")
         }
-        if let error = callback.error, !error.isEmpty {
+        if let error = callback.error,
+           !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw SnaplinkAuthError(
                 code: String(error.prefix(64)),
                 message: String((callback.errorDescription ?? "authorization was not completed").prefix(512))
             )
         }
-        guard let code = callback.code, !code.isEmpty else {
+        guard let code = callback.code,
+              !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw SnaplinkAuthError(code: "invalid_request", message: "authorization response did not contain a code")
         }
         let response = try await transport.exchangeCode(code, verifier: transaction.verifier)
@@ -99,7 +101,12 @@ public actor SnaplinkAuthClient {
               !logoutInProgress else {
             throw SnaplinkAuthError(code: "invalid_request", message: "authorization transaction was superseded")
         }
-        let tokens = StoredTokenSet(response: response, previousRefreshToken: nil, now: clock())
+        let tokens = StoredTokenSet(
+            response: response,
+            previousRefreshToken: nil,
+            previousScope: nil,
+            now: clock()
+        )
         try save(tokens, account: tokenAccount)
         loggedOut = false
         refreshTask = nil
@@ -137,7 +144,12 @@ public actor SnaplinkAuthClient {
             guard generation == sessionRevision, !logoutInProgress else {
                 throw SnaplinkAuthError(code: "login_required", message: "the session changed during token refresh")
             }
-            let refreshed = StoredTokenSet(response: response, previousRefreshToken: current.refreshToken, now: clock())
+            let refreshed = StoredTokenSet(
+                response: response,
+                previousRefreshToken: current.refreshToken,
+                previousScope: current.scope,
+                now: clock()
+            )
             try save(refreshed, account: tokenAccount)
             refreshTask = nil
             return refreshed.accessToken
@@ -152,10 +164,25 @@ public actor SnaplinkAuthClient {
         }
     }
 
+    /// Removes local credentials without contacting Snaplink.
+    public func clear() throws {
+        guard !logoutInProgress else {
+            throw SnaplinkAuthError(code: "operation_in_progress", message: "a session lifecycle operation is already in progress")
+        }
+        logoutInProgress = true
+        loggedOut = true
+        sessionRevision &+= 1
+        authorizationRevision &+= 1
+        refreshTask?.cancel()
+        refreshTask = nil
+        defer { logoutInProgress = false }
+        try clearLocalCredentials()
+    }
+
     /// Revokes the refresh token when present and always clears local credentials first.
     public func logout() async throws {
         guard !logoutInProgress else {
-            throw SnaplinkAuthError(code: "operation_in_progress", message: "logout is already in progress")
+            throw SnaplinkAuthError(code: "operation_in_progress", message: "a session lifecycle operation is already in progress")
         }
         logoutInProgress = true
         loggedOut = true
@@ -192,7 +219,7 @@ public actor SnaplinkAuthClient {
     }
 
     private func validate(_ response: OAuthTokenResponse) throws {
-        guard !response.accessToken.isEmpty,
+        guard !response.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               response.tokenType.caseInsensitiveCompare("Bearer") == .orderedSame,
               response.expiresIn > 0, response.expiresIn <= 31_536_000 else {
             throw SnaplinkAuthError(code: "invalid_response", message: "Snaplink returned an invalid token response")
@@ -262,18 +289,24 @@ private struct AuthorizationTransaction: Codable, Sendable {
     let createdAt: Date
 }
 
-private struct StoredTokenSet: Codable, Sendable {
+struct StoredTokenSet: Codable, Sendable {
     let accessToken: String
     let refreshToken: String?
     let expiresAt: Date
     let scope: String?
 
-    init(response: OAuthTokenResponse, previousRefreshToken: String?, now: Date) {
+    init(
+        response: OAuthTokenResponse,
+        previousRefreshToken: String?,
+        previousScope: String?,
+        now: Date
+    ) {
         accessToken = response.accessToken
         refreshToken = response.refreshToken.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
             ?? previousRefreshToken
-        expiresAt = now.addingTimeInterval(TimeInterval(response.expiresIn))
-        scope = response.scope
+        let epochSeconds = now.timeIntervalSince1970.rounded(.down)
+        expiresAt = Date(timeIntervalSince1970: epochSeconds + TimeInterval(response.expiresIn))
+        scope = response.scope ?? previousScope
     }
 
     var session: SnaplinkSession { SnaplinkSession(accessToken: accessToken, expiresAt: expiresAt) }

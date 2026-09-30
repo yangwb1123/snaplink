@@ -43,6 +43,57 @@ final class HTTPTransportTests: XCTestCase {
         XCTAssertFalse(body.contains("client_secret"))
     }
 
+    func testTokenExchangeNormalizesWhitespaceOnlyOptionalFields() async throws {
+        StubURLProtocol.setHandler { request in
+            let body = Data(#"{"access_token":"access-1","token_type":"Bearer","expires_in":900,"refresh_token":"   ","scope":"  "}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, body)
+        }
+        defer { StubURLProtocol.setHandler(nil) }
+
+        let configuration = try SnaplinkConfiguration(
+            issuerBaseURL: URL(string: "https://sso.example.test")!,
+            clientID: "ios-client",
+            redirectURI: URL(string: "com.example.sverp:/oauth/callback")!
+        )
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [StubURLProtocol.self]
+        let transport = URLSessionOAuthTransport(
+            configuration: configuration,
+            session: URLSession(configuration: sessionConfiguration)
+        )
+        let token = try await transport.exchangeCode("code", verifier: "verifier")
+        XCTAssertNil(token.refreshToken)
+        XCTAssertNil(token.scope)
+    }
+
+    func testMalformedOAuthErrorFieldsUseSafeFallbacks() async throws {
+        StubURLProtocol.setHandler { request in
+            let body = Data(#"{"error":"invalid_grant","error_description":"   "}"#.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 400, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, body)
+        }
+        defer { StubURLProtocol.setHandler(nil) }
+
+        let configuration = try SnaplinkConfiguration(
+            issuerBaseURL: URL(string: "https://sso.example.test")!,
+            clientID: "ios-client",
+            redirectURI: URL(string: "com.example.sverp:/oauth/callback")!
+        )
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [StubURLProtocol.self]
+        let transport = URLSessionOAuthTransport(
+            configuration: configuration,
+            session: URLSession(configuration: sessionConfiguration)
+        )
+        do {
+            _ = try await transport.refresh("refresh-1")
+            XCTFail("HTTP OAuth error must fail")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.code, "invalid_grant")
+            XCTAssertEqual(error.message, "Snaplink request failed with HTTP 400")
+            XCTAssertEqual(error.statusCode, 400)
+        }
+    }
+
     func testRefreshRequestOmitsPKCEAndPreservesOAuthError() async throws {
         let capturedRequest = RequestCapture()
         StubURLProtocol.setHandler { request in

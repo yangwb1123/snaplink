@@ -85,6 +85,123 @@ final class SnaplinkAuthClientTests: XCTestCase {
         XCTAssertEqual(exchangeCount, 0)
     }
 
+    func testWhitespaceOnlyCallbackErrorAndCodeAreRejected() async throws {
+        let blankError = try fixture()
+        let errorAuthURL = try await blankError.client.beginAuthorization()
+        let errorState = try XCTUnwrap(queryItems(errorAuthURL)["state"])
+        let errorCallback = URL(string: "com.example.sverp:/oauth/callback?error=%20%20&state=\(errorState)&iss=https%3A%2F%2Fsso.example.test")!
+        do {
+            _ = try await blankError.client.handleAuthorizationCallback(errorCallback)
+            XCTFail("blank OAuth error without a code must fail closed")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.code, "invalid_request")
+        }
+        let errorExchangeCount = await blankError.transport.exchangeCount
+        XCTAssertEqual(errorExchangeCount, 0)
+
+        let blankCode = try fixture()
+        let codeAuthURL = try await blankCode.client.beginAuthorization()
+        let codeState = try XCTUnwrap(queryItems(codeAuthURL)["state"])
+        let codeCallback = URL(string: "com.example.sverp:/oauth/callback?code=%20%20&state=\(codeState)&iss=https%3A%2F%2Fsso.example.test")!
+        do {
+            _ = try await blankCode.client.handleAuthorizationCallback(codeCallback)
+            XCTFail("blank authorization code must not be exchanged")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.code, "invalid_request")
+        }
+        let codeExchangeCount = await blankCode.transport.exchangeCount
+        XCTAssertEqual(codeExchangeCount, 0)
+    }
+
+    func testCallbackTransactionTTLUsesExactBoundary() async throws {
+        let exact = try fixture()
+        let exactAuthURL = try await exact.client.beginAuthorization()
+        let exactState = try XCTUnwrap(queryItems(exactAuthURL)["state"])
+        exact.clock.advance(600)
+        let session = try await exact.client.handleAuthorizationCallback(
+            callbackURL(state: exactState, code: "auth-code")
+        )
+        XCTAssertEqual(session.accessToken, "access-initial")
+
+        let expired = try fixture()
+        let expiredAuthURL = try await expired.client.beginAuthorization()
+        let expiredState = try XCTUnwrap(queryItems(expiredAuthURL)["state"])
+        expired.clock.advance(600.001)
+        do {
+            _ = try await expired.client.handleAuthorizationCallback(
+                callbackURL(state: expiredState, code: "auth-code")
+            )
+            XCTFail("transaction beyond the TTL must be rejected")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.code, "invalid_request")
+        }
+        let exchangeCount = await expired.transport.exchangeCount
+        XCTAssertEqual(exchangeCount, 0)
+    }
+
+    func testSessionExpiryUsesWholeEpochSeconds() async throws {
+        let setup = try fixture()
+        setup.clock.advance(0.75)
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        let session = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "auth-code"))
+        XCTAssertEqual(session.expiresAt, Date(timeIntervalSince1970: 1_900))
+    }
+
+    func testRefreshWithoutScopeRetainsExistingScopeAndRefreshToken() {
+        let initial = StoredTokenSet(
+            response: OAuthTokenResponse(
+                accessToken: "access-old",
+                tokenType: "Bearer",
+                expiresIn: 900,
+                refreshToken: "refresh-old",
+                scope: "openid profile"
+            ),
+            previousRefreshToken: nil,
+            previousScope: nil,
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+        let refreshed = StoredTokenSet(
+            response: OAuthTokenResponse(
+                accessToken: "access-new",
+                tokenType: "Bearer",
+                expiresIn: 900,
+                refreshToken: nil,
+                scope: nil
+            ),
+            previousRefreshToken: initial.refreshToken,
+            previousScope: initial.scope,
+            now: Date(timeIntervalSince1970: 1_100)
+        )
+        XCTAssertEqual(refreshed.refreshToken, "refresh-old")
+        XCTAssertEqual(refreshed.scope, "openid profile")
+    }
+
+    func testWhitespaceOnlyAccessTokenIsRejected() async throws {
+        let setup = try fixture()
+        await setup.transport.setInitialResponse(OAuthTokenResponse(
+            accessToken: " \t\n",
+            tokenType: "Bearer",
+            expiresIn: 900,
+            refreshToken: "refresh-one",
+            scope: "openid"
+        ))
+        let authURL = try await setup.client.beginAuthorization()
+        let state = try XCTUnwrap(queryItems(authURL)["state"])
+        do {
+            _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: state, code: "auth-code"))
+            XCTFail("whitespace-only access token must be rejected")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.code, "invalid_response")
+        }
+        do {
+            _ = try await setup.client.accessToken()
+            XCTFail("rejected token response must not create a local session")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.code, "login_required")
+        }
+    }
+
     func testCallbackExchangesCodeAndPersistsBearerToken() async throws {
         let setup = try fixture()
         let authURL = try await setup.client.beginAuthorization()
@@ -150,6 +267,35 @@ final class SnaplinkAuthClientTests: XCTestCase {
         let storedToken = try await setup.client.accessToken()
         XCTAssertEqual(refreshedToken, "access-refreshed")
         XCTAssertEqual(storedToken, "access-refreshed")
+    }
+
+    func testClearDropsLocalSessionAndPendingTransactionWithoutRevocation() async throws {
+        let setup = try fixture()
+        let firstAuthURL = try await setup.client.beginAuthorization()
+        let firstState = try XCTUnwrap(queryItems(firstAuthURL)["state"])
+        _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: firstState, code: "auth-code"))
+        let pendingAuthURL = try await setup.client.beginAuthorization()
+        let pendingState = try XCTUnwrap(queryItems(pendingAuthURL)["state"])
+
+        try await setup.client.clear()
+        let revokeCount = await setup.transport.revokeCount
+        let exchangeCount = await setup.transport.exchangeCount
+        XCTAssertEqual(revokeCount, 0)
+        XCTAssertEqual(exchangeCount, 1)
+        do {
+            _ = try await setup.client.accessToken()
+            XCTFail("clear must remove the local session")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.code, "login_required")
+        }
+        do {
+            _ = try await setup.client.handleAuthorizationCallback(callbackURL(state: pendingState, code: "second-code"))
+            XCTFail("clear must remove the pending transaction")
+        } catch let error as SnaplinkAuthError {
+            XCTAssertEqual(error.code, "invalid_request")
+        }
+        let finalExchangeCount = await setup.transport.exchangeCount
+        XCTAssertEqual(finalExchangeCount, 1)
     }
 
     func testLogoutClearsLocalTokensWhenRevocationFails() async throws {
@@ -334,6 +480,7 @@ private actor FakeOAuthTransport: OAuthTransport {
     private var refreshStartWaiter: CheckedContinuation<Void, Never>?
     private(set) var exchangeCount = 0
     private(set) var refreshCount = 0
+    private(set) var revokeCount = 0
     private(set) var lastCode: String?
     private(set) var lastVerifier: String?
 
@@ -377,6 +524,7 @@ private actor FakeOAuthTransport: OAuthTransport {
     }
 
     func revoke(_ token: String, tokenTypeHint: String) async throws {
+        revokeCount += 1
         XCTAssertEqual(token, "refresh-one")
         XCTAssertEqual(tokenTypeHint, "refresh_token")
         if shouldFailRevocation {

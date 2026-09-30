@@ -59,6 +59,24 @@ public class HttpOAuthTransportTest {
     }
 
     @Test
+    public fun malformedScalarOAuthErrorFieldsUseSafeFallbacks(): Unit = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse().setResponseCode(400).setBody("""{"error":"invalid_grant","error_description":"   "}"""),
+        )
+        server.start()
+        try {
+            val transport = HttpOAuthTransport(configuration(server.url("/").toString()))
+            val error = runCatching { transport.refresh("refresh-token") }.exceptionOrNull() as SnaplinkAuthException
+            assertEquals("invalid_grant", error.errorCode)
+            assertEquals("Snaplink request failed with HTTP 400", error.message)
+            assertEquals(400, error.httpStatus)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
     public fun refreshOmitsPkceVerifierAndRejectsRedirects(): Unit = runBlocking {
         val server = MockWebServer()
         server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "https://evil.example.test/token"))

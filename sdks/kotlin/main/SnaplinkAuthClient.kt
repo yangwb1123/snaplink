@@ -6,6 +6,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -57,7 +58,7 @@ public class SnaplinkAuthClient internal constructor(
 
     /** Persists a one-use state/verifier transaction and returns the browser URL. */
     public suspend fun beginAuthorization(): URI {
-        if (logoutInProgress) throw SnaplinkAuthException("operation_in_progress", "logout is still in progress")
+        if (logoutInProgress) throw SnaplinkAuthException("operation_in_progress", "a session lifecycle operation is in progress")
         val pkce = OAuthProtocol.createPkce()
         val transaction = LoginTransaction(
             issuer = configuration.issuerBaseUrl,
@@ -70,7 +71,7 @@ public class SnaplinkAuthClient internal constructor(
         val url = OAuthProtocol.buildAuthorizationUri(configuration, transaction.state, pkce.challenge)
         withContext(Dispatchers.IO) {
             synchronized(storeLock) {
-                if (logoutInProgress) throw SnaplinkAuthException("operation_in_progress", "logout is still in progress")
+                if (logoutInProgress) throw SnaplinkAuthException("operation_in_progress", "a session lifecycle operation is in progress")
                 secureStore.write(pendingTransactionKey, encodeTransaction(transaction))
                 authorizationRevision.incrementAndGet()
             }
@@ -80,7 +81,7 @@ public class SnaplinkAuthClient internal constructor(
 
     /** Completes the app-link/custom-scheme callback. The transaction is consumed once. */
     public suspend fun handleAuthorizationCallback(callbackUri: URI): SnaplinkSession {
-        if (logoutInProgress) throw SnaplinkAuthException("operation_in_progress", "logout is still in progress")
+        if (logoutInProgress) throw SnaplinkAuthException("operation_in_progress", "a session lifecycle operation is in progress")
         val authorizationGeneration = authorizationRevision.get()
         val sessionGeneration = sessionRevision.get()
         val transaction = withContext(Dispatchers.IO) { takeTransaction() }
@@ -152,10 +153,38 @@ public class SnaplinkAuthClient internal constructor(
         refreshed.accessToken
     }
 
+    /** Removes local credentials without contacting Snaplink. */
+    public suspend fun clear() {
+        synchronized(storeLock) {
+            if (logoutInProgress) throw SnaplinkAuthException("operation_in_progress", "a session lifecycle operation is already in progress")
+            logoutInProgress = true
+            loggedOut = true
+            sessionRevision.incrementAndGet()
+            authorizationRevision.incrementAndGet()
+        }
+        try {
+            withContext(NonCancellable) {
+                sessionMutex.withLock {
+                    withContext(Dispatchers.IO) {
+                        synchronized(storeLock) {
+                            try {
+                                secureStore.delete(tokenSetKey)
+                            } finally {
+                                secureStore.delete(pendingTransactionKey)
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            synchronized(storeLock) { logoutInProgress = false }
+        }
+    }
+
     /** Revokes the best available token and always removes local credentials. */
     public suspend fun logout() {
         synchronized(storeLock) {
-            if (logoutInProgress) throw SnaplinkAuthException("operation_in_progress", "logout is already in progress")
+            if (logoutInProgress) throw SnaplinkAuthException("operation_in_progress", "a session lifecycle operation is already in progress")
             logoutInProgress = true
             loggedOut = true
             sessionRevision.incrementAndGet()
@@ -190,8 +219,10 @@ public class SnaplinkAuthClient internal constructor(
         ) {
             throw SnaplinkAuthException("invalid_request", "hosted-login transaction belongs to another client")
         }
-        val ageSeconds = (clockMillis() - transaction.createdAtMillis) / 1000
-        if (ageSeconds < 0 || ageSeconds > configuration.transactionTtlSeconds) {
+        val nowMillis = clockMillis()
+        val ageMillis = nowMillis - transaction.createdAtMillis
+        val maxAgeMillis = configuration.transactionTtlSeconds * 1000
+        if (nowMillis < transaction.createdAtMillis || ageMillis < 0 || ageMillis > maxAgeMillis) {
             throw SnaplinkAuthException("invalid_request", "hosted-login transaction is missing or expired")
         }
     }

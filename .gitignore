@@ -22,6 +22,8 @@ ops/deploy/openresty/fullstack/static/
 
 # Editor / OS noise
 .DS_Store
+.build/
+.swiftpm/
 *.swp
 *.swo
 .idea/

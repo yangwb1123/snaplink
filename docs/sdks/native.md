@@ -19,6 +19,14 @@ are intentionally not native login options; the host application owns its
 post-login navigation. Both SDKs parse callback query values using form-style
 `+`/percent decoding, reject duplicate OAuth response fields, and bound
 callback error codes/descriptions to 64/512 characters before exposing them.
+Both SDKs expose distinct `clear()` and `logout()` operations: `clear()` drops
+local credentials only; `logout()` also requests server revocation. Both token
+transports use form-encoded requests, reject redirects, send no cookies, apply a
+15-second request/resource timeout, and cap response bodies at
+64 KiB. Malformed or blank OAuth error fields are ignored independently; a
+missing/invalid code falls back to `http_error`, and a missing/invalid
+description falls back to an HTTP-status message. Omitted refresh scope/token
+fields retain the previous values.
 
 These packages currently target Android API 23+ / iOS 17+; the Swift package
 also builds for macOS 14+. They are not published or production-approved. The

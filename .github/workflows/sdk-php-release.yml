@@ -1,0 +1,124 @@
+name: sdk-php-release
+
+on:
+  push:
+    tags:
+      - "sdk-php-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-php-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify PHP package before split release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          tools: composer
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check protected tag and package version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          python ops/scripts/php_sdk_release.py verify \
+            --ref-name "$REF_NAME" --ref-protected "$REF_PROTECTED"
+      - name: Test PHP release metadata and subtree safeguards
+        run: python -m unittest discover -s ops/scripts -p 'test_sdk_php_release.py' -v
+      - name: Verify package version registry
+        run: python cli.py sdk-surface versions
+      - name: Verify SDK surface and paradigm registries
+        run: |
+          python cli.py sdk-surface check
+          python cli.py sdk-paradigm check
+      - name: Validate Composer package
+        working-directory: sdks/php
+        run: composer validate --strict --no-check-publish --no-check-version
+      - name: Run PHP SDK tests
+        working-directory: sdks/php
+        run: |
+          php tests/hosted_login_test.php
+          php tests/entitlement_test.php
+          php tests/license_file_test.php
+      - name: Verify offline Composer path installation
+        working-directory: sdks/php
+        run: bash tests/package_install_smoke.sh
+      - name: Build Composer archive
+        working-directory: sdks/php
+        run: composer archive --format=zip --dir="${RUNNER_TEMP}/snaplink-php-dist"
+      - name: Preflight standalone history split
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          python ops/scripts/php_sdk_release.py split \
+            --source-sha "$GITHUB_SHA" \
+            --ref-name "$REF_NAME" --ref-protected "$REF_PROTECTED"
+
+  publish-split:
+    name: Publish standalone PHP SDK source tag
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: php-packagist
+      url: https://packagist.org/packages/snaplink/sso-client
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Split package history and push immutable version tag
+        env:
+          TARGET_REPOSITORY: ${{ vars.PHP_SDK_REPOSITORY }}
+          SDK_RELEASE_TOKEN: ${{ secrets.PHP_SDK_PUBLISH_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+            echo "::error::Set php-packagist environment variable PHP_SDK_REPOSITORY to owner/repository."
+            exit 1
+          }
+          [[ -n "$SDK_RELEASE_TOKEN" ]] || {
+            echo "::error::Set PHP_SDK_PUBLISH_TOKEN as a fine-grained token scoped to the split repository."
+            exit 1
+          }
+
+          release_info="$(python ops/scripts/php_sdk_release.py split \
+            --source-sha "$GITHUB_SHA" \
+            --ref-name "$REF_NAME" --ref-protected "$REF_PROTECTED")"
+          IFS=$'\t' read -r split_commit version target_tag <<< "$release_info"
+          [[ -n "$split_commit" && -n "$version" && -n "$target_tag" ]]
+
+          askpass="${RUNNER_TEMP}/sdk-release-askpass.sh"
+          cat > "$askpass" <<'ASKPASS'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *Password*) printf '%s\n' "$SDK_RELEASE_TOKEN" ;;
+            *) exit 1 ;;
+          esac
+          ASKPASS
+          chmod 700 "$askpass"
+          trap 'rm -f "$askpass"' EXIT
+          GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 git push --atomic \
+            "https://github.com/${TARGET_REPOSITORY}.git" \
+            "${split_commit}:refs/heads/main" \
+            "${split_commit}:refs/tags/${target_tag}"

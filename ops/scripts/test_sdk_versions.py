@@ -106,7 +106,15 @@ example-dependency = "77.77.77"
     )
     _write(
         root,
-        "sdks/kotlin/snaplink-sso/build.gradle.kts",
+        "sdks/settings.gradle.kts",
+        '''rootProject.name = "snaplink-sso-android"
+include(":snaplink-sso")
+project(":snaplink-sso").projectDir = file("kotlin")
+''',
+    )
+    _write(
+        root,
+        "sdks/kotlin/build.gradle.kts",
         f'''plugins {{ id("com.android.library") }}
 group = "com.snaplink"
 version = "{kotlin_version}"
@@ -118,7 +126,7 @@ android {{ namespace = "com.snaplink.sso" }}
     # package name only. That is the one manifest with no version to read.
     _write(
         root,
-        "sdks/swift/Package.swift",
+        "Package.swift",
         '''// swift-tools-version: 5.9
 let package = Package(
     name: "SnaplinkSSO"
@@ -199,6 +207,25 @@ class SDKVersionGateTests(unittest.TestCase):
         output = sdk_versions.format_version_report(report)
         self.assertIn('id="rust" name="snaplink-sso" version="1.0.0"', output)
         self.assertTrue(output.endswith("verdict: FAIL"))
+
+    def test_the_gradle_coordinate_follows_the_project_not_the_directory(self) -> None:
+        """`:snaplink-sso` builds from `kotlin/`, so the published coordinate
+        must be read from the settings script rather than the folder name."""
+        manifest = Path("sdks/kotlin/build.gradle.kts")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_fixtures(root)
+            self.assertEqual("snaplink-sso", sdk_versions._gradle_project_name(root, manifest))
+            _write(root, "sdks/settings.gradle.kts", 'include(":kotlin")\n')
+            self.assertEqual("kotlin", sdk_versions._gradle_project_name(root, manifest))
+            (root / "sdks/settings.gradle.kts").unlink()
+            self.assertEqual("kotlin", sdk_versions._gradle_project_name(root, manifest))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_fixtures(root)
+            _write(root, "sdks/settings.gradle.kts", 'include(":snaplink-sso")\n')
+            with self.assertRaises(sdk_versions.SDKVersionError):
+                sdk_versions._gradle_project_name(root, manifest)
 
     def test_an_undeclared_sdk_directory_fails(self) -> None:
         """A new SDK must not ship without a version gate, which is how Kotlin

@@ -14,6 +14,8 @@ struct URLSessionOAuthTransport: OAuthTransport, @unchecked Sendable {
             sessionConfiguration.httpCookieStorage = nil
             sessionConfiguration.httpShouldSetCookies = false
             sessionConfiguration.urlCache = nil
+            sessionConfiguration.timeoutIntervalForRequest = Self.requestTimeout
+            sessionConfiguration.timeoutIntervalForResource = Self.requestTimeout
             self.session = URLSession(configuration: sessionConfiguration, delegate: delegate, delegateQueue: nil)
         }
     }
@@ -48,13 +50,23 @@ struct URLSessionOAuthTransport: OAuthTransport, @unchecked Sendable {
         let data = try await post("token", form: form)
         do {
             let response = try JSONDecoder().decode(OAuthTokenResponse.self, from: data)
-            guard !response.accessToken.isEmpty,
+            guard !response.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   response.tokenType.caseInsensitiveCompare("Bearer") == .orderedSame,
                   response.expiresIn > 0,
                   response.expiresIn <= 31_536_000 else {
                 throw SnaplinkAuthError(code: "invalid_response", message: "Snaplink returned an invalid token response")
             }
-            return response
+            return OAuthTokenResponse(
+                accessToken: response.accessToken,
+                tokenType: response.tokenType,
+                expiresIn: response.expiresIn,
+                refreshToken: response.refreshToken.flatMap {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+                },
+                scope: response.scope.flatMap {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+                }
+            )
         } catch let error as SnaplinkAuthError {
             throw error
         } catch {
@@ -67,7 +79,7 @@ struct URLSessionOAuthTransport: OAuthTransport, @unchecked Sendable {
         for component in path.split(separator: "/") {
             endpoint.appendPathComponent(String(component))
         }
-        var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: Self.requestTimeout)
         request.httpMethod = "POST"
         request.httpBody = encodeForm(form)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -83,7 +95,7 @@ struct URLSessionOAuthTransport: OAuthTransport, @unchecked Sendable {
             data.reserveCapacity(4096)
             for try await byte in bytes {
                 data.append(byte)
-                guard data.count <= 64 * 1024 else {
+                guard data.count <= Self.maximumResponseBytes else {
                     throw SnaplinkAuthError(code: "invalid_response", message: "Snaplink response exceeded the SDK size limit")
                 }
             }
@@ -109,17 +121,31 @@ struct URLSessionOAuthTransport: OAuthTransport, @unchecked Sendable {
         struct ErrorBody: Decodable {
             let error: String?
             let errorDescription: String?
+
             enum CodingKeys: String, CodingKey {
                 case error
                 case errorDescription = "error_description"
             }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                error = try? container.decode(String.self, forKey: .error)
+                errorDescription = try? container.decode(String.self, forKey: .errorDescription)
+            }
         }
         let body = try? JSONDecoder().decode(ErrorBody.self, from: data)
-        let code = body?.error.flatMap { $0.isEmpty ? nil : $0 } ?? "http_error"
-        let message = body?.errorDescription.flatMap { $0.isEmpty ? nil : String($0.prefix(512)) }
-            ?? "Snaplink request failed with HTTP \(status)"
+        let code = body?.error.flatMap {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+        } ?? "http_error"
+        let message = body?.errorDescription.flatMap {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : String($0.prefix(Self.maximumErrorText))
+        } ?? "Snaplink request failed with HTTP \(status)"
         return SnaplinkAuthError(code: code, message: message, statusCode: status)
     }
+
+    private static let requestTimeout: TimeInterval = 15
+    private static let maximumResponseBytes = 64 * 1024
+    private static let maximumErrorText = 512
 }
 
 private final class RejectRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {

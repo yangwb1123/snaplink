@@ -161,6 +161,16 @@ def test_missing_deploy_target_fails(tree: dict[str, Path], key: str, capsys: py
     assert str(tree[key].relative_to(tree["root"])) in capsys.readouterr().out
 
 
+def test_native_sdk_governance_doc_is_not_generated_drift(
+    tree: dict[str, Path], capsys: pytest.CaptureFixture[str]
+):
+    native_doc = tree["root"] / "docs/sdks/native.md"
+    native_doc.write_text("hand-maintained native SDK governance\n")
+
+    assert sdk_drift.run(["check"]) == 0
+    assert "OK (regen 2/2, deploy 3/3)" in capsys.readouterr().out
+
+
 def test_stray_file_under_docs_sdks_fails(tree: dict[str, Path], capsys: pytest.CaptureFixture[str]):
     stray = tree["root"] / "docs/sdks/stray.txt"
     stray.write_text("not generated")

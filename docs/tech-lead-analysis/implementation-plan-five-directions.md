@@ -7,7 +7,7 @@
 > - `docs/requirements/architect-expansion-5-directions.md`  
 > - `docs/requirements/architect-expansion-novel-5-directions-2026-07-11.md`  
 > - `docs/feature-spec-architecture-synthesis-five-directions.md`  
-> - `docs/tech-lead-analysis-five-directions.md`  
+> - `docs/tech-lead-analysis/expansion-analysis-2026-07-11.md`
 > - AGENTS.md 工程门禁体系  
 >
 > **方法：** 交叉验证所有分析文档中的代码级断言，剔除重复/已覆盖部分，提取互补方向重新编排为工程可执行计划

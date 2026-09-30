@@ -15,7 +15,7 @@ tenant isolation, or client permissions.
 ## Requirements
 
 - Android API 23 or newer
-- JDK 17 for building the library
+- JDK 21 (the version used by the Android SDK CI)
 - Gradle 8.13
 
 ## Add the SDK
@@ -92,8 +92,9 @@ omitted by default, and stale copies in `loginPageUrl` are removed. The token
 endpoint runs on `Dispatchers.IO`. `accessToken()` returns a non-expired bearer
 token and refreshes it when needed. Refresh calls are
 serialized within one SDK instance; this is not a cross-process or cross-device
-lock. `logout()` attempts server revocation and clears local credentials even
-if the network call fails.
+lock. `clear()` removes local tokens and pending login state without a network
+call. `logout()` is distinct: it attempts server revocation and clears local
+credentials even if the network call fails.
 
 ## Security boundary
 
@@ -115,8 +116,15 @@ if the network call fails.
 ## Verify
 
 ```bash
+cd sdks
 ./gradlew :snaplink-sso:testDebugUnitTest :snaplink-sso:assembleRelease
 ```
 
+The Gradle workspace lives at `sdks/`. Kotlin package declarations remain
+`com.snaplink.sso`; main, unit-test, and instrumentation sources are kept in
+flat `kotlin/main`, `kotlin/test`, and `kotlin/androidTest` source roots to fit
+the repository's directory-depth budget.
+
 The unit suite covers PKCE construction, callback state/issuer binding, token
-exchange, concurrent refresh, logout cleanup, and configuration validation.
+exchange, concurrent refresh, local clear/logout cleanup, and configuration
+validation.

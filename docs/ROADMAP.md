@@ -197,10 +197,11 @@ Delivered:
   missing files, and malformed schema structures fail closed. No version is
   changed automatically, and the SDK CI runs the check against the pull
   request base with a full local checkout.
-- `python cli.py sdk-surface versions` now reads the four fixed package
-  manifests, validates SemVer 2.0.0 and the TypeScript lock root, and compares
-  all package versions. `sdk-surface check` and `make ci` execute this same
-  read-only gate; the current four package versions are `0.3.0`.
+- `python cli.py sdk-surface versions` reads the four fixed published-package
+  manifests, validates each package's SemVer 2.0.0 independently, and checks the
+  TypeScript lock root against its manifest. Package versions need not match;
+  `sdk-surface check` and `make ci` execute this same read-only gate. The package
+  version is distinct from the server/module and OAuth/OIDC protocol versions.
 
 Remaining (non-blocking): versioned package publication once the contract is
 declared stable by the maintainers. Versioned package publication remains an

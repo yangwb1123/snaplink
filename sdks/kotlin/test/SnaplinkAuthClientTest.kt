@@ -84,6 +84,57 @@ public class SnaplinkAuthClientTest {
     }
 
     @Test
+    public fun whitespaceOnlyCallbackErrorAndCodeAreRejected(): Unit = runBlocking {
+        val blankError = fixture()
+        val errorAuth = blankError.client.beginAuthorization()
+        val errorState = query(errorAuth.toString()).getValue("state")
+        val errorFailure = runCatching {
+            blankError.client.handleAuthorizationCallback(
+                URI("com.example.sverp:/oauth/callback?error=%20%20&state=$errorState&iss=https%3A%2F%2Fsso.example.test"),
+            )
+        }.exceptionOrNull() as SnaplinkAuthException
+        assertEquals("invalid_request", errorFailure.errorCode)
+        assertEquals(0, blankError.transport.exchangeCount.get())
+
+        val blankCode = fixture()
+        val codeAuth = blankCode.client.beginAuthorization()
+        val codeState = query(codeAuth.toString()).getValue("state")
+        val codeFailure = runCatching {
+            blankCode.client.handleAuthorizationCallback(
+                URI("com.example.sverp:/oauth/callback?code=%20%20&state=$codeState&iss=https%3A%2F%2Fsso.example.test"),
+            )
+        }.exceptionOrNull() as SnaplinkAuthException
+        assertEquals("invalid_request", codeFailure.errorCode)
+        assertEquals(0, blankCode.transport.exchangeCount.get())
+    }
+
+    @Test
+    public fun callbackTransactionTtlUsesExactMillisecondBoundary(): Unit = runBlocking {
+        val exact = fixture()
+        val exactAuth = exact.client.beginAuthorization()
+        val exactState = query(exactAuth.toString()).getValue("state")
+        exact.clock.set(1_600_000)
+        assertEquals(
+            "access-initial",
+            exact.client.handleAuthorizationCallback(
+                URI("com.example.sverp:/oauth/callback?code=auth-code&state=$exactState&iss=https%3A%2F%2Fsso.example.test"),
+            ).accessToken,
+        )
+
+        val expired = fixture()
+        val expiredAuth = expired.client.beginAuthorization()
+        val expiredState = query(expiredAuth.toString()).getValue("state")
+        expired.clock.set(1_600_001)
+        val error = runCatching {
+            expired.client.handleAuthorizationCallback(
+                URI("com.example.sverp:/oauth/callback?code=auth-code&state=$expiredState&iss=https%3A%2F%2Fsso.example.test"),
+            )
+        }.exceptionOrNull() as SnaplinkAuthException
+        assertEquals("invalid_request", error.errorCode)
+        assertEquals(0, expired.transport.exchangeCount.get())
+    }
+
+    @Test
     public fun callbackExchangesCodeAndPersistsAccessToken(): Unit = runBlocking {
         val setup = fixture()
         val authorizationUrl = setup.client.beginAuthorization()
@@ -94,6 +145,34 @@ public class SnaplinkAuthClientTest {
         assertEquals("auth-code", setup.transport.lastCode)
         assertTrue((setup.transport.lastVerifier?.length ?: 0) >= 43)
         assertEquals("access-initial", setup.client.accessToken())
+    }
+
+    @Test
+    public fun sessionExpiryUsesWholeEpochSeconds(): Unit = runBlocking {
+        val setup = fixture()
+        setup.clock.addAndGet(750)
+        val authorization = setup.client.beginAuthorization()
+        val state = query(authorization.toString()).getValue("state")
+        val session = setup.client.handleAuthorizationCallback(
+            URI("com.example.sverp:/oauth/callback?code=auth-code&state=$state&iss=https%3A%2F%2Fsso.example.test"),
+        )
+        assertEquals(1_900L, session.expiresAtEpochSeconds)
+    }
+
+    @Test
+    public fun whitespaceOnlyAccessTokenIsRejected(): Unit = runBlocking {
+        val setup = fixture()
+        setup.transport.initialResponse = OAuthTokenResponse(" \t\n", "Bearer", 900, "refresh-1", "openid")
+        val authorization = setup.client.beginAuthorization()
+        val state = query(authorization.toString()).getValue("state")
+        val error = runCatching {
+            setup.client.handleAuthorizationCallback(
+                URI("com.example.sverp:/oauth/callback?code=auth-code&state=$state&iss=https%3A%2F%2Fsso.example.test"),
+            )
+        }.exceptionOrNull() as SnaplinkAuthException
+        assertEquals("invalid_response", error.errorCode)
+        assertEquals(1, setup.transport.exchangeCount.get())
+        assertEquals("login_required", (runCatching { setup.client.accessToken() }.exceptionOrNull() as SnaplinkAuthException).errorCode)
     }
 
     @Test
@@ -111,6 +190,29 @@ public class SnaplinkAuthClientTest {
         assertEquals("access-refreshed", first.await())
         assertEquals("access-refreshed", second.await())
         assertEquals(1, setup.transport.refreshCount.get())
+    }
+
+    @Test
+    public fun clearDropsLocalSessionAndPendingTransactionWithoutRevocation(): Unit = runBlocking {
+        val setup = fixture()
+        val firstAuthorization = setup.client.beginAuthorization()
+        val firstState = query(firstAuthorization.toString()).getValue("state")
+        setup.client.handleAuthorizationCallback(
+            URI("com.example.sverp:/oauth/callback?code=auth-code&state=$firstState&iss=https%3A%2F%2Fsso.example.test"),
+        )
+        val pendingAuthorization = setup.client.beginAuthorization()
+        val pendingState = query(pendingAuthorization.toString()).getValue("state")
+
+        setup.client.clear()
+        assertEquals(0, setup.transport.revokeCount.get())
+        assertEquals("login_required", (runCatching { setup.client.accessToken() }.exceptionOrNull() as SnaplinkAuthException).errorCode)
+        val callbackError = runCatching {
+            setup.client.handleAuthorizationCallback(
+                URI("com.example.sverp:/oauth/callback?code=auth-code&state=$pendingState&iss=https%3A%2F%2Fsso.example.test"),
+            )
+        }.exceptionOrNull() as SnaplinkAuthException
+        assertEquals("invalid_request", callbackError.errorCode)
+        assertEquals(1, setup.transport.exchangeCount.get())
     }
 
     @Test
@@ -263,6 +365,7 @@ public class SnaplinkAuthClientTest {
     private class FakeTransport : OAuthTransport {
         val exchangeCount = AtomicInteger()
         val refreshCount = AtomicInteger()
+        val revokeCount = AtomicInteger()
         var initialResponse = OAuthTokenResponse("access-initial", "Bearer", 900, "refresh-1", "openid")
         var lastCode: String? = null
         var lastVerifier: String? = null
@@ -295,6 +398,7 @@ public class SnaplinkAuthClientTest {
         }
 
         override suspend fun revoke(token: String, tokenTypeHint: String) {
+            revokeCount.incrementAndGet()
             assertEquals("refresh-1", token)
             assertEquals("refresh_token", tokenTypeHint)
             if (failRevoke) throw SnaplinkAuthException("network_error", "unavailable")

@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "snaplink-sso-android"
 include(":snaplink-sso")
+project(":snaplink-sso").projectDir = file("kotlin")
