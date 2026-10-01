@@ -155,12 +155,22 @@ class SDKVersionGateTests(unittest.TestCase):
         )
         self.assertEqual(list(NAMES), [package.name for package in report.packages])
 
+        # A package must carry a version unless its manifest format is one
+        # where the version lives elsewhere — SwiftPM derives it from the release
+        # tag. Deriving this from the format keeps the rule correct when another
+        # such package is added, instead of naming today's one.
+        tag_versioned = {
+            spec.id for spec in sdk_versions.MANIFEST_SPECS if spec.format == "swift"
+        }
+
         majors = set()
         for package in report.packages:
             if package.version is None:
-                # SwiftPM versions from the release tag, so there is no file to
-                # read a number from. The package is still audited by name.
-                self.assertEqual("swift", package.id)
+                self.assertIn(
+                    package.id,
+                    tag_versioned,
+                    f"{package.id} publishes to a registry but has no manifest version",
+                )
                 continue
             self.assertTrue(
                 sdk_versions.is_valid_semver(package.version),
