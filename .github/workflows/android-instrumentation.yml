@@ -1,0 +1,88 @@
+# The Android Keystore instrumentation test.
+#
+# This is the one Android SDK check that cannot run on the JVM: the code under
+# test asks Android Keystore for a hardware-backed key, and only a real device
+# or emulator answers that. It therefore needs nested virtualization, which
+# shared CI runners do not reliably provide, and the emulator action surfaces a
+# failed boot as a bare "adb could not connect to TCP port 5554" from its
+# teardown rather than as the boot error itself.
+#
+# So it runs here instead of in the per-push sdk-ci job. The coverage is not
+# reduced - the default job still builds, unit-tests and lints the SDK on every
+# push - but a test whose failure usually means "the runner had no KVM" is a
+# poor gate for every commit. This workflow covers main, and can be dispatched
+# on demand to re-run a suspect case. That is the same reasoning that keeps
+# bench-gate out of `make ci`.
+#
+# When this workflow fails, read the steps between "Install Android SDK" and
+# "Terminate Emulator": that is where the real cause is, and the teardown error
+# at the end is only the symptom.
+
+name: android-instrumentation
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: android-instrumentation-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: sdks
+
+jobs:
+  keystore:
+    name: Android Keystore instrumentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install the pinned Android SDK packages
+        # android-actions/setup-android@v3 installs a package named `tools` that
+        # Google's repository no longer publishes, so it fails immediately. The
+        # runner already ships the SDK; install what the build needs.
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager_bin="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          [[ -x "$sdkmanager_bin" ]] || sdkmanager_bin="$(command -v sdkmanager)"
+          yes | "$sdkmanager_bin" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager_bin" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          echo "$(dirname "$sdkmanager_bin")" >> "$GITHUB_PATH"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+      - name: Report the Android emulator prerequisites
+        # Checked explicitly so a runner without nested virtualization says so,
+        # rather than failing later as an opaque adb connection error.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -e /dev/kvm ]]; then
+            echo "::error::/dev/kvm is absent, so no Android emulator can run here."
+            exit 1
+          fi
+          echo "KVM present: $(ls -l /dev/kvm)"
+      - name: Run Android Keystore instrumentation test
+        # api-level 34 with the google_apis x86_64 image is the combination this
+        # test is verified against; the AVD is created with the `pixel` device
+        # profile, which avdmanager accepts as a valid id.
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel
+          disable-animations: true
+          emulator-boot-timeout: 900
+          script: ./gradlew :snaplink:connectedDebugAndroidTest

@@ -308,6 +308,28 @@ The Gradle workspace lives at `sdks/`. Kotlin package declarations remain
 flat `kotlin/main`, `kotlin/test`, and `kotlin/androidTest` source roots to fit
 the repository's directory-depth budget.
 
+The Keystore instrumentation test needs a real emulator, so it is not part of
+the per-push SDK job:
+
+```bash
+cd sdks
+./gradlew :snaplink:connectedDebugAndroidTest   # requires a running emulator
+```
+
+It runs in `.github/workflows/android-instrumentation.yml`, which covers `main`
+and can be dispatched on demand. The reason is infrastructure, not the SDK: an
+emulator requires nested virtualization that shared runners do not reliably
+provide, and the emulator action reports a failed boot as a bare adb connection
+error from its teardown. That makes it a poor gate on every push while still
+being a real signal when it runs.
+
+The publication set is verified separately, without publishing anything:
+
+```bash
+cd sdks
+./gradlew :snaplink:publishToMavenLocal
+```
+
 The unit suite covers PKCE construction, callback state/issuer binding, token
 exchange, concurrent refresh, local clear/logout cleanup, configuration
 validation, activation and the account context (both at the wire level through
