@@ -752,7 +752,7 @@ impl SnaplinkClient {
         Ok(())
     }
 
-    async fn request_json<T: DeserializeOwned>(
+    pub(crate) async fn request_json<T: DeserializeOwned>(
         &self,
         method: Method,
         url: impl Into<String>,

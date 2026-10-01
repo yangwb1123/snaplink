@@ -2,7 +2,7 @@
   "$schema": "./sdk-paradigm.schema.json",
   "schema_version": 1,
   "compatibility": {
-    "policy": "This registry is the single source of truth for the hand-written SDK layers (transport, session, entitlement, preferences, runtime). It covers what ops/build/sdk-surface.json deliberately does not: the operationId surface is generated for TypeScript and Python only, so the hosted-login and commercial-entitlement behaviour of every published SDK is reconciled here instead. The checker never infers a capability from source; every present entry names the exact file and symbol that provides it, and every missing entry names the wave that will add it. A capability declared as parity must be present in every language, so closing a gap means flipping an entry from missing to present with a real symbol, not relaxing the declaration. Capability entries are append-only in id; changing the file or symbol behind a present entry is a deliberate edit the diff gate can review, and dropping an id or downgrading parity from parity to divergent is a breaking change for the cross-language contract and requires a minor version bump plus a CHANGELOG entry. Adding a language id is allowed and must declare every existing capability for it. A language is onboarded only after it has been reviewed against the parity floor; a language still onboarding must declare every capability so its debt is reported rather than hidden, but is not held to parity until it is onboarded. This exists so a newly added SDK is neither able to fake a pass nor able to downgrade a capability to turn the gate green.",
+    "policy": "This registry is the single source of truth for the hand-written SDK layers (transport, session, entitlement, preferences, runtime). It covers what ops/build/sdk-surface.json deliberately does not: the operationId surface is generated for TypeScript and Python only, so the hosted-login and commercial-entitlement behaviour of every published SDK is reconciled here instead. The checker never infers a capability from source; every present entry names the exact file and symbol that provides it, and every missing entry names the wave that will add it. A capability declared as parity must be present in every language, so closing a gap means flipping an entry from missing to present with a real symbol, not relaxing the declaration. Capability entries are append-only in id; changing the file or symbol behind a present entry is a deliberate edit the diff gate can review, and dropping an id or downgrading parity from parity to divergent is a breaking change for the cross-language contract and requires a minor version bump plus a CHANGELOG entry. Adding a language id is allowed and must declare every existing capability for it. A language is onboarded only after it has been reviewed against the parity floor; a language still onboarding must declare every capability so its debt is reported rather than hidden, but is not held to parity until it is onboarded. This exists so a newly added SDK is neither able to fake a pass nor able to downgrade a capability to turn the gate green. A capability may only become present in a language by implementing it in that language's SDK, never by a consumer reaching past the SDK to call the endpoint itself.",
     "languages": [
       {
         "id": "typescript",
@@ -716,6 +716,50 @@
           "status": "present",
           "file": "sdks/swift/Sources/SnaplinkAuthClient.swift",
           "symbol": "public func accessToken() async throws -> String"
+        }
+      }
+    },
+    {
+      "id": "session.authorization",
+      "layer": "session",
+      "summary": "Identity, permissions, roles, and the menu tree are read through one typed call, and the permission-holding rule is implemented once by the SDK. A consumer that re-implements the rule will eventually disagree with the server and either hide a control it would grant or show one it would deny.",
+      "parity": "divergent",
+      "languages": {
+        "rust": {
+          "status": "present",
+          "file": "sdks/rust/src/authorization.rs",
+          "symbol": "pub async fn authorize(",
+          "note": "W6: Authorization assembles /userinfo, /permissions/me, /roles/me and /menus/me. holds() mirrors domains/permissions/matcher.go exactly: domain:* is a PREFIX rule and a bare * is global."
+        },
+        "typescript": {
+          "status": "missing",
+          "note": "The generated client exposes the four calls but no assembled view, and no shared permission rule.",
+          "plan": "W5: add an assembled authorization view and the shared rule when the generator covers it."
+        },
+        "python": {
+          "status": "missing",
+          "note": "The generated client exposes the four calls but no assembled view.",
+          "plan": "W5: add an assembled authorization view and the shared rule."
+        },
+        "php": {
+          "status": "missing",
+          "note": "No generated client and no assembled view.",
+          "plan": "W5: add an assembled authorization view and the shared rule."
+        },
+        "go": {
+          "status": "missing",
+          "note": "interfaces/ssoclient exists but has no assembled authorization view.",
+          "plan": "W5: add an assembled authorization view and the shared rule."
+        },
+        "kotlin": {
+          "status": "missing",
+          "note": "No permission or menu read at all.",
+          "plan": "Onboarding: add the assembled authorization read."
+        },
+        "swift": {
+          "status": "missing",
+          "note": "No permission or menu read at all.",
+          "plan": "Onboarding: add the assembled authorization read."
         }
       }
     }

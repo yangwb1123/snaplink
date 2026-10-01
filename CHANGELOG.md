@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Rust SDK: `SnaplinkClient::authorize(client_id)` and the `Authorization`,
+  `MenuNode`, `MenuButton`, and `holds` types in `sdks/rust/src/authorization.rs`.
+  One call reads identity from `/userinfo` plus the `/permissions/me`,
+  `/roles/me`, and `/menus/me` projections, so a consumer does not hand-roll an
+  authorization read or re-implement the permission rule. `holds` mirrors
+  `domains/permissions/matcher.go` exactly: an exact match grants, `domain:*` is a
+  **prefix** rule so `a:*` grants `a:b:c`, and a bare `*` is global including for a
+  single-segment code. `Authorization` is assembled rather than decoded, so it is
+  `Serialize` but deliberately not `Deserialize`: no single wire document has
+  that shape, and parsing one would let a caller read a response the server never
+  sent. `client_id` is required rather than defaulted because one subject can hold
+  different grants per application and guessing would read the wrong set. Pinned by
+  the new `ops/build/sdk-conformance/authorization.json` and registered as
+  `session.authorization` in the paradigm registry.
 - TypeScript SDK: a resource-server surface, so a TypeScript or Deno service can
   validate the access tokens this server minted instead of trusting whatever
   bearer arrives at its door. `createJWKSCache` (ETag revalidation, jittered

@@ -35,7 +35,13 @@ CONFORMANCE_DIR_RELATIVE_PATH = Path("ops/build/sdk-conformance")
 KNOWN_LAYERS = {"transport", "session", "entitlement", "preferences", "runtime"}
 KNOWN_STATUSES = {"present", "missing"}
 KNOWN_PARITIES = {"parity", "divergent"}
-REQUIRED_CONFORMANCE_FILES = ("entitlement.json", "errors.json", "transport.json", "license_file.json")
+REQUIRED_CONFORMANCE_FILES = (
+    "entitlement.json",
+    "errors.json",
+    "transport.json",
+    "license_file.json",
+    "authorization.json",
+)
 EXPECTED_SCHEMA_HEADER = "https://json-schema.org/draft/2020-12/schema"
 
 

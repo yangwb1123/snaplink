@@ -5,6 +5,7 @@
 //! code with S256 PKCE. A web framework only needs to issue the redirect and
 //! pass the callback URL back to this client; no BFF is required.
 
+mod authorization;
 mod entitlement;
 mod error;
 mod license_file;
@@ -23,6 +24,7 @@ mod transport;
 /// prefix keeps it out of the server vocabulary in `docs/error-codes.md`.
 pub const UNCLASSIFIED_ERROR: &str = "sdk_response_unclassified";
 
+pub use authorization::{holds, Authorization, MenuButton, MenuNode};
 pub use entitlement::{
     unix_now, Entitlement, Feature, InactiveReason, LicenseState, Limit, LimitGrant, PlanRef,
 };

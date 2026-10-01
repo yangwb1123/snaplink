@@ -1,0 +1,153 @@
+{
+  "$comment": "Shared authorization-conformance fixture. Covers the permission-holding rule and the authorization shape, so every SDK applies the same decision. A consumer that re-implements `allows` instead of using the SDK's is the failure this fixture exists to prevent: two implementations disagreeing about whether `panel:*` grants `panel:read` is an authorization bug, not a style difference.",
+  "schema_version": 1,
+  "rule": {
+    "summary": "An exact match grants. `domain:*` is a PREFIX rule: it grants every permission starting with `domain:`. A bare `*` grants everything, including a single-segment code. An empty requirement is always granted.",
+    "mirrors": "domains/permissions/matcher.go Matches(). A client rule that disagrees with the server is a display bug at best and a false sense of safety at worst.",
+    "why_prefix_not_exact": "`a:*` grants `a:b:c`, because the server compares the `domain:` prefix. Treating it as an exact pair match would hide controls the server does grant.",
+    "why_bare_star_is_everything": "The server treats `*` as a global wildcard. A client that denied on `*` would refuse to show what the server allows."
+  },
+  "cases": [
+    {
+      "id": "exact_match",
+      "held": [
+        "panel:read",
+        "panel:config:apply"
+      ],
+      "required": "panel:read",
+      "expect": true
+    },
+    {
+      "id": "absent_permission_is_denied",
+      "held": [
+        "panel:read"
+      ],
+      "required": "panel:config:write",
+      "expect": false
+    },
+    {
+      "id": "domain_wildcard_covers_a_narrower_permission",
+      "held": [
+        "panel:*"
+      ],
+      "required": "panel:config:apply",
+      "expect": true,
+      "why": "The ordinary case a panel depends on."
+    },
+    {
+      "id": "domain_wildcard_does_not_cross_domains",
+      "held": [
+        "panel:*"
+      ],
+      "required": "billing:read",
+      "expect": false
+    },
+    {
+      "id": "domain_wildcard_does_not_match_a_similar_looking_domain",
+      "held": [
+        "panel:*"
+      ],
+      "required": "panelx:read",
+      "expect": false,
+      "why": "The prefix includes the colon, so panel:* cannot reach panelx:."
+    },
+    {
+      "id": "domain_wildcard_is_a_prefix_rule",
+      "held": [
+        "a:*"
+      ],
+      "required": "a:b:c",
+      "expect": true,
+      "why": "The server compares the domain: prefix, so a deeper permission is covered."
+    },
+    {
+      "id": "nested_domain_wildcard_covers_its_own_children",
+      "held": [
+        "a:b:*"
+      ],
+      "required": "a:b:c",
+      "expect": true
+    },
+    {
+      "id": "a_bare_star_grants_everything",
+      "held": [
+        "*"
+      ],
+      "required": "panel:read",
+      "expect": true,
+      "why": "The server treats a bare * as a global wildcard."
+    },
+    {
+      "id": "a_bare_star_grants_an_unqualified_permission",
+      "held": [
+        "*"
+      ],
+      "required": "superuser",
+      "expect": true,
+      "why": "The server's global wildcard matches even a single-segment code."
+    },
+    {
+      "id": "an_unqualified_permission_is_exact_only",
+      "held": [
+        "superuser"
+      ],
+      "required": "superuser",
+      "expect": true
+    },
+    {
+      "id": "an_unqualified_permission_is_never_a_prefix",
+      "held": [
+        "superuser"
+      ],
+      "required": "superuser:read",
+      "expect": false,
+      "why": "Without the :* suffix the server compares the code exactly."
+    },
+    {
+      "id": "an_empty_requirement_is_always_granted",
+      "held": [],
+      "required": "",
+      "expect": true
+    },
+    {
+      "id": "an_empty_grant_set_denies_everything",
+      "held": [],
+      "required": "panel:read",
+      "expect": false
+    }
+  ],
+  "authorization_shape": {
+    "summary": "The fields every SDK's authorization read must be able to produce. A missing optional field is absent, never defaulted to a value that grants something.",
+    "required": [
+      "subject"
+    ],
+    "optional": [
+      "email",
+      "name",
+      "roles",
+      "permissions",
+      "menus"
+    ],
+    "menu_node": {
+      "required": [
+        "id",
+        "name"
+      ],
+      "optional": [
+        "path",
+        "icon",
+        "permission",
+        "buttons",
+        "children"
+      ],
+      "rule": "An empty `permission` on a node or button means always shown; it must not be treated as a permission code that fails to match."
+    }
+  },
+  "invariants": [
+    "The server decides; this rule only decides what the client shows or hides.",
+    "A client-side allow that disagrees with the server is a display bug at best and a false sense of safety at worst.",
+    "Identity comes from the validated bearer, never from anything the caller supplied.",
+    "An unknown permission code is denied, never treated as a wildcard.",
+    "Menus are a convenience for navigation and are not an authorization surface."
+  ]
+}
