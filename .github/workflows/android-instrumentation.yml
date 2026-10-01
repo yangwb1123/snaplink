@@ -78,11 +78,15 @@ jobs:
         # test is verified against; the AVD is created with the `pixel` device
         # profile, which avdmanager accepts as a valid id.
         #
-        # The script runs in this action's own working directory, which defaults
-        # to the repository root - and the Gradle wrapper lives in sdks/, not at
-        # the root. The workflow-level `defaults.run.working-directory` does not
-        # reach a script executed inside an action, so the location is set here
-        # explicitly rather than inherited.
+        # The script is a repository script rather than an inline gradle command
+        # for two reasons. A freshly booted emulator can report
+        # sys.boot_completed=1 before the package manager answers, and installing
+        # the test APK into that window fails with "Can't find service: package"
+        # - reported as "Starting 0 tests", which reads as a test failure rather
+        # than a race; the script polls the device and names the cause if it never
+        # becomes ready. And the script locates the Gradle workspace itself, so
+        # the action's working directory cannot reintroduce the "gradlew: not
+        # found" failure that a bare inline command produced.
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -91,5 +95,4 @@ jobs:
           profile: pixel
           disable-animations: true
           emulator-boot-timeout: 900
-          working-directory: sdks
-          script: ./gradlew :snaplink:connectedDebugAndroidTest
+          script: ops/scripts/android-instrumentation.sh
