@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- TypeScript SDK: a resource-server surface, so a TypeScript or Deno service can
+  validate the access tokens this server minted instead of trusting whatever
+  bearer arrives at its door. `createJWKSCache` (ETag revalidation, jittered
+  background refresh, unknown-`kid` rotation fetch, singleflight collapse, and a
+  failed refresh that keeps the published keys) plus `validateToken`,
+  `validateTokenWithIntrospect`, `validateTokenByMode`, `rsMiddleware`, the
+  `RSClaims` projection and the `checkScope`/`checkAnyScope`/`requireSubject`
+  helpers. The gate order, the anti-oracle error collapses and the RFC 6750
+  challenges mirror Go `interfaces/ssoclient/rs`; RFC 9449 DPoP proof
+  verification and RFC 8705 mTLS sender-constraints are NOT implemented, because
+  WebCrypto cannot read the peer certificate — a `DPoP`-scheme request is
+  refused rather than downgraded. EdDSA needs an injected `eddsaVerify`; every
+  other asymmetric alg in the server's set imports natively. Published as 0.4.0.
+
+### Fixed
+- TypeScript SDK: `preferences.ts`, `entitlement.ts` and `license-file.ts` were
+  missing from the `tsconfig.json` include list, so `npm run typecheck` and
+  `npm run build` never covered them, and from the `package.json` files list, so
+  the published tarball shipped an `index.js` that re-exported three modules
+  whose sources were absent.
+- TypeScript SDK: `browser-login.ts` read `globalThis.history` directly, which
+  does not type-check under a non-DOM lib (Deno, Node) even though it is correct
+  at runtime; a Deno consumer type-checking the SDK hit TS7017.
+
 ### Changed
 - Rust SDK: `AccountContext::entitlement` changed from
   `Option<serde_json::Value>` to `Option<Entitlement>`, and

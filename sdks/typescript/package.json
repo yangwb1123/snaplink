@@ -1,6 +1,6 @@
 {
   "name": "@snaplink/sso",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "TypeScript SDK for the snaplink/sso HTTP API and hosted-login redirects.",
   "license": "Apache-2.0",
   "type": "module",

@@ -34,11 +34,13 @@ function jwksServer() {
     fetch: async (_url, init) => {
       state.calls += 1;
       state.lastIfNoneMatch = init?.headers?.["if-none-match"];
-      if (init?.headers?.["if-none-match"] === state.etag) {
-        return new Response(null, { status: 304, headers: { etag: state.etag } });
-      }
+      // A failing server answers with its status, not a 304 — check it first so
+      // an outage is not masked by a still-valid ETag.
       if (state.status !== 200) {
         return new Response("nope", { status: state.status });
+      }
+      if (init?.headers?.["if-none-match"] === state.etag) {
+        return new Response(null, { status: 304, headers: { etag: state.etag } });
       }
       return new Response(JSON.stringify({ keys: state.keys }), {
         status: 200,
@@ -115,12 +117,26 @@ test("concurrent misses collapse into a single round-trip", async () => {
   const results = await Promise.all([
     cache.getJWK("k1"),
     cache.getJWK("k1"),
-    cache.getJWK("k2"),
+    cache.getJWK("k1"),
     cache.getJWK("k1"),
   ]);
 
   assert.equal(server.state.calls, 1);
   assert.ok(results.every((key) => key && key.kid === "k1"));
+  cache.close();
+});
+
+test("a concurrent miss for an unpublished kid stays a miss without a second fetch", async () => {
+  const server = jwksServer();
+  const cache = cacheFor(server.fetch);
+
+  const [present, absent] = await Promise.all([cache.getJWK("k1"), cache.getJWK("k2")]);
+
+  // Both ride the one round-trip the first caller started; the unpublished kid
+  // is still reported as a miss rather than as a fetch of its own.
+  assert.equal(server.state.calls, 1);
+  assert.equal(present.kid, "k1");
+  assert.equal(absent, undefined);
   cache.close();
 });
 

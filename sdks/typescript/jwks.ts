@@ -19,8 +19,21 @@
 // `resource-server.ts` owns the verification itself; this module only turns a
 // JWKS document into `CryptoKey`s.
 
-/** A single JSON Web Key, projected to the members verification needs. */
-export interface JWK {
+// `FetchLike` is the generated client's own transport type, reused rather than
+// redeclared so a caller can pass one `fetch` to both halves of the SDK.
+import type { FetchLike } from "./client.js";
+
+export type { FetchLike };
+
+/**
+ * A JSON Web Key carrying the material verification needs.
+ *
+ * Distinct from the generated `JWK` wire projection in `client.ts`: that one
+ * describes what the JWKS document *advertises* (a `kid`, a `use`, an EC `x`),
+ * while this one is the superset an RS actually imports, adding the RSA `n`/`e`
+ * and OKP `k` members.
+ */
+export interface RSJWK {
   kty: string;
   kid?: string;
   use?: string;
@@ -39,8 +52,8 @@ export interface JWK {
 }
 
 /** A JWKS document as served at `/.well-known/jwks.json`. */
-export interface JWKS {
-  keys: JWK[];
+export interface RSJWKS {
+  keys: RSJWK[];
 }
 
 /** Why a key could not be produced. Callers must not distinguish these to a
@@ -64,7 +77,7 @@ export class JWKSCacheError extends Error {
 }
 
 /** Injected transport, so a test or a Deno/Bun/Node host can supply its own. */
-export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+export type JWKSCacheFetch = FetchLike;
 
 /**
  * An EdDSA verifier for runtimes whose WebCrypto has no Ed25519.
@@ -75,14 +88,14 @@ export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
  * `LicenseVerifier` in `license-file.ts`.
  */
 export type EdDSASigner = (params: {
-  publicKey: JWK;
+  publicKey: RSJWK;
   message: Uint8Array;
   signature: Uint8Array;
 }) => Promise<boolean>;
 
 export interface JWKSCacheOptions {
   /** Transport for the JWKS document. Defaults to global `fetch`. */
-  fetch?: FetchLike;
+  fetch?: JWKSCacheFetch;
   /** Minimum age before a cached document is revalidated. Default 300_000ms. */
   minRefreshIntervalMs?: number;
   /** Background refresh cadence; 0 disables it. Default 1_800_000ms. */
@@ -109,7 +122,7 @@ export interface JWKSCache {
    * absent key resolves `undefined` rather than rejecting: "no such key" and
    * "bad signature" must be indistinguishable to a token holder.
    */
-  getJWK(kid: string): Promise<JWK | undefined>;
+  getJWK(kid: string): Promise<RSJWK | undefined>;
   /** Re-fetch now, honoring ETag. Resolves false when the server answered 304. */
   refresh(): Promise<boolean>;
   /** Stop the background refresher. Safe to call more than once. */
@@ -136,28 +149,23 @@ const DEFAULT_REFRESH_MS = 1_800_000;
 const DEFAULT_COOLDOWN_MS = 30_000;
 
 /** RFC 7515 §2 base64url decode — no padding, no `+`/`/`. */
-export function base64UrlToBytes(encoded: string): Uint8Array {
+export function base64UrlToBytes(encoded: string): Uint8Array<ArrayBuffer> {
   const padded = encoded.replace(/-/g, "+").replace(/_/g, "/");
   const binary = atob(padded.padEnd(padded.length + ((4 - (padded.length % 4)) % 4), "="));
-  const bytes = new Uint8Array(binary.length);
+  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
 }
 
-/** The WebCrypto parameters for one JWS alg. Throws for anything asymmetric
- * that this module does not import. */
-function webCryptoParams(alg: string): {
-  name: string;
-  hash: string;
-  namedCurve?: string;
-  saltLength?: number;
-} {
+/** The WebCrypto import parameters for one JWS alg. Throws for anything
+ * asymmetric that this module does not import. */
+function webCryptoParams(alg: string): RsaHashedImportParams | EcKeyImportParams {
   switch (alg) {
     case "RS256":
       return { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
     case "PS256":
       // RFC 7518 §3.5: the salt length equals the hash output length.
-      return { name: "RSA-PSS", hash: "SHA-256", saltLength: 32 };
+      return { name: "RSA-PSS", hash: "SHA-256", saltLength: 32 } as RsaHashedImportParams;
     case "ES256":
       return { name: "ECDSA", namedCurve: "P-256", hash: "SHA-256" };
     case "ES384":
@@ -170,9 +178,10 @@ function webCryptoParams(alg: string): {
   }
 }
 
-/** Import a JWK for `alg`, or return undefined for the injected EdDSA alg. */
+/** Import a key for `alg`, or return the literal `"eddsa"` when the alg is
+ * EdDSA, whose verification is delegated to the injected signer. */
 async function importVerificationKey(
-  jwk: JWK,
+  jwk: RSJWK,
   alg: string,
   cache: JWKSCacheOptions,
 ): Promise<CryptoKey | "eddsa"> {
@@ -185,15 +194,9 @@ async function importVerificationKey(
     }
     return "eddsa";
   }
-  const params = webCryptoParams(alg);
-  const material: RsaHashedImportParams | EcKeyImportParams = {
-    name: params.name,
-    hash: params.hash,
-  } as RsaHashedImportParams;
-  if (params.namedCurve) (material as EcKeyImportParams).namedCurve = params.namedCurve;
-  if (params.saltLength) (material as RsaHashedImportParams).saltLength = params.saltLength;
-  const key = jwk.kty === "EC" ? jwk.x : jwk.n;
-  if (!key) {
+  const material = webCryptoParams(alg);
+  const encoded = jwk.kty === "EC" ? jwk.x : jwk.n;
+  if (!encoded) {
     throw new JWKSCacheError("jwks_key_malformed", `kty ${jwk.kty} has no key material`);
   }
   try {
@@ -218,7 +221,7 @@ export function createJWKSCache(url: string, options: JWKSCacheOptions = {}): JW
   const schedule = options.scheduleTimeout ?? ((handler, ms) => setTimeout(handler, ms));
   const cancel = options.cancelTimeout ?? ((handle) => clearTimeout(handle as number));
 
-  let published: Map<string, JWK> = new Map();
+  let published: Map<string, RSJWK> = new Map();
   let etag: string | undefined;
   let lastFetchAt = 0;
   let lastMissFetchAt = 0;
@@ -241,16 +244,16 @@ export function createJWKSCache(url: string, options: JWKSCacheOptions = {}): JW
     if (!response.ok) {
       throw new JWKSCacheError("jwks_fetch_failed", `${url}: status ${response.status}`);
     }
-    let document: JWKS;
+    let document: RSJWKS;
     try {
-      document = (await response.json()) as JWKS;
+      document = (await response.json()) as RSJWKS;
     } catch (cause) {
       throw new JWKSCacheError("jwks_document_malformed", `${url}: ${String(cause)}`);
     }
     if (!document || !Array.isArray(document.keys)) {
       throw new JWKSCacheError("jwks_document_malformed", `${url}: no keys array`);
     }
-    const next = new Map<string, JWK>();
+    const next = new Map<string, RSJWK>();
     for (const key of document.keys) {
       if (key && typeof key.kid === "string" && key.kid !== "") next.set(key.kid, key);
     }
@@ -275,24 +278,59 @@ export function createJWKSCache(url: string, options: JWKSCacheOptions = {}): JW
   }
 
   const cache: JWKSCache = {
-    async getJWK(kid: string): Promise<JWK | undefined> {
+    async getJWK(kid: string): Promise<RSJWK | undefined> {
       if (kid === "") return undefined;
-      let found = published.get(kid);
-      if (found) return found;
-      const since = now() - lastMissFetchAt;
-      const stale = lastFetchAt === 0 || now() - lastFetchAt >= minRefreshMs;
-      if (since >= cooldownMs && (stale || lastMissFetchAt === 0)) {
-        lastMissFetchAt = now();
+      const found = published.get(kid);
+      if (found) {
+        // Revalidate a stale document at most once per minRefreshIntervalMs so a
+        // long-lived process keeps its key set fresh even with no background
+        // timer. The server answers 304, so this costs a conditional request
+        // and no body.
+        const age = now() - lastFetchAt;
+        if (lastFetchAt === 0 || age >= minRefreshMs) {
+          try {
+            await refresh();
+          } catch {
+            /* keep the published keys and serve the hit */
+          }
+          return published.get(kid);
+        }
+        return found;
+      }
+
+      // Another caller already started a refresh: await it rather than
+      // reporting a miss, so a rotation burst resolves for everyone from the
+      // single round-trip already in progress.
+      if (inFlight) {
         try {
-          await refresh();
-          found = published.get(kid);
+          await inFlight;
         } catch {
-          // A refresh failure keeps the previously published keys. The miss
-          // stays a miss; the caller reports the signature class, not this.
           return undefined;
         }
+        return published.get(kid);
       }
-      return published.get(kid);
+
+      // The cooldown is the ONLY gate on a miss-triggered fetch: once it has
+      // elapsed, a miss may revalidate whatever the document's age, because a
+      // missing kid is the normal signature of rotation.
+      if (lastMissFetchAt !== 0 && now() - lastMissFetchAt < cooldownMs) {
+        return undefined;
+      }
+
+      lastMissFetchAt = now();
+      try {
+        await refresh();
+      } catch {
+        // A refresh failure keeps the previously published keys. The miss stays
+        // a miss; the caller reports the signature class, not this.
+        return undefined;
+      }
+      const hit = published.get(kid);
+      // The cooldown damps repeated misses, it does not penalize a rotation
+      // that just resolved: a fetch that produced the requested key releases the
+      // window so the next genuine rotation is served at once.
+      if (hit) lastMissFetchAt = 0;
+      return hit;
     },
 
     refresh,
@@ -325,7 +363,7 @@ export function createJWKSCache(url: string, options: JWKSCacheOptions = {}): JW
   return cache;
 }
 
-export type { JWKSCacheOptions as JWKSOptions, JWKS as JWKSDocument };
+export type { JWKSCacheOptions as JWKSOptions, RSJWKS as JWKSDocument };
 
 /**
  * Import a JWK for signature verification under `alg`.

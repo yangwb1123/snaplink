@@ -800,7 +800,11 @@ function browserLocation(): SnaplinkLocation {
 }
 
 function browserHistory(): SnaplinkHistory | undefined {
-  const value = globalThis.history;
+  // Read through a narrowed alias rather than `globalThis.history`: in a
+  // non-DOM lib the global has no index signature, so a direct property read
+  // fails to type-check under Deno/Node even though it is correct at runtime.
+  const scope = globalThis as unknown as { history?: SnaplinkHistory };
+  const value = scope.history;
   return value && typeof value.replaceState === "function" ? value : undefined;
 }
 

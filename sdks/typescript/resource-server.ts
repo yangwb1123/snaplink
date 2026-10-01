@@ -40,9 +40,9 @@ import {
   importVerificationKey,
   JWKSCacheError,
   type EdDSASigner,
-  type JWK,
-  type JWKSCache,
   type FetchLike,
+  type JWKSCache,
+  type RSJWK,
 } from "./jwks.js";
 
 /** RFC 9068 §2.1 access-token JOSE `typ` values, short and full spelling. */
@@ -212,7 +212,7 @@ function skewSeconds(config: RSConfig): number {
   return configured > 0 ? configured : DEFAULT_MAX_CLOCK_SKEW_SEC;
 }
 
-function decodeSegment(segment: string, what: string): Uint8Array {
+function decodeSegment(segment: string, what: string): Uint8Array<ArrayBuffer> {
   try {
     return base64UrlToBytes(segment);
   } catch (cause) {
@@ -317,8 +317,8 @@ async function verifySignature(
   token: string,
   header: { alg: string; kid: string; typ: string },
   config: RSConfig,
-  jwk: JWK,
-): Promise<Uint8Array> {
+  jwk: RSJWK,
+): Promise<Uint8Array<ArrayBuffer>> {
   const parts = token.split(".");
   const signingInput = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
   const signature = decodeSegment(parts[2], "signature");
@@ -343,14 +343,18 @@ async function verifySignature(
   if (key === "eddsa") {
     throw new RSError("rs_signature_invalid", "unexpected eddsa key for a non-EdDSA alg");
   }
-  const params: RsaPssParams | EcdsaParams | Algorithm =
-    header.alg === "PS256"
-      ? { name: "RSA-PSS", saltLength: 32 }
-      : header.alg.startsWith("ES")
-        ? { name: "ECDSA", hash: ecdsaHash(header.alg) }
-        : "RSASSA-PKCS1-v1_5";
-  const ok = await crypto.subtle.verify(params, key, signature, signingInput);
-  if (!ok) throw new RSError("rs_signature_invalid", "signature did not verify");
+  // One branch per alg family, so the WebCrypto parameters are a literal rather
+  // than a widened union: PS256 needs its salt length, ES* its curve hash, and
+  // the RS* family takes the bare algorithm name.
+  let verified: boolean;
+  if (header.alg === "PS256") {
+    verified = await crypto.subtle.verify({ name: "RSA-PSS", saltLength: 32 }, key, signature, signingInput);
+  } else if (header.alg.startsWith("ES")) {
+    verified = await crypto.subtle.verify({ name: "ECDSA", hash: ecdsaHash(header.alg) }, key, signature, signingInput);
+  } else {
+    verified = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, signingInput);
+  }
+  if (!verified) throw new RSError("rs_signature_invalid", "signature did not verify");
   return decodeSegment(parts[1], "payload");
 }
 

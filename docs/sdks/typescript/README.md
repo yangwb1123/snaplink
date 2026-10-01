@@ -88,6 +88,92 @@ Usage below.
   client rejects it with an `invalid_request` error rather than
   sending it (use the flat `code`/`assertion` fields instead).
 
+## Resource-server use: validating this server's tokens
+
+Everything above is the **client** side: your service calls Snaplink. A service
+that *holds* an access token it did not mint — an API gateway, a webhook
+receiver, a resource server validating the console's bearer — needs the other
+side, exported from `jwks.ts` and `resource-server.ts`.
+
+The gate order is the same as the Go `interfaces/ssoclient/rs` and is
+load-bearing: `typ` (RFC 9068 §4) is checked **before** any signature work, the
+key is resolved by `kid` and verified alone, and claims are read only from a
+payload whose signature already verified.
+
+```ts
+import { createJWKSCache, issuerJwksUrl, rsMiddleware } from "@snaplink/sso";
+
+const jwks = createJWKSCache(issuerJwksUrl("https://sso.example.com"));
+
+const guarded = rsMiddleware(
+  { issuer: "https://sso.example.com", jwks, expectedAud: "domain-panel-api" },
+  (request, claims) =>
+    Response.json({ sub: claims.subject, scopes: claims.scopes() }),
+);
+```
+
+`rsMiddleware` is a Fetch-API `Request -> Response` pair, so it serves Deno, Bun,
+Node 18+, and edge runtimes directly. Pass the claims on as the handler's
+second argument — the incoming `Request` is never mutated.
+
+For a handler that is not a whole request pipeline, call the validator yourself:
+
+```ts
+import { checkScope, requireSubject, validateToken, RSError } from "@snaplink/sso";
+
+try {
+  const claims = await validateToken(token, { issuer, jwks, expectedAud: "domain-panel-api" });
+  checkScope(claims, "domain:write");
+  const user = requireSubject(claims); // rejects a machine token with no sub
+} catch (failure) {
+  if (failure instanceof RSError && failure.code === "rs_token_expired") { /* ... */ }
+}
+```
+
+### Two validation modes
+
+| Function | Authorization server on the hot path | Revocation |
+|---|---|---|
+| `validateToken` | no — local JWS against the cached JWKS | not visible before natural expiry |
+| `validateTokenWithIntrospect` | yes — one RFC 7662 round-trip | visible immediately |
+| `validateTokenByMode` | picks by whether `introspectUrl` is set | — |
+
+`rs_introspection_failed` (endpoint down) is deliberately distinct from
+`rs_token_inactive` (revoked), so a caller can fail open on an authorization
+server outage if that is the deployment's choice.
+
+### The JWKS cache
+
+`createJWKSCache` does what Go's `remote.JWKSCache` does: ETag/`If-None-Match`
+revalidation, a jittered background refresh, an unknown `kid` triggering one
+immediate fetch, concurrent fetches collapsing into one round-trip, and — the
+one that matters in production — **a failed refresh keeping the previously
+published keys**, so a transient outage cannot turn every in-flight request into
+a signature failure.
+
+Share one cache per issuer across every consumer, and call `close()` on
+shutdown to stop the refresher.
+
+### Known limitations
+
+These are honest gaps against Go `interfaces/ssoclient/rs`, not oversights:
+
+- **No RFC 9449 DPoP proof verification.** A `DPoP`-scheme request is
+  *refused* (`extractToken` throws) rather than silently downgraded to bearer.
+  `RSClaims.cnfJkt` is projected so a caller can detect a sender-constrained
+  token and decide explicitly.
+- **No RFC 8705 mTLS sender-constraint validation.** WebCrypto has no access to
+  the peer certificate, so a certificate-bound token (`cnf.x5t#S256`) cannot be
+  validated in this runtime family.
+- **EdDSA needs an injected verifier.** `RS256`, `PS256`, and `ES256/384/512`
+  import natively from WebCrypto; `EdDSA` requires the `eddsaVerify` option
+  because Ed25519 support in WebCrypto is still uneven. `none` and every `HS*`
+  alg are refused even when the caller allowlists them.
+- **Not in the paradigm registry.** `ops/build/sdk-paradigm.json` tracks the
+  hand-written layers as `transport`, `session`, `entitlement`, `preferences`,
+  and `runtime`; this surface has no layer there yet, so a registry change is
+  needed before it is gated for cross-SDK parity.
+
 ## Usage
 
 ### One-call browser login without a BFF
