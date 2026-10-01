@@ -21,7 +21,9 @@ VERSIONS = ("0.3.0", "0.3.0", "0.3.0", "0.3.0", "0.3.0", "")
 #: What the committed manifests actually say. Rust is ahead at 0.4.0 because it
 #: took a breaking change (async transport); the others are 0.3.0 with additive
 #: changes only, which the train rule permits.
-REPOSITORY_VERSIONS = ("0.3.0", "0.3.0", "0.4.0", "0.3.0", "0.3.0", "")
+# Swift and Go report no version: both derive it from the release tag, so the
+# gate checks their name and leaves the version unavailable.
+REPOSITORY_VERSIONS = ("0.3.0", "0.3.0", "0.4.0", "0.3.0", "0.3.0", "", "")
 NAMES = (
     "@snaplink/sso",
     "snaplink-sso",
@@ -29,6 +31,7 @@ NAMES = (
     "snaplink/sso",
     "site.ywbsd.sso:snaplink",
     "SnaplinkSSO",
+    "github.com/yangwb1123/snaplink/sdks/go",
 )
 
 
@@ -43,7 +46,8 @@ def _write_fixtures(
     versions: tuple[str, ...] = VERSIONS,
     lock_version: str | None = None,
 ) -> None:
-    ts_version, py_version, rust_version, php_version, kotlin_version, _ = versions
+    # Swift and Go take no version from a manifest; their slots are ignored.
+    ts_version, py_version, rust_version, php_version, kotlin_version = versions[:5]
     lock_version = lock_version or ts_version
     _write(
         root,
@@ -133,6 +137,16 @@ let package = Package(
 )
 ''',
     )
+    # The Go client SDK is a nested module. It reports no version for the same
+    # reason Swift does: the go command resolves the version from the tag.
+    _write(
+        root,
+        "sdks/go/go.mod",
+        """module github.com/yangwb1123/snaplink/sdks/go
+
+go 1.26.1
+""",
+    )
 
 
 def _package(report: sdk_versions.VersionReport, package_id: str) -> sdk_versions.PackageVersion:
@@ -211,7 +225,7 @@ class SDKVersionGateTests(unittest.TestCase):
         self.assertFalse(sdk_versions.is_valid_semver("0.3"))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            _write_fixtures(root, versions=("1.2.3-alpha.1+build.5",) * 5 + ("",))
+            _write_fixtures(root, versions=("1.2.3-alpha.1+build.5",) * 5 + ("", ""))
             report = sdk_versions.load_version_report(root)
         self.assertTrue(report.ok)
 
@@ -234,7 +248,7 @@ class SDKVersionGateTests(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            _write_fixtures(root, versions=("0.3.0", "0.3.0", "0.4.0", "0.3.0", "0.3.0", ""))
+            _write_fixtures(root, versions=("0.3.0", "0.3.0", "0.4.0", "0.3.0", "0.3.0", "", ""))
             report = sdk_versions.load_version_report(root)
         self.assertTrue(report.ok, report.failure_message())
         output = sdk_versions.format_version_report(report)
@@ -245,7 +259,7 @@ class SDKVersionGateTests(unittest.TestCase):
         """A package left on a different major is a broken release train."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            _write_fixtures(root, versions=("0.3.0", "0.3.0", "1.0.0", "0.3.0", "0.3.0", ""))
+            _write_fixtures(root, versions=("0.3.0", "0.3.0", "1.0.0", "0.3.0", "0.3.0", "", ""))
             report = sdk_versions.load_version_report(root)
         self.assertFalse(report.ok)
         self.assertIn("SDK package majors differ", report.failure_message())
@@ -288,7 +302,7 @@ class SDKVersionGateTests(unittest.TestCase):
         for invalid in ("0.3.0-01", "0.3.0-rc..1", "0.3", "1.2.3+"):
             with self.subTest(version=invalid), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                _write_fixtures(root, versions=(invalid,) * 5 + ("",))
+                _write_fixtures(root, versions=(invalid,) * 5 + ("", ""))
                 report = sdk_versions.load_version_report(root)
             self.assertFalse(report.ok)
             self.assertIn("invalid SemVer", report.failure_message())
@@ -396,10 +410,13 @@ class SDKVersionGateTests(unittest.TestCase):
     def test_success_output_is_stable(self) -> None:
         report = sdk_versions.VersionReport(
             tuple(
-                # SwiftPM versions from the tag, so the synthetic report leaves
-                # it versionless the way the real gate does.
+                # SwiftPM and the Go module both take their version from the
+                # release tag, so the synthetic report leaves them versionless
+                # the way the real gate does.
                 sdk_versions.PackageVersion(
-                    package_id, name, None if package_id == "swift" else "0.3.0"
+                    package_id,
+                    name,
+                    None if package_id in ("swift", "go") else "0.3.0",
                 )
                 for package_id, name in zip((spec.id for spec in sdk_versions.MANIFEST_SPECS), NAMES)
             )
@@ -414,7 +431,8 @@ class SDKVersionGateTests(unittest.TestCase):
                     'package id="rust" name="snaplink-sso" version="0.3.0" status=PASS',
                     'package id="php" name="snaplink/sso" version="0.3.0" status=PASS',
                     'package id="kotlin" name="site.ywbsd.sso:snaplink" version="0.3.0" status=PASS',
-                'package id="swift" name="SnaplinkSSO" version="<unavailable>" status=PASS',
+                    'package id="swift" name="SnaplinkSSO" version="<unavailable>" status=PASS',
+                    'package id="go" name="github.com/yangwb1123/snaplink/sdks/go" version="<unavailable>" status=PASS',
                     "verdict: PASS",
                 ]
             ),

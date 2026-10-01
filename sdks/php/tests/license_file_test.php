@@ -14,6 +14,7 @@ require __DIR__ . '/../src/EntitlementFile.php';
 require __DIR__ . '/../src/LicenseError.php';
 require __DIR__ . '/../src/LicenseFile.php';
 require __DIR__ . '/../src/LicenseState.php';
+require __DIR__ . '/conformance_corpus.php';
 
 use Snaplink\LicenseError;
 use Snaplink\LicenseState;
@@ -200,8 +201,10 @@ check(
     })(),
 );
 
+snaplinkSkipWithoutConformanceCorpus('license file conformance');
+
 $fixture = json_decode(
-    (string) file_get_contents(__DIR__ . '/../../../ops/build/sdk-conformance/license_file.json'),
+    (string) file_get_contents(snaplinkConformanceFixture('license_file.json')),
     true,
     512,
     JSON_THROW_ON_ERROR,

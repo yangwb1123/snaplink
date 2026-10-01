@@ -270,6 +270,9 @@ dev: ## Hot-reload dev loop for cmd/sso-server (air-verse/air, fetched on demand
 	$(GO) run github.com/air-verse/air@latest -c .air.toml
 
 ci-modules: ## Build + test all nested modules.
+	# The Go client SDK is a nested module: a go.mod makes every architecture and
+	# budget gate skip this directory, so it is built and tested here or nowhere.
+	cd sdks/go && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd infrastructure/kms/awskms && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd infrastructure/kms/gcpkms && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd infrastructure/kms/azurekeyvault && $(GO) build ./... && $(GO) test -race -count=1 ./...
@@ -396,7 +399,7 @@ release: ## Build + publish to GitHub Releases (requires git tag).
 
 docker-push: ## Build + push multi-arch Docker image (requires git tag).
 	docker buildx build --platform linux/amd64,linux/arm64 \
-		-t ghcr.io/snaplink/sso-server:latest \
+		-t ghcr.io/yangwb1123/sso-server:latest \
 		--push .
 
 docker-multiarch: ## Build local multi-arch manifest (no push).

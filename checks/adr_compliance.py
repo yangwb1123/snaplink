@@ -47,6 +47,13 @@ RECOGNIZED_LAYER_DIRS = {
     "proto", "gen", "checks", "scripts", "docs",
     "test", "examples", "config", "migrate", "internal", "dist",
     "admin", "kms", "cluster", "permissions",
+    # sdks/ is the client-SDK tree, not a server layer: architecture
+    # layerName() already classifies it at the interfaces boundary because
+    # these are delivery adapters with no server-layer dependencies. Listing
+    # it here only stops rule 4 from reading a legitimate root directory as an
+    # escaped package; it grants no new home to a protocol package, because
+    # rules 2 and 3 still reject any known protocol name sitting at the root.
+    "sdks",
 }
 
 

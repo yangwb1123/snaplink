@@ -67,6 +67,12 @@ MANIFEST_SPECS = (
         "SnaplinkSSO",
         "swift",
     ),
+    ManifestSpec(
+        "go",
+        Path("sdks/go/go.mod"),
+        "github.com/yangwb1123/snaplink/sdks/go",
+        "gomod",
+    ),
 )
 
 #: Manifests that identify a published SDK package directory. A directory under
@@ -80,6 +86,7 @@ SDK_MANIFEST_MARKERS = (
     Path("composer.json"),
     Path("Package.swift"),
     Path("build.gradle.kts"),
+    Path("go.mod"),
 )
 
 TYPESCRIPT_LOCK_PATH = Path("sdks/typescript/package-lock.json")
@@ -329,6 +336,29 @@ def _gradle_project_name(root: Path, manifest: Path) -> str:
     )
 
 
+_GO_MODULE = re.compile(r"""^module\s+(\S+)\s*$""", re.MULTILINE)
+_GO_VERSION = re.compile(r"""^go\s+(\S+)\s*$""", re.MULTILINE)
+
+
+def _parse_gomod(text: str, source: str) -> dict:
+    """Read a Go module path, and deliberately report no package version.
+
+    A go.mod has no version field. The version is the tag the go command
+    resolves, exactly as with SwiftPM, so this reports none and the package is
+    excluded from the cross-SDK major comparison. The `go` directive is a
+    language floor, not a release version: folding it into this gate made the
+    module look like it shipped 1.26.1, which would have failed the check that
+    every published package shares a major. The directive is still required to
+    be present, so a truncated or non-module file fails closed.
+    """
+    module = _GO_MODULE.search(text)
+    if module is None:
+        raise SDKVersionError(f"{source}: module directive is missing")
+    if _GO_VERSION.search(text) is None:
+        raise SDKVersionError(f"{source}: go directive is missing")
+    return {"name": module.group(1), "version": None}
+
+
 def _parse_swift(text: str, source: str) -> dict:
     """Read a SwiftPM manifest's package name.
 
@@ -389,6 +419,9 @@ def _load_package(spec: ManifestSpec, root: Path) -> PackageVersion:
             table = None
         elif spec.format == "swift":
             data = _parse_swift(_read_fixed(root, spec.path), source)
+            table = None
+        elif spec.format == "gomod":
+            data = _parse_gomod(_read_fixed(root, spec.path), source)
             table = None
         else:  # The tuple above is fixed; guard accidental code drift.
             raise SDKVersionError(f"{source}: unsupported fixed manifest parser")

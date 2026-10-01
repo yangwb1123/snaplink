@@ -2,7 +2,7 @@ replicaCount: 3
 externalRevision: ""
 
 image:
-  repository: ghcr.io/snaplink/snaplink-billing
+  repository: ghcr.io/yangwb1123/snaplink-billing
   tag: latest
   digest: ""
   pullPolicy: IfNotPresent

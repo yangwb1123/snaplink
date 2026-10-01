@@ -99,6 +99,14 @@ __pycache__/
 # before `tsc` and `bun test`).
 /sdks/typescript/node_modules/
 
+# Gradle build output for the Android SDK. The Gradle workspace root is sdks/,
+# so both the workspace-level and the module-level build directories appear
+# here. Same category as the Rust target/ and Python build/ entries above: a
+# developer following the SDK CI instructions hits these locally.
+/sdks/build/
+/sdks/*/build/
+/sdks/.gradle/
+
 # OIDC conformance run archives (large, timestamped; see test/oidc-conformance/results/README.md)
 test/oidc-conformance/results/*/
 

@@ -21,6 +21,17 @@ jobs:
         run: |
           go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
           go install github.com/uudashr/gocognit/cmd/gocognit@latest
+
+      # The gate configuration and several checks read engineering.yaml and
+      # the OpenAPI document as YAML, and `make check-test` runs the checks/
+      # suite under pytest. checks/config.py exits hard when PyYAML is missing
+      # and pytest is not in any runner image, so without this the harness dies
+      # at the first gate instead of testing anything. These are the floors
+      # declared in the root pyproject's `gates` extra; they are installed by
+      # name because this project has no build backend and the gates never
+      # import an installed package.
+      - name: Install declared Python dependencies
+        run: python -m pip install --disable-pip-version-check "PyYAML>=6.0" "pytest>=8"
       
       - name: Generate engineering scaffolding
         run: make generate-engineering
@@ -59,6 +70,10 @@ jobs:
         with:
           go-version: '1.26'
           cache: true
+      # Same requirement as the harness job: make generate-engineering goes
+      # through cli.py, which reads engineering.yaml and exits without PyYAML.
+      - name: Install declared Python dependencies
+        run: python -m pip install --disable-pip-version-check "PyYAML>=6.0"
       - name: Generate and diagnose
         run: |
           make generate-engineering
@@ -84,6 +99,9 @@ jobs:
         with:
           go-version: '1.26'
           cache: true
+      # checks/coverage.py reads its targets from engineering.yaml.
+      - name: Install declared Python dependencies
+        run: python -m pip install --disable-pip-version-check "PyYAML>=6.0"
       - name: Generate scaffolding
         run: make generate-engineering
       - name: Coverage check

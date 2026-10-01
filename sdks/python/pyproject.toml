@@ -1,5 +1,7 @@
 [build-system]
-requires = ["setuptools>=68"]
+# setuptools >= 77 is what accepts `license = "Apache-2.0"` as an SPDX string
+# and what stops emitting the deprecation warning for the old table form.
+requires = ["setuptools>=77.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,12 +10,41 @@ version = "0.3.0"
 description = "Python SDK for the Snaplink OAuth 2.0 and OpenID Connect API"
 readme = "README.md"
 requires-python = ">=3.9"
-license = {text = "Apache-2.0"}
+# SPDX string rather than the deprecated `{text = ...}` table: setuptools
+# warns today and stops accepting the table form after 2027-02-18, so a
+# published distribution should not be built on it.
+license = "Apache-2.0"
 authors = [{name = "Snaplink contributors"}]
 dependencies = []
+keywords = ["oauth", "oidc", "sso", "pkce", "snaplink"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+# The same source identity the npm and crates.io packages carry. The package
+# lives in the monorepo rather than at its root, so each link names the
+# subdirectory a reader actually wants. The license is identified by its SPDX
+# expression only, matching the other SDK packages: setuptools refuses a
+# license-files path outside the project root, and shipping a second copy of
+# the repository's Apache-2.0 text would be duplication for no gain.
+[project.urls]
+Homepage = "https://github.com/yangwb1123/snaplink/tree/main/sdks/python"
+Repository = "https://github.com/yangwb1123/snaplink/tree/main/sdks/python"
+Issues = "https://github.com/yangwb1123/snaplink/issues"
 
 [tool.setuptools.packages.find]
+# Restricted on purpose. With a bare `where = ["."]` any build artifact left in
+# this directory - a `build/` tree from a previous build, an `*.egg-info`, a
+# vendored copy - is auto-discovered as a package and copied into the next
+# wheel, one level deeper each time. A local build then produced a wheel
+# containing build/lib/build/lib/... alongside the real package. Naming the one
+# package this distribution ships makes that impossible.
 where = ["."]
+include = ["snaplink_sso*"]
+exclude = ["build*", "tests*", "docs*"]
 
 [tool.setuptools.package-data]
 snaplink_sso = ["py.typed"]

@@ -38,7 +38,7 @@ See [values.yaml](./values.yaml) for all configurable options.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `image.repository` | `ghcr.io/snaplink/sso-server` | Container image repository |
+| `image.repository` | `ghcr.io/yangwb1123/sso-server` | Container image repository |
 | `image.tag` | `latest` | Image tag (pin for production) |
 | `deployment.replicas` | `2` | Render default; requires shared stores for correctness |
 | `config.server.issuer` | `sso-server` | SSO issuer identifier |

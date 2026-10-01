@@ -1,5 +1,20 @@
 # Snaplink Go SDK login
 
+This is its own Go module, `github.com/yangwb1123/snaplink/sdks/go`, so the
+client SDK versions and releases independently of the server and pulling it
+never triggers a server release. It has no dependencies at all - standard
+library only - and imports nothing from the rest of this repository.
+
+Before the first tagged release, consume it at a commit:
+
+```sh
+go get github.com/yangwb1123/snaplink/sdks/go@<commit-sha>
+```
+
+Once a release exists, versions are ordinary SemVer and the import path is
+unchanged. Note that Go requires a subdirectory module's version tag to be
+prefixed with the module path, so releases here are `sdks/go/v0.3.0`.
+
 This package provides framework-neutral hosted login for a public OAuth
 client. `Client.Login` returns a Console `/login/` redirect on the first call;
 the callback call validates state and issuer and exchanges the authorization

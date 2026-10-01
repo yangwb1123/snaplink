@@ -59,6 +59,13 @@ SWIFT_MODULE = "SnaplinkSSO"
 #: product host is `sso.ywbsd.site`, so the group is `site.ywbsd.sso`.
 MAVEN_GROUP = "site.ywbsd.sso"
 
+#: The Go module path. The client SDK is a nested module under this repository
+#: so it can be versioned independently of the server, which means the path is
+#: the repository path plus the language directory. `go get` resolves exactly
+#: this string, so it is the one name here that is dictated by where the code
+#: lives rather than chosen.
+GO_MODULE_PATH = "github.com/yangwb1123/snaplink/sdks/go"
+
 
 @dataclass(frozen=True)
 class Convention:
@@ -105,6 +112,15 @@ _MAVEN = re.compile(
 
 #: SwiftPM module names are Swift identifiers; PascalCase is the house rule.
 _SWIFT = re.compile(r"^[A-Z][A-Za-z0-9]*$")
+
+#: A Go module path is a VCS host, an owner, and a directory. The path is the
+#: address the go command fetches from, so it cannot be chosen freely: a
+#: subdirectory module has to be addressed by its real repository path. That is
+#: why the Go package cannot carry the product token the way the other five do.
+_GO_MODULE = re.compile(
+    r"^github\.com/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*"
+    r"(/[a-z0-9][a-z0-9._-]*)*$"
+)
 
 
 CONVENTIONS = (
@@ -157,11 +173,42 @@ CONVENTIONS = (
         rule="PascalCase SwiftPM module; brand and product token in one slot",
         namespace_slot="none",
     ),
+    Convention(
+        id="go",
+        manifest=Path("sdks/go/go.mod"),
+        expected=GO_MODULE_PATH,
+        pattern=_GO_MODULE,
+        rule="module path is the fetchable repository path; tag is <module path>/v<version>",
+        namespace_slot="repository path",
+    ),
 )
 
 
 class SDKNamingError(Exception):
     """Raised when a package name breaks the scheme or a platform grammar."""
+
+
+#: The registry each manifest is published to. A name is only scarce *within* a
+#: registry, so uniqueness is asserted per registry: PyPI and crates.io may
+#: both carry `snaplink-sso` without conflict, while two PyPI claims on one name
+#: make the second upload ambiguous and are rejected.
+REGISTRIES = {
+    "typescript": "npm",
+    "python": "PyPI",
+    "rust": "crates.io",
+    "php": "Packagist",
+    "kotlin": "Maven Central",
+    "swift": "SwiftPM",
+    "go": "Go module proxy",
+}
+
+#: The repository's own engineering CLI. It is installed with
+#: `pip install -e .` and never published, but it is a pip distribution like
+#: the Python SDK, so it shares the PyPI namespace and must hold a distinct
+#: name there. The engineering CLI is a developer tool, not an SDK, so the
+#: registry scheme does not apply to it - uniqueness does.
+ENGINEERING_CLI = Path("pyproject.toml")
+ENGINEERING_CLI_LABEL = "engineering-cli"
 
 
 def _import_module():
@@ -219,6 +266,10 @@ def _read_via_spec(sdk_versions, root: Path, spec) -> dict:
         return sdk_versions._parse_swift(
             sdk_versions._read_fixed(root, spec.path), spec.path.as_posix()
         )
+    if spec.format == "gomod":
+        return sdk_versions._parse_gomod(
+            sdk_versions._read_fixed(root, spec.path), spec.path.as_posix()
+        )
     raise SDKNamingError(f"{spec.path.as_posix()}: unknown manifest format {spec.format!r}")
 
 
@@ -240,9 +291,63 @@ def check_name(convention: Convention, name: str) -> list[str]:
     return errors
 
 
-def check(root: Path = ROOT) -> list[str]:
-    """Check every registered SDK package name, fail-closed on unreadable input."""
+def _normalize(name: str) -> str:
+    """Normalize a distribution name the way its registry does before comparing.
+
+    Only the rules that matter for equality are applied. PEP 503 collapses runs
+    of ``-_.`` to a single ``-``, so `Snaplink_SSO` and `snaplink-sso` are one
+    PyPI project; treating them as different would let the uniqueness check
+    pass on two claims that are actually the same name. Every other registry
+    form is already lowercase, so the same normalization is harmless there.
+    """
+    return re.sub(r"[-_.]+", "-", name.strip().lower())
+
+
+def _engineering_cli_name(root: Path) -> str:
+    """Read the root CLI's distribution name from its own pyproject."""
+    sdk_versions = _import_module()
+    manifest = root / ENGINEERING_CLI
+    try:
+        data = sdk_versions._parse_toml(
+            sdk_versions._read_fixed(root, ENGINEERING_CLI), ENGINEERING_CLI.as_posix()
+        )
+    except OSError as exc:
+        raise SDKNamingError(f"{ENGINEERING_CLI.as_posix()}: {exc}") from exc
+    name = (data.get("project") or {}).get("name")
+    if not name:
+        raise SDKNamingError(f"{ENGINEERING_CLI.as_posix()}: project name is missing")
+    return str(name)
+
+
+def check_uniqueness(root: Path, claims: list[tuple[str, str, str]]) -> list[str]:
+    """Fail when two distributions claim one name on the same registry.
+
+    *claims* is a list of ``(registry, label, name)``. A name is only scarce
+    within a registry, so PyPI and crates.io may both hold ``snaplink-sso``;
+    two PyPI claims on one name are an ambiguous upload and are rejected. This
+    is the check that catches a copy-pasted name, a renamed package that kept
+    an old one, or a developer tool squatting on a published SDK's identity.
+    """
+    by_registry: dict[str, dict[str, list[str]]] = {}
+    for registry, label, name in claims:
+        by_registry.setdefault(registry, {}).setdefault(_normalize(name), []).append(label)
     errors: list[str] = []
+    for registry, names in sorted(by_registry.items()):
+        for normalized, labels in sorted(names.items()):
+            if len(labels) < 2:
+                continue
+            errors.append(
+                f"registry {registry} name {normalized!r} is claimed by "
+                f"{len(labels)} distributions ({', '.join(sorted(labels))}); "
+                f"one registry allows one owner per name"
+            )
+    return errors
+
+
+def check(root: Path = ROOT) -> list[str]:
+    """Check every registered SDK name, its scheme, and per-registry uniqueness."""
+    errors: list[str] = []
+    claims: list[tuple[str, str, str]] = []
     for convention in CONVENTIONS:
         try:
             name = declared_name(root, convention)
@@ -250,6 +355,12 @@ def check(root: Path = ROOT) -> list[str]:
             errors.append(f"id={convention.id} {exc}")
             continue
         errors.extend(check_name(convention, name))
+        claims.append((REGISTRIES[convention.id], convention.id, name))
+    try:
+        claims.append(("PyPI", ENGINEERING_CLI_LABEL, _engineering_cli_name(root)))
+    except (SDKNamingError, OSError) as exc:
+        errors.append(f"id={ENGINEERING_CLI_LABEL} {exc}")
+    errors.extend(check_uniqueness(root, claims))
     return errors
 
 
@@ -270,7 +381,10 @@ def run(args: list[str]) -> int:
         for error in errors:
             print(f"  {error}")
         return 1
-    print(f"sdk-naming: OK ({len(CONVENTIONS)} packages, brand={BRAND}, product={CAPABILITY})")
+    print(
+        f"sdk-naming: OK ({len(CONVENTIONS)} SDK packages + the engineering CLI, "
+        f"brand={BRAND}, product={CAPABILITY}, one name per registry)"
+    )
     return 0
 
 

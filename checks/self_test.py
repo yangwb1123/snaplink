@@ -63,23 +63,24 @@ def run() -> int:
         f("gocognit missing")
 
     print("--- 3. architecture gate ---")
-    result = subprocess.run(
-        ["grep", "-r", '"github.com/yangwb1123/snaplink/protocols/oidc"', "protocols/oauth/", "--include=*.go"],
-        capture_output=True, text=True, check=False, cwd=str(ROOT)
-    )
-    if not result.stdout.strip():
-        p("oauth does not import oidc")
-    else:
-        f("oauth imports oidc")
-
-    result = subprocess.run(
-        ["grep", "-r", '"github.com/yangwb1123/snaplink/interfaces/admin"', "protocols/oidc/", "--include=*.go"],
-        capture_output=True, text=True, check=False, cwd=str(ROOT)
-    )
-    if not result.stdout.strip():
-        p("oidc does not import admin")
-    else:
-        f("oidc imports admin")
+    # Scope must match the enforced boundary. TestArchitecture_ImportBoundaries
+    # skips _test.go files, because a test may legitimately reach across a
+    # protocol boundary to build a fixture (protocols/oauth/txntoken signs an
+    # ID token in its tests). Grepping test files here reported a violation the
+    # gate does not consider one, and this check sat behind an earlier failing
+    # gate in the same workflow for long enough to look like a real regression.
+    for label, pattern, target, bad in (
+        ("oauth does not import oidc", '"github.com/yangwb1123/snaplink/protocols/oidc"', "protocols/oauth/", "oauth imports oidc"),
+        ("oidc does not import admin", '"github.com/yangwb1123/snaplink/interfaces/admin"', "protocols/oidc/", "oidc imports admin"),
+    ):
+        result = subprocess.run(
+            ["grep", "-r", pattern, target, "--include=*.go", "--exclude=*_test.go"],
+            capture_output=True, text=True, check=False, cwd=str(ROOT)
+        )
+        if not result.stdout.strip():
+            p(label)
+        else:
+            f(bad)
 
     print("--- 4. docs ---")
     for d in ["HARNESS.md", "BOOTSTRAP.md", "ARCHITECTURE.md", "EVALUATION.md"]:

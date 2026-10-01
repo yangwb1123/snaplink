@@ -165,16 +165,9 @@ type StdRoute struct {
 	method      string
 	handler     HandlerFunc
 	middlewares []MiddlewareFunc
-	// live gates MATCHING itself, not just the handler: nil means always
-	// live (every pre-existing route, unchanged). When set and it reports
-	// false, ServeHTTP treats this route as NOT MATCHED at all — skipping
-	// its middlewares entirely — rather than running them and then having
-	// the handler answer 404. This is what makes a gated-off route
-	// byte-identical to a route that was never registered: a per-route
-	// global middleware (e.g. Tracing, added via Use() before this route
-	// was registered) would otherwise still run and stamp response
-	// headers before a handler-level gate check ever got a chance to
-	// reject the request. See GatedRouter's doc for the full rationale.
+	// live gates MATCHING itself, not the handler: nil means always live, and
+	// false means the route does not exist as far as the request is concerned.
+	// See StdRoute.matches for why, and GatedRouter for the full rationale.
 	live    func() bool
 	acquire RouteLeaseAcquirer
 }
@@ -273,25 +266,41 @@ func (r *StdRouter) Use(middlewares ...MiddlewareFunc) {
 	r.mu.Unlock()
 }
 
+// matches reports whether this route is a candidate for req. The live gate is
+// part of MATCHING, not handling: a route that is off must stay indistinguishable
+// from one that was never registered, or a global middleware added via Use()
+// earlier would stamp a genuinely-unmatched request with response headers.
+func (route StdRoute) matches(req *http.Request) bool {
+	if req.Method != route.method {
+		return false
+	}
+	if !matchPath(route.path, req.URL.Path) {
+		return false
+	}
+	return route.live == nil || route.live()
+}
+
+// runRoute executes a matched route: path parameters first so both the
+// middlewares and the handler see them, then the route's own middlewares, then
+// the handler only if nothing aborted the chain.
+func (r *StdRouter) runRoute(ctx *Context, route StdRoute, requestPath string) {
+	extractParams(ctx, route.path, requestPath)
+	for _, mw := range route.middlewares {
+		mw(ctx)
+		if ctx.Aborted() {
+			break
+		}
+	}
+	if !ctx.Aborted() {
+		route.handler(ctx)
+	}
+}
+
 func (r *StdRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ctx := NewContext(w, req)
 
 	for _, route := range *r.routes {
-		if req.Method != route.method {
-			continue
-		}
-		if !matchPath(route.path, req.URL.Path) {
-			continue
-		}
-		// A live-gated route that's currently off is treated as NOT
-		// MATCHED — falls through to the shared http.NotFound below,
-		// same as if it had never been registered — rather than running
-		// its middlewares and then having the handler itself answer 404.
-		// That distinction is exactly what would otherwise let a global
-		// middleware (Tracing, added via Use() before this route was
-		// registered) stamp response headers a genuinely-unmatched
-		// request never gets. See StdRoute.live's doc.
-		if route.live != nil && !route.live() {
+		if !route.matches(req) {
 			continue
 		}
 		if route.acquire != nil {
@@ -303,16 +312,7 @@ func (r *StdRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				defer release()
 			}
 		}
-		extractParams(ctx, route.path, req.URL.Path)
-		for _, mw := range route.middlewares {
-			mw(ctx)
-			if ctx.Aborted() {
-				break
-			}
-		}
-		if !ctx.Aborted() {
-			route.handler(ctx)
-		}
+		r.runRoute(ctx, route, req.URL.Path)
 		return
 	}
 

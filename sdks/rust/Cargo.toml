@@ -6,6 +6,13 @@ description = "Snaplink public-client hosted login SDK"
 license = "Apache-2.0"
 readme = "README.md"
 documentation = "https://docs.rs/snaplink-sso"
+# The crate page and the docs.rs source view both read this; without it a
+# published crate has no link back to the commit it was built from. It points at
+# the subdirectory because the crate lives in the monorepo, not at its root.
+repository = "https://github.com/yangwb1123/snaplink/tree/main/sdks/rust"
+homepage = "https://github.com/yangwb1123/snaplink/tree/main/sdks/rust"
+keywords = ["oauth", "oidc", "sso", "pkce", "snaplink"]
+categories = ["api-bindings", "authentication"]
 
 [dependencies]
 async-trait = "0.1"

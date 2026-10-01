@@ -1,10 +1,28 @@
 [project]
-name = "snaplink-sso"
+# The engineering CLI is a developer tool, not a published SDK. Its name must
+# never collide with a distribution this repository publishes: PyPI already
+# carries snaplink-sso for the Python SDK, and two claims on one registry make
+# the second upload ambiguous. `python cli.py sdk-naming check` holds that
+# uniqueness per registry.
+name = "snaplink-engineering-cli"
 version = "0.1.0"
 description = "SSO server engineering CLI"
 requires-python = ">=3.12"
 dependencies = [
-    "PyYAML>=6.0",  # ai-dev review/pipeline runners parse YAML contexts and task files
+    # cli.py parses docs/openapi.yaml and the deploy config tree as YAML, so
+    # every command in this package needs it; hosted CI installs it explicitly.
+    "PyYAML>=6.0",
+]
+
+# What the engineering gates themselves need to run. The gates execute
+# repository scripts directly rather than importing an installed package, and
+# this project declares no build backend, so hosted CI installs these by name
+# rather than through this extra. It is declared here so the requirement is
+# discoverable instead of only existing inside a workflow file.
+[project.optional-dependencies]
+gates = [
+    "PyYAML>=6.0",
+    "pytest>=8",
 ]
 
 [project.scripts]

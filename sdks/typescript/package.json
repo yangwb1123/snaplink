@@ -2,6 +2,16 @@
   "name": "@snaplink/sso",
   "version": "0.4.0",
   "description": "TypeScript SDK for the snaplink/sso HTTP API and hosted-login redirects.",
+  "author": "Snaplink contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yangwb1123/snaplink.git",
+    "directory": "sdks/typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/yangwb1123/snaplink/issues"
+  },
+  "homepage": "https://github.com/yangwb1123/snaplink/tree/main/docs/sdks/typescript",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",

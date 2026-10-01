@@ -73,14 +73,19 @@ jobs:
   go:
     name: Go SDK
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # sdks/go is its own module, so it is built from inside its directory
+        # rather than as a path of the root module.
+        working-directory: sdks/go
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test ./sdks/go
-      - run: go vet ./sdks/go
+      - run: go test -race ./...
+      - run: go vet ./...
 
   android:
     name: Android SDK
@@ -94,20 +99,34 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - uses: android-actions/setup-android@v3
-      - name: Install pinned Android compile SDK
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Install the pinned Android SDK packages
+        # android-actions/setup-android@v3 cannot be used: it installs a package
+        # literally named `tools`, and Google's SDK repository no longer
+        # publishes one, so the action fails with "Warning: Failed to find
+        # package 'tools'" before a single build step runs. The GitHub runner
+        # already ships the SDK and cmdline-tools, so install exactly what this
+        # build needs and keep accepting licences explicitly.
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager_bin="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          [[ -x "$sdkmanager_bin" ]] || sdkmanager_bin="$(command -v sdkmanager)"
+          yes | "$sdkmanager_bin" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager_bin" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          echo "$(dirname "$sdkmanager_bin")" >> "$GITHUB_PATH"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
       - name: Run Kotlin unit tests, lint, and release build
+        # The Keystore instrumentation test is not here. It needs a real
+        # emulator, so it depends on nested virtualization that shared runners
+        # do not reliably provide, and the emulator action reports a failed boot
+        # as a bare "adb could not connect to TCP port 5554" from its teardown.
+        # That makes it a poor gate for every push. It runs in
+        # .github/workflows/android-instrumentation.yml instead, which covers
+        # main and can be dispatched on demand - the same reasoning that keeps
+        # bench-gate out of `make ci`.
         run: ./gradlew :snaplink:testDebugUnitTest :snaplink:lintDebug :snaplink:assembleRelease
-      - name: Run Android Keystore instrumentation test
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          script: cd sdks && ./gradlew :snaplink:connectedDebugAndroidTest
-
   swift:
     name: Swift SDK
     runs-on: macos-14
@@ -131,6 +150,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # The tool-cache interpreter ships no third-party packages, and the SDK
+      # surface reader parses docs/openapi.yaml with PyYAML. The root
+      # pyproject declares it; install it here so the gate tests the code
+      # instead of the runner's Python.
+      - name: Install declared Python dependencies
+        run: python -m pip install --disable-pip-version-check "PyYAML>=6.0"
       - name: Test SDK surface tool
         run: python -m unittest discover -s ops/scripts -p 'test_sdk_*.py' -v
       - name: Verify SDK package versions

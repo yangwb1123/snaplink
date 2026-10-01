@@ -103,42 +103,68 @@ func (p *PermissionProvider) checkStaticConflict(ctx context.Context, q permissi
 // subject's assignment and both SSoD and DSoD declaration tables.
 func (p *PermissionProvider) ActivateRoles(ctx context.Context, userID, clientID, sessionID string, roles []string) error {
 	return runTx(ctx, p.db, serializable, func(tx *sql.Tx) error {
-		if len(roles) > 0 {
-			held, err := p.assignedCodes(ctx, tx, userID, clientID)
-			if err != nil {
-				return err
-			}
-			for _, code := range roles {
-				if !containsCode(held, code) {
-					return fmt.Errorf("%w: %q", permissions.ErrRoleNotAssigned, code)
-				}
-			}
-		}
-		static, err := p.loadConflictSets(ctx, tx, clientID, staticSoDMode)
-		if err != nil {
+		// Every check runs before the first write: a rejected activation must
+		// not clear the session's existing subset on the way out.
+		if err := p.requireAssignedRoles(ctx, tx, userID, clientID, roles); err != nil {
 			return err
 		}
-		dynamic, err := p.loadConflictSets(ctx, tx, clientID, dynamicSoDMode)
-		if err != nil {
+		if err := p.requireNoRoleConflict(ctx, tx, clientID, roles); err != nil {
 			return err
 		}
-		if conflict := permissions.CheckRoleConflict(clientID, append(static, dynamic...), roles); conflict != nil {
-			return conflict
-		}
-		if _, err := tx.ExecContext(ctx, `
-            DELETE FROM permissions_active_roles
-            WHERE user_id = $1 AND client_id = $2 AND session_id = $3`, userID, clientID, sessionID); err != nil {
-			return fmt.Errorf("postgres: clear activation: %w", err)
-		}
-		for i, code := range roles {
-			if _, err := tx.ExecContext(ctx, `
-                INSERT INTO permissions_active_roles (user_id, client_id, session_id, role_code, role_index)
-                VALUES ($1, $2, $3, $4, $5)`, userID, clientID, sessionID, code, i); err != nil {
-				return fmt.Errorf("postgres: store activation: %w", err)
-			}
-		}
-		return nil
+		return p.replaceActiveRoles(ctx, tx, userID, clientID, sessionID, roles)
 	})
+}
+
+// requireAssignedRoles rejects any requested role the subject does not hold.
+// The check is skipped for an empty request, which is how a client clears a
+// session's activation without naming what it held.
+func (p *PermissionProvider) requireAssignedRoles(ctx context.Context, tx *sql.Tx, userID, clientID string, roles []string) error {
+	if len(roles) == 0 {
+		return nil
+	}
+	held, err := p.assignedCodes(ctx, tx, userID, clientID)
+	if err != nil {
+		return err
+	}
+	for _, code := range roles {
+		if !containsCode(held, code) {
+			return fmt.Errorf("%w: %q", permissions.ErrRoleNotAssigned, code)
+		}
+	}
+	return nil
+}
+
+// requireNoRoleConflict applies both declaration tables: a role pair that any
+// SSoD or DSoD declaration separates cannot be activated together.
+func (p *PermissionProvider) requireNoRoleConflict(ctx context.Context, tx *sql.Tx, clientID string, roles []string) error {
+	static, err := p.loadConflictSets(ctx, tx, clientID, staticSoDMode)
+	if err != nil {
+		return err
+	}
+	dynamic, err := p.loadConflictSets(ctx, tx, clientID, dynamicSoDMode)
+	if err != nil {
+		return err
+	}
+	return permissions.CheckRoleConflict(clientID, append(static, dynamic...), roles)
+}
+
+// replaceActiveRoles rewrites the session's subset in one transaction: clear,
+// then insert each role at its request index so the stored order is the
+// caller's order. The order is what `ActiveRoles` replays.
+func (p *PermissionProvider) replaceActiveRoles(ctx context.Context, tx *sql.Tx, userID, clientID, sessionID string, roles []string) error {
+	if _, err := tx.ExecContext(ctx, `
+        DELETE FROM permissions_active_roles
+        WHERE user_id = $1 AND client_id = $2 AND session_id = $3`, userID, clientID, sessionID); err != nil {
+		return fmt.Errorf("postgres: clear activation: %w", err)
+	}
+	for i, code := range roles {
+		if _, err := tx.ExecContext(ctx, `
+            INSERT INTO permissions_active_roles (user_id, client_id, session_id, role_code, role_index)
+            VALUES ($1, $2, $3, $4, $5)`, userID, clientID, sessionID, code, i); err != nil {
+			return fmt.Errorf("postgres: store activation: %w", err)
+		}
+	}
+	return nil
 }
 
 func (p *PermissionProvider) ActiveRoles(ctx context.Context, userID, clientID, sessionID string) ([]permissions.Role, error) {

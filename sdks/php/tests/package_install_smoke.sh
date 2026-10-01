@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-package_dir="${repo_root}/sdks/php"
+# The package root is this script's parent. Deriving it from the script rather
+# than from a fixed monorepo path keeps the check working in the standalone
+# repository the subtree split produces, which is where Composer consumers and
+# anyone auditing the published source actually land.
+package_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 package_name="$(php -r '$manifest = json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $manifest["name"] ?? "";' "${package_dir}/composer.json")"
 package_version="$(php -r '$manifest = json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $manifest["version"] ?? "";' "${package_dir}/composer.json")"
 [[ -n "${package_name}" && -n "${package_version}" ]]

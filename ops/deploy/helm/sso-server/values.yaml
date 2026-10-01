@@ -13,7 +13,7 @@ global:
 # ── Image ─────────────────────────────────────────────────────
 image:
   # Repository on GitHub Container Registry.
-  repository: ghcr.io/snaplink/sso-server
+  repository: ghcr.io/yangwb1123/sso-server
   # Image tag. Override with --set image.tag=vX.Y.Z.
   # Production deployments MUST pin a semver tag or digest.
   tag: latest

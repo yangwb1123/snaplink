@@ -1,0 +1,175 @@
+# Publish the Android SDK to Maven Central independently from the Go server
+# release and from the other SDK packages.
+#
+# NOT READY TO RUN. The SDK is still marked experimental in sdks/kotlin/README.md
+# and its platform/security review, callback registration, and SVERP integration
+# acceptance are open. Maven Central is the strictest of the four registries:
+# a published coordinate is immutable, so 0.3.0 could never be corrected and a
+# later breaking fix would force 0.4.0 on every consumer. The workflow is
+# therefore committed but its tag is not pushed, and the `publish` job also
+# refuses to run until the gate below is satisfied.
+#
+# Before the first release, all of these must be in place:
+#   1. Namespace `site.ywbsd.sso` verified with Sonatype. The groupId is the
+#      reverse-DNS form of sso.ywbsd.site, so that host must serve the
+#      verification token Central issues (or publish the matching `token` TXT
+#      record). The host resolves today; the token is not deployed.
+#   2. A `maven-central` environment with required reviewers.
+#   3. Environment secrets: MAVEN_SIGNING_KEY, MAVEN_SIGNING_PASSWORD,
+#      CENTRAL_TOKEN_USERNAME, CENTRAL_TOKEN_PASSWORD. Central has no OIDC
+#      trusted publishing, so a token is required.
+#   4. A protected `sdk-kotlin-v*` tag rule.
+#   5. The platform/security review and integration acceptance recorded, and the
+#      experimental marker in sdks/kotlin/README.md removed.
+#
+# Steps 1-4 are configuration. Step 5 is the reason this workflow is gated
+# rather than merely untagged: publishing an unapproved SDK cannot be undone.
+
+name: sdk-kotlin-release
+
+on:
+  push:
+    tags:
+      - "sdk-kotlin-v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to Maven Central after the verification gates
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: sdk-kotlin-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify Android SDK before publication
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+      - name: Install the pinned Android SDK packages
+        # Same reason as sdk-ci: android-actions/setup-android@v3 installs a
+        # package named `tools` that Google's repository no longer publishes,
+        # so it fails before any build step. The runner already ships the SDK.
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager_bin="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          [[ -x "$sdkmanager_bin" ]] || sdkmanager_bin="$(command -v sdkmanager)"
+          yes | "$sdkmanager_bin" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager_bin" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          echo "$(dirname "$sdkmanager_bin")" >> "$GITHUB_PATH"
+      - name: Run unit tests and assemble the release AAR
+        working-directory: sdks
+        run: ./gradlew :snaplink:testDebugUnitTest :snaplink:assembleRelease
+      - name: Verify the tag matches the published version
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' sdks/kotlin/build.gradle.kts)"
+          [[ -n "$version" ]] || { echo "::error::cannot read version from sdks/kotlin/build.gradle.kts"; exit 1; }
+          expected="sdk-kotlin-v${version}"
+          if [[ "${GITHUB_REF_NAME}" != "$expected" ]]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match $expected"
+            exit 1
+          fi
+      - name: Verify the publication gate
+        # Fail closed while the SDK still declares itself experimental. This is
+        # the check that makes committing this workflow safe: the artifacts can
+        # never reach Central from a tag until the marker is gone.
+        run: |
+          if grep -q '(experimental' sdks/kotlin/README.md; then
+            echo "::error::sdks/kotlin/README.md still marks the SDK experimental."
+            echo "Publishing an unapproved SDK to Maven Central is irreversible:"
+            echo "the coordinate can never be corrected or re-uploaded."
+            echo "Complete the platform/security review and the SVERP integration"
+            echo "acceptance, remove the marker, and re-run."
+            exit 1
+          fi
+      - name: Verify the package name registry
+        run: python cli.py sdk-surface versions
+      - name: Verify the naming scheme
+        run: python cli.py sdk-naming check
+      - name: Assemble the publishable artifact set
+        working-directory: sdks
+        run: ./gradlew :snaplink:publishToMavenLocal
+      - name: Check the artifact set Central requires
+        run: |
+          set -euo pipefail
+          staged="${HOME}/.m2/repository/site/ywbsd/sso/snaplink"
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' sdks/kotlin/build.gradle.kts)"
+          dir="${staged}/${version}"
+          for artifact in ".aar" "-sources.jar" "-javadoc.jar" ".pom"; do
+            [[ -f "${dir}/snaplink-${version}${artifact}" ]] || {
+              echo "::error::missing ${artifact} in the publication set"
+              exit 1
+            }
+          done
+          # Central rejects a POM without these, so verify rather than assume.
+          for element in "<name>" "<description>" "<url>" "<licenses>" "<developers>" "<scm>"; do
+            grep -q "$element" "${dir}/snaplink-${version}.pom" || {
+              echo "::error::POM is missing ${element}"
+              exit 1
+            }
+          done
+          echo "artifact set and POM verified for ${dir}"
+
+  publish:
+    name: Publish to Maven Central
+    needs: verify
+    # The environment is what turns a tag push into a reviewed release, matching
+    # the npm, PyPI, crates.io and PHP workflows.
+    environment: maven-central
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+      - name: Install the pinned Android SDK packages
+        # Same reason as sdk-ci: android-actions/setup-android@v3 installs a
+        # package named `tools` that Google's repository no longer publishes,
+        # so it fails before any build step. The runner already ships the SDK.
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager_bin="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          [[ -x "$sdkmanager_bin" ]] || sdkmanager_bin="$(command -v sdkmanager)"
+          yes | "$sdkmanager_bin" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager_bin" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          echo "$(dirname "$sdkmanager_bin")" >> "$GITHUB_PATH"
+      - name: Sign and upload to Maven Central
+        working-directory: sdks
+        env:
+          MAVEN_SIGNING_KEY: ${{ secrets.MAVEN_SIGNING_KEY }}
+          MAVEN_SIGNING_PASSWORD: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ -n "${MAVEN_SIGNING_KEY}" && -n "${MAVEN_SIGNING_PASSWORD}" ]] || {
+            echo "::error::MAVEN_SIGNING_KEY and MAVEN_SIGNING_PASSWORD are required;"
+            echo "Central requires every artifact to be GPG-signed."
+            exit 1
+          }
+          [[ -n "${CENTRAL_TOKEN_USERNAME}" && -n "${CENTRAL_TOKEN_PASSWORD}" ]] || {
+            echo "::error::CENTRAL_TOKEN_USERNAME and CENTRAL_TOKEN_PASSWORD are required;"
+            echo "Central has no OIDC trusted publishing, so a token is required."
+            exit 1
+          }
+          ./gradlew :snaplink:publishReleasePublicationToSonatypeRepository
