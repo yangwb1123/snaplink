@@ -11,8 +11,9 @@
 `sdks/typescript/client.ts` the same way generated Go under `gen/proto/` is:
 checked in for consumers to use directly, regenerated from `docs/openapi.yaml`
 by a Go program rather than hand-maintained.
-`hosted-login.ts` is the small hand-written browser-navigation companion and
-`browser-login.ts` is the public-client PKCE facade; both are exported through
+`hosted-login.ts` is the small hand-written browser-navigation companion,
+`browser-login.ts` is the public-client PKCE facade, and `server-login.ts` is its
+server-side counterpart for hosts that cannot navigate; all are exported through
 `index.ts` and are not overwritten by API generation.
 
 The package root is `sdks/typescript/`. This page remains the user-facing
@@ -314,6 +315,72 @@ production configuration. Existing query parameters such as a theme selector
 are preserved, while OAuth parameters are set from the validated arguments.
 The helper rejects URL fragments, embedded credentials, `client_secret`,
 `code_verifier`, PKCE downgrade to `plain`, and non-code response types.
+
+### Hosted login from a server: two phases, no navigation
+
+`SnaplinkBrowserClient` above drives the flow from a page: it creates the
+transaction, navigates, and resumes on the next load. A server-side host cannot
+navigate, so `SnaplinkServerClient` exposes the same protocol in two explicit
+phases. This is the TypeScript counterpart of the Go SDK's `Client.Login` in
+[`sdks/go/login.go`](../../sdks/go/login.go).
+
+```ts
+import { SnaplinkServerClient } from "@snaplink/sso";
+
+const client = new SnaplinkServerClient(); // pass `store` on multi-replica hosts
+
+// Phase 1: request handler -> 302 the browser to redirectUrl.
+const started = await client.login({
+  baseUrl: "https://sso.example.com",
+  clientId: "my-public-app",
+  redirectUri: "https://app.example.com/api/auth/callback",
+  returnTo: "https://app.example.com/dashboard",
+  scope: ["openid", "profile", "email"],
+});
+if (started.kind === "redirect") return Response.redirect(started.redirectUrl, 302);
+
+// Phase 2: callback handler -> pass the raw request URL back in.
+const done = await client.login({
+  baseUrl: "https://sso.example.com",
+  clientId: "my-public-app",
+  redirectUri: "https://app.example.com/api/auth/callback",
+  callbackUrl: request.url,
+});
+if (done.kind === "tokens") {
+  // done.tokens holds the access/refresh/ID token; done.returnTo is where the
+  // user was headed before the login redirect.
+}
+```
+
+What the client guarantees, identically to the Go SDK:
+
+- **State and PKCE are server-side.** The verifier never enters a URL and is
+  never accepted from the browser.
+- **Single-use transactions.** `take` must consume atomically; a replayed
+  callback finds nothing and fails with `invalid_request`.
+- **`state` is compared in constant time** and the RFC 9207 `iss` parameter
+  must match `baseUrl`. Both are checked before any token request.
+- **No orphan transaction.** The transaction is stored only after the login URL
+  validates, so a rejected login page leaves nothing pending.
+- **A client secret is never accepted.** Hosted login is Authorization Code +
+  S256 PKCE for a public client.
+
+Deliberate differences from the Go SDK:
+
+- **The transaction TTL travels with the transaction.** A host that rebuilds
+  its options per request and omits `transactionTtlMs` on the callback still
+  gets the TTL that was in force when the transaction was created, instead of
+  silently falling back to the default.
+- **`returnTo` must share the redirect URI origin**, so a landing URL can
+  never become an open redirect that carries a session across origins.
+- **Activation/licensing is not wired here.** `client.setup(...)` from
+  `browser-login.ts` prepares a ticket for a page; a server host that needs the
+  activation flow should follow the Go SDK's `SetupOptions` wiring.
+
+The client holds no tokens and defines no session: an application decides how
+to store `done.tokens` (server-side session, or the browser facade's in-memory
+holder). `resource-server.ts` validates the tokens this client mints when a
+separate API must accept them.
 
 ### Simplest integration: direct password login, no redirect
 

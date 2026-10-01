@@ -4,6 +4,7 @@ export * from "./browser-login.js";
 export * from "./preferences.js";
 export * from "./entitlement.js";
 export * from "./license-file.js";
+export * from "./server-login.js";
 export * from "./jwks.js";
 export * from "./resource-server.js";
 export { snaplink as default } from "./browser-login.js";

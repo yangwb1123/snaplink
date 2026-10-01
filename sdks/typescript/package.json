@@ -46,6 +46,7 @@
     "jwks.ts",
     "license-file.ts",
     "preferences.ts",
-    "resource-server.ts"
+    "resource-server.ts",
+    "server-login.ts"
   ]
 }
