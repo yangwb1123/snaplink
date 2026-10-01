@@ -15,6 +15,12 @@ import sdk_surface
 import sdk_toml
 import sdk_versions
 
+# Manifest formats whose package version is carried by a release tag rather
+# than by a version field in the manifest. Kept here as a set so the rule stays
+# format-derived: adding a third such format is a one-line change, not a new
+# special case in the assertion below.
+TAG_VERSIONED_FORMATS = frozenset({"swift", "gomod"})
+
 
 VERSIONS = ("0.3.0", "0.3.0", "0.3.0", "0.3.0", "0.3.0", "")
 
@@ -171,10 +177,11 @@ class SDKVersionGateTests(unittest.TestCase):
 
         # A package must carry a version unless its manifest format is one
         # where the version lives elsewhere — SwiftPM derives it from the release
-        # tag. Deriving this from the format keeps the rule correct when another
-        # such package is added, instead of naming today's one.
+        # tag, and a Go module's version is its module tag. Deriving this from
+        # the format keeps the rule correct when another such package is added,
+        # instead of naming today's ones.
         tag_versioned = {
-            spec.id for spec in sdk_versions.MANIFEST_SPECS if spec.format == "swift"
+            spec.id for spec in sdk_versions.MANIFEST_SPECS if spec.format in TAG_VERSIONED_FORMATS
         }
 
         majors = set()
