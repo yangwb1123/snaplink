@@ -141,17 +141,52 @@ def _package(report: sdk_versions.VersionReport, package_id: str) -> sdk_version
 
 class SDKVersionGateTests(unittest.TestCase):
     def test_current_repository_versions_pass(self) -> None:
+        """The committed manifests must satisfy the gate, now and after a release.
+
+        The expected versions are read from the manifests rather than pinned
+        here: a hardcoded list breaks on every version bump, which is exactly
+        when the gate matters least and trains people to ignore it.
+        """
         report = sdk_versions.load_version_report()
         self.assertTrue(report.ok, report.failure_message())
         self.assertEqual(
-            [package.version for package in report.packages],
-            # Swift has no manifest version to compare against.
-            [
-                None if version == "" else version
-                for version in REPOSITORY_VERSIONS
-            ],
+            [spec.id for spec in sdk_versions.MANIFEST_SPECS],
+            [package.id for package in report.packages],
         )
-        self.assertEqual([package.name for package in report.packages], list(NAMES))
+        self.assertEqual(list(NAMES), [package.name for package in report.packages])
+
+        majors = set()
+        for package in report.packages:
+            if package.version is None:
+                # SwiftPM versions from the release tag, so there is no file to
+                # read a number from. The package is still audited by name.
+                self.assertEqual("swift", package.id)
+                continue
+            self.assertTrue(
+                sdk_versions.is_valid_semver(package.version),
+                f"{package.id}={package.version!r} is not valid SemVer",
+            )
+            majors.add(package.version.split(".", 1)[0])
+        self.assertEqual(
+            1, len(majors), f"the release train split across majors: {majors}"
+        )
+
+    def test_the_train_rule_accepts_a_minor_split(self) -> None:
+        packages = (
+            sdk_versions.PackageVersion("typescript", "a", "0.3.0"),
+            sdk_versions.PackageVersion("rust", "b", "0.4.0"),
+            sdk_versions.PackageVersion("swift", "c", None),
+        )
+        self.assertIsNone(sdk_versions.check_train_consistency(packages))
+
+    def test_the_train_rule_rejects_a_major_split(self) -> None:
+        packages = (
+            sdk_versions.PackageVersion("typescript", "a", "0.3.0"),
+            sdk_versions.PackageVersion("rust", "b", "1.0.0"),
+        )
+        error = sdk_versions.check_train_consistency(packages)
+        self.assertIsNotNone(error)
+        self.assertIn("majors differ", error)
 
     def test_the_repository_declares_every_sdk_directory(self) -> None:
         """The check that would have caught Kotlin and Swift."""
