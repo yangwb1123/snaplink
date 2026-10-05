@@ -13,7 +13,7 @@ go 1.26.1
 // `go list -m all`, blurring the core's zero-external-SDK invariant.)
 require github.com/yangwb1123/snaplink v0.0.0
 
-require github.com/miekg/pkcs11 v1.1.1
+require github.com/miekg/pkcs11 v1.1.2
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
