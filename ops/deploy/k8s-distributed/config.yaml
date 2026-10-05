@@ -90,6 +90,9 @@ oauth:
     # Registered for the explicitly optional, read-only device observer
     # below. Registration does not grant it to forge-cli/forge-console.
     - forge:devices:read
+    # Domain Panel resource server. The wildcard covers domain:read and
+    # domain:write; only the domain-panel-spa client below is granted them.
+    - domain:*
 security:
   jti_replay:
     backend: redis
@@ -234,6 +237,27 @@ clients:
   - password
   - google
   - github
+  token_strategy: jwt
+  require_pkce: true
+  active: true
+# Domain Panel SPA gets its own public PKCE client rather than widening
+# sso-admin-console above: the panel manages production reverse-proxy routes,
+# and least privilege is cheaper to keep when that grant is not shared.
+- id: domain-panel-spa
+  name: Domain Panel
+  redirect_uris:
+  - https://sso.ywbsd.site/
+  - http://192.168.31.198:30101/
+  allowed_scopes:
+  - openid
+  - profile
+  - email
+  - domain:read
+  - domain:write
+  allowed_authenticators:
+  - password
+  allowed_resources:
+  - domain-panel-api
   token_strategy: jwt
   require_pkce: true
   active: true

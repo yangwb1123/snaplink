@@ -9,6 +9,11 @@ import (
 	"github.com/yangwb1123/snaplink/domains/authenticators"
 )
 
+// freshTOTPEnrollmentStore builds a TOTPEnrollmentStore against the
+// integration DB and wipes totp_factors so each test starts clean. Callers
+// must NOT run in parallel: a concurrent TRUNCATE takes ACCESS EXCLUSIVE and
+// deletes rows a running test just wrote, so every test in this file runs
+// sequentially.
 func freshTOTPEnrollmentStore(t *testing.T) *TOTPEnrollmentStore {
 	t.Helper()
 	s, err := NewTOTPEnrollmentStore(testConfig(t))
@@ -23,7 +28,6 @@ func freshTOTPEnrollmentStore(t *testing.T) *TOTPEnrollmentStore {
 }
 
 func TestTOTPEnrollment_Lifecycle(t *testing.T) {
-	t.Parallel()
 	s := freshTOTPEnrollmentStore(t)
 	ctx := context.Background()
 	secret := []byte("seedbytes12345678901")
@@ -56,7 +60,6 @@ func TestTOTPEnrollment_Lifecycle(t *testing.T) {
 }
 
 func TestTOTPEnrollment_ReEnrollReplacesInFull(t *testing.T) {
-	t.Parallel()
 	s := freshTOTPEnrollmentStore(t)
 	ctx := context.Background()
 	secret := []byte("seedbytes12345678901")
@@ -83,7 +86,6 @@ func TestTOTPEnrollment_ReEnrollReplacesInFull(t *testing.T) {
 }
 
 func TestTOTPEnrollment_RemoveIsIdempotentAndScoped(t *testing.T) {
-	t.Parallel()
 	s := freshTOTPEnrollmentStore(t)
 	ctx := context.Background()
 	secret := []byte("seedbytes12345678901")
@@ -118,7 +120,6 @@ func TestTOTPEnrollment_RemoveIsIdempotentAndScoped(t *testing.T) {
 }
 
 func TestTOTPEnrollment_PerUserIsolation(t *testing.T) {
-	t.Parallel()
 	s := freshTOTPEnrollmentStore(t)
 	ctx := context.Background()
 	aliceSecret := []byte("aliceseed12345678901")
@@ -144,7 +145,6 @@ func TestTOTPEnrollment_PerUserIsolation(t *testing.T) {
 }
 
 func TestTOTPEnrollment_AddedAtNanosecondRoundTrip(t *testing.T) {
-	t.Parallel()
 	s := freshTOTPEnrollmentStore(t)
 	ctx := context.Background()
 

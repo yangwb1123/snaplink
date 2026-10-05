@@ -58,6 +58,20 @@ clients:
     allowed_resources: [snaplink-sso-quota]
     token_strategy: jwt
     active: true
+  # Domain Panel SPA: a separate public PKCE client rather than a widened
+  # sso-admin-console, so granting the panel write access cannot silently add
+  # it to the console. Public clients carry no secret by construction.
+  - id: domain-panel-spa
+    name: Domain Panel
+    redirect_uris:
+      - http://localhost:5173/
+      - http://localhost:8080/
+    allowed_scopes: [openid, profile, email, domain:read, domain:write]
+    allowed_authenticators: []
+    allowed_resources: [domain-panel-api]
+    token_strategy: jwt
+    require_pkce: true
+    active: true
 
 # Global scope registry (scope-matrix-v2, B4-2): the dev stack provisions an
 # explicit matrix (the built-in table minus billing:checkout:create, which is
@@ -70,7 +84,13 @@ oauth:
     enabled: true
     matrix: [admin:read, admin:write, billing:payment:order:read, billing:payment:write,
              metering:write, billing:entitlement:read, audit:event:write, admin:*]
-    extra_scopes: [billing:checkout:create, tenant-quota:projection:write]
+    extra_scopes: [billing:checkout:create, tenant-quota:projection:write,
+                  # Domain Panel resource server, a separate deployment at
+                  # ../../../domain-panel. One wildcard registers every scope
+                  # the panel uses; the domain-panel-spa client below is what
+                  # actually grants them, so registration alone confers no
+                  # access. Mirror both edits into k8s-distributed/config.yaml.
+                  domain:*]
 
 tenant:
   enabled: true

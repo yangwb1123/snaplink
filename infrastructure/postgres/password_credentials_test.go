@@ -8,6 +8,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// freshPasswordCredentialStore opens a store on the shared integration DB and
+// TRUNCATEs password_credentials. Callers must NOT run in parallel: a
+// concurrent TRUNCATE (or a parallel peer's assertions) would wipe or leak
+// rows on the same table, so every test in this file runs sequentially.
 func freshPasswordCredentialStore(t *testing.T) *PasswordCredentialStore {
 	t.Helper()
 	s, err := NewPasswordCredentialStore(testConfig(t))
@@ -22,7 +26,6 @@ func freshPasswordCredentialStore(t *testing.T) *PasswordCredentialStore {
 }
 
 func TestPasswordCredentials_SetVerify(t *testing.T) {
-	t.Parallel()
 	s := freshPasswordCredentialStore(t)
 	ctx := context.Background()
 
@@ -50,7 +53,6 @@ func TestPasswordCredentials_SetVerify(t *testing.T) {
 }
 
 func TestPasswordCredentials_UpsertReplacesInFull(t *testing.T) {
-	t.Parallel()
 	s := freshPasswordCredentialStore(t)
 	ctx := context.Background()
 
@@ -82,7 +84,6 @@ func TestPasswordCredentials_UpsertReplacesInFull(t *testing.T) {
 }
 
 func TestPasswordCredentials_SetPasswordHashImporter(t *testing.T) {
-	t.Parallel()
 	s := freshPasswordCredentialStore(t)
 	ctx := context.Background()
 
@@ -118,7 +119,6 @@ func TestPasswordCredentials_SetPasswordHashImporter(t *testing.T) {
 }
 
 func TestPasswordCredentials_UpdatedAtNanoRoundTrip(t *testing.T) {
-	t.Parallel()
 	s := freshPasswordCredentialStore(t)
 	ctx := context.Background()
 
@@ -150,7 +150,6 @@ func TestPasswordCredentials_UpdatedAtNanoRoundTrip(t *testing.T) {
 // self-service identity-unlink "don't lock yourself out" guard fell CLOSED
 // (assumed no password) even for a user who genuinely had one.
 func TestPasswordCredentials_HasPassword(t *testing.T) {
-	t.Parallel()
 	s := freshPasswordCredentialStore(t)
 	ctx := context.Background()
 
@@ -166,7 +165,6 @@ func TestPasswordCredentials_HasPassword(t *testing.T) {
 }
 
 func TestPasswordCredentials_PingAndDB(t *testing.T) {
-	t.Parallel()
 	s := freshPasswordCredentialStore(t)
 	ctx := context.Background()
 

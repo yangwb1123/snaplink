@@ -8,14 +8,27 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
-func TestSessionManager_CreateGetDestroy(t *testing.T) {
-	t.Parallel()
-	cfg := testConfig(t)
-	sm, err := NewSessionManager(cfg, 0)
+// freshSessionManager opens a SessionManager on the shared integration DB and
+// TRUNCATEs sessions BEFORE the caller's test body runs, so absolute row-count
+// assertions (ListByUser/ListByTenant) see only this test's rows and never
+// accumulate across earlier tests or earlier runs. Callers must NOT run in
+// parallel: a concurrent TRUNCATE (or a parallel peer's assertions) would wipe
+// or leak rows on the same table, so every test in this file runs sequentially.
+func freshSessionManager(t *testing.T, ttl time.Duration) *SessionManager {
+	t.Helper()
+	sm, err := NewSessionManager(testConfig(t), ttl)
 	if err != nil {
 		t.Fatalf("NewSessionManager: %v", err)
 	}
 	t.Cleanup(func() { _ = sm.Close() })
+	if _, err := sm.db.ExecContext(context.Background(), "TRUNCATE sessions"); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+	return sm
+}
+
+func TestSessionManager_CreateGetDestroy(t *testing.T) {
+	sm := freshSessionManager(t, 0)
 
 	ctx := context.Background()
 	s, err := sm.Create(ctx, "user1")
@@ -49,13 +62,7 @@ func TestSessionManager_CreateGetDestroy(t *testing.T) {
 }
 
 func TestSessionManager_CreateWithMeta(t *testing.T) {
-	t.Parallel()
-	cfg := testConfig(t)
-	sm, err := NewSessionManager(cfg, 0)
-	if err != nil {
-		t.Fatalf("NewSessionManager: %v", err)
-	}
-	t.Cleanup(func() { _ = sm.Close() })
+	sm := freshSessionManager(t, 0)
 
 	ctx := context.Background()
 	authTime := time.Now().UTC().Add(-time.Minute).Truncate(time.Nanosecond)
@@ -96,14 +103,7 @@ func TestSessionManager_CreateWithMeta(t *testing.T) {
 }
 
 func TestSessionManager_Refresh(t *testing.T) {
-	t.Parallel()
-	cfg := testConfig(t)
-	ttl := 10 * time.Minute
-	sm, err := NewSessionManager(cfg, ttl)
-	if err != nil {
-		t.Fatalf("NewSessionManager: %v", err)
-	}
-	t.Cleanup(func() { _ = sm.Close() })
+	sm := freshSessionManager(t, 10*time.Minute)
 
 	ctx := context.Background()
 	s, err := sm.Create(ctx, "user1")
@@ -132,13 +132,7 @@ func TestSessionManager_Refresh(t *testing.T) {
 }
 
 func TestSessionManager_ListByUser(t *testing.T) {
-	t.Parallel()
-	cfg := testConfig(t)
-	sm, err := NewSessionManager(cfg, 0)
-	if err != nil {
-		t.Fatalf("NewSessionManager: %v", err)
-	}
-	t.Cleanup(func() { _ = sm.Close() })
+	sm := freshSessionManager(t, 0)
 
 	ctx := context.Background()
 	s1, err := sm.Create(ctx, "user1")
@@ -167,13 +161,7 @@ func TestSessionManager_ListByUser(t *testing.T) {
 }
 
 func TestSessionManager_DeleteByTenant(t *testing.T) {
-	t.Parallel()
-	cfg := testConfig(t)
-	sm, err := NewSessionManager(cfg, 0)
-	if err != nil {
-		t.Fatalf("NewSessionManager: %v", err)
-	}
-	t.Cleanup(func() { _ = sm.Close() })
+	sm := freshSessionManager(t, 0)
 
 	ctx := context.Background()
 	s1, err := sm.CreateWithMeta(ctx, "user1", sso.SessionMeta{TenantID: "t1"})
@@ -213,13 +201,7 @@ func TestSessionManager_DeleteByTenant(t *testing.T) {
 }
 
 func TestSessionManager_ListByTenant(t *testing.T) {
-	t.Parallel()
-	cfg := testConfig(t)
-	sm, err := NewSessionManager(cfg, 0)
-	if err != nil {
-		t.Fatalf("NewSessionManager: %v", err)
-	}
-	t.Cleanup(func() { _ = sm.Close() })
+	sm := freshSessionManager(t, 0)
 
 	ctx := context.Background()
 	sm.CreateWithMeta(ctx, "user1", sso.SessionMeta{TenantID: "t1"})
@@ -245,14 +227,8 @@ func TestSessionManager_ListByTenant(t *testing.T) {
 }
 
 func TestSessionManager_ExpiredSessionNotFound(t *testing.T) {
-	t.Parallel()
-	cfg := testConfig(t)
-	// Use a very short TTL so the session expires quickly.
-	sm, err := NewSessionManager(cfg, 10*time.Millisecond)
-	if err != nil {
-		t.Fatalf("NewSessionManager: %v", err)
-	}
-	t.Cleanup(func() { _ = sm.Close() })
+	// Very short TTL so the session expires quickly.
+	sm := freshSessionManager(t, 10*time.Millisecond)
 
 	ctx := context.Background()
 	s, err := sm.Create(ctx, "user1")

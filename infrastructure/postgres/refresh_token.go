@@ -78,11 +78,11 @@ func (s *RefreshTokenStore) StartReaper(interval time.Duration) {
 		nowNs := now.UnixNano()
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM refresh_token_families WHERE expires_at < $1`, nowNs)
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM refresh_tokens WHERE expires_at < $1`, nowNs)
-		// The always-true guard preserves the SQLite shape exactly.
+		// The always-true guard preserves the SQLite shape exactly; the ::bigint cast is mandatory because Postgres otherwise infers $1 as int4 from the bare 0 literal and pgx then refuses to encode int64 nanos (the error is discarded below, so the sweep would silently never run).
 		_, _ = s.db.ExecContext(ctx, `
             DELETE FROM refresh_rotation_windows
              WHERE family_id NOT IN (SELECT family_id FROM refresh_token_families)
-               AND $1 > 0`, nowNs)
+               AND $1::bigint > 0`, nowNs)
 	}))
 }
 

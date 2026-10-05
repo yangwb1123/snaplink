@@ -16,7 +16,6 @@ import (
 // for the missing secret_rotated_at column (this backend previously had no
 // column, write, or read for it at all).
 func TestPostgresClients_AddBaselinesSecretRotatedAt(t *testing.T) {
-	t.Parallel()
 	st := freshClientStore(t)
 	ctx := context.Background()
 	if err := st.Add(ctx, &sso.Client{ID: "confidential", Secret: "shh", Active: true}); err != nil {
@@ -44,7 +43,6 @@ func TestPostgresClients_AddBaselinesSecretRotatedAt(t *testing.T) {
 // TestPostgresClients_RotateSecretUpdatesSecretRotatedAt proves RotateSecret
 // stamps a fresh SecretRotatedAt, converging a due client back to not-due.
 func TestPostgresClients_RotateSecretUpdatesSecretRotatedAt(t *testing.T) {
-	t.Parallel()
 	st := freshClientStore(t)
 	ctx := context.Background()
 	if err := st.Add(ctx, &sso.Client{ID: "r", Secret: "old", Active: true}); err != nil {
@@ -67,7 +65,6 @@ func TestPostgresClients_RotateSecretUpdatesSecretRotatedAt(t *testing.T) {
 }
 
 func TestPostgresClients_RotateSecretOverlapLifecycle(t *testing.T) {
-	t.Parallel()
 	st := freshClientStore(t)
 	ctx := context.Background()
 	if err := st.Add(ctx, &sso.Client{ID: "overlap", Secret: "old", Active: true}); err != nil {
@@ -100,7 +97,6 @@ func TestPostgresClients_RotateSecretOverlapLifecycle(t *testing.T) {
 }
 
 func TestPostgresClients_SecretExpiryPersistsAndIsEnforced(t *testing.T) {
-	t.Parallel()
 	st := freshClientStore(t)
 	ctx := context.Background()
 	expires := time.Now().UTC().Add(-time.Minute)
@@ -117,7 +113,6 @@ func TestPostgresClients_SecretExpiryPersistsAndIsEnforced(t *testing.T) {
 }
 
 func TestPostgresClients_DCRRuntimeMetadataAndRATOverlapPersist(t *testing.T) {
-	t.Parallel()
 	st := freshClientStore(t)
 	ctx := context.Background()
 	until := time.Now().UTC().Add(time.Hour)
@@ -153,7 +148,6 @@ func TestPostgresClients_DCRRuntimeMetadataAndRATOverlapPersist(t *testing.T) {
 // didn't implement clientrotation.ClientRotationLister at all, so scheduled
 // rotation silently never listed anything against a Postgres ClientStore.
 func TestPostgresClients_ListDueForRotation(t *testing.T) {
-	t.Parallel()
 	st := freshClientStore(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -203,7 +197,6 @@ func mustAddClient(t *testing.T, st *ClientStore, c *sso.Client) {
 // re-Get — this backend previously had no columns for either field, so a
 // score set by the trust scorer was silently lost the moment it was re-read.
 func TestPostgresClients_TrustScoreRoundTrips(t *testing.T) {
-	t.Parallel()
 	st := freshClientStore(t)
 	ctx := context.Background()
 	if err := st.Add(ctx, &sso.Client{ID: "t1", Secret: "x", Active: true}); err != nil {

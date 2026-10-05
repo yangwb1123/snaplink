@@ -19,7 +19,9 @@ func truncatePermissions(t *testing.T, db interface {
 }
 
 // freshPermissionProvider returns a PermissionProvider over the shared test DB
-// with the three permissions tables truncated.
+// with the three permissions tables truncated. Callers must NOT run in
+// parallel: a concurrent TRUNCATE takes ACCESS EXCLUSIVE and deletes rows a
+// running test just wrote, so every test in this file runs sequentially.
 func freshPermissionProvider(t *testing.T) *PermissionProvider {
 	t.Helper()
 	p, err := NewPermissionProvider(testConfig(t))
@@ -41,7 +43,6 @@ func freshPermissionProvider(t *testing.T) *PermissionProvider {
 // per Factory call, so the integration test needs only a single live DB
 // connection.
 func TestPermissionProvider_Conformance(t *testing.T) {
-	t.Parallel()
 	cfg := testConfig(t)
 	db, err := Open(cfg)
 	if err != nil {
@@ -49,6 +50,9 @@ func TestPermissionProvider_Conformance(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	// Same non-parallel contract as freshPermissionProvider: this Factory
+	// TRUNCATE hits the same tables, so the suite's subtests — which contain no
+	// t.Parallel() of their own — must run without a parallel peer in this file.
 	permissionstest.ConformanceSuite{
 		Factory: func(t *testing.T) permissions.Provider {
 			t.Helper()
@@ -70,7 +74,6 @@ func TestPermissionProvider_Conformance(t *testing.T) {
 // multi-user fan-out must not miss anyone, and a user left with no roles drops
 // out of ListAssignments / Roles.
 func TestPermissionProvider_RemoveRoleStripsAllUsers(t *testing.T) {
-	t.Parallel()
 	ctx := context.Background()
 	p := freshPermissionProvider(t)
 

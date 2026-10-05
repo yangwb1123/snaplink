@@ -220,7 +220,6 @@ func TestAuthCodeStore_OpaqueLookupKeysAndRotation(t *testing.T) {
 		t.Fatalf("NewAuthCodeStoreWithDB: %v", err)
 	}
 	current := []byte("0123456789abcdef0123456789abcdef")
-	previous := []byte("abcdef0123456789abcdef0123456789")
 	s.SetLookupHMACKeys(current)
 	if err := s.Issue(ctx, "code-hmac", &oauthspi.AuthCode{
 		UserID: "u", ClientID: "c", ExpiresAt: time.Now().Add(time.Minute),
@@ -235,11 +234,13 @@ func TestAuthCodeStore_OpaqueLookupKeysAndRotation(t *testing.T) {
 	if stored == "code-hmac" || !strings.HasPrefix(stored, "h1:") {
 		t.Fatalf("raw code persisted: %q", stored)
 	}
-	// Rotation: reads with the previous key (and legacy plaintext) still work.
-	s.SetLookupHMACKeys([]byte("new-key-0123456789abcdef0123456789ab"), previous)
+	// Rotation: the key that wrote the row must stay among the read candidates
+	// (current, previous) until the row's TTL elapses — that is the no-logout
+	// rotation contract; the legacy plaintext candidate trails them.
+	s.SetLookupHMACKeys([]byte("new-key-0123456789abcdef0123456789ab"), current)
 	out, err := s.Consume(ctx, "code-hmac")
 	if err != nil || out.UserID != "u" {
-		t.Fatalf("previous-key read failed: out=%+v err=%v", out, err)
+		t.Fatalf("retained-key read failed: out=%+v err=%v", out, err)
 	}
 	// Legacy plaintext fallback: a raw row written with nil keys is readable.
 	s2, err := NewAuthCodeStoreWithDB(db, dialect)
@@ -372,16 +373,18 @@ func TestRefreshTokenStore_InspectDeleteAndCount(t *testing.T) {
 	_, err = s.Inspect(ctx, "rt-b")
 	assertSentinel(t, err, oauthspi.ErrRefreshTokenNotFound)
 
-	// CountForSubject dry-run.
-	if n, err := s.CountForSubject(ctx, "u1", ""); err != nil || n != 1 {
-		t.Fatalf("CountForSubject(u1, all) = (%d, %v), want 1", n, err)
+	// CountForSubject dry-run: rt-a was consumed and rt-b deleted above, so u1
+	// owns no active token left (rt-c belongs to u2).
+	if n, err := s.CountForSubject(ctx, "u1", ""); err != nil || n != 0 {
+		t.Fatalf("CountForSubject(u1, all) = (%d, %v), want 0", n, err)
 	}
 	if n, err := s.CountForSubject(ctx, "u1", "c1"); err != nil || n != 0 {
 		t.Fatalf("CountForSubject(u1, c1) = (%d, %v), want 0", n, err)
 	}
-	// DeleteAllForSubject revokes across clients when clientID empty.
-	if n, err := s.DeleteAllForSubject(ctx, "u1", ""); err != nil || n != 1 {
-		t.Fatalf("DeleteAllForSubject(u1, all) = (%d, %v), want 1", n, err)
+	// DeleteAllForSubject revokes across clients when clientID empty. Nothing is
+	// left for u1, so this must be a counted no-op rather than a phantom 1.
+	if n, err := s.DeleteAllForSubject(ctx, "u1", ""); err != nil || n != 0 {
+		t.Fatalf("DeleteAllForSubject(u1, all) = (%d, %v), want 0", n, err)
 	}
 	if n, err := s.DeleteAllForSubject(ctx, "", ""); err != nil || n != 0 {
 		t.Fatalf("DeleteAllForSubject(empty user) = (%d, %v), want no-op", n, err)
@@ -415,16 +418,21 @@ func TestRefreshTokenStore_ListExpiringThumbprintsStoredValue(t *testing.T) {
 			t.Fatalf("Issue(%s): %v", token, err)
 		}
 	}
+	// With HMAC keys configured, the thumbprint MUST be over the stored h1:
+	// value (SQLite byte-parity), not the raw token — sha256(raw) would
+	// differ and leak that the value is not stored raw. The keys must be set
+	// BEFORE the writes, or the rows are stored raw and never gain an h1: value.
+	s.SetLookupHMACKeys([]byte("0123456789abcdef0123456789abcdef"))
 	issue("rt-e1", "f1", now.Add(24*time.Hour))
 	issue("rt-e2", "f2", now.Add(48*time.Hour))
 	issue("rt-past", "f3", now.Add(-time.Hour))
 
-	// With HMAC keys configured, the thumbprint MUST be over the stored h1:
-	// value (SQLite byte-parity), not the raw token — sha256(raw) would
-	// differ and leak that the value is not stored raw.
-	s.SetLookupHMACKeys([]byte("0123456789abcdef0123456789abcdef"))
+	// Pin the probe to the 24h row — the one both ListExpiring calls below
+	// return — so the thumbprint comparison cannot silently bind to another row.
 	var stored string
-	if err := db.QueryRowContext(ctx, `SELECT token FROM refresh_tokens WHERE token LIKE 'h1:%'`).Scan(&stored); err != nil {
+	if err := db.QueryRowContext(ctx,
+		`SELECT token FROM refresh_tokens WHERE token LIKE 'h1:%' AND expires_at >= $1 ORDER BY expires_at ASC LIMIT 1`,
+		now.UnixNano()).Scan(&stored); err != nil {
 		t.Fatalf("read stored token: %v", err)
 	}
 	list, err := s.ListExpiring(ctx, now.Add(36*time.Hour), 0)
@@ -505,8 +513,14 @@ func TestRefreshTokenStore_ReaperPrunesLedgerAndRotationWindows(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
+	// An expired token collapses to the not-found sentinel (it is consumed
+	// atomically, then dropped as expired) — SQLite parity. The REPLAY then
+	// trips reuse detection, which is what leaves the ledger row the sweep
+	// below must prune.
+	_, err = s.Consume(ctx, "rt-old")
+	assertSentinel(t, err, oauthspi.ErrRefreshTokenNotFound)
 	if _, err := s.Consume(ctx, "rt-old"); !errors.Is(err, oauthspi.ErrRefreshTokenReused) {
-		t.Fatalf("consume expired = %v, want reuse signal (ledger row present)", err)
+		t.Fatalf("consume replay = %v, want reuse signal (ledger row present)", err)
 	}
 	if _, _, err := s.RecordRotation(ctx, "fam-old"); err != nil {
 		t.Fatalf("RecordRotation: %v", err)
@@ -520,6 +534,51 @@ func TestRefreshTokenStore_ReaperPrunesLedgerAndRotationWindows(t *testing.T) {
 	_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM refresh_rotation_windows`).Scan(&windows)
 	if tokens != 0 || ledger != 0 || windows != 0 {
 		t.Fatalf("post-sweep residue: tokens=%d ledger=%d windows=%d", tokens, ledger, windows)
+	}
+}
+
+// TestRefreshTokenStore_ReaperPrunesOrphanRotationWindow drives the SHIPPED
+// StartReaper — not a re-declared copy of its statements — so a statement that
+// silently fails at runtime cannot hide behind mirror drift. It exists because
+// the rotation-window sweep binds an untyped parameter next to a bare integer
+// literal: without an explicit cast Postgres infers int4 and pgx cannot encode
+// int64 nanoseconds, and StartReaper discards the error, so the third sweep
+// would never run and refresh_rotation_windows would grow unbounded.
+func TestRefreshTokenStore_ReaperPrunesOrphanRotationWindow(t *testing.T) {
+	db, dialect := freshOAuthStore(t)
+	ctx := context.Background()
+	s, err := NewRefreshTokenStoreWithDB(db, dialect)
+	if err != nil {
+		t.Fatalf("NewRefreshTokenStoreWithDB: %v", err)
+	}
+	if err := s.Issue(ctx, "rt-orphan", &oauthspi.RefreshToken{
+		UserID: "u", ClientID: "c", IssuedAt: time.Now(),
+		ExpiresAt: time.Now().Add(-time.Minute), FamilyID: "fam-orphan",
+	}); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	// Two rotation windows, neither of which has a live family to own it.
+	for _, familyID := range []string{"fam-orphan", "fam-gone"} {
+		if _, _, err := s.RecordRotation(ctx, familyID); err != nil {
+			t.Fatalf("RecordRotation(%s): %v", familyID, err)
+		}
+	}
+	s.StartReaper(time.Millisecond)
+	t.Cleanup(func() { _ = s.Close() })
+
+	deadline := time.Now().Add(5 * time.Second)
+	var tokens, ledger, windows int
+	for {
+		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM refresh_tokens`).Scan(&tokens)
+		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM refresh_token_families`).Scan(&ledger)
+		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM refresh_rotation_windows`).Scan(&windows)
+		if tokens == 0 && ledger == 0 && windows == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("reaper never pruned: tokens=%d ledger=%d windows=%d", tokens, ledger, windows)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -537,7 +596,7 @@ func sweepStatements(t *testing.T, db *sql.DB, now time.Time) {
 	if _, err := db.ExecContext(context.Background(), `
         DELETE FROM refresh_rotation_windows
          WHERE family_id NOT IN (SELECT family_id FROM refresh_token_families)
-           AND $1 > 0`, nowNs); err != nil {
+           AND $1::bigint > 0`, nowNs); err != nil {
 		t.Fatalf("sweep windows: %v", err)
 	}
 }
@@ -786,12 +845,19 @@ func TestRefreshGraceStore_RememberLookupAndFailClosed(t *testing.T) {
 	if _, ok := s.Lookup("", now); ok {
 		t.Fatal("Lookup of empty token must be a miss")
 	}
-	// PruneExpired removes expired rows.
+	// PruneExpired removes expired rows. It is wall-clock, so it only reaps a
+	// row whose window has actually elapsed: remember a second, already-stale
+	// entry alongside the live one to exercise the prune.
+	s.Remember("stale-token", resp, now.Add(-11*time.Minute))
 	if n, err := s.PruneExpired(ctx); err != nil || n != 1 {
 		t.Fatalf("PruneExpired = (%d, %v), want (1, nil)", n, err)
 	}
-	if _, ok := s.Lookup("consumed-token", now.Add(time.Second)); ok {
-		t.Fatal("Lookup after prune must be a miss")
+	// The stale row is gone, but the in-window row survives the same prune.
+	if _, ok := s.Lookup("stale-token", now); ok {
+		t.Fatal("Lookup of pruned token must be a miss")
+	}
+	if _, ok := s.Lookup("consumed-token", now.Add(time.Second)); !ok {
+		t.Fatal("prune must not remove a row whose grace window is still live")
 	}
 }
 

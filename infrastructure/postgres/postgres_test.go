@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yangwb1123/snaplink/platform/migrate"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -27,7 +28,6 @@ func testConfig(t *testing.T) Config {
 }
 
 func TestMigrate_RunIdempotentAndVersioned(t *testing.T) {
-	t.Parallel()
 	cfg := testConfig(t)
 	db, err := Open(cfg)
 	if err != nil {
@@ -46,22 +46,28 @@ func TestMigrate_RunIdempotentAndVersioned(t *testing.T) {
 	if err := Run(ctx, db, "consent", consentMigrations, cfg.Dialect); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
-	if v, err := CurrentVersion(ctx, db, "consent"); err != nil || v != 1 {
-		t.Fatalf("after Run CurrentVersion = (%d, %v), want (1, nil)", v, err)
+	wantVersion := migrate.MaxVersion(consentMigrations)
+	if v, err := CurrentVersion(ctx, db, "consent"); err != nil || v != wantVersion {
+		t.Fatalf("after Run CurrentVersion = (%d, %v), want (%d, nil)", v, err, wantVersion)
 	}
 	// Idempotent: a second Run with the same set is a no-op.
 	if err := Run(ctx, db, "consent", consentMigrations, cfg.Dialect); err != nil {
 		t.Fatalf("second Run: %v", err)
 	}
-	// CheckSchema: live (1) ahead of binaryMax (0) must error; equal is fine.
+	// CheckSchema: live (ahead of binaryMax 0) must error; equal is fine.
 	if err := CheckSchema(ctx, db, "consent", 0); err == nil {
 		t.Error("CheckSchema must reject a DB schema ahead of the binary")
 	}
-	if err := CheckSchema(ctx, db, "consent", 1); err != nil {
+	if err := CheckSchema(ctx, db, "consent", wantVersion); err != nil {
 		t.Errorf("CheckSchema at matching version must pass, got %v", err)
 	}
 }
 
+// freshConsentStore opens a store on the shared integration DB and TRUNCATEs
+// consent_grants. Callers must NOT run in parallel: a concurrent TRUNCATE (or
+// a parallel peer's assertions) would wipe or leak rows on the same table.
+// TestMigrate_RunIdempotentAndVersioned DROP TABLEs that same table, so it
+// runs sequentially with the tests below rather than in parallel with them.
 func freshConsentStore(t *testing.T) *ConsentStore {
 	t.Helper()
 	s, err := NewConsentStore(testConfig(t))
@@ -76,7 +82,6 @@ func freshConsentStore(t *testing.T) *ConsentStore {
 }
 
 func TestConsent_RecordGetRevoke(t *testing.T) {
-	t.Parallel()
 	s := freshConsentStore(t)
 	ctx := context.Background()
 
@@ -123,7 +128,6 @@ func TestConsent_RecordGetRevoke(t *testing.T) {
 }
 
 func TestConsent_ListByUserDescending(t *testing.T) {
-	t.Parallel()
 	s := freshConsentStore(t)
 	ctx := context.Background()
 	base := time.Now().UTC()

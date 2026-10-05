@@ -8,6 +8,10 @@ import (
 	"github.com/yangwb1123/snaplink/shared/security"
 )
 
+// freshPairwiseStore opens a store on the shared integration DB and TRUNCATEs
+// pairwise_subjects. Callers must NOT run in parallel: a concurrent TRUNCATE
+// (or a parallel peer's assertions) would wipe or leak rows on the same
+// table, so every test in this file runs sequentially.
 func freshPairwiseStore(t *testing.T) *PairwiseSubjectStore {
 	t.Helper()
 	s, err := NewPairwiseSubjectStore(testConfig(t))
@@ -22,7 +26,6 @@ func freshPairwiseStore(t *testing.T) *PairwiseSubjectStore {
 }
 
 func TestPairwise_MapAndResolve(t *testing.T) {
-	t.Parallel()
 	s := freshPairwiseStore(t)
 	ctx := context.Background()
 
@@ -44,7 +47,6 @@ func TestPairwise_MapAndResolve(t *testing.T) {
 }
 
 func TestPairwise_IdempotentUpsertReplacesInFull(t *testing.T) {
-	t.Parallel()
 	s := freshPairwiseStore(t)
 	ctx := context.Background()
 
@@ -72,7 +74,6 @@ func TestPairwise_IdempotentUpsertReplacesInFull(t *testing.T) {
 }
 
 func TestPairwise_DistinctSubjectsCoexist(t *testing.T) {
-	t.Parallel()
 	s := freshPairwiseStore(t)
 	ctx := context.Background()
 
@@ -104,7 +105,6 @@ func TestPairwise_DistinctSubjectsCoexist(t *testing.T) {
 }
 
 func TestPairwise_RejectsEmpty(t *testing.T) {
-	t.Parallel()
 	s := freshPairwiseStore(t)
 	ctx := context.Background()
 

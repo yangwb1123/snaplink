@@ -69,7 +69,11 @@ func TestPostgresMigratesVersion3ChargebackConstraints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = adminDB.Close() }()
+	// Registered before the DROP cleanup because cleanups run LIFO and only
+	// after this function's defers. A defer here would close the pool first, so
+	// the DROP below would hit a closed pool, fail silently, and leave the schema
+	// behind; the next run would then die on "schema already exists".
+	t.Cleanup(func() { _ = adminDB.Close() })
 	schemaName := fmt.Sprintf("tenant_commerce_upgrade_%d", migrationSchemaSequence.Add(1))
 	if _, err := adminDB.ExecContext(context.Background(), "CREATE SCHEMA "+schemaName); err != nil {
 		t.Fatal(err)

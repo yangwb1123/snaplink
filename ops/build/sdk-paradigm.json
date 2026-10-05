@@ -732,9 +732,10 @@
           "note": "W6: Authorization assembles /userinfo, /permissions/me, /roles/me and /menus/me. holds() mirrors domains/permissions/matcher.go exactly: domain:* is a PREFIX rule and a bare * is global."
         },
         "typescript": {
-          "status": "missing",
-          "note": "The generated client exposes the four calls but no assembled view, and no shared permission rule.",
-          "plan": "W5: add an assembled authorization view and the shared rule when the generator covers it."
+          "status": "present",
+          "file": "sdks/typescript/authorization.ts",
+          "symbol": "export function holds(",
+          "note": "The rule is asserted against ops/build/sdk-conformance/authorization.json, the same fixture Rust uses, so the two cannot drift."
         },
         "python": {
           "status": "missing",

@@ -9,6 +9,10 @@ import (
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
+// freshInvitationStore builds an InvitationStore against the integration DB
+// and wipes invitations so each test starts clean. Callers must NOT run in
+// parallel: a concurrent TRUNCATE takes ACCESS EXCLUSIVE and deletes rows a
+// running test just wrote, so every test in this file runs sequentially.
 func freshInvitationStore(t *testing.T) *InvitationStore {
 	t.Helper()
 	s, err := NewInvitationStore(testConfig(t))
@@ -23,7 +27,6 @@ func freshInvitationStore(t *testing.T) *InvitationStore {
 }
 
 func TestInvitation_IssueConsumeSingleUse(t *testing.T) {
-	t.Parallel()
 	s := freshInvitationStore(t)
 	ctx := context.Background()
 
@@ -42,7 +45,6 @@ func TestInvitation_IssueConsumeSingleUse(t *testing.T) {
 }
 
 func TestInvitation_MissingAndExpired(t *testing.T) {
-	t.Parallel()
 	s := freshInvitationStore(t)
 	ctx := context.Background()
 
@@ -70,7 +72,6 @@ func TestInvitation_MissingAndExpired(t *testing.T) {
 }
 
 func TestInvitation_NanosecondRoundTrip(t *testing.T) {
-	t.Parallel()
 	s := freshInvitationStore(t)
 	ctx := context.Background()
 
@@ -90,7 +91,6 @@ func TestInvitation_NanosecondRoundTrip(t *testing.T) {
 }
 
 func TestInvitation_IssueUpsertReplacesInFull(t *testing.T) {
-	t.Parallel()
 	s := freshInvitationStore(t)
 	ctx := context.Background()
 
@@ -121,7 +121,6 @@ func TestInvitation_IssueUpsertReplacesInFull(t *testing.T) {
 }
 
 func TestInvitation_ListByTenantAndIsolation(t *testing.T) {
-	t.Parallel()
 	s := freshInvitationStore(t)
 	ctx := context.Background()
 	exp := time.Now().Add(time.Minute)
@@ -164,7 +163,6 @@ func TestInvitation_ListByTenantAndIsolation(t *testing.T) {
 }
 
 func TestInvitation_RevokeByTenantEmail(t *testing.T) {
-	t.Parallel()
 	s := freshInvitationStore(t)
 	ctx := context.Background()
 	exp := time.Now().Add(time.Minute)
