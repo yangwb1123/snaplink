@@ -243,6 +243,10 @@ clients:
 # Domain Panel SPA gets its own public PKCE client rather than widening
 # sso-admin-console above: the panel manages production reverse-proxy routes,
 # and least privilege is cheaper to keep when that grant is not shared.
+#
+# redirect_uris must list the ORIGIN the panel is actually served from, not this
+# issuer's origin. It is a root path, not a sub-path, because the panel SPA uses
+# hash routing. Adjust to the real deployment before rollout.
 - id: domain-panel-spa
   name: Domain Panel
   redirect_uris:
