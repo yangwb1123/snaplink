@@ -7,6 +7,8 @@ import (
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+
+	"github.com/yangwb1123/snaplink/shared/wasmruntime"
 )
 
 // Request is the authorization input marshaled to JSON and written into the
@@ -103,7 +105,7 @@ func New(ctx context.Context, wasmModule []byte) (*Engine, error) {
 	rc := wazero.NewRuntimeConfig().
 		WithCloseOnContextDone(true).
 		WithMemoryLimitPages(DefaultMemoryLimitPages)
-	runtime := wazero.NewRuntimeWithConfig(ctx, rc)
+	runtime := wasmruntime.New(ctx, rc)
 
 	compiled, err := runtime.CompileModule(ctx, wasmModule)
 	if err != nil {

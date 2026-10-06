@@ -4,7 +4,6 @@ package generate
 import (
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
@@ -24,17 +23,13 @@ import (
 // compare against yet — the generated file's very first build IS the only
 // signal that the template itself is sound.
 //
-// outputDir is a directory path relative to the current working directory
-// (or absolute); go build/vet require an explicit "./" prefix to treat an
-// argument as a filesystem path rather than an import path.
+// Verify from the generated package's directory so Go discovers its owning
+// module, not the invocation's module. A relative target also avoids macOS
+// /var versus /private/var aliases being treated as different module roots.
 func verifyGeneratedBuild(outputDir string) error {
-	target := outputDir
-	if !filepath.IsAbs(target) && !strings.HasPrefix(target, ".") {
-		target = "." + string(filepath.Separator) + target
-	}
-
 	for _, tool := range []string{"build", "vet"} {
-		cmd := exec.Command("go", tool, target)
+		cmd := exec.Command("go", tool, ".")
+		cmd.Dir = outputDir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("go %s %s:\n%s", tool, outputDir, strings.TrimRight(string(out), "\n"))

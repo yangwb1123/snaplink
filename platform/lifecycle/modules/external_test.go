@@ -320,7 +320,7 @@ func TestExternalFactoryParticipatesInGenerationLifecycle(t *testing.T) {
 
 func signedLocalExternalSpec(t *testing.T) ExternalModuleSpec {
 	t.Helper()
-	socketPath := filepath.Join(t.TempDir(), "worker.sock")
+	socketPath := localExternalWorkerSocket(t)
 	t.Setenv(externalWorkerSocketEnv, socketPath)
 	t.Setenv(externalWorkerTokenEnv, "secret")
 	executable, err := os.Executable()

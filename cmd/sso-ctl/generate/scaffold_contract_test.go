@@ -312,9 +312,9 @@ func assertKindInvariants(t *testing.T, kind string, content []byte, root string
 
 // TestVerifyGeneratedBuildVet proves the generation-time gate runs `go vet`
 // in addition to `go build`: a package that compiles but fails vet must be
-// rejected with a vet-naming error. The test chdirs into the buildable
-// module it verifies because go build/vet on an absolute directory outside
-// the current module is a pre-existing "outside main module" quirk.
+// rejected with a vet-naming error. Changing into the buildable module here
+// also exercises relative output paths; standalone and symlinked absolute
+// outputs are covered separately in verify_test.go.
 func TestVerifyGeneratedBuildVet(t *testing.T) {
 	root := repoRoot(t)
 	dir := t.TempDir()
@@ -386,8 +386,8 @@ func TestRunExitCodes(t *testing.T) {
 		t.Errorf("build-check failure: exit = %d, want 1", got)
 	}
 
-	// Full gate inside a buildable module: absolute --output, chdir'd so the
-	// module context resolves; build AND vet both run and pass (exit 0).
+	// Full gate inside a buildable module: absolute --output with a matching
+	// invocation module; build AND vet both run and pass (exit 0).
 	modDir := t.TempDir()
 	newBuildableModule(t, modDir, repoRoot(t))
 	genDir := filepath.Join(modDir, "gen", "internal", "handler")
