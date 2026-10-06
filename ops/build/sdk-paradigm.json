@@ -746,19 +746,22 @@
           "note": "The rule is asserted against ops/build/sdk-conformance/authorization.json, the same fixture Rust uses, so the two cannot drift."
         },
         "python": {
-          "status": "missing",
-          "note": "The generated client exposes the four calls but no assembled view.",
-          "plan": "W5: add an assembled authorization view and the shared rule."
+          "status": "present",
+          "file": "sdks/python/snaplink_sso/authorization.py",
+          "symbol": "def holds(",
+          "note": "Asserted against ops/build/sdk-conformance/authorization.json, the same fixture Rust and TypeScript use."
         },
         "php": {
-          "status": "missing",
-          "note": "No generated client and no assembled view.",
-          "plan": "W5: add an assembled authorization view and the shared rule."
+          "status": "present",
+          "file": "sdks/php/src/Authorization.php",
+          "symbol": "public static function holds(",
+          "note": "Asserted against the shared authorization.json fixture; authorize() on SSOClient supplies the authenticated request seam."
         },
         "go": {
-          "status": "missing",
-          "note": "interfaces/ssoclient exists but has no assembled authorization view.",
-          "plan": "W5: add an assembled authorization view and the shared rule."
+          "status": "present",
+          "file": "sdks/go/authorization.go",
+          "symbol": "func Holds(",
+          "note": "Asserted against ops/build/sdk-conformance/authorization.json, the same fixture Rust, TypeScript, and Python use."
         },
         "kotlin": {
           "status": "missing",

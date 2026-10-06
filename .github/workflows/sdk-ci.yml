@@ -254,6 +254,7 @@ jobs:
           php tests/errors_conformance_test.php
           php tests/entitlement_test.php
           php tests/license_file_test.php
+          php tests/authorization_test.php
       - name: Verify offline Composer path installation
         run: bash tests/package_install_smoke.sh
       - name: Build Composer package archive

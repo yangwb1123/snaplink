@@ -1,6 +1,13 @@
 """Public package for the Snaplink HTTP SDK."""
 
 from .client import AsyncSSOClient, AsyncTransport, AsyncioTransport, SSOClient, SSOError
+from .authorization import (
+    Authorization,
+    MenuButton,
+    MenuNode,
+    holds,
+    read_authorization,
+)
 from .entitlement import (
     Entitlement,
     Feature,
@@ -63,8 +70,10 @@ __all__ = [
     "build_login_preference_handoff",
     "entitlement_from_account_context",
     "has_feature",
+    "holds",
     "license_state_from_account_context",
     "license_trust_from_key",
+    "read_authorization",
     "snaplink",
     "unix_now",
     "vendor_pinned_trust",

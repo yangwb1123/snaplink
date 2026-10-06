@@ -3,12 +3,12 @@ package auditverify
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	pgbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	"github.com/yangwb1123/snaplink/internal/pgtest"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	auditsqlite "github.com/yangwb1123/snaplink/platform/audit/sqlite"
 )
@@ -321,10 +321,10 @@ func flipHash(t *testing.T, dsn, id string) {
 // SSO_TEST_POSTGRES_DSN (repo skip convention); the dialect classifier and
 // misuse cases already run everywhere without a live DB.
 func TestRun_DSN_Postgres(t *testing.T) {
-	dsn := os.Getenv("SSO_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("SSO_TEST_POSTGRES_DSN not set — skipping postgres audit-verify --dsn test")
-	}
+	// One schema for both the populated sink and the verify run: a second
+	// pgtest.Schema call would hand out a different, empty schema and the
+	// verifier would read a chain with no events.
+	dsn := pgtest.Schema(t)
 	pg, err := pgbackend.NewAuditSink(pgbackend.Config{DSN: dsn}) // writable: test setup migrates
 	if err != nil {
 		t.Fatalf("NewAuditSink: %v", err)

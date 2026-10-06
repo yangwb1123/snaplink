@@ -14,13 +14,11 @@ import (
 
 	"github.com/yangwb1123/snaplink/domains/tenant/commerce"
 	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	"github.com/yangwb1123/snaplink/internal/pgtest"
 	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
-var (
-	integrationNow          = time.Date(2026, time.August, 4, 12, 0, 0, 123, time.UTC)
-	migrationSchemaSequence atomic.Uint64
-)
+var integrationNow = time.Date(2026, time.August, 4, 12, 0, 0, 123, time.UTC)
 
 func TestSchemaDeclaresDurabilityBoundaries(t *testing.T) {
 	baseline := []string{
@@ -61,32 +59,7 @@ func TestSchemaDeclaresDurabilityBoundaries(t *testing.T) {
 }
 
 func TestPostgresMigratesVersion3ChargebackConstraints(t *testing.T) {
-	dsn := os.Getenv("SSO_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("SSO_TEST_POSTGRES_DSN not set; skipping tenant commerce migration test")
-	}
-	adminDB, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Registered before the DROP cleanup because cleanups run LIFO and only
-	// after this function's defers. A defer here would close the pool first, so
-	// the DROP below would hit a closed pool, fail silently, and leave the schema
-	// behind; the next run would then die on "schema already exists".
-	t.Cleanup(func() { _ = adminDB.Close() })
-	schemaName := fmt.Sprintf("tenant_commerce_upgrade_%d", migrationSchemaSequence.Add(1))
-	if _, err := adminDB.ExecContext(context.Background(), "CREATE SCHEMA "+schemaName); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = adminDB.ExecContext(context.Background(), "DROP SCHEMA "+schemaName+" CASCADE")
-	})
-
-	separator := "?"
-	if strings.Contains(dsn, "?") {
-		separator = "&"
-	}
-	db, err := sql.Open("pgx", dsn+separator+"search_path="+schemaName)
+	db, err := sql.Open("pgx", pgtest.Schema(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,11 +91,7 @@ func assertConstraintContains(t *testing.T, db *sql.DB, name, expected string) {
 
 func integrationStore(t *testing.T) *Store {
 	t.Helper()
-	dsn := os.Getenv("SSO_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("SSO_TEST_POSTGRES_DSN not set; skipping tenant commerce integration test")
-	}
-	db, err := sql.Open("pgx", dsn)
+	db, err := sql.Open("pgx", pgtest.Schema(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,6 +14,7 @@ import (
 	ledger "github.com/yangwb1123/snaplink/domains/metering/usageledger"
 	"github.com/yangwb1123/snaplink/domains/tenant/commerce"
 	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	"github.com/yangwb1123/snaplink/internal/pgtest"
 )
 
 var integrationNow = time.Date(2026, time.August, 4, 12, 0, 0, 123, time.UTC)
@@ -43,11 +44,7 @@ func TestSchemaDeclaresInvoiceLedgerBoundaries(t *testing.T) {
 
 func integrationStore(t *testing.T) *Store {
 	t.Helper()
-	dsn := os.Getenv("SSO_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("SSO_TEST_POSTGRES_DSN not set; skipping usage ledger integration test")
-	}
-	db, err := sql.Open("pgx", dsn)
+	db, err := sql.Open("pgx", pgtest.Schema(t))
 	if err != nil {
 		t.Fatal(err)
 	}

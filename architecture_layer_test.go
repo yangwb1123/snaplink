@@ -110,6 +110,12 @@ func layerName(rel string) string {
 		// cmd/ roots import it downward.
 		return "composition"
 	}
+	if strings.HasPrefix(rel, "internal/pgtest") {
+		// Test-only PostgreSQL harness: a leaf with no Snaplink imports that
+		// hands each integration test a private schema. Every layer's tests use
+		// it, so it ranks at the kernel and is imported strictly downward.
+		return "shared"
+	}
 	if strings.HasPrefix(rel, "internal/auth") {
 		return "domains"
 	}
