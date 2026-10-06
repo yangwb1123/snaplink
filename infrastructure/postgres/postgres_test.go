@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yangwb1123/snaplink/internal/pgtest"
 	"github.com/yangwb1123/snaplink/platform/migrate"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
@@ -13,13 +14,11 @@ import (
 // testDSN returns the Postgres/CockroachDB DSN for integration tests, or skips.
 // Set SSO_TEST_POSTGRES_DSN (e.g. postgres://user@localhost:5432/sso_test?sslmode=disable)
 // to run these against a real database; CI without a DB skips them.
+// Each test gets a private schema so concurrently running packages cannot
+// truncate the rows another package is asserting on.
 func testDSN(t *testing.T) string {
 	t.Helper()
-	dsn := os.Getenv("SSO_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("SSO_TEST_POSTGRES_DSN not set — skipping postgres integration test")
-	}
-	return dsn
+	return pgtest.Schema(t)
 }
 
 func testConfig(t *testing.T) Config {

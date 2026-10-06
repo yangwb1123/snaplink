@@ -12,6 +12,7 @@ import (
 	"time"
 
 	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	"github.com/yangwb1123/snaplink/internal/pgtest"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/test/testkit/tenantquotatest"
 )
@@ -200,11 +201,7 @@ tenant_quota_token_windows, tenant_quota_state CASCADE`)
 
 func integrationDSN(t *testing.T) string {
 	t.Helper()
-	dsn := os.Getenv("SSO_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("SSO_TEST_POSTGRES_DSN not set; skipping tenant quota integration test")
-	}
-	return dsn
+	return pgtest.Schema(t)
 }
 
 func testDialect() postgresbackend.Dialect {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/domains/tenant/commerce"
 	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	"github.com/yangwb1123/snaplink/internal/pgtest"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -19,11 +20,7 @@ import (
 // is unset.
 func importTestStore(t *testing.T) (postgresbackend.UserProvider, *Store) {
 	t.Helper()
-	dsn := os.Getenv("SSO_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("SSO_TEST_POSTGRES_DSN not set; skipping tenant commerce import integration test")
-	}
-	db, err := postgresbackend.Open(postgresbackend.Config{DSN: dsn, Dialect: postgresbackend.Dialect(os.Getenv("SSO_TEST_POSTGRES_DIALECT"))})
+	db, err := postgresbackend.Open(postgresbackend.Config{DSN: pgtest.Schema(t), Dialect: postgresbackend.Dialect(os.Getenv("SSO_TEST_POSTGRES_DIALECT"))})
 	if err != nil {
 		t.Fatal(err)
 	}

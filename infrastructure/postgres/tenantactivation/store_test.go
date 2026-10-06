@@ -2,11 +2,9 @@ package tenantactivation
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +12,7 @@ import (
 	"github.com/yangwb1123/snaplink/domains/tenant/activation"
 	"github.com/yangwb1123/snaplink/domains/tenant/commerce"
 	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	"github.com/yangwb1123/snaplink/internal/pgtest"
 )
 
 func TestSchemaContract(t *testing.T) {
@@ -32,26 +31,8 @@ func TestSchemaContract(t *testing.T) {
 }
 
 func TestPostgresActivationRoundTrip(t *testing.T) {
-	dsn := os.Getenv("SSO_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("SSO_TEST_POSTGRES_DSN not set; skipping tenant activation integration test")
-	}
 	dialect := postgresbackend.Dialect(os.Getenv("SSO_TEST_POSTGRES_DIALECT"))
-	adminDB, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = adminDB.Close() }()
-	schemaName := "tenant_activation_test_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	if _, err := adminDB.ExecContext(context.Background(), "CREATE SCHEMA "+schemaName); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _, _ = adminDB.ExecContext(context.Background(), "DROP SCHEMA "+schemaName+" CASCADE") })
-	separator := "?"
-	if strings.Contains(dsn, "?") {
-		separator = "&"
-	}
-	db, err := postgresbackend.Open(postgresbackend.Config{DSN: dsn + separator + "search_path=" + schemaName, Dialect: dialect})
+	db, err := postgresbackend.Open(postgresbackend.Config{DSN: pgtest.Schema(t), Dialect: dialect})
 	if err != nil {
 		t.Fatal(err)
 	}

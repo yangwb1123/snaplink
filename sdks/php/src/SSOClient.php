@@ -227,6 +227,25 @@ final class SSOClient
         $this->accountContext = null;
     }
 
+    /**
+     * Read identity, permissions, roles, and menus for the current bearer.
+     *
+     * All four are fetched together because they are always wanted together and
+     * a navigation tree that disagrees with the enforced permission set is
+     * worse than one extra round trip.
+     */
+    public function authorize(string $clientId): Authorization
+    {
+        $token = $this->accessToken();
+        if ($token === null || $token === '' || $this->baseUrl === null) {
+            throw new SSOError(401, 'login_required', 'login is required');
+        }
+        $base = rtrim($this->baseUrl, '/');
+        $request = fn (string $path): array => $this->jsonRequest('GET', $base . $path, null, $token);
+
+        return Authorization::read($request, $clientId);
+    }
+
     public function logout(): void
     {
         try {
