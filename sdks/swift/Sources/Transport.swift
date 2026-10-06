@@ -96,7 +96,7 @@ public struct SnaplinkHTTPRequest: Sendable, Equatable {
                 .map { Self.sensitiveFormFields.contains($0.key.lowercased()) ? ($0.key, "<redacted>") : $0 }
                 .sorted { $0.0 < $1.0 }
             lines.append(contentsOf: redacted.map { "\($0.0)=\($0.1)" })
-        case .json(let data):
+        case .json:
             lines.append("<redacted json body>")
         case nil:
             break

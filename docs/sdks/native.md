@@ -31,8 +31,13 @@ fields retain the previous values.
 These packages currently target Android API 23+ / iOS 17+; the Swift package
 also builds for macOS 14+. Swift's host/path-bound HTTPS callback API requires
 iOS 17.4 or macOS 14.4; older supported systems can use a registered custom
-URI scheme. The packages are not published or production-approved. Confirm the
-minimum versions against the approved device-support matrix before release.
+URI scheme. Neither package is production-approved. Swift prerelease source
+publication is automated by `.github/workflows/sdk-swift-release.yml` when a
+new `sdks/swift/VERSION` is merged into protected `main`; all repository and
+Apple build checks must pass before a tag is created. Check GitHub Releases
+for availability; workflow configuration alone is not evidence of publication.
+Confirm minimum versions against the approved device-support matrix before
+release.
 Callback URIs and OAuth client IDs must be registered before application
 integration. Production use additionally requires platform-device acceptance,
 independent identity/security review, and the SVERP production release gate.

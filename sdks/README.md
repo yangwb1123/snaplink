@@ -79,14 +79,15 @@ reproduces in reverse.
 | Rust | crates.io, `snaplink-sso` | `sdk-rs-v<package-version>` | `.github/workflows/sdk-rust.yml` tests, packages, checks the tag, and publishes |
 | PHP | Packagist target, `snaplink/sso` (not listed publicly) | `sdk-php-v<package-version>` | CI validates/builds an archive and proves an offline install; a protected subtree-split release workflow is configured but needs a target repository, Packagist registration, and protected-environment credentials |
 | Kotlin | Maven Central candidate, `site.ywbsd.sso:snaplink` | Not configured | Experimental and unpublished; platform/security acceptance and Maven publishing setup are outstanding, and the `groupId` still needs Central's domain token |
-| Swift | Swift Package Manager, `SnaplinkSSO` | Plain SemVer Git tag, e.g. `0.3.0` | Experimental and unpublished; root `Package.swift` targets `sdks/swift/`; no release workflow |
+| Swift | Swift Package Manager, `SnaplinkSSO` | `sdks/swift/VERSION` creates a plain SemVer prerelease tag, e.g. `0.3.0-beta.1` | Experimental; `.github/workflows/sdk-swift-release.yml` runs `make ci` and Apple target checks before creating an immutable source tag and GitHub prerelease; production acceptance is outstanding |
 
 Package SemVer is independent across SDKs and from the server/module and
-OAuth/OIDC protocol versions. `python cli.py sdk-surface versions` validates the
-four published-package manifests independently; `python cli.py sdk-naming check`
-holds the naming scheme; Kotlin and Swift remain outside the release gate and the
-five-language full-SDK paradigm gate until approved. No package is published yet:
-every registry returns 404 for these names.
+OAuth/OIDC protocol versions. `python cli.py sdk-surface versions` audits the
+registered package manifests; SwiftPM resolves versions from Git tags, so its
+prerelease intent is validated separately by `swift_sdk_release.py`.
+`python cli.py sdk-naming check` holds the naming scheme. Kotlin and Swift remain
+experimental and are not production-approved; configuring a release workflow
+alone does not prove a successful publication or native platform acceptance.
 
 | Language | Package directory | Documentation |
 |---|---|---|
@@ -99,8 +100,9 @@ every registry returns 404 for these names.
 | TypeScript | [`typescript/`](typescript/) | [`docs/sdks/typescript/README.md`](../docs/sdks/typescript/README.md) |
 
 The Kotlin and Swift packages are experimental native hosted-login clients;
-they are not published or production-approved and do not replace generated
-business API clients. The full OpenAPI-generated REST clients are TypeScript
+they are not production-approved and do not replace generated business API
+clients. Swift prerelease availability is shown in GitHub Releases. The full
+OpenAPI-generated REST clients are TypeScript
 and Python. See [`docs/sdks/native.md`](../docs/sdks/native.md).
 
 The embeddable Go server API is the separate `interfaces/sso` package; it stays

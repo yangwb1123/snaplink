@@ -1,0 +1,156 @@
+# SwiftPM consumes source at a plain SemVer Git tag; no registry upload or
+# deployment is involved. A version-file change on protected main is release
+# intent. All pre-publication gates run before creating the installable tag.
+# GITHUB_TOKEN events do not trigger another workflow, so published consumption
+# is verified explicitly here by a separate read-only job.
+name: sdk-swift-release
+
+on:
+  push:
+    branches: [main]
+    paths: ["sdks/swift/VERSION"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-swift-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    name: Validate Swift prerelease intent
+    if: github.repository == 'yangwb1123/snaplink' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install workflow test dependency
+        run: python -m pip install --disable-pip-version-check "PyYAML>=6.0"
+      - name: Test Swift release safeguards
+        run: python -m unittest discover -s ops/scripts -p 'test_sdk_swift*.py' -v
+      - name: Validate protected source and prerelease version
+        id: version
+        run: |
+          version="$(python ops/scripts/swift_sdk_release.py plan)"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+  verify-root:
+    name: Committed root handoff gate
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.69.0"
+      - name: Install declared Python and nested-module dependencies
+        run: |
+          python -m pip install --disable-pip-version-check "PyYAML>=6.0"
+          sudo apt-get update
+          sudo apt-get install -y libltdl-dev
+      - name: Run the complete repository gate
+        run: make ci
+
+  verify-swift:
+    name: Swift tests and Apple target builds
+    needs: plan
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Keep Swift build records outside the worktree
+        run: printf 'SWIFT_BUILD_PATH=%s/snaplink-swift\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Check the evaluated root SwiftPM library manifest
+        run: |
+          swift package --scratch-path "$SWIFT_BUILD_PATH" dump-package > "$RUNNER_TEMP/swift-package.json"
+          python ops/scripts/swift_sdk_release.py package --manifest-json "$RUNNER_TEMP/swift-package.json"
+      - name: Run Swift tests
+        run: swift test --scratch-path "$SWIFT_BUILD_PATH"
+      - name: Check complete strict concurrency
+        run: swift build --scratch-path "$SWIFT_BUILD_PATH" -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+      - name: Build the release library
+        run: swift build --scratch-path "$SWIFT_BUILD_PATH" -c release
+      - name: Install and run the exact candidate in a clean SwiftPM consumer
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: python ops/scripts/swift_sdk_smoke.py candidate --version "$RELEASE_VERSION" --source-sha "$SOURCE_SHA"
+      - name: Build for iOS devices
+        # --sdk applies to the cross-compiled target. SDKROOT would also force
+        # the macOS manifest compiler to use an iOS SDK and fail on a clean run.
+        run: swift build --scratch-path "$RUNNER_TEMP/swift-ios" --triple arm64-apple-ios17.0 --sdk "$(xcrun --sdk iphoneos --show-sdk-path)"
+      - name: Build for iOS Simulator
+        run: swift build --scratch-path "$RUNNER_TEMP/swift-simulator" --triple arm64-apple-ios17.0-simulator --sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)"
+
+  publish:
+    name: Publish immutable SwiftPM prerelease
+    needs: [plan, verify-root, verify-swift]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Create or resume the version tag and prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: python ops/scripts/swift_sdk_release.py publish --expected-version "$RELEASE_VERSION"
+
+  verify-install:
+    name: Verify the published GitHub SwiftPM tag
+    needs: [plan, publish]
+    runs-on: macos-14
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install and run the published version without credentials
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: python ops/scripts/swift_sdk_smoke.py published --version "$RELEASE_VERSION" --source-sha "$SOURCE_SHA"

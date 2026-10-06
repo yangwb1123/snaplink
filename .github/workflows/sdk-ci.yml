@@ -34,6 +34,11 @@ on:
       - ".github/workflows/sdk-php-release.yml"
       - "ops/scripts/php_sdk_release.py"
       - "ops/scripts/test_sdk_php_release.py"
+      - ".github/workflows/sdk-swift-release.yml"
+      - "ops/scripts/swift_sdk_release.py"
+      - "ops/scripts/test_sdk_swift_release.py"
+      - "ops/scripts/swift_sdk_smoke.py"
+      - "ops/scripts/test_sdk_swift_smoke.py"
   pull_request:
     paths:
       - "sdks/**"
@@ -64,6 +69,11 @@ on:
       - ".github/workflows/sdk-php-release.yml"
       - "ops/scripts/php_sdk_release.py"
       - "ops/scripts/test_sdk_php_release.py"
+      - ".github/workflows/sdk-swift-release.yml"
+      - "ops/scripts/swift_sdk_release.py"
+      - "ops/scripts/test_sdk_swift_release.py"
+      - "ops/scripts/swift_sdk_smoke.py"
+      - "ops/scripts/test_sdk_swift_smoke.py"
   workflow_dispatch:
 
 permissions:
@@ -132,12 +142,32 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Keep Swift build records outside the worktree
+        run: printf 'SWIFT_BUILD_PATH=%s/snaplink-swift\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Run Swift package tests from the repository-root manifest
-        run: swift test
+        run: swift test --scratch-path "$SWIFT_BUILD_PATH"
+      - name: Build the library under complete strict concurrency
+        # The package is actor- and Sendable-based, so a concurrency finding is
+        # a defect, not style. Warnings are errors here: Swift 5 language mode
+        # only reports strict-concurrency findings as warnings, and under the
+        # Swift 6 language mode they would fail the build outright.
+        run: swift build --scratch-path "$SWIFT_BUILD_PATH" -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
       - name: Build iOS Simulator package
-        run: SDKROOT="$(xcrun --sdk iphonesimulator --show-sdk-path)" swift build --triple arm64-apple-ios17.0-simulator
+        run: swift build --scratch-path "$RUNNER_TEMP/swift-simulator" --triple arm64-apple-ios17.0-simulator --sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)"
       - name: Build release package
-        run: swift build -c release
+        run: swift build --scratch-path "$SWIFT_BUILD_PATH" -c release
+      - name: Install and run the candidate as a SwiftPM dependency
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          version="$(python ops/scripts/swift_sdk_release.py version)"
+          python ops/scripts/swift_sdk_smoke.py candidate --version "$version" --source-sha "$SOURCE_SHA"
 
   surface:
     name: SDK surface compatibility
@@ -160,6 +190,8 @@ jobs:
         run: python -m unittest discover -s ops/scripts -p 'test_sdk_*.py' -v
       - name: Verify SDK package versions
         run: python cli.py sdk-surface versions
+      - name: Validate Swift prerelease version
+        run: python ops/scripts/swift_sdk_release.py version
       - name: Verify hand-written SDK-layer paradigm registry
         run: python cli.py sdk-paradigm check
       - name: Compare operation and schema surface with pull request base

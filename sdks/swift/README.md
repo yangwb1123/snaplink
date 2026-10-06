@@ -1,4 +1,4 @@
-# Snaplink Swift SDK (experimental, 0.3.0)
+# Snaplink Swift SDK (experimental, 0.3.0-beta.1)
 
 The package name follows the naming scheme in [`../README.md`](../README.md).
 SwiftPM has no namespace slot, so the brand and the product share one PascalCase
@@ -9,8 +9,8 @@ This Swift Package implements native public-client hosted login using
 Authorization Code + PKCE S256, one-use state and issuer validation, Keychain
 token storage, serialized refresh, and token revocation. It uses
 `ASWebAuthenticationSession` and Keychain; no WebView or client secret is
-involved. This package is under development, not published, and not approved
-for production use.
+involved. This package is under development and not approved for production
+use. Prerelease automation is configured; check GitHub Releases for availability.
 
 The package is an identity SDK, not a generated Snaplink REST client. Use the
 service's OpenAPI-generated client for business APIs. Server-side authorization,
@@ -32,11 +32,24 @@ SVERP device-support matrix before distribution.
 ## Add the package
 
 The SwiftPM manifest is at the repository root and points to this SDK's source
-and tests under `sdks/swift/`. In Xcode, add the repository root as a local
-Swift Package and select the `SnaplinkSSO` product. Once a release is approved,
-Git-based SwiftPM dependencies use a plain SemVer tag (for example, `0.3.0`);
-custom monorepo tags such as `sdk-swift-v0.3.0` are not the version selector.
-This package remains experimental and unpublished.
+and tests under `sdks/swift/`. For local development, add the repository root as
+a local Swift Package. After a prerelease has passed the release workflow,
+Xcode's Add Package Dependencies can use
+`https://github.com/yangwb1123/snaplink.git`; select its exact prerelease version
+and the `SnaplinkSSO` product. A consuming package declares:
+
+```swift
+.package(
+    url: "https://github.com/yangwb1123/snaplink.git",
+    exact: "0.3.0-beta.1"
+)
+// Target dependency: .product(name: "SnaplinkSSO", package: "snaplink")
+```
+
+Git-based SwiftPM dependencies use plain SemVer tags; custom monorepo tags such
+as `sdk-swift-v0.3.0` are not version selectors. The committed `VERSION` file is
+release intent, not a version field in `Package.swift`. A configured workflow
+does not mean its intended version has already been published.
 
 ```swift
 import SnaplinkSSO
@@ -291,14 +304,81 @@ repository, or CI; only the payload and its signature are transmitted.
   included in this initial package. Add them only against approved server
   contracts and security review.
 
+## Automated prereleases
+
+`.github/workflows/sdk-swift-release.yml` publishes source through GitHub, not a
+binary registry. No deployment, signing private key, or separate publishing
+secret is needed. After the workflow is merged, changing `sdks/swift/VERSION`
+to a new prerelease such as `0.3.0-beta.2` and merging it into protected `main`
+automatically:
+
+1. Validates the plain SemVer prerelease and exact checked-out source commit.
+2. Runs the committed full `make ci` gate, plus Swift tests, complete strict
+   concurrency with warnings as errors, Release, iOS device, and Simulator
+   builds. The evaluated root manifest must export `SnaplinkSSO` from this SDK.
+   A clean standalone executable also installs the exact candidate version from
+   a temporary Git clone, checks the resolved commit SHA, then builds in Release
+   under strict concurrency and runs a public-API smoke check. Candidate tags
+   exist only in that temporary clone; PR CI runs this check too.
+3. Creates the version tag at that verified commit and a GitHub prerelease with
+   installation instructions. It does not mark the prerelease as latest.
+4. A separate read-only job installs the published exact version from the public
+   GitHub URL without credentials, verifies its resolved SHA, and builds/runs
+   the same standalone consumer. Completion requires this final check to pass.
+
+Only the publication job receives `contents: write`, using `GITHUB_TOKEN`. All source
+checkouts are pinned to the workflow SHA and do not retain Git credentials.
+Tags are plain versions without a `v` prefix, so this workflow neither needs nor
+triggers the server's `v*` release workflow. Versions without a prerelease or
+with build metadata are refused while native production acceptance is pending.
+Unchanged versions do not trigger automatic publication on ordinary SDK edits.
+
+One-time repository setup: enable GitHub Actions, protect `main` with a branch
+rule or ruleset, and allow the publication job's requested contents-write
+permission. Tag rulesets should forbid updating/deleting released `0.*` tags
+while allowing the Actions publisher to create them. There is no per-release
+manual deployment or mandatory environment approval in this workflow.
+
+A failed pre-publication gate creates no tag. If tag creation succeeds but
+Release creation or the final GitHub installation check fails, SwiftPM can
+already resolve the immutable tag. The workflow reports failure and leaves
+that tag intact; rerun the same Actions run to complete the remaining checks.
+A retry with the same version and commit is idempotent, but an existing tag at
+another commit is never moved or deleted.
+The workflow can also be dispatched on `main` to retry, provided it still
+points to the same source commit; otherwise choose a new version. Existing
+stable or draft Releases are not rewritten. Real-device/browser acceptance is
+still required before a production release policy is enabled.
+
 ## Verify
 
-Run these commands from the Snaplink repository root:
+Run these commands from the Snaplink repository root. Keep Swift build records
+outside the worktree so they do not enter the committed Go directory gates:
 
 ```bash
-swift test
-swift build -c release
+SWIFT_BUILD_PATH="$(mktemp -d)"
+swift test --scratch-path "$SWIFT_BUILD_PATH"
+swift build --scratch-path "$SWIFT_BUILD_PATH" -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+swift build --scratch-path "$SWIFT_BUILD_PATH" -c release
+python3 ops/scripts/swift_sdk_release.py version
+python3 -m unittest discover -s ops/scripts -p 'test_sdk_swift*.py' -v
 ```
+
+The Git-backed installation check uses committed source, never dirty or
+untracked files. Once the SDK changes and `VERSION` are committed, run it locally
+without publishing or adding a tag to the source repository:
+
+```bash
+python3 ops/scripts/swift_sdk_smoke.py candidate \
+  --version "$(python3 ops/scripts/swift_sdk_release.py version)" \
+  --source-sha "$(git rev-parse HEAD)"
+```
+
+Each consumer gets fresh build, cache, configuration, and security directories
+outside the worktree; existing SwiftPM mirrors and Git URL rewrites cannot make
+a published-install check silently consume a local checkout.
+
+`make ci` remains the full repository handoff gate and also blocks publication.
 
 The tests cover PKCE generation, callback state/issuer binding, token exchange,
 concurrent refresh, local clear/logout cleanup, configuration validation,
@@ -307,3 +387,10 @@ context routes, presentation preferences, and all four shared cross-language
 contracts in `ops/build/sdk-conformance/`: transport seam, entitlement semantics,
 the error taxonomy, and offline license-file verification. Browser UI and device
 Keychain integration still require Apple platform acceptance.
+
+The package is built under complete strict concurrency with warnings treated as
+errors, because it is actor- and `Sendable`-based: a concurrency finding here is
+a defect rather than style, and the same check would fail outright under the
+Swift 6 language mode. Shared mutable state does not belong in this package, so
+date parsing uses `Date.ISO8601FormatStyle` value types rather than a shared
+`ISO8601DateFormatter`.

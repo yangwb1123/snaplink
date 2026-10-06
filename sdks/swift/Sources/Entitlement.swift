@@ -244,18 +244,20 @@ struct SnaplinkWireDate: Decodable {
         value = nil
     }
 
+    /**
+     * Parses RFC 3339 with or without fractional seconds.
+     *
+     * The strategies are value types, so parsing is concurrency-safe. A shared
+     * `ISO8601DateFormatter` array would be cheaper but is not `Sendable` and
+     * becomes a hard error under the Swift 6 language mode.
+     */
     private static func parse(_ text: String) -> Date? {
-        for formatter in formatters {
-            if let date = formatter.date(from: text) { return date }
+        if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text) {
+            return date
+        }
+        if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: false).parse(text) {
+            return date
         }
         return nil
     }
-
-    private static let formatters: [ISO8601DateFormatter] = {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let standard = ISO8601DateFormatter()
-        standard.formatOptions = [.withInternetDateTime]
-        return [fractional, standard]
-    }()
 }
