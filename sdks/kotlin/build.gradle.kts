@@ -2,10 +2,10 @@ plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
-    // Sonatype's own publisher for Gradle. It owns the POM, the sources and
-    // javadoc jars, the GPG signatures and the Portal upload, so it replaces
-    // maven-publish here rather than sitting beside it: applying both makes them
-    // register the release component twice and the configuration fails.
+    // Vanniktech configures Gradle's maven-publish plugin and the Android release
+    // component. Do not also declare singleVariant or a second publication.
+    // Central upload and signing are opt-in Gradle properties set by release CI;
+    // ordinary builds and unsigned local publication need no credentials.
     id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
@@ -82,11 +82,6 @@ dependencies {
 // brand sits in the artifactId. `com.snaplink` would assert a domain this
 // project does not own.
 //
-// The POM is written out in full rather than left to defaults because Central
-// rejects an upload whose POM is missing a name, description, url, licence,
-// developer or scm section, and because a published artefact is immutable: a
-// coordinate that has to be retired is a coordinate nobody can fix.
-
 // The POM is written out in full because Central rejects an upload whose POM
 // is missing a name, description, url, licence, developer or scm section, and
 // because a published artefact is immutable: a coordinate that has to be

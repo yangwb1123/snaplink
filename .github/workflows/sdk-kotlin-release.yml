@@ -10,14 +10,13 @@
 # refuses to run until the gate below is satisfied.
 #
 # Before the first release, all of these must be in place:
-#   1. Namespace `cn.ywbsd.sso` verified with Sonatype. The groupId is the
-#      reverse-DNS form of sso.ywbsd.cn, so that host must serve the
-#      verification token Central issues (or publish the matching `token` TXT
-#      record). The host resolves today; the token is not deployed.
+#   1. Namespace `cn.ywbsd.sso` verified in the Central Portal, with publish
+#      rights for the account that issues the user token. DNS/TLS reachability
+#      alone does not establish namespace ownership or publishing permission.
 #   2. A `maven-central` environment with required reviewers.
 #   3. Environment secrets: MAVEN_SIGNING_KEY, MAVEN_SIGNING_PASSWORD,
-#      CENTRAL_TOKEN_USERNAME, CENTRAL_TOKEN_PASSWORD. Central has no OIDC
-#      trusted publishing, so a token is required.
+#      CENTRAL_TOKEN_USERNAME, CENTRAL_TOKEN_PASSWORD. Use a Central Portal
+#      user token, not an account password or a base64-encoded token pair.
 #   4. A protected `sdk-kotlin-v*` tag rule.
 #   5. The platform/security review and integration acceptance recorded, and the
 #      experimental marker in sdks/kotlin/README.md removed.
@@ -71,12 +70,24 @@ jobs:
           yes | "$sdkmanager_bin" --licenses > /dev/null 2>&1 || true
           "$sdkmanager_bin" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
           echo "$(dirname "$sdkmanager_bin")" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the registry-check dependency
+        run: python -m pip install --disable-pip-version-check "PyYAML>=6.0"
+      - name: Test Kotlin release safeguards
+        run: python -m unittest discover -s ops/scripts -p 'test_sdk_kotlin*.py' -v
       - name: Run unit tests and assemble the release AAR
         working-directory: sdks
         run: ./gradlew :snaplink:testDebugUnitTest :snaplink:assembleRelease
       - name: Verify the tag matches the published version
         shell: bash
         run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_PROTECTED}" == "true" ]] || {
+            echo "::error::publication requires a protected release tag"
+            exit 1
+          }
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' sdks/kotlin/build.gradle.kts)"
           [[ -n "$version" ]] || { echo "::error::cannot read version from sdks/kotlin/build.gradle.kts"; exit 1; }
           expected="sdk-kotlin-v${version}"
@@ -89,6 +100,11 @@ jobs:
         # the check that makes committing this workflow safe: the artifacts can
         # never reach Central from a tag until the marker is gone.
         run: |
+          set -euo pipefail
+          [[ -s sdks/kotlin/README.md && -r sdks/kotlin/README.md ]] || {
+            echo "::error::publication status README is missing, empty, or unreadable."
+            exit 1
+          }
           if grep -q '(experimental' sdks/kotlin/README.md; then
             echo "::error::sdks/kotlin/README.md still marks the SDK experimental."
             echo "Publishing an unapproved SDK to Maven Central is irreversible:"
@@ -128,6 +144,7 @@ jobs:
   publish:
     name: Publish to Maven Central
     needs: verify
+    if: startsWith(github.ref, 'refs/tags/sdk-kotlin-v') && (github.event_name == 'push' || inputs.publish)
     # The environment is what turns a tag push into a reviewed release, matching
     # the npm, PyPI, crates.io and PHP workflows.
     environment: maven-central
@@ -156,20 +173,26 @@ jobs:
       - name: Sign and upload to Maven Central
         working-directory: sdks
         env:
-          MAVEN_SIGNING_KEY: ${{ secrets.MAVEN_SIGNING_KEY }}
-          MAVEN_SIGNING_PASSWORD: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
-          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
-          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          # Gradle's documented environment-to-project-property mechanism. Keep
+          # the four GitHub secret names stable; do not put secrets in -P args,
+          # gradle.properties, System properties, or diagnostic task output.
+          ORG_GRADLE_PROJECT_mavenCentralPublishing: "true"
+          ORG_GRADLE_PROJECT_signAllPublications: "true"
+          ORG_GRADLE_PROJECT_mavenCentralDeploymentValidation: "PUBLISHED"
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
         run: |
           set -euo pipefail
-          [[ -n "${MAVEN_SIGNING_KEY}" && -n "${MAVEN_SIGNING_PASSWORD}" ]] || {
+          [[ -n "${ORG_GRADLE_PROJECT_signingInMemoryKey}" && -n "${ORG_GRADLE_PROJECT_signingInMemoryKeyPassword}" ]] || {
             echo "::error::MAVEN_SIGNING_KEY and MAVEN_SIGNING_PASSWORD are required;"
             echo "Central requires every artifact to be GPG-signed."
             exit 1
           }
-          [[ -n "${CENTRAL_TOKEN_USERNAME}" && -n "${CENTRAL_TOKEN_PASSWORD}" ]] || {
+          [[ -n "${ORG_GRADLE_PROJECT_mavenCentralUsername}" && -n "${ORG_GRADLE_PROJECT_mavenCentralPassword}" ]] || {
             echo "::error::CENTRAL_TOKEN_USERNAME and CENTRAL_TOKEN_PASSWORD are required;"
-            echo "Central has no OIDC trusted publishing, so a token is required."
+            echo "Use the two separate Central Portal user-token values."
             exit 1
           }
-          ./gradlew :snaplink:publishAndReleaseToMavenCentral
+          ./gradlew --no-daemon --no-configuration-cache --no-build-cache :snaplink:publishAndReleaseToMavenCentral
