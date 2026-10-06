@@ -157,8 +157,16 @@ public class SnaplinkAuthClient internal constructor(
     }
 
     /** Persists a one-use state/verifier transaction and returns the browser URL. */
-    public suspend fun beginAuthorization(): URI {
+    public suspend fun beginAuthorization(
+        preferences: SnaplinkPresentationPreferencesPatch? = null,
+    ): URI {
         if (logoutInProgress) throw SnaplinkAuthException("operation_in_progress", "a session lifecycle operation is in progress")
+        // A patch, not a map: the caller cannot hand-write the wire keys, and a
+        // hint left over in loginPageUrl is dropped rather than duplicated,
+        // because both presentation keys are SDK-managed.
+        val presentationHandoff = preferences
+            ?.let(SnaplinkPresentationPreferencesCodec::buildLoginHandoff)
+            ?: emptyMap()
         val pkce = OAuthProtocol.createPkce()
         val transaction = LoginTransaction(
             issuer = configuration.issuerBaseUrl,
@@ -168,7 +176,12 @@ public class SnaplinkAuthClient internal constructor(
             verifier = pkce.verifier,
             createdAtMillis = clockMillis(),
         )
-        val url = OAuthProtocol.buildAuthorizationUri(configuration, transaction.state, pkce.challenge)
+        val url = OAuthProtocol.buildAuthorizationUri(
+            configuration,
+            transaction.state,
+            pkce.challenge,
+            presentationHandoff,
+        )
         withContext(Dispatchers.IO) {
             synchronized(storeLock) {
                 if (logoutInProgress) throw SnaplinkAuthException("operation_in_progress", "a session lifecycle operation is in progress")
