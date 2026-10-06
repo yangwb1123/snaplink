@@ -3,7 +3,7 @@
 
 The name of a published package is the one identifier that cannot be changed
 after release, and four registries spell the same product four different ways
-(`@snaplink/sso`, `snaplink-sso`, `snaplink/sso`, `site.ywbsd.sso:snaplink`). Every
+(`@snaplink/sso`, `snaplink-sso`, `snaplink/sso`, `cn.ywbsd.sso:snaplink`). Every
 platform also has its own rules for what a legal name looks like, and a name
 that satisfies the house scheme can still be rejected by the registry. This gate
 holds both properties at once:
@@ -56,8 +56,8 @@ SWIFT_MODULE = "SnaplinkSSO"
 #: product host rather than a brand name. `com.snaplink` would assert a
 #: `snaplink.com` this project does not control, and an unverifiable groupId is
 #: rejected at publication — the worst possible moment to discover it. The
-#: product host is `sso.ywbsd.site`, so the group is `site.ywbsd.sso`.
-MAVEN_GROUP = "site.ywbsd.sso"
+#: product host is `sso.ywbsd.cn`, so the group is `cn.ywbsd.sso`.
+MAVEN_GROUP = "cn.ywbsd.sso"
 
 #: The Go module path. The client SDK is a nested module under this repository
 #: so it can be versioned independently of the server, which means the path is

@@ -35,7 +35,7 @@ NAMES = (
     "snaplink-sso",
     "snaplink-sso",
     "snaplink/sso",
-    "site.ywbsd.sso:snaplink",
+    "cn.ywbsd.sso:snaplink",
     "SnaplinkSSO",
     "github.com/yangwb1123/snaplink/sdks/go",
 )
@@ -126,7 +126,7 @@ project(":snaplink").projectDir = file("kotlin")
         root,
         "sdks/kotlin/build.gradle.kts",
         f'''plugins {{ id("com.android.library") }}
-group = "site.ywbsd.sso"
+group = "cn.ywbsd.sso"
 version = "{kotlin_version}"
 
 android {{ namespace = "com.snaplink.sso" }}
@@ -437,7 +437,7 @@ class SDKVersionGateTests(unittest.TestCase):
                     'package id="python" name="snaplink-sso" version="0.3.0" status=PASS',
                     'package id="rust" name="snaplink-sso" version="0.3.0" status=PASS',
                     'package id="php" name="snaplink/sso" version="0.3.0" status=PASS',
-                    'package id="kotlin" name="site.ywbsd.sso:snaplink" version="0.3.0" status=PASS',
+                    'package id="kotlin" name="cn.ywbsd.sso:snaplink" version="0.3.0" status=PASS',
                     'package id="swift" name="SnaplinkSSO" version="<unavailable>" status=PASS',
                     'package id="go" name="github.com/yangwb1123/snaplink/sdks/go" version="<unavailable>" status=PASS',
                     "verdict: PASS",

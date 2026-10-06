@@ -37,7 +37,7 @@
       {
         "id": "kotlin",
         "package": true,
-        "notes": "sdks/kotlin; Android/JVM artifact site.ywbsd.sso:snaplink, browser-PKCE plus encrypted secure storage",
+        "notes": "sdks/kotlin; Android/JVM artifact cn.ywbsd.sso:snaplink, browser-PKCE plus encrypted secure storage",
         "onboarded": false
       },
       {
@@ -128,7 +128,7 @@
         "kotlin": {
           "status": "present",
           "file": "sdks/kotlin/main/SnaplinkAuthClient.kt",
-          "symbol": "public suspend fun beginAuthorization(): URI"
+          "symbol": "public suspend fun beginAuthorization("
         },
         "swift": {
           "status": "present",
@@ -670,9 +670,10 @@
           "note": "W2: includes the legacy sverp:theme_mode alias, matching the other SDKs; the handoff is consumed by LoginOptions::presentation_locale/ThemeMode."
         },
         "kotlin": {
-          "status": "missing",
-          "plan": "W5 generator coverage does not apply. SnaplinkPresentationPreferencesCodec.buildLoginHandoff exists but is not consumed: SnaplinkConfiguration carries no presentation field and OAuthProtocol.buildAuthorizationUri emits no presentation_locale or presentation_theme_mode, so no preference reaches hosted login. Wiring the handoff is a configuration and authorization-request change.",
-          "note": "The builder exists but is dead code; the round trip into the hosted login request does not."
+          "status": "present",
+          "note": "A patch, not a map: the caller cannot hand-write the wire keys, and both presentation keys were added to OAuthProtocol.managedParameters so a value left in loginPageUrl is dropped rather than duplicated. Covered by sdks/kotlin/test/PreferenceHandoffTest.kt, which pins that an unmanaged login-page parameter still survives.",
+          "file": "sdks/kotlin/main/SnaplinkAuthClient.kt",
+          "symbol": "public suspend fun beginAuthorization("
         },
         "swift": {
           "status": "missing",
@@ -717,7 +718,7 @@
         "kotlin": {
           "status": "present",
           "file": "sdks/kotlin/main/SnaplinkAuthClient.kt",
-          "symbol": "public suspend fun beginAuthorization(): URI"
+          "symbol": "public suspend fun beginAuthorization("
         },
         "swift": {
           "status": "present",

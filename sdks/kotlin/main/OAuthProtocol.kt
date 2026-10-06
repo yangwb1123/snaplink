@@ -24,6 +24,10 @@ internal object OAuthProtocol {
         "client_id", "redirect_uri", "response_type", "response_mode", "scope", "state",
         "code_challenge", "code_challenge_method", "resource", "prompt", "max_age",
         "login_hint", "acr_values", "ui_locales",
+        // Presentation hints are SDK-managed for the same reason the OAuth
+        // parameters above are: a value left in loginPageUrl must not survive
+        // alongside the one the caller actually asked for.
+        "presentation_locale", "presentation_theme_mode",
     )
 
     fun createPkce(): PkcePair {
@@ -38,7 +42,12 @@ internal object OAuthProtocol {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
     }
 
-    fun buildAuthorizationUri(config: SnaplinkConfiguration, state: String, challenge: String): URI {
+    fun buildAuthorizationUri(
+        config: SnaplinkConfiguration,
+        state: String,
+        challenge: String,
+        presentationHandoff: Map<String, String> = emptyMap(),
+    ): URI {
         val login = URI(config.loginPageUrl)
         val query = decodeQuery(login.rawQuery).filterNot { (name, _) ->
             name.lowercase(Locale.ROOT) in managedParameters
@@ -57,6 +66,10 @@ internal object OAuthProtocol {
         config.loginHint?.takeIf(String::isNotEmpty)?.let { query += "login_hint" to it }
         config.acrValues?.takeIf(String::isNotEmpty)?.let { query += "acr_values" to it }
         config.uiLocales?.takeIf(String::isNotEmpty)?.let { query += "ui_locales" to it }
+        // Built by SnaplinkPresentationPreferences.buildLoginHandoff, so these
+        // are UI hints the server persists as the user's preference after a
+        // successful authentication - never authorization or tenant parameters.
+        presentationHandoff.forEach { (name, value) -> query += name to value }
         val encoded = query.joinToString("&") { (name, value) -> "${encode(name)}=${encode(value)}" }
         val originAndPath = buildString {
             append(login.scheme)

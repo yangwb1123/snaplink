@@ -2,9 +2,9 @@
 
 The published coordinate follows the naming scheme in
 [`../README.md`](../README.md): the Gradle project is `:snaplink`, so the Maven
-coordinate is `site.ywbsd.sso:snaplink`. Maven Central verifies a `groupId`
+coordinate is `cn.ywbsd.sso:snaplink`. Maven Central verifies a `groupId`
 against a domain the publisher controls, so the group is the reverse-DNS form of
-the product host `sso.ywbsd.site` and the brand sits in the artifactId; a
+the product host `sso.ywbsd.cn` and the brand sits in the artifactId; a
 `com.snaplink` group would assert a domain this project does not own. Before the
 first release that host must serve Central's verification token (or publish the
 matching `token` TXT record) and keep resolving. The Android namespace

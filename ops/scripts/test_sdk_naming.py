@@ -70,7 +70,7 @@ class SchemeTests(unittest.TestCase):
     def test_the_maven_group_is_the_reverse_dns_product_host(self):
         """A Central groupId must name a host the publisher controls."""
         group = sdk_naming.MAVEN_GROUP
-        self.assertEqual("sso.ywbsd.site", ".".join(reversed(group.split("."))))
+        self.assertEqual("sso.ywbsd.cn", ".".join(reversed(group.split("."))))
         self.assertEqual(f"{group}:snaplink", CONVENTIONS["kotlin"].expected)
         self.assertTrue(CONVENTIONS["kotlin"].namespace_is_domain)
 
@@ -109,8 +109,8 @@ class PlatformGrammarTests(unittest.TestCase):
         self.assertRejected("kotlin", "snaplink")
         self.assertRejected("kotlin", "snaplink:snaplink")
         self.assertRejected("kotlin", "site.ywbsd:snaplink")
-        self.assertRejected("kotlin", "site.ywbsd.sso:SNAPLINK")
-        self.assertEqual([], sdk_naming.check_name(CONVENTIONS["kotlin"], "site.ywbsd.sso:snaplink"))
+        self.assertRejected("kotlin", "cn.ywbsd.sso:SNAPLINK")
+        self.assertEqual([], sdk_naming.check_name(CONVENTIONS["kotlin"], "cn.ywbsd.sso:snaplink"))
 
     def test_swift_requires_pascal_case(self):
         self.assertRejected("swift", "snaplinkSSO")

@@ -2,13 +2,14 @@ plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
-    id("maven-publish")
-    // Required explicitly: maven-publish does not apply the signing plugin, and
-    // without it the signing {} extension below does not exist.
-    id("signing")
+    // Sonatype's own publisher for Gradle. It owns the POM, the sources and
+    // javadoc jars, the GPG signatures and the Portal upload, so it replaces
+    // maven-publish here rather than sitting beside it: applying both makes them
+    // register the release component twice and the configuration fails.
+    id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
-group = "site.ywbsd.sso"
+group = "cn.ywbsd.sso"
 version = "0.3.0"
 
 android {
@@ -33,15 +34,10 @@ android {
         }
     }
 
-    publishing {
-        // Maven Central requires a sources jar and a javadoc jar alongside the
-        // AAR, and rejects the upload without them. Both are generated from this
-        // single variant so they can never drift from what is shipped.
-        singleVariant("release") {
-            withSourcesJar()
-            withJavadocJar()
-        }
-    }
+    // Sources and javadoc jars are required by Central alongside the AAR. The
+    // publisher plugin derives them from this release variant itself, so
+    // declaring singleVariant here as well would register the same component
+    // twice and the configuration would fail.
 
     compileOptions {
         // minSdk is 23 but the SDK uses java.time and java.util.Base64, which
@@ -81,7 +77,7 @@ dependencies {
 // ── Publication ────────────────────────────────────────────────────
 //
 // The coordinate follows the naming scheme in sdks/README.md: the groupId is
-// the reverse-DNS form of the product host sso.ywbsd.site, because Maven
+// the reverse-DNS form of the product host sso.ywbsd.cn, because Maven
 // Central verifies a groupId against a domain the publisher controls, and the
 // brand sits in the artifactId. `com.snaplink` would assert a domain this
 // project does not own.
@@ -90,84 +86,40 @@ dependencies {
 // rejects an upload whose POM is missing a name, description, url, licence,
 // developer or scm section, and because a published artefact is immutable: a
 // coordinate that has to be retired is a coordinate nobody can fix.
-publishing {
-    repositories {
-        // The Central upload target, registered only when credentials are present
-        // so that local verification and ordinary CI builds never require them.
-        //
-        // The endpoint is Sonatype's OSSRH staging API. Sonatype has been
-        // migrating publishing to the Central Portal, and the two are not
-        // interchangeable, so this URL must be confirmed against Sonatype's
-        // current documentation before the first real publish. Everything around
-        // it - the coordinate, the artifact set, the POM and the signing - is
-        // verified, so a wrong endpoint fails at the upload step with a clear
-        // error rather than publishing anything wrong.
-        val centralUser: String? = providers.environmentVariable("CENTRAL_TOKEN_USERNAME").orNull
-        val centralPassword: String? = providers.environmentVariable("CENTRAL_TOKEN_PASSWORD").orNull
-        if (centralUser != null && centralPassword != null) {
-            maven {
-                name = "sonatype"
-                url = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
-                credentials {
-                    username = centralUser
-                    password = centralPassword
-                }
+
+// The POM is written out in full because Central rejects an upload whose POM
+// is missing a name, description, url, licence, developer or scm section, and
+// because a published artefact is immutable: a coordinate that has to be
+// retired is a coordinate nobody can fix.
+mavenPublishing {
+    pom {
+        name.set("Snaplink Android SDK")
+        description.set(
+            "Android SDK for the snaplink/sso OAuth 2.0 and OpenID Connect hosted login."
+        )
+        url.set("https://github.com/yangwb1123/snaplink/tree/main/sdks/kotlin")
+
+        licenses {
+            license {
+                name.set("The Apache License, Version 2.0")
+                url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                distribution.set("repo")
             }
         }
-    }
-
-    publications {
-        register<MavenPublication>("release") {
-            groupId = "site.ywbsd.sso"
-            artifactId = "snaplink"
-            version = project.version.toString()
-
-            afterEvaluate { from(components["release"]) }
-
-            pom {
-                name.set("Snaplink Android SDK")
-                description.set(
-                    "Android SDK for the snaplink/sso OAuth 2.0 and OpenID Connect hosted login."
-                )
-                url.set("https://github.com/yangwb1123/snaplink/tree/main/sdks/kotlin")
-
-                licenses {
-                    license {
-                        name.set("The Apache License, Version 2.0")
-                        url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
-                        distribution.set("repo")
-                    }
-                }
-                developers {
-                    developer {
-                        id.set("snaplink")
-                        name.set("Snaplink contributors")
-                    }
-                }
-                scm {
-                    url.set("https://github.com/yangwb1123/snaplink")
-                    connection.set("scm:git:https://github.com/yangwb1123/snaplink.git")
-                    developerConnection.set("scm:git:ssh://git@github.com/yangwb1123/snaplink.git")
-                }
-                issueManagement {
-                    system.set("GitHub Issues")
-                    url.set("https://github.com/yangwb1123/snaplink/issues")
-                }
+        developers {
+            developer {
+                id.set("snaplink")
+                name.set("Snaplink contributors")
             }
         }
-    }
-}
-
-// Central requires every published artifact to be GPG-signed, and the signing
-// key must never live in the repository. Signing is therefore wired to key
-// material supplied by the environment and simply not applied when it is
-// absent, so a local `publishToMavenLocal` needs no secrets and still verifies
-// the artifact set and the POM.
-val signingKey: String? = providers.environmentVariable("MAVEN_SIGNING_KEY").orNull
-val signingPassword: String? = providers.environmentVariable("MAVEN_SIGNING_PASSWORD").orNull
-signing {
-    if (signingKey != null && signingPassword != null) {
-        useInMemoryPgpKeys(signingKey, signingPassword)
-        sign(publishing.publications)
+        scm {
+            url.set("https://github.com/yangwb1123/snaplink")
+            connection.set("scm:git:https://github.com/yangwb1123/snaplink.git")
+            developerConnection.set("scm:git:ssh://git@github.com/yangwb1123/snaplink.git")
+        }
+        issueManagement {
+            system.set("GitHub Issues")
+            url.set("https://github.com/yangwb1123/snaplink/issues")
+        }
     }
 }
