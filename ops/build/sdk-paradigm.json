@@ -37,7 +37,7 @@
       {
         "id": "kotlin",
         "package": true,
-        "notes": "sdks/kotlin; Android/JVM artifact site.ywbsd.sso:snaplink, browser-PKCE plus encrypted secure storage",
+        "notes": "sdks/kotlin; Android/JVM artifact cn.ywbsd.sso:snaplink, browser-PKCE plus encrypted secure storage",
         "onboarded": false
       },
       {

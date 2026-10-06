@@ -10,8 +10,8 @@
 # refuses to run until the gate below is satisfied.
 #
 # Before the first release, all of these must be in place:
-#   1. Namespace `site.ywbsd.sso` verified with Sonatype. The groupId is the
-#      reverse-DNS form of sso.ywbsd.site, so that host must serve the
+#   1. Namespace `cn.ywbsd.sso` verified with Sonatype. The groupId is the
+#      reverse-DNS form of sso.ywbsd.cn, so that host must serve the
 #      verification token Central issues (or publish the matching `token` TXT
 #      record). The host resolves today; the token is not deployed.
 #   2. A `maven-central` environment with required reviewers.
@@ -107,7 +107,7 @@ jobs:
       - name: Check the artifact set Central requires
         run: |
           set -euo pipefail
-          staged="${HOME}/.m2/repository/site/ywbsd/sso/snaplink"
+          staged="${HOME}/.m2/repository/cn/ywbsd/sso/snaplink"
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' sdks/kotlin/build.gradle.kts)"
           dir="${staged}/${version}"
           for artifact in ".aar" "-sources.jar" "-javadoc.jar" ".pom"; do

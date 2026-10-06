@@ -8,7 +8,7 @@ plugins {
     id("signing")
 }
 
-group = "site.ywbsd.sso"
+group = "cn.ywbsd.sso"
 version = "0.3.0"
 
 android {
@@ -81,7 +81,7 @@ dependencies {
 // ── Publication ────────────────────────────────────────────────────
 //
 // The coordinate follows the naming scheme in sdks/README.md: the groupId is
-// the reverse-DNS form of the product host sso.ywbsd.site, because Maven
+// the reverse-DNS form of the product host sso.ywbsd.cn, because Maven
 // Central verifies a groupId against a domain the publisher controls, and the
 // brand sits in the artifactId. `com.snaplink` would assert a domain this
 // project does not own.
@@ -118,7 +118,7 @@ publishing {
 
     publications {
         register<MavenPublication>("release") {
-            groupId = "site.ywbsd.sso"
+            groupId = "cn.ywbsd.sso"
             artifactId = "snaplink"
             version = project.version.toString()
 
