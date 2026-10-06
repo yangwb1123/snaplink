@@ -172,4 +172,4 @@ jobs:
             echo "Central has no OIDC trusted publishing, so a token is required."
             exit 1
           }
-          ./gradlew :snaplink:publishReleasePublicationToSonatypeRepository
+          ./gradlew :snaplink:publishAndReleaseToMavenCentral
