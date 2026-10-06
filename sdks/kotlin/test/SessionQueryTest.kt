@@ -1,6 +1,7 @@
 package com.snaplink.sso
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -136,7 +137,13 @@ class SessionQueryTest {
         val setup = fixture()
         login(setup)
         setup.store.pauseDelete()
-        val logout = async { setup.client.logout() }
+        // Dispatchers.Default, not this coroutine's context: the store seam is a
+        // blocking, non-suspending API, so the gate below has to be awaited on a
+        // thread of its own. Inheriting this event loop instead would park the
+        // single thread this test is suspended on, and `releaseDelete()` could
+        // never run - the test would deadlock against itself rather than
+        // observe anything. Default has at least two threads by construction.
+        val logout = async(Dispatchers.Default) { setup.client.logout() }
         setup.store.deleteStarted.await()
 
         assertFalse("an in-flight logout is not a session", setup.client.isLoggedIn())
@@ -224,9 +231,11 @@ class SessionQueryTest {
         override fun delete(key: String) {
             deletes++
             deleteStarted.complete(Unit)
-            // The store seam is not a suspending API, so the gate is awaited on
-            // the IO thread the client already moved to; the test's own event
-            // loop stays free to observe the in-flight logout.
+            // The store seam is a blocking API, so a test that wants to observe
+            // an in-flight delete has to block somewhere. The client calls this
+            // off the caller's event loop (see logout()), and the test's
+            // coroutine is suspended by the time this runs, so parking here
+            // cannot starve the code that releases the gate.
             deleteGate?.let { gate -> runBlocking { gate.await() } }
             values.remove(key)
         }
