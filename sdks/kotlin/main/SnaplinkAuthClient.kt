@@ -46,6 +46,23 @@ public class SnaplinkAuthClient internal constructor(
         HttpCommerceTransport(configuration),
     )
 
+    /**
+     * Uses a caller-supplied store for the transaction, token, and activation
+     * records. The transport and the clock stay the production ones; a store
+     * that cannot keep a record fails the session closed rather than silently
+     * reporting a signed-out client.
+     */
+    public constructor(
+        secureStore: SnaplinkSecureStore,
+        configuration: SnaplinkConfiguration,
+    ) : this(
+        configuration,
+        secureStore,
+        HttpOAuthTransport(configuration),
+        System::currentTimeMillis,
+        HttpCommerceTransport(configuration),
+    )
+
     internal constructor(
         configuration: SnaplinkConfiguration,
         secureStore: SnaplinkSecureStore,
@@ -210,7 +227,7 @@ public class SnaplinkAuthClient internal constructor(
         if (logoutInProgress || loggedOut) throw SnaplinkAuthException("login_required", "native login is required")
         val current = withContext(Dispatchers.IO) { readTokenSet() }
             ?: throw SnaplinkAuthException("login_required", "native login is required")
-        if (current.expiresAtEpochSeconds > nowSeconds() + REFRESH_SKEW_SECONDS) {
+        if (current.isUsable()) {
             return@withLock current.accessToken
         }
         val refreshToken = current.refreshToken
@@ -306,6 +323,35 @@ public class SnaplinkAuthClient internal constructor(
         val current = withContext(Dispatchers.IO) { readTokenSet() }
             ?: throw SnaplinkAuthException("login_required", "native login is required")
         return current.toSession()
+    }
+
+    /**
+     * Whether this client holds a usable session in local storage right now.
+     *
+     * A point-in-time read: no network I/O, no refresh, and no write or delete, so
+     * it can neither create nor resurrect a session. False means "authenticate
+     * again" and is reported when no record exists, when the stored access token is
+     * at or inside the refresh skew [accessToken] applies, and while a clear or
+     * logout is in flight.
+     *
+     * A storage failure raises `secure_storage_error` instead of answering false:
+     * an unreadable record and an absent session are different situations, and a
+     * caller that cannot tell them apart must not be pushed into a re-login loop
+     * by an SDK storage fault.
+     */
+    public suspend fun isLoggedIn(): Boolean {
+        return withContext(Dispatchers.IO) {
+            synchronized(storeLock) {
+                // Same predicate [accessToken] applies before it reaches the
+                // network: while a clear or logout is in flight, or after one
+                // completed, there is no session to report.
+                if (logoutInProgress || loggedOut) {
+                    false
+                } else {
+                    secureStore.read(tokenSetKey)?.let(::decodeTokenSet)?.isUsable() == true
+                }
+            }
+        }
     }
 
     /**
@@ -425,6 +471,16 @@ public class SnaplinkAuthClient internal constructor(
     }
 
     private fun nowSeconds(): Long = clockMillis() / 1000
+
+    /**
+     * Whether this record can be served without a round trip.
+     *
+     * Shared with [isLoggedIn] so the query can never claim a session that
+     * [accessToken] would have to renew: `isLoggedIn() == false` implies that
+     * an [accessToken] call would reach the network.
+     */
+    private fun StoredTokenSet.isUsable(): Boolean =
+        expiresAtEpochSeconds > nowSeconds() + REFRESH_SKEW_SECONDS
 
     private fun encodeTransaction(transaction: LoginTransaction): String = encodeBinary { output ->
         output.writeInt(STORAGE_VERSION)

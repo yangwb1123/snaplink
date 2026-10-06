@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Android (Kotlin) SDK: a caller-injectable state store, so an application can
+  hold the SDK's app-private records somewhere other than the Android Keystore.
+  `SnaplinkSecureStore` is now public (it was module-internal, so a consumer
+  could neither supply nor test a store) and gains the public constructor
+  `SnaplinkAuthClient(secureStore, configuration)` plus
+  `SnaplinkMemorySecureStore`, an unencrypted in-process store for tests,
+  examples, and single-process development. This is additive: the existing
+  `SnaplinkAuthClient(context, configuration)` still builds the same
+  `AndroidSecureStore`, the same transports, and the same clock, and the record
+  encoding and key derivation are unchanged, so a record written before this
+  change is still readable after it. A store receives opaque versioned records
+  and must fail with `secure_storage_error` rather than return an empty value;
+  the SDK never converts an unreadable record into an absent one. The
+  consumer-visible commerce transport stays internal.
+- Android (Kotlin) SDK: `SnaplinkAuthClient.isLoggedIn()`. `currentSession()` is
+  not a query: it calls `accessToken()` first, which refreshes over the network,
+  may delete the record on `invalid_grant`, and throws `login_required`, so a
+  caller using it as a "may I show the login screen?" check pays for network I/O
+  and a possible token write. `isLoggedIn()` is a point-in-time local read: no
+  request, no refresh, no write, and no delete, so it can neither create nor
+  resurrect a session. It reports false when no record exists, when the stored
+  access token is at or inside the same 60-second refresh skew `accessToken()`
+  applies, and while a clear or logout is in flight, and raises
+  `secure_storage_error` rather than answering false when the record cannot be
+  read: an unreadable record and an absent session demand different responses from
+  the caller, and answering false would turn a storage fault into a re-login
+  loop. The freshness rule is now one shared predicate, so `isLoggedIn() == false`
+  implies `accessToken()` would have to reach the network. It is stricter than
+  Go's `IsLoggedIn`, which ignores expiry entirely.
 - Rust SDK: `SnaplinkClient::authorize(client_id)` and the `Authorization`,
   `MenuNode`, `MenuButton`, and `holds` types in `sdks/rust/src/authorization.rs`.
   One call reads identity from `/userinfo` plus the `/permissions/me`,

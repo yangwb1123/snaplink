@@ -19,13 +19,6 @@ public data class SnaplinkSession(
     public val expiresAtEpochSeconds: Long,
 )
 
-/** Internal boundary for app-private token and PKCE storage. */
-internal interface SnaplinkSecureStore {
-    fun read(key: String): String?
-    fun write(key: String, value: String)
-    fun delete(key: String)
-}
-
 internal data class OAuthTokenResponse(
     val accessToken: String,
     val tokenType: String,

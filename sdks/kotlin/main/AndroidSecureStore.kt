@@ -10,8 +10,14 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** AES-GCM encrypted, app-private storage backed by an Android Keystore key. */
-internal class AndroidSecureStore(context: Context) : SnaplinkSecureStore {
+/**
+ * AES-GCM encrypted, app-private storage backed by an Android Keystore key.
+ *
+ * This remains the default for every public [SnaplinkAuthClient] constructor:
+ * a caller who wants different storage passes a [SnaplinkSecureStore] instead
+ * of obtaining one of these.
+ */
+public class AndroidSecureStore(context: Context) : SnaplinkSecureStore {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
     override fun read(key: String): String? = synchronized(KEY_LOCK) {

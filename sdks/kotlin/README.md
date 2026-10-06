@@ -122,7 +122,12 @@ token and refreshes it when needed. Refresh calls are
 serialized within one SDK instance; this is not a cross-process or cross-device
 lock. `clear()` removes local tokens and pending login state without a network
 call. `logout()` is distinct: it attempts server revocation and clears local
-credentials even if the network call fails.
+credentials even if the network call fails. `isLoggedIn()` answers whether a
+usable session is held right now; it is a point-in-time local read that never
+issues a request, never writes, and never refreshes, so a token at or inside the
+refresh skew reads as signed out and a storage failure raises
+`secure_storage_error` rather than answering false. Use `currentSession()` when
+you want the client to renew a nearly expired token instead.
 
 ## Commercial entitlements
 
@@ -271,6 +276,28 @@ A code the server sends that this build does not recognise is still surfaced
 verbatim; it simply carries no known class. A local license failure is never
 remapped onto a network error.
 
+## Storage
+
+The token set, the one-use PKCE transaction, and a pending activation ticket live
+in an app-private store. Every public constructor defaults to
+`AndroidSecureStore`, which encrypts each record with AES-GCM under a
+non-exportable Android Keystore key. An application that needs different storage
+supplies its own `SnaplinkSecureStore`; nothing else about the client changes:
+
+```kotlin
+val client = SnaplinkAuthClient(SnaplinkMemorySecureStore(), configuration)
+```
+
+`SnaplinkMemorySecureStore` keeps records in heap with no confidentiality. It is
+for unit tests, examples, and single-process development, not for a device build,
+which is why the Keystore store stays the default. A custom store receives
+opaque, versioned records and must store them verbatim without inspecting them.
+It must raise `SnaplinkAuthException` with code `secure_storage_error` on a
+storage failure rather than return an empty value, because the client cannot tell
+a lost record from an absent one and would treat a fabricated answer as a live
+session. Consuming the login transaction is a read followed by a delete inside the
+SDK, so a store shared by several processes must make that effectively single-use.
+
 ## Security boundary
 
 - Android Keystore AES-GCM encrypts both pending PKCE transactions and tokens;
@@ -284,6 +311,8 @@ remapped onto a network error.
   Do not enable that development path in a release build.
 - `SnaplinkSession.accessToken` is a bearer credential: never log it, place it
   in an intent/query parameter, or persist it outside the SDK's secure store.
+  A caller-injected `SnaplinkSecureStore` takes over that duty in full: an
+  unencrypted store on a device leaks a refresh token.
 - Activation and self-service requests carry `Cache-Control: no-store`, send no
   cookies, and refuse redirects, so a credential or a bearer cannot be replayed
   onto a host the SDK did not choose.
@@ -331,10 +360,12 @@ cd sdks
 ```
 
 The unit suite covers PKCE construction, callback state/issuer binding, token
-exchange, concurrent refresh, local clear/logout cleanup, configuration
-validation, activation and the account context (both at the wire level through
-a real OkHttp stack and at the client level), presentation preferences, and all
-four shared cross-language contracts in `ops/build/sdk-conformance/`: transport
-seam, entitlement semantics, the error taxonomy, and offline license-file
-verification. Keystore encryption is verified separately on a device by the
-instrumentation suite in `kotlin/androidTest`.
+exchange, concurrent refresh, local clear/logout cleanup, the logged-in query's
+no-network/no-write/fail-closed contract, the injectable store seam (record
+isolation per configuration, a restart reading a persisted session, and storage
+faults failing closed), configuration validation, activation and the account
+context (both at the wire level through a real OkHttp stack and at the client
+level), presentation preferences, and all four shared cross-language contracts in
+`ops/build/sdk-conformance/`: transport seam, entitlement semantics, the error
+taxonomy, and offline license-file verification. Keystore encryption is verified
+separately on a device by the instrumentation suite in `kotlin/androidTest`.
