@@ -21,6 +21,24 @@ internal object SnaplinkHttp {
 
     val json: Json = Json { ignoreUnknownKeys = true }
 
+    /** Common boundary for both the shipped adapter and caller-supplied transports. */
+    suspend fun read(transport: SnaplinkHttpTransport, request: SnaplinkHttpRequest): String {
+        val response = try {
+            transport.execute(request)
+        } catch (error: IOException) {
+            throw networkError(error)
+        }
+        // Check character count first so measuring UTF-8 cannot allocate an
+        // unbounded second copy of a caller-supplied response.
+        if (response.status !in 100..599 || response.body.length > MAX_RESPONSE_BYTES ||
+            response.body.toByteArray(Charsets.UTF_8).size > MAX_RESPONSE_BYTES
+        ) {
+            throw SnaplinkAuthException("invalid_response", "Snaplink returned an invalid HTTP response")
+        }
+        if (response.status !in 200..299) throw decodeError(response.status, response.body)
+        return response.body
+    }
+
     /** Reads at most [MAX_RESPONSE_BYTES], failing closed past the cap. */
     fun readBounded(source: BufferedSource): String {
         val buffer = Buffer()

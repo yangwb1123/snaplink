@@ -83,8 +83,10 @@
           "symbol": "pub trait Transport: Send + Sync"
         },
         "kotlin": {
-          "status": "missing",
-          "plan": "W5 generator coverage does not apply. OAuthTransport and its OAuthTokenResponse wire type are both module-internal, so closing this means deciding which wire types are consumer API; it is a design change, not a one-file edit."
+          "status": "present",
+          "file": "sdks/kotlin/main/SnaplinkHttpTransport.kt",
+          "symbol": "public fun interface SnaplinkHttpTransport",
+          "note": "Public context/store constructor overloads inject one normalized HTTP executor across OAuth, activation, preferences and authorization reads. OAuth wire types remain internal; the SDK retains PKCE, token validation, storage and refresh serialization. The shared response boundary validates status and UTF-8 byte limits even for injected transports. SnaplinkOkHttpTransport enforces no cookies, redirects or cache and a bounded call deadline. Covered by TransportInjectionTest and an external Android consumer compile."
         },
         "swift": {
           "status": "present",
@@ -764,9 +766,10 @@
           "note": "Asserted against ops/build/sdk-conformance/authorization.json, the same fixture Rust, TypeScript, and Python use."
         },
         "kotlin": {
-          "status": "missing",
-          "note": "No permission or menu read at all.",
-          "plan": "Onboarding: add the assembled authorization read."
+          "status": "present",
+          "file": "sdks/kotlin/main/SnaplinkAuthClient.kt",
+          "symbol": "public suspend fun authorization(): SnaplinkAuthorization",
+          "note": "Assembles /userinfo and /permissions|roles|menus/me using the current bearer and the configured client_id, validating the response scope. Missing or malformed projections and endpoint failures propagate instead of empty success. Session-generation checks reject late reads after clear, logout or replacement login; projections are neither persisted nor cached. Permission matching is driven by all 13 cases in the shared authorization.json fixture; navigation recursively filters denied parents and buttons. Kotlin remains onboarding pending independent native/security and integration review."
         },
         "swift": {
           "status": "missing",

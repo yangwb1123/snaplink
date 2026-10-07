@@ -26,6 +26,7 @@ public class SnaplinkAuthClient internal constructor(
     private val transport: OAuthTransport,
     private val clockMillis: () -> Long,
     private val commerceTransport: SnaplinkCommerceTransport,
+    private val authorizationTransport: HttpAuthorizationTransport = HttpAuthorizationTransport(configuration),
 ) {
     private val sessionMutex = Mutex()
     private val pendingTransactionKey = storageKey("transaction")
@@ -39,28 +40,41 @@ public class SnaplinkAuthClient internal constructor(
 
     /** Uses AES-GCM encrypted app-private storage backed by Android Keystore. */
     public constructor(context: Context, configuration: SnaplinkConfiguration) : this(
-        configuration,
-        AndroidSecureStore(context.applicationContext),
-        HttpOAuthTransport(configuration),
-        System::currentTimeMillis,
-        HttpCommerceTransport(configuration),
+        AndroidSecureStore(context.applicationContext), configuration, SnaplinkOkHttpTransport(),
     )
 
-    /**
-     * Uses a caller-supplied store for the transaction, token, and activation
-     * records. The transport and the clock stay the production ones; a store
-     * that cannot keep a record fails the session closed rather than silently
-     * reporting a signed-out client.
-     */
+    /** Uses a caller-supplied store; production transport and clock remain the defaults. */
     public constructor(
         secureStore: SnaplinkSecureStore,
         configuration: SnaplinkConfiguration,
+    ) : this(secureStore, configuration, SnaplinkOkHttpTransport())
+
+    /** Uses encrypted Android storage and one shared transport for every SDK HTTP call. */
+    public constructor(
+        context: Context,
+        configuration: SnaplinkConfiguration,
+        httpTransport: SnaplinkHttpTransport,
+    ) : this(AndroidSecureStore(context.applicationContext), configuration, httpTransport)
+
+    /** The SDK still owns PKCE, token validation, storage and refresh serialization. */
+    public constructor(
+        secureStore: SnaplinkSecureStore,
+        configuration: SnaplinkConfiguration,
+        httpTransport: SnaplinkHttpTransport,
+    ) : this(configuration, secureStore, httpTransport, System::currentTimeMillis)
+
+    private constructor(
+        configuration: SnaplinkConfiguration,
+        secureStore: SnaplinkSecureStore,
+        httpTransport: SnaplinkHttpTransport,
+        clockMillis: () -> Long,
     ) : this(
         configuration,
         secureStore,
-        HttpOAuthTransport(configuration),
-        System::currentTimeMillis,
-        HttpCommerceTransport(configuration),
+        HttpOAuthTransport(configuration, httpTransport),
+        clockMillis,
+        HttpCommerceTransport(configuration, httpTransport),
+        HttpAuthorizationTransport(configuration, httpTransport),
     )
 
     internal constructor(
@@ -127,6 +141,24 @@ public class SnaplinkAuthClient internal constructor(
             throw SnaplinkAuthException("invalid_request", "productID is required to read the account context")
         }
         return commerceTransport.accountContext(product, bearer)
+    }
+
+    /**
+     * Reads identity, permissions, roles and menus for this client's current bearer.
+     * A failed, unavailable or superseded projection is never returned as empty success.
+     */
+    public suspend fun authorization(): SnaplinkAuthorization {
+        val generation = sessionRevision.get()
+        val bearer = accessToken()
+        val projection = authorizationTransport.read(bearer) { requireAuthorizationSession(generation) }
+        requireAuthorizationSession(generation)
+        return projection
+    }
+
+    private fun requireAuthorizationSession(generation: Long) = synchronized(storeLock) {
+        if (logoutInProgress || loggedOut || generation != sessionRevision.get()) {
+            throw SnaplinkAuthException("login_required", "native session changed during authorization read")
+        }
     }
 
     /** Returns the caller's stored allowlisted presentation preferences. */

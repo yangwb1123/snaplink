@@ -5,11 +5,12 @@ The published coordinate follows the naming scheme in
 coordinate is `cn.ywbsd.sso:snaplink`. Maven Central verifies a `groupId`
 against a domain the publisher controls, so the group is the reverse-DNS form of
 the product host `sso.ywbsd.cn` and the brand sits in the artifactId; a
-`com.snaplink` group would assert a domain this project does not own. Before the
-first release that host must serve Central's verification token (or publish the
-matching `token` TXT record) and keep resolving. The Android namespace
+`com.snaplink` group would assert a domain this project does not own. Publishing
+requires Central Portal namespace verification and publish rights for the token
+owner; DNS reachability alone is not proof. The Android namespace
 (`com.snaplink.sso`) is the code package, not the published artifact name, and
-is not domain-verified. Maven publishing stays unconfigured.
+is not domain-verified. Maven publication is prepared but remains gated by
+independent platform/security review and integration acceptance.
 
 This Android library provides the public-client hosted-login vertical slice:
 Authorization Code + PKCE S256, state and issuer validation, encrypted token
@@ -225,6 +226,29 @@ never enters this package, the repository, or CI.
 
 ## Transport seam
 
+`SnaplinkHttpTransport` is a public suspending HTTP executor. The context/store
+constructor overloads accept one instance, shared by OAuth, activation,
+preferences and authorization reads:
+
+```kotlin
+val transport = SnaplinkOkHttpTransport(myOkHttpClient)
+val client = SnaplinkAuthClient(applicationContext, configuration, transport)
+// A custom secure store can use the same overload:
+// SnaplinkAuthClient(mySecureStore, configuration, transport)
+```
+
+The SDK still owns PKCE, callback binding, token validation, encrypted records
+and refresh serialization; its OAuth wire response types remain internal.
+`SnaplinkOkHttpTransport` preserves caller proxies/interceptors but disables
+cookies, redirects and caching, runs on `Dispatchers.IO`, and caps the call
+at 15 seconds (a shorter caller timeout is preserved). Custom implementations
+must obey the same security contract, preserve SDK-built requests, return the
+actual HTTP status/body, avoid logging credentials and avoid blindly retrying
+one-use code exchanges or rotating refresh grants. The shared SDK response
+boundary rejects invalid status codes and bodies exceeding 64 KiB of UTF-8,
+even for an injected implementation. Response/body diagnostic strings are
+redacted; `canonical()` deliberately includes raw credentials and is not a log.
+
 Every request is built as a normalized `SnaplinkHttpRequest` by
 `SnaplinkRequestFactory`, which is a pure function of its inputs and performs no
 I/O. Header names are canonicalized and matched case-insensitively, form fields
@@ -248,6 +272,33 @@ nor a credential form field (`code`, `code_verifier`, `refresh_token`,
 request can be logged without leaking a secret. Timeouts, redirect refusal, and
 the response size cap live in the transport, not the client, so both are
 substitutable in one place.
+
+## Identity and authorization projection
+
+```kotlin
+val authorization = client.authorization()
+if (authorization.allows("order:read")) {
+    // Show the control; the business API must still authorize the operation.
+}
+val navigation = authorization.visibleMenus()
+```
+
+One call reads `/userinfo`, `/permissions/me`, `/roles/me` and `/menus/me` with
+the current bearer. Grant/menu reads explicitly use the configuration's
+`clientId`; each response must echo the same `client_id`. Missing identity,
+missing/null/malformed projection arrays, mismatched scope and unavailable
+endpoints fail rather than producing an empty successful projection. An explicit
+empty array remains a valid empty result. Reads are not cached or persisted, and
+session-generation checks reject late results after clear, logout or replacement
+login. Four reads are not an atomic server snapshot.
+
+`SnaplinkPermissions.holds` follows the server rule: exact matching, a global
+`*`, and a `domain:*` prefix including the colon. An empty menu/button permission
+means unrestricted display; a malformed or null permission is not treated as
+empty. `visibleMenus()` recursively drops denied parents and their descendants,
+filters buttons, and leaves the original tree unchanged. Menu decoding is
+limited to 32 levels. These are presentation conveniences, never substitutes
+for server-side RBAC or tenant/company authorization.
 
 ## Error taxonomy
 
@@ -365,7 +416,10 @@ no-network/no-write/fail-closed contract, the injectable store seam (record
 isolation per configuration, a restart reading a persisted session, and storage
 faults failing closed), configuration validation, activation and the account
 context (both at the wire level through a real OkHttp stack and at the client
-level), presentation preferences, and all four shared cross-language contracts in
-`ops/build/sdk-conformance/`: transport seam, entitlement semantics, the error
-taxonomy, and offline license-file verification. Keystore encryption is verified
+level), presentation preferences, HTTP injection and all five shared
+cross-language contracts in `ops/build/sdk-conformance/`: transport seam,
+entitlement semantics, the error taxonomy, offline license-file verification,
+and authorization. The authorization suite also covers unavailable/malformed
+projections, scope binding, menu filtering and late reads across session changes.
+Keystore encryption is verified
 separately on a device by the instrumentation suite in `kotlin/androidTest`.

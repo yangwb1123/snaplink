@@ -39,6 +39,7 @@ on:
       - "ops/scripts/test_sdk_swift_release.py"
       - "ops/scripts/swift_sdk_smoke.py"
       - "ops/scripts/test_sdk_swift_smoke.py"
+      - "ops/scripts/kotlin_sdk_consumer.sh"
   pull_request:
     paths:
       - "sdks/**"
@@ -74,6 +75,7 @@ on:
       - "ops/scripts/test_sdk_swift_release.py"
       - "ops/scripts/swift_sdk_smoke.py"
       - "ops/scripts/test_sdk_swift_smoke.py"
+      - "ops/scripts/kotlin_sdk_consumer.sh"
   workflow_dispatch:
 
 permissions:
@@ -137,6 +139,8 @@ jobs:
         # main and can be dispatched on demand - the same reasoning that keeps
         # bench-gate out of `make ci`.
         run: ./gradlew :snaplink:testDebugUnitTest :snaplink:lintDebug :snaplink:assembleRelease
+      - name: Install and compile a POM-only external Android consumer
+        run: bash ../ops/scripts/kotlin_sdk_consumer.sh
   swift:
     name: Swift SDK
     runs-on: macos-14

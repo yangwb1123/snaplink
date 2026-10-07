@@ -15,7 +15,7 @@ import okio.Buffer
  * trailing newline. Building one performs no I/O, so the request shape is
  * testable without a transport.
  */
-internal class SnaplinkHttpRequest(
+public class SnaplinkHttpRequest(
     method: String,
     url: String,
     headers: Map<String, String> = emptyMap(),
@@ -43,10 +43,14 @@ internal class SnaplinkHttpRequest(
 
     sealed interface Body {
         /** Already-encoded form fields, in the order they go on the wire. */
-        data class Form(val fields: List<Pair<String, String>>) : Body
+        data class Form(val fields: List<Pair<String, String>>) : Body {
+            override fun toString(): String = "Form(<redacted>)"
+        }
 
         /** UTF-8 JSON bytes with no trailing newline. */
-        data class Json(val text: String) : Body
+        data class Json(val text: String) : Body {
+            override fun toString(): String = "Json(<redacted>)"
+        }
     }
 
     init {
@@ -75,7 +79,7 @@ internal class SnaplinkHttpRequest(
         }
         append('\n')
         when (val payload = body) {
-            is Body.Form -> append(payload.fields.joinToString("&") { (key, value) -> "$key=${encodeComponent(key)}=${encodeComponent(value)}" })
+            is Body.Form -> append(Buffer().also { formBody(payload.fields).writeTo(it) }.readUtf8())
             is Body.Json -> append(payload.text)
             null -> Unit
         }
@@ -108,11 +112,11 @@ internal class SnaplinkHttpRequest(
     }
 
     /** Converts to an OkHttp request, applying the canonical header spelling. */
-    fun toOkHttp(): Request {
+    internal fun toOkHttp(): Request {
         val builder = Request.Builder().url(url)
         for ((name, value) in headers) builder.header(name, value)
         when (val payload = body) {
-            is Body.Form -> builder.post(formBody(payload.fields))
+            is Body.Form -> builder.method(method, formBody(payload.fields))
             is Body.Json -> builder.method(method, payload.text.toRequestBody(JSON_MEDIA_TYPE))
             null -> builder.method(method, null)
         }
@@ -146,6 +150,9 @@ internal class SnaplinkHttpRequest(
             "code_verifier",
             "client_secret",
             "refresh_token",
+            "token",
+            "access_token",
+            "id_token",
             "password",
             "license_key",
             "invitation_code",
@@ -167,8 +174,13 @@ internal class SnaplinkHttpRequest(
         fun encodeComponent(value: String): String = value
             .toByteArray(Charsets.UTF_8)
             .joinToString("") { byte ->
-                val ch = byte.toInt().toChar()
-                if (ch.isLetterOrDigit() || ch in "-._~") ch.toString() else "%%%02X".format(byte)
+                val unsigned = byte.toInt() and 0xff
+                val ch = unsigned.toChar()
+                if (ch in 'a'..'z' || ch in 'A'..'Z' || ch in '0'..'9' || ch in "-._~") {
+                    ch.toString()
+                } else {
+                    "%%%02X".format(unsigned)
+                }
             }
     }
 }
@@ -179,7 +191,7 @@ internal val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 /**
  * Builds Snaplink requests: a pure function of its inputs, performing no I/O.
  */
-internal object SnaplinkRequestFactory {
+public object SnaplinkRequestFactory {
     /** Joins a path onto the issuer base URL without I/O. */
     fun endpoint(baseURL: String, path: String): String =
         "${baseURL.trimEnd('/')}/${path.trim('/')}"
@@ -217,7 +229,8 @@ internal object SnaplinkRequestFactory {
         url = endpoint(baseURL, path),
         headers = SnaplinkHttp.noStoreHeaders() + ("Content-Type" to "application/json") +
             bearerHeader(bearer),
-        body = if (fields.isEmpty()) null else SnaplinkHttpRequest.Body.Json(jsonText(fields)),
+        // An empty update is the JSON object {}, not a missing PUT/POST body.
+        body = SnaplinkHttpRequest.Body.Json(jsonText(fields)),
     )
 
     /** A bearer-authenticated read with no request body. */

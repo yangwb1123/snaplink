@@ -1,14 +1,7 @@
 package com.snaplink.sso
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.JsonObject
-import okhttp3.OkHttpClient
-import java.io.IOException
-import java.util.concurrent.TimeUnit
 
 /** A prepared one-time activation, returned by the activation endpoint. */
 public data class SnaplinkActivationPreparation(
@@ -103,7 +96,7 @@ internal interface SnaplinkCommerceTransport {
  */
 internal class HttpCommerceTransport(
     private val config: SnaplinkConfiguration,
-    private val client: OkHttpClient = defaultClient(),
+    private val http: SnaplinkHttpTransport = SnaplinkOkHttpTransport(),
 ) : SnaplinkCommerceTransport {
 
     override suspend fun prepareActivation(
@@ -184,15 +177,7 @@ internal class HttpCommerceTransport(
 
     private suspend fun jsonResponse(request: SnaplinkHttpRequest): String = read(request)
 
-    private fun read(request: SnaplinkHttpRequest): String = try {
-        client.newCall(request.toOkHttp()).execute().use { response ->
-            val body = response.body?.source()?.let(SnaplinkHttp::readBounded).orEmpty()
-            if (!response.isSuccessful) throw SnaplinkHttp.decodeError(response.code, body)
-            body
-        }
-    } catch (error: IOException) {
-        throw SnaplinkHttp.networkError(error)
-    }
+    private suspend fun read(request: SnaplinkHttpRequest): String = SnaplinkHttp.read(http, request)
 
     private fun decodeContext(raw: String): SnaplinkAccountContext {
         val context = decode< SnaplinkActivationContextResponse >(raw, "Snaplink returned an incomplete account context").context
@@ -210,14 +195,5 @@ internal class HttpCommerceTransport(
 
     private companion object {
         const val UPDATE_OK = "ok"
-
-        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
-            .cookieJar(okhttp3.CookieJar.NO_COOKIES)
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .callTimeout(15, TimeUnit.SECONDS)
-            .build()
     }
 }
