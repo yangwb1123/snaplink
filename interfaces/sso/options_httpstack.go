@@ -219,14 +219,13 @@ func WithCompression() Option {
 	return func(s *Server) { s.compressionEnabled = true }
 }
 
-// WithIdempotentStore wires an idempotency cache for the /token endpoint.
-// When set, the server checks for an Idempotency-Key header on token
-// requests and, after authenticating the client and sender constraint, caches
-// the first successful response under a client + request fingerprint. Only an
-// authenticated retry of the same operation can receive that response.
-//
-// The cache TTL is typically aligned with the token lifetime or a
-// maximum of 1 hour. Pass nil to disable idempotency (default).
+// WithIdempotentStore caches only built-in client_credentials responses after
+// client/sender authentication, isolated by client and request fingerprint.
+// Replays recheck current scopes and token validity, with TTL capped at one
+// minute or the token lifetime, whichever is shorter. Stateful/custom grants
+// always reach their own validation; refresh retries use rotation grace only.
+// Memory coordination is process-local; Get/Set alone does not coordinate
+// concurrent first misses across replicas. Pass nil to disable (default).
 func WithIdempotentStore(cache core.IdempotentCache) Option {
 	return func(s *Server) { s.idempotentCache = cache }
 }

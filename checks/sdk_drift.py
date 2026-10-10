@@ -186,6 +186,48 @@ def check_deploy(root: Path) -> tuple[list[str], bool]:
     return errors, False
 
 
+def sync_deploy(root: Path) -> list[str]:
+    """Refresh only declared derived copies; never follow external symlinks."""
+    static = root / STATIC_DIR
+    if not static.is_dir() or static.is_symlink():
+        return ["deploy sync: an existing non-symlink static directory is required"]
+    if not static.resolve().is_relative_to(root.resolve()):
+        return ["deploy sync: static directory escapes repository"]
+    pending: list[tuple[Path, bytes]] = []
+    try:
+        for canonical, relative_target in DEPLOY_OUTPUTS:
+            target = static / relative_target
+            if target.is_symlink() or not target.parent.resolve().is_relative_to(static.resolve()):
+                return [f"deploy sync: unsafe target: {_display(target, root)}"]
+            pending.append((target, (root / canonical).read_bytes()))
+        for target, content in pending:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as temporary:
+                temporary.write(content)
+                temporary_path = Path(temporary.name)
+            try:
+                temporary_path.chmod(0o644)
+                temporary_path.replace(target)
+            finally:
+                temporary_path.unlink(missing_ok=True)
+    except OSError as exc:
+        return [f"deploy sync: {exc}"]
+    return []
+
+
+def _run_sync() -> int:
+    with tempfile.TemporaryDirectory(prefix="snaplink-sdk-sync-") as temporary:
+        errors = check_regen(ROOT, Path(temporary), REGEN_CMD)
+    if not errors:
+        errors = sync_deploy(ROOT)
+    if errors:
+        for error in errors:
+            print(f"sdk-drift: {error}")
+        return 1
+    print("sdk-drift: refreshed 3 declared deploy copies; canonical sources unchanged")
+    return _run_check()
+
+
 def _run_check() -> int:
     with tempfile.TemporaryDirectory(prefix="snaplink-sdk-drift-") as temporary:
         regen_errors = check_regen(ROOT, Path(temporary), REGEN_CMD)
@@ -213,11 +255,12 @@ def run(args: list[str]) -> int:
         prog="sdk-drift",
         description="Regenerate SDK artifacts in a temporary tree and sweep deploy copies.",
     )
-    parser.add_argument("action", choices=["check"], help="run both SDK drift legs")
+    parser.add_argument("action", choices=["check", "sync-deploy"],
+                        help="check read-only, or explicitly refresh declared deploy copies")
     parsed = parser.parse_args(args)
-    if parsed.action == "check":
-        return _run_check()
-    return 2
+    if parsed.action == "sync-deploy":
+        return _run_sync()
+    return _run_check()
 
 
 if __name__ == "__main__":

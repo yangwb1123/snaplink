@@ -11,6 +11,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/protocols/oidc/browsersso"
 	"github.com/yangwb1123/snaplink/shared/spi"
 
 	"github.com/yangwb1123/snaplink/protocols/caep"
@@ -36,11 +37,21 @@ import (
 type SigningIssuer interface {
 	sso.TokenIssuer
 	oidc.IDTokenIssuer
+	browsersso.Verifier
 	sso.LogoutTokenIssuer
 	// caep.JWTSigner (SignJWT) lets the same key mint Security Event
 	// Tokens (RFC 8417) for the CAEP transmitter — one key, one JWKS
 	// entry, every JWT shape.
 	caep.JWTSigner
+}
+
+// BrowserSSOOption keeps the stock default off and uses the same rotating
+// signing/verification keys on every replica; no process-local session cache.
+func BrowserSSOOption(enabled bool, issuer SigningIssuer) sso.Option {
+	if enabled {
+		return sso.WithBrowserSSO(issuer, issuer)
+	}
+	return func(*sso.Server) {}
 }
 
 // BuildSigningIssuer constructs the JWT signing issuer for the configured

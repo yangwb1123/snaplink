@@ -16,7 +16,16 @@ import (
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
-func (j *RSAJWTIssuer) Validate(_ context.Context, token string) (_ *sso.TokenClaims, resultErr error) {
+func (j *RSAJWTIssuer) Validate(ctx context.Context, token string) (*sso.TokenClaims, error) {
+	return j.validateJWT(ctx, token, false)
+}
+
+// ValidateBrowserSession accepts only the purpose-separated OP-cookie typ.
+func (j *RSAJWTIssuer) ValidateBrowserSession(ctx context.Context, token string) (*sso.TokenClaims, error) {
+	return j.validateJWT(ctx, token, true)
+}
+
+func (j *RSAJWTIssuer) validateJWT(_ context.Context, token string, browserSession bool) (_ *sso.TokenClaims, resultErr error) {
 	defer func() {
 		if resultErr != nil {
 			resultErr = fmt.Errorf("%w: %v", core.ErrTokenValidationRejected, resultErr)
@@ -34,7 +43,7 @@ func (j *RSAJWTIssuer) Validate(_ context.Context, token string) (_ *sso.TokenCl
 		return nil, errors.New("rsa: token revoked")
 	}
 
-	h, err := j.parseAndGuardHeader(parts[0])
+	h, err := j.parseAndGuardHeaderForPurpose(parts[0], browserSession)
 	if err != nil {
 		return nil, err
 	}
@@ -57,6 +66,10 @@ func (j *RSAJWTIssuer) Validate(_ context.Context, token string) (_ *sso.TokenCl
 // rejected here, never reaching the verify path. Strict kid->alg: the
 // RP can't pick the verification algorithm.
 func (j *RSAJWTIssuer) parseAndGuardHeader(headerB64 string) (rsaHeader, error) {
+	return j.parseAndGuardHeaderForPurpose(headerB64, false)
+}
+
+func (j *RSAJWTIssuer) parseAndGuardHeaderForPurpose(headerB64 string, browserSession bool) (rsaHeader, error) {
 	headerBytes, err := base64.RawURLEncoding.DecodeString(headerB64)
 	if err != nil {
 		return rsaHeader{}, fmt.Errorf("rsa: header decode: %w", err)
@@ -68,7 +81,11 @@ func (j *RSAJWTIssuer) parseAndGuardHeader(headerB64 string) (rsaHeader, error) 
 	if h.Alg != j.alg {
 		return rsaHeader{}, fmt.Errorf("rsa: alg %q not accepted (issuer signs %q)", h.Alg, j.alg)
 	}
-	if h.Typ != "" {
+	if browserSession {
+		if h.Typ != core.JWTTypBrowserSession {
+			return rsaHeader{}, errors.New("rsa: not an OP identity cookie")
+		}
+	} else if h.Typ != "" {
 		if _, ok := supportedJWTTypes[h.Typ]; !ok {
 			return rsaHeader{}, fmt.Errorf("rsa: typ %q not in allowlist", h.Typ)
 		}

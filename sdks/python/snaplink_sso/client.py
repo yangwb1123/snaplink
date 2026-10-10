@@ -949,6 +949,9 @@ class LocalUserResponse(TypedDict, total=False):
 
 class LoginDiscoveryResponse(TypedDict, total=False):
     authorization_request_passthrough_supported: bool  # True only when top-level federated GET can preserve the complete
+    op_session_available: bool  # A valid OP identity cookie and its canonical live session were verified. Not an authorization decision.
+    op_session_error: str  # Identity-session verification failed; availability is unknown, not false.
+    op_session_supported: bool  # Present as true only when browser identity SSO is configured.
     providers: List[str]  # Authenticator names this client may use.
     unavailable: bool  # Optional home-realm login-discovery marker. Present as `true` when
 
@@ -963,10 +966,11 @@ class LoginRequest(TypedDict, total=False):
     nonce: str  # OIDC nonce bound to a subsequently issued ID token.
     presentation_locale: str  # Optional hosted-login UI hint. It is persisted as the authenticated
     presentation_theme_mode: str  # Optional hosted-login UI hint persisted as the shared
-    provider: str  # Authenticator name; omit for discovery.
+    provider: str  # Authenticator name; omit for discovery or OP-cookie resume_session.
     redirect_uri: str  # Registered redirect URI bound to the authorization code.
     resource: List[str]  # RFC 8707 resource indicators. Each value MUST be in the
     response_type: str  # Request an OAuth 2.0 authorization code instead of direct token minting.
+    resume_session: bool  # Opt-in POST-only OP-cookie authentication, not application-token
     scope: List[str]
     state: str  # Opaque value echoed back to redirect-based flows.
 

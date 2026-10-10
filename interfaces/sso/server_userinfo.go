@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 	"slices"
@@ -9,9 +10,11 @@ import (
 
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/protocols/oidc/browsersso"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -92,6 +95,7 @@ func (s *Server) applySessionManagement(ctx HandlerContext, req *login.Request, 
 // budget; it belongs beside applySessionManagement, the other half of this
 // cookie's lifecycle.
 func (s *Server) ClearSessionManagementCookie(ctx core.HandlerContext) {
+	s.clearBrowserSession(ctx)
 	if !s.sessionManagementEnabled {
 		return
 	}
@@ -300,4 +304,176 @@ var loginPresentationLocalePattern = regexp.MustCompile(
 
 func validPresentationLocale(value string) bool {
 	return len(value) <= 32 && loginPresentationLocalePattern.MatchString(value)
+}
+
+type browserSSOState struct {
+	browserSessions *browsersso.Session
+}
+
+// WithBrowserSSO enables HttpOnly OP-cookie authentication. Application scopes,
+// resources, consent and sessions remain independent; the SDK default is off.
+func WithBrowserSSO(signer browsersso.Signer, verifier browsersso.Verifier) Option {
+	return func(s *Server) { s.browserSessions = browsersso.New(signer, verifier) }
+}
+
+// Reject before consuming PAR/JAR: an automatic attempt must never burn an
+// opaque, one-use authorization request that still needs primary credentials.
+func (s *Server) prepareBrowserResume(ctx HandlerContext, req *login.Request) bool {
+	if !req.ResumeSession {
+		return false
+	}
+	if !validBrowserResumeRequest(req) {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
+		return true
+	}
+	ctx = s.browserResumeErrorContext(ctx, req)
+	if s.browserSessions == nil {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, core.ErrLoginRequired, req.State))
+		return true
+	}
+	values := strings.Fields(req.Prompt)
+	if slices.Contains(values, "none") && len(values) != 1 {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
+		return true
+	}
+	result, err := s.browserSessions.Resolve(ctx.Request().Context(), ctx.Request(), s.sessionMgr, s.resolveIssuer(ctx))
+	if err != nil {
+		ctx.JSON(http.StatusServiceUnavailable, s.authzErrorBodyWithState(ctx, core.ErrTemporarilyUnavailable, req.State))
+		return true
+	}
+	if result == nil || !browsersso.Allows(req.Prompt, req.MaxAge, result.AuthTime) {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, core.ErrLoginRequired, req.State))
+		return true
+	}
+	req.Provider = result.Provider
+	browsersso.SaveResult(ctx, result)
+	return false
+}
+
+// Early session misses/outages still need a registered RP delivery boundary.
+// This only validates response delivery; it never authorizes the request or
+// consumes PAR/JAR, and unregistered redirects remain unattested.
+func (s *Server) browserResumeErrorContext(ctx HandlerContext, req *login.Request) HandlerContext {
+	if s.clientStore == nil {
+		return ctx
+	}
+	client, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
+	if err != nil || client == nil {
+		return ctx
+	}
+	return s.wrapAuthorizationResponse(ctx, req, client)
+}
+
+func validBrowserResumeRequest(req *login.Request) bool {
+	return req.RequestURI == "" && req.Request == "" && req.LoginTransactionID == "" &&
+		req.Provider == "" && len(req.Credential) == 0 && req.IDTokenHint == "" && req.ResponseType == "code" &&
+		(req.MaxAge == nil || *req.MaxAge >= 0)
+}
+
+func (s *Server) authenticateCredentialOrSession(ctx HandlerContext, req *login.Request, client *Client) (*AuthResult, bool) {
+	if req.ResumeSession {
+		return s.authenticateBrowserUser(ctx, req)
+	}
+	return s.authenticateUser(ctx, req, client)
+}
+
+func (s *Server) authenticateBrowserUser(ctx HandlerContext, req *login.Request) (*AuthResult, bool) {
+	result := browsersso.Result(ctx)
+	if result == nil || s.userProvider == nil {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, core.ErrLoginRequired, req.State))
+		return nil, true
+	}
+	user, err := s.userProvider.GetByID(ctx.Request().Context(), result.UserID)
+	if errors.Is(err, core.ErrNoSuchUser) {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, core.ErrLoginRequired, req.State))
+		return nil, true
+	}
+	if err != nil {
+		ctx.JSON(http.StatusServiceUnavailable, s.authzErrorBodyWithState(ctx, core.ErrTemporarilyUnavailable, req.State))
+		return nil, true
+	}
+	if user == nil || !browserLoginHintMatches(req.LoginHint, user) || !s.browserProviderLive(ctx, result.Provider) {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, core.ErrLoginRequired, req.State))
+		return nil, true
+	}
+	if s.rejectDeactivatedUser(ctx, req, result.UserID) {
+		return nil, true
+	}
+	result.ExternalID, result.Attributes = user.ExternalID, user.Attributes
+	return result, false
+}
+
+func browserLoginHintMatches(hint string, user *User) bool {
+	if hint == "" {
+		return true
+	}
+	for _, candidate := range []string{user.Email, user.Username, user.ExternalID, user.Attributes["email"], user.Attributes["preferred_username"]} {
+		if strings.EqualFold(strings.TrimSpace(hint), strings.TrimSpace(candidate)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) browserSessionProbe(ctx HandlerContext, resp map[string]any) map[string]any {
+	if s.browserSessions == nil {
+		return resp
+	}
+	resp[browsersso.KeySupported] = true
+	result, err := s.browserSessions.Resolve(ctx.Request().Context(), ctx.Request(), s.sessionMgr, s.resolveIssuer(ctx))
+	if err != nil {
+		resp[browsersso.KeyError] = core.ErrTemporarilyUnavailable
+		return resp
+	}
+	resp[browsersso.KeyAvailable] = result != nil
+	return resp
+}
+
+func (s *Server) applyBrowserSessionCookie(ctx HandlerContext, result *AuthResult, req *login.Request, sessionID string) {
+	if s.browserSessions == nil || req.ResumeSession {
+		return
+	}
+	if sessionID == "" || s.sessionMgr == nil || result == nil {
+		s.browserSessions.Expire(ctx, s.resolveIssuer(ctx))
+		return
+	}
+	live, err := s.sessionMgr.Get(ctx.Request().Context(), sessionID)
+	if err != nil {
+		s.browserSessions.Expire(ctx, s.resolveIssuer(ctx))
+		s.logger.Error("browser session unavailable after login", "error", err)
+		return
+	}
+	complete := *result
+	complete.AuthMethods = handler.AmrForResult(result)
+	if err := s.browserSessions.Issue(ctx, live, &complete, s.resolveIssuer(ctx)); err != nil {
+		s.browserSessions.Expire(ctx, s.resolveIssuer(ctx))
+		s.logger.Error("browser session cookie signing failed", "error", err)
+	}
+}
+
+func (s *Server) clearBrowserSession(ctx HandlerContext) {
+	if s.browserSessions != nil {
+		s.browserSessions.Clear(ctx, s.sessionMgr, s.resolveIssuer(ctx))
+	}
+}
+
+func (s *Server) browserProviderLive(ctx HandlerContext, provider string) bool {
+	if _, err := s.getAuthenticator(provider); err == nil {
+		return true
+	}
+	_, err := s.connectionLoginAuthenticator(ctx, provider)
+	return err == nil
+}
+
+func (s *Server) browserResumeResponse(ctx HandlerContext, req *login.Request) HandlerContext {
+	if req.ResumeSession {
+		return browsersso.NonInteractive(ctx, req.Prompt)
+	}
+	return ctx
+}
+
+func (s *Server) rejectBrowserSessionCreation(ctx HandlerContext, err error, state string) {
+	if s.browserSessions != nil && errors.Is(err, errMaxActiveSessions) {
+		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrAccessDenied, state))
+	}
 }

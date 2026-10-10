@@ -51,17 +51,13 @@ func (s *IdempotentCache) Get(ctx context.Context, key string) ([]byte, bool, er
 	return raw, true, nil
 }
 
-// Set stores the response body for key with the given TTL. A non-positive
-// TTL stores without expiry (the caller normally passes the token-lifetime
-// bound the memory peer enforces via its constructor default).
+// Set always uses a finite TTL, including for callers of the legacy zero-TTL
+// API. Credential responses must not remain in Redis indefinitely.
 func (s *IdempotentCache) Set(ctx context.Context, key string, body []byte, ttl time.Duration) error {
-	if ttl > 0 {
-		if err := s.rdb.Set(ctx, idemKey(key), body, ttl).Err(); err != nil {
-			return fmt.Errorf("redis: set idempotency entry: %w", err)
-		}
-		return nil
+	if ttl <= 0 {
+		ttl = time.Minute
 	}
-	if err := s.rdb.Set(ctx, idemKey(key), body, 0).Err(); err != nil {
+	if err := s.rdb.Set(ctx, idemKey(key), body, ttl).Err(); err != nil {
 		return fmt.Errorf("redis: set idempotency entry: %w", err)
 	}
 	return nil

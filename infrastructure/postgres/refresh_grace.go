@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/platform/migrate"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // refreshGraceSchema is the refresh-rotation grace cache: one row per
@@ -172,7 +173,7 @@ func refreshGraceHash(token string) string {
 // -- tokengrant.RefreshGraceStore interface (structural typing) --
 
 // Remember caches resp as the successor for the just-consumed token. The
-// response is JSON-marshalled and stored with an expiry of now+window.
+// response is JSON-marshalled with expiry capped by both window and grant deadline.
 // ON CONFLICT DO UPDATE makes it idempotent — a concurrent duplicate call
 // silently overwrites with the same successor. Best-effort: marshal/DB errors
 // degrade to strict single-use (the double-submit then trips family-reuse
@@ -182,13 +183,18 @@ func (s *RefreshGraceStore) Remember(token string, resp map[string]any, now time
 	if s == nil || s.db == nil || token == "" || s.window <= 0 {
 		return
 	}
+	deadline := core.RefreshGraceExpiresAt(resp, now, s.window)
+	if !deadline.After(now) {
+		return
+	}
 	blob, err := json.Marshal(resp)
 	if err != nil {
 		return
 	}
 	hash := refreshGraceHash(token)
-	expiresAt := now.Add(s.window).UnixNano()
-	ctx := context.Background()
+	expiresAt := deadline.UnixNano()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 	_, _ = s.db.ExecContext(ctx,
 		`DELETE FROM refresh_grace_cache WHERE expires_at <= $1`, now.UnixNano())
 	_, _ = s.db.ExecContext(ctx,
@@ -198,6 +204,30 @@ func (s *RefreshGraceStore) Remember(token string, resp map[string]any, now time
             SET successor_response = excluded.successor_response,
                 expires_at = excluded.expires_at`,
 		hash, blob, expiresAt)
+}
+
+// PreparePending atomically retains live state, replacing only expired rows.
+func (s *RefreshGraceStore) PreparePending(token string, resp map[string]any, now time.Time) {
+	if s == nil || s.db == nil || token == "" {
+		return
+	}
+	body := core.RefreshGracePendingResponse(resp, now, s.window)
+	if body == nil {
+		return
+	}
+	blob, err := json.Marshal(body)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, _ = s.db.ExecContext(ctx,
+		`INSERT INTO refresh_grace_cache (consumed_token_hash, successor_response, expires_at)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (consumed_token_hash) DO UPDATE
+            SET successor_response = excluded.successor_response, expires_at = excluded.expires_at
+            WHERE refresh_grace_cache.expires_at <= $4`,
+		refreshGraceHash(token), blob, core.RefreshGraceExpiresAt(body, now, s.window).UnixNano(), now.UnixNano())
 }
 
 // Lookup returns the cached successor for token if it was rotated within the
@@ -216,7 +246,9 @@ func (s *RefreshGraceStore) Lookup(token string, now time.Time) (map[string]any,
 	hash := refreshGraceHash(token)
 	var blob []byte
 	var expiresAt int64
-	err := s.db.QueryRowContext(context.Background(),
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err := s.db.QueryRowContext(ctx,
 		`SELECT successor_response, expires_at FROM refresh_grace_cache WHERE consumed_token_hash = $1`,
 		hash).Scan(&blob, &expiresAt)
 	if err != nil {

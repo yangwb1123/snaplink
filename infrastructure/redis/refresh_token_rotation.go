@@ -131,11 +131,11 @@ func (s *RefreshTokenStore) consumedOrNotFound(ctx context.Context, token string
 	return &oauth.RefreshToken{FamilyID: familyID}, oauth.ErrRefreshTokenReused
 }
 
-// Consume checks the family tombstone before and after GETDEL. The checks
-// bracket the single-use removal so a concurrent family kill cannot mint a
-// usable descendant after its tombstone is committed.
+// Consume checks family revocation before and after atomic GETDEL. Persist
+// reuse evidence BEFORE removal: an outage/crash must never consume a token
+// without a durable family marker. A pre-consume crash leaves the token active.
 func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.RefreshToken, error) {
-	blob, _, err := s.activeBlob(ctx, token, false)
+	blob, lookup, err := s.activeBlob(ctx, token, false)
 	if errors.Is(err, goredis.Nil) {
 		return s.consumedOrNotFound(ctx, token)
 	}
@@ -156,7 +156,10 @@ func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.R
 	if revoked {
 		return nil, oauth.ErrRefreshTokenNotFound
 	}
-	consumed, lookup, err := s.activeBlob(ctx, token, true)
+	if err := s.prepareConsumeMarker(ctx, lookup, &out); err != nil {
+		return nil, err
+	}
+	consumed, _, err := s.activeBlob(ctx, token, true)
 	if errors.Is(err, goredis.Nil) {
 		return s.consumedOrNotFound(ctx, token)
 	}
@@ -176,10 +179,21 @@ func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.R
 	if revoked {
 		return nil, oauth.ErrRefreshTokenNotFound
 	}
-	if out.FamilyID != "" {
-		_ = s.rdb.Set(ctx, rtFamilyMemKey(lookup), out.FamilyID, s.familyTTL).Err()
-	}
 	return &out, nil
+}
+
+func (s *RefreshTokenStore) prepareConsumeMarker(ctx context.Context, lookup string, info *oauth.RefreshToken) error {
+	if info.FamilyID == "" {
+		return nil
+	}
+	ttl := s.familyTTL
+	if remaining := time.Until(info.ExpiresAt); remaining > ttl {
+		ttl = remaining
+	}
+	if err := s.rdb.Set(ctx, rtFamilyMemKey(lookup), info.FamilyID, ttl).Err(); err != nil {
+		return fmt.Errorf("redis: persist refresh reuse marker: %w", err)
+	}
+	return nil
 }
 
 // DeleteFamily commits a cluster-safe logical tombstone before cleaning up

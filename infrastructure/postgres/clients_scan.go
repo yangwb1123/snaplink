@@ -29,7 +29,7 @@ var clientColumns = []string{
 	"secret_rotated_at", "client_trust_score", "client_trust_set_at",
 	"previous_secret", "secret_overlap_until",
 	"secret_expires_at",
-	"redirect_uri_patterns",
+	"redirect_uri_patterns", "skip_consent", "consent_refresh_interval", "allow_passwordless_only",
 }
 
 // clientWriteArgs is the ordered argument bundle shared by INSERT, upsert, and
@@ -67,7 +67,7 @@ func clientWriteArgs(c *sso.Client, secret, rat string) []any {
 		c.ClientTrustScore, unixNanoOrZero(c.ClientTrustSetAt),
 		c.PreviousSecret, unixNanoOrZero(c.SecretOverlapUntil),
 		unixNanoOrZero(c.SecretExpiresAt),
-		string(redirectPatterns),
+		string(redirectPatterns), boolToInt(c.SkipConsent), int64(c.ConsentRefreshInterval), boolToInt(c.AllowPasswordlessOnly),
 	}
 }
 
@@ -143,6 +143,7 @@ type clientScanRow struct {
 	previousSecret                                         string
 	secretOverlapUntilUnixNs                               int64
 	secretExpiresAtUnixNs                                  int64
+	skipConsentInt, passwordlessOnlyInt, consentRefreshNs  int64
 }
 
 // scanInto reads every column of clientColumns into the raw row holder in
@@ -165,7 +166,7 @@ func (r *clientScanRow) scanInto(s scanner) error {
 		&r.c.ClientTrustScore, &r.clientTrustSetAtUnixNs,
 		&r.previousSecret, &r.secretOverlapUntilUnixNs,
 		&r.secretExpiresAtUnixNs,
-		&r.redirectPatterns,
+		&r.redirectPatterns, &r.skipConsentInt, &r.consentRefreshNs, &r.passwordlessOnlyInt,
 	)
 }
 
@@ -183,6 +184,7 @@ func (r *clientScanRow) scalars() {
 	c.RequireSignedRequestObject = r.requireSROInt != 0
 	c.RequirePAR = r.requirePARInt != 0
 	c.Federation = r.federationInt != 0
+	r.loginPolicies()
 	c.RefreshTokenTTL = time.Duration(r.refreshTTL)
 	c.AccessTokenTTL = time.Duration(r.accessTTL)
 	c.DeviceCodeTTL = time.Duration(r.dcTTL)
@@ -216,6 +218,12 @@ func (r *clientScanRow) scalars() {
 	if r.secretExpiresAtUnixNs != 0 {
 		c.SecretExpiresAt = time.Unix(0, r.secretExpiresAtUnixNs).UTC()
 	}
+}
+
+func (r *clientScanRow) loginPolicies() {
+	r.c.SkipConsent = r.skipConsentInt != 0
+	r.c.AllowPasswordlessOnly = r.passwordlessOnlyInt != 0
+	r.c.ConsentRefreshInterval = time.Duration(r.consentRefreshNs)
 }
 
 // unmarshalClientJSON treats empty / "[]" / "{}" / "null" blobs as the zero

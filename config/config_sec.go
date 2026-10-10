@@ -188,6 +188,13 @@ type OIDCConfig struct {
 	// SessionManagement opts into OpenID Connect Session Management 1.0 —
 	// see SessionManagementConfig.
 	SessionManagement SessionManagementConfig `yaml:"session_management"`
+	// BrowserSSO reuses a canonical OP identity session with an HttpOnly
+	// cookie. Separate from the optional check_session_iframe protocol.
+	BrowserSSO BrowserSSOConfig `yaml:"browser_sso"`
+}
+
+type BrowserSSOConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // SessionManagementConfig opts into OpenID Connect Session Management 1.0:

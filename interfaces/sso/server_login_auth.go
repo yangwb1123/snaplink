@@ -480,11 +480,12 @@ func (s *Server) codeFlowSession(ctx HandlerContext, result *AuthResult, req *lo
 		s.logger.Error("code flow: resumed session invalid, dropping sid", "session", result.SessionID, "error", err)
 		return ""
 	}
-	if !result.CreateSession {
+	if !result.CreateSession && s.browserSessions == nil {
 		return ""
 	}
 	sess, err := s.createSession(ctx, result.UserID, client.ID, client.TenantID, req.Scope, result.AuthTime)
 	if err != nil {
+		s.rejectBrowserSessionCreation(ctx, err, req.State)
 		s.logger.Error("code flow: session creation failed, login continues without sid", "error", err, "user", result.UserID)
 		return ""
 	}

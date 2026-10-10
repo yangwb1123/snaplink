@@ -367,7 +367,7 @@ func (b *appBuilder) wireRefreshRotationGrace() error {
 			b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-refresh-grace", store)
 			b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-refresh-grace", store)
 			b.refreshGracePruneCancel = store.CleanupStop()
-			b.refreshGracePruneDone = store.CleanupDone()
+			b.refreshGracePruneDone = closeGraceAfterPrune(store.CleanupDone(), store, b.logger)
 			b.logger.Info("refresh rotation grace enabled (sqlite; cluster-shared)", "window", w, "dsn", cfg.OAuth.SQLite.DSN)
 		case "postgres":
 			if b.pgDB == nil {
@@ -381,7 +381,7 @@ func (b *appBuilder) wireRefreshRotationGrace() error {
 			b.opts = serverbuildsign.AppendReadyCheck(b.opts, "postgres-refresh-grace", store)
 			b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "postgres-refresh-grace", store)
 			b.refreshGracePruneCancel = store.CleanupStop()
-			b.refreshGracePruneDone = store.CleanupDone()
+			b.refreshGracePruneDone = closeGraceAfterPrune(store.CleanupDone(), store, b.logger)
 			b.logger.Info("refresh rotation grace enabled (postgres; cluster-shared)", "window", w)
 		default:
 			return fmt.Errorf("unknown oauth.refresh_token.rotation_grace_backend %q (supported: memory, sqlite, redis, postgres)", cfg.OAuth.RefreshToken.RotationGraceBackend)

@@ -198,7 +198,7 @@ func (s *Server) handleLoginContinuationOrPromptNone(ctx HandlerContext, req log
 		return true
 	}
 	prompts := oidc.ParsePromptValues(req.Prompt)
-	if !oidc.PromptHasNone(prompts) {
+	if req.ResumeSession || !oidc.PromptHasNone(prompts) {
 		return false
 	}
 	s.handlePromptNone(ctx, prompts, &req)

@@ -244,7 +244,7 @@ const clientInsertSQL = `
             frontchannel_logout_uri, federation, attributes, secret_rotated_at,
             client_trust_score, client_trust_set_at,
             previous_secret, secret_overlap_until, secret_expires_at,
-            redirect_uri_patterns
+            redirect_uri_patterns, skip_consent, consent_refresh_interval, allow_passwordless_only
         ) VALUES (
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
@@ -261,7 +261,7 @@ const clientInsertSQL = `
             ?, ?, ?, ?,
 			?, ?,
 			?, ?, ?,
-			?
+			?, ?, ?, ?
         )`
 
 func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
@@ -339,7 +339,7 @@ const clientUpdateSQL = `
             frontchannel_logout_uri = ?, federation = ?, attributes = ?, secret_rotated_at = ?,
             client_trust_score = ?, client_trust_set_at = ?,
             previous_secret = ?, secret_overlap_until = ?, secret_expires_at = ?,
-            redirect_uri_patterns = ?
+            redirect_uri_patterns = ?, skip_consent = ?, consent_refresh_interval = ?, allow_passwordless_only = ?
         WHERE id = ?`
 
 func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
@@ -429,7 +429,7 @@ func clientSelectAll() string {
         frontchannel_logout_uri, federation, attributes, secret_rotated_at,
         client_trust_score, client_trust_set_at,
         previous_secret, secret_overlap_until, secret_expires_at,
-        redirect_uri_patterns
+        redirect_uri_patterns, skip_consent, consent_refresh_interval, allow_passwordless_only
         FROM clients`
 }
 

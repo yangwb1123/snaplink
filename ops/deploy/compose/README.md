@@ -39,7 +39,18 @@ docker compose --profile audit-provisioning up --build snaplink-audit-provisione
 
 The first `--build` pass compiles the sso-server image from the repo
 root Dockerfile (one-shot — re-runs are cached unless you edit Go
-source).
+source). All published development ports bind to `127.0.0.1`, including
+etcd and the plaintext gRPC port; do not change these bindings to expose the
+committed development credentials to an untrusted network.
+
+The one-shot `sso-state-init` service sets the private `sso-data` volume owner
+to the distroless nonroot UID. SSO runs read-only apart from that volume, which
+holds SQLite identity/sessions, OAuth and permissions state, its bootstrap
+ledger, signing key and durable access-token revocations. First-run bootstrap
+requires the enabled permissions provider; its generated password remains
+sensitive even in development. Preserve the ledger together with the state it
+initialized. Other optional stores remain development defaults, not an HA
+configuration.
 
 ## What's running
 
@@ -124,7 +135,7 @@ docker compose restart sso-server
 
 ## Demonstrating the env config source
 
-Uncomment the `environment:` block in `compose.yaml`, then
+Add the documented `environment:` block in `compose.yaml`, then
 `docker compose up -d --force-recreate sso-server`. Same merge
 semantics — env wins over file but loses to etcd (which loses to a
 CLI flag if you add one to the `command:` block).
@@ -132,8 +143,8 @@ CLI flag if you add one to the `command:` block).
 ## Stopping
 
 ```bash
-docker compose down            # stops; keeps the etcd volume
-docker compose down -v         # also wipes the etcd volume
+docker compose down            # stops; keeps the named SSO/commerce state volumes
+docker compose down -v         # DESTRUCTIVE: also removes those volumes
 ```
 
 ## Layout
@@ -167,8 +178,8 @@ event-relay credentials and receives only the provisioner's fixed scope.
 ## What this stack is NOT
 
 * **Not production-grade.** One API replica uses the configured development
-  stores; etcd runs single-node with an ephemeral
-  volume; admin/admin Grafana credentials; anonymous viewer access
+  SQLite identity/OAuth/permissions stores; etcd runs single-node with
+  ephemeral container state; admin/admin Grafana credentials; anonymous viewer access
   on; sso-server has no TLS termination, no rate limiting wired,
   no real users seeded. Memory and local SQLite stores are not shared HA state.
   The commerce/payment profiles also commit local-only PostgreSQL credentials

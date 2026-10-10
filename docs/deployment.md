@@ -39,6 +39,124 @@ sso-server version                          # version / build time / Git hash / 
 sso-server modules                          # compiled profile/inventory; configured builds include a lock digest
 ```
 
+### Multi-platform container images
+
+The root Dockerfile cross-compiles static binaries on the builder's native
+platform, including `/healthcheck`; it does not need QEMU to build amd64/arm64.
+Runtime images remain distroless/nonroot, with no embedded config or frontend.
+This builds the stock compatibility server, not a different cold-build profile.
+
+Use a Buildx `docker-container` builder (one-time setup):
+
+```bash
+docker buildx create --name snaplink-builder --driver docker-container --use
+docker buildx inspect --bootstrap
+```
+
+Choose the output explicitly:
+
+```bash
+# Load one architecture into local Docker; default PLATFORM is the Docker server's.
+make docker PLATFORM=linux/amd64 IMAGE_TAG=dev-amd64
+make docker PLATFORM=linux/arm64 IMAGE_TAG=dev-arm64
+
+# Build both architectures without publishing; writes dist/images/sso-server-dev.oci.tar.
+make docker-multiarch IMAGE_TAG=dev
+
+# Publish one tag containing both architectures (replace your-org; requires credentials).
+docker login ghcr.io
+make docker-push IMAGE=ghcr.io/your-org/sso-server IMAGE_TAG=v1.2.3 VERSION=v1.2.3
+
+docker buildx imagetools inspect ghcr.io/your-org/sso-server:v1.2.3
+```
+
+`PLATFORMS` defaults to `linux/amd64,linux/arm64` and is configurable. Other
+architectures require support from the Go dependencies and runtime base image;
+they are not covered by this amd64/arm64 verification. Running a foreign-arch
+image locally requires emulation or a machine of that architecture.
+
+`docker-multiarch` exports an OCI archive, not a classic `docker save` archive.
+Do not assume every Docker image store can load a multi-platform archive; use
+`make docker` for local execution or `make docker-push` for registry delivery.
+Pulling the published tag selects the host-compatible image automatically.
+
+For a local API run, build the Docker server's architecture and initialize a
+private named development-state volume for the nonroot UID:
+
+```bash
+make docker IMAGE_TAG=dev
+docker volume create snaplink-dev-state
+docker run --rm --network=none --read-only \
+  --mount type=volume,src=snaplink-dev-state,dst=/state busybox:1.37 \
+  sh -c 'chown 65532:65532 /state && chmod 0700 /state'
+docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+  -p 127.0.0.1:8080:8080 \
+  --mount "type=bind,src=$(pwd)/ops/deploy/compose/config.yaml,dst=/etc/sso/config.yaml,readonly" \
+  --mount type=volume,src=snaplink-dev-state,dst=/var/lib/snaplink \
+  snaplink/sso-server:dev --config /etc/sso/config.yaml --grpc-listen=
+```
+
+The development config enables the bootstrap permissions dependency and keeps
+identity/sessions, permissions, OAuth state, the bootstrap ledger, signing key
+and access-token revocations on SQLite/the same volume. gRPC is disabled rather
+than exposing a plaintext control plane. Production needs its own issuer,
+TLS/trusted edge, secrets and shared/durable storage; this is not an HA profile.
+Do not persist a bootstrap ledger separately from the data it initialized.
+
+A disposable acceptance run verifies startup, no-store credential responses,
+issuing/revoking a token, stable JWKS and durable revocation after restart:
+
+```bash
+python ops/scripts/container_smoke.py --image snaplink/sso-server:dev
+```
+
+It creates and removes only its own container/volume and never prints tokens or
+bootstrap passwords. On Apple Silicon, Docker Desktop/Colima runs the
+`linux/arm64` image inside a Linux VM; this is not a native macOS executable.
+
+Other services use the same build path but remain separate images:
+
+```bash
+make docker-multiarch DOCKER_TARGET=snaplink-billing IMAGE=snaplink/billing
+make docker-multiarch DOCKER_TARGET=snaplink-stripe-adapter IMAGE=snaplink/stripe-adapter
+make docker-multiarch DOCKER_TARGET=snaplink-audit-provisioner IMAGE=snaplink/audit-provisioner
+make docker-multiarch DOCKER_TARGET=sso-mcp IMAGE=snaplink/sso-mcp
+```
+
+Override `OCI_ARCHIVE` for another output path and `DOCKER_BUILD_ARGS` for build
+metadata or `--build-arg GOFIPS140=latest`. Never supply credentials as build args;
+mount runtime configuration/secrets instead. CI builds the four production
+service targets on native amd64 and arm64 runners and executes the SSO binary
+and its health probe on each architecture; it never publishes PR images.
+
+### Controlled Docker Hub publication
+
+`.github/workflows/dockerhub.yml` is an opt-in stock `sso-server` workflow,
+separate from GoReleaser/GHCR. It has no push/PR publication trigger:
+
+1. Create the Docker Hub repository and enable immutable stable version tags.
+2. Configure the GitHub `dockerhub` environment with required reviewers and
+   default-branch deployment restrictions; protect release tags as well.
+3. Set repository variables `DOCKERHUB_IMAGE=your-account/sso-server` and
+   `ENABLE_DOCKERHUB_PUBLICATION=true`. Put `DOCKERHUB_USERNAME` and a
+   repository-scoped write `DOCKERHUB_TOKEN` in that environment's secrets.
+4. After committing/reviewing the changes, dispatch the workflow from the
+   default branch with an existing protected `vX.Y.Z` tag. The tag must be
+   reachable from that branch; its exact SHA runs complete `make ci`.
+5. Both native architectures export OCI artifacts with SBOM/provenance, load
+   those same bytes for token/restart acceptance and pass HIGH/CRITICAL scans.
+   Only then does the approved publish job transfer the tested OCI artifacts,
+   merge their platform indexes, verify/sign the immutable digest and upload
+   release evidence. It does not rebuild between testing and publication.
+
+No `latest` alias is moved automatically. `build-<run>-<attempt>-<arch>` staging
+tags are operator-retained candidates, not accepted releases; configure their
+retention in Docker Hub. A failed signature/evidence check is not a completed
+release even if registry bytes exist. Pull by the recorded `image@sha256:...`
+for deployment and verify the workflow identity with cosign. This workflow
+requires actual registry credentials and native GitHub runners; its presence
+in the tree does not mean an image has been published or Apple Silicon tested.
+
 FIPS 140-3 build (opt-in, default off — see [docs/fips.md](fips.md)):
 
 ```bash

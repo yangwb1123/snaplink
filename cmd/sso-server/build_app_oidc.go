@@ -58,6 +58,7 @@ func (b *appBuilder) wireResponseEncryption() error {
 // wireSessionManagement wires OpenID Connect Session Management 1.0 when
 // oidc.session_management.enabled is set — see sso.WithOIDCSessionManagement.
 func (b *appBuilder) wireSessionManagement() {
+	b.opts = append(b.opts, serverbuildsign.BrowserSSOOption(b.cfg.OIDC.BrowserSSO.Enabled, b.jwtIssuer))
 	if !b.cfg.OIDC.SessionManagement.Enabled {
 		return
 	}

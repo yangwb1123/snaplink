@@ -60,57 +60,53 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	if s.rejectDisallowedGrantType(ctx, client, req.GrantType) {
 		return
 	}
-	idemKey, idemRW, served := s.beginTokenIdempotency(ctx, client.ID, req, dpopJKT, mtlsX5T)
+	idemKey, idemRW, served := s.beginTokenIdempotency(ctx, client, req, dpopJKT, mtlsX5T)
 	if served {
 		return
 	}
 	s.dispatchTokenGrantWithQuota(ctx, client, req, dpopJKT, mtlsX5T, idemKey, idemRW)
 }
 
-// beginTokenIdempotency implements the Idempotency-Key fast path: when the
-// header names an already-cached response it is replayed verbatim
-// (served=true, the caller MUST return); otherwise the context's
-// ResponseWriter is swapped for the shared capture wrapper (middleware.
-// InstallCapture) so finishTokenIdempotency can cache the eventual success
-// body — safe retry semantics. The hit check deliberately runs AFTER
-// client authentication and grant-type rejection (see handleToken): a
-// wrong-secret replay must never receive a cached 200.
-func (s *Server) beginTokenIdempotency(ctx HandlerContext, clientID string, req oauth.TokenRequest, dpopJKT, mtlsX5T string) (idemKey string, idemRW *middleware.CaptureWriter, served bool) {
-	if s.idempotentCache == nil {
+// Stateful grants must reach their own atomic consume/session/family guards;
+// only built-in client_credentials may use this post-auth response cache.
+func (s *Server) beginTokenIdempotency(ctx HandlerContext, client *Client, req oauth.TokenRequest, dpopJKT, mtlsX5T string) (idemKey string, idemRW *middleware.CaptureWriter, served bool) {
+	if s.idempotentCache == nil || req.GrantType != GrantClientCredentials || s.customGrantHandlers[req.GrantType] != nil {
 		return "", nil, false
 	}
-	rawKey := ctx.Request().Header.Get("Idempotency-Key")
+	rawKey := ctx.Request().Header.Get(core.HeaderIdempotencyKey)
 	if rawKey == "" {
 		return "", nil, false
 	}
-	idemKey = tokenIdempotencyCacheKey(clientID, rawKey, req, dpopJKT, mtlsX5T)
+	idemKey = tokenIdempotencyCacheKey(client.ID, rawKey, req, dpopJKT, mtlsX5T)
 	s.idempotentMu.Lock()
-	if cached, ok, _ := s.idempotentCache.Get(ctx.Request().Context(), idemKey); ok && len(cached) > 0 {
-		s.idempotentMu.Unlock()
+	owned := true
+	defer func() {
+		if owned {
+			s.idempotentMu.Unlock()
+		}
+	}()
+	if cached, ok, _ := s.idempotentCache.Get(ctx.Request().Context(), idemKey); ok && tokengrant.CachedClientCredentialsValid(s, ctx, client, req, cached) {
+		if s.denyPublicClientCredentials(ctx, client, req) || s.rejectUnregisteredScopes(ctx, strings.Fields(req.Scope)) || s.denyTokenScopeCombo(ctx, client.ID, client.TenantID, strings.Fields(req.Scope)) {
+			return idemKey, nil, true
+		}
 		middleware.ReplayCachedResponse(ctx, cached)
 		return idemKey, nil, true
 	}
 	idemRW = middleware.InstallCapture(ctx, s.idempotentMu.Unlock)
+	owned = false
 	return idemKey, idemRW, false
 }
 
-// finishTokenIdempotency commits the captured /token response through the
-// shared middleware commit — 2xx responses with a body only, so error
-// responses are never replayed as successes — then releases the
-// single-flight lock beginTokenIdempotency took (the idempotentMu
-// serialization is the atomic-consume behavior AGENTS.md §3 requires).
+// Cache successful responses only; dispatch owns panic-safe lock release.
+// Local coordination does not replace a stateful grant's atomic consume.
 func (s *Server) finishTokenIdempotency(ctx HandlerContext, idemKey string, idemRW *middleware.CaptureWriter) {
 	if idemRW == nil {
 		return
 	}
-	defer idemRW.Unlock()
 	middleware.CommitCapturedBody(ctx, idemKey, s.idempotentCache, idemRW.Body(), idemRW.StatusCode())
 }
 
-// rejectDisallowedGrantType enforces RFC 6749 §5.2 / RFC 8693 §4.5: when a
-// client declares GrantTypes the AS MUST reject any grant not in the list.
-// Empty = unrestricted (backward compat). Returns true when the 400
-// unauthorized_client response was written and the caller MUST return.
+// Empty GrantTypes stays unrestricted; configured allowlists apply to retries.
 func (s *Server) rejectDisallowedGrantType(ctx HandlerContext, client *Client, grantType string) bool {
 	if len(client.GrantTypes) > 0 && !slices.Contains(client.GrantTypes, grantType) {
 		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrUnauthorizedClient))

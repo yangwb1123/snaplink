@@ -9,6 +9,8 @@
 # Build Stripe adapter:  docker build --target snaplink-stripe-adapter -t snaplink/stripe-adapter .
 # Build audit provisioner: docker build --target snaplink-audit-provisioner -t snaplink/audit-provisioner .
 # Build sso-mcp:          docker build --target sso-mcp -t snaplink/sso-mcp .
+# Multi-platform export/push: make docker-multiarch / make docker-push
+# PLATFORMS defaults to linux/amd64,linux/arm64; see docs/deployment.md.
 # Run sso-server:
 #   docker run --rm -p 8080:8080 -p 8081:8081 \
 #       -v $(pwd)/cmd/sso-server/config.yaml:/etc/sso/config.yaml \
@@ -29,7 +31,7 @@
 # arg alone only affects Go's stdlib crypto, not this server's config.
 
 # ---- shared builder base ----
-FROM golang:1.26-alpine AS builder-base
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder-base
 
 # GOFIPS140: "off" (default, byte-identical to no FIPS support at all) |
 # "latest" | a pinned module version (e.g. "v1.0.0") | "inprocess" |
@@ -40,9 +42,9 @@ ARG BUILD_TIME
 ARG GIT_HASH
 ARG BUILD_MODIFIED
 
-# git is needed by `go build` when modules pull from a private VCS;
-# harmless here, fixes the most-common future surprise.
-RUN apk add --no-cache git ca-certificates
+# The standard Go builder includes git/CA roots; preserve VCS build metadata
+# without a second distro-package fetch on every new base-image digest.
+RUN git --version
 
 WORKDIR /src
 
@@ -85,6 +87,11 @@ RUN cd infrastructure/saml && go mod download
 # ── Layer 3: source code ──────────────────────────────────────────
 COPY . .
 
+# Keep dependency downloads native and shared between target architectures.
+# Child builders inherit these BuildKit args and cross-compile without QEMU.
+ARG TARGETOS
+ARG TARGETARCH
+
 # ═════════════════════════════════════════════════════════════════
 # Build sso-server  (http REST + gRPC — the main binary)
 # ═════════════════════════════════════════════════════════════════
@@ -97,12 +104,13 @@ COPY . .
 # compose healthcheck and debug exec.
 FROM builder-base AS sso-server-builder
 
-RUN cd test/oidc-conformance/healthcheck && CGO_ENABLED=0 go build -o /out/healthcheck .
+RUN cd test/oidc-conformance/healthcheck && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /out/healthcheck .
 
 RUN resolved_build_time="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"; \
     resolved_git_hash="${GIT_HASH:-$(git rev-parse HEAD 2>/dev/null || true)}"; \
     resolved_modified="${BUILD_MODIFIED:-$(test -z "$(git status --porcelain 2>/dev/null)" || echo true)}"; \
-    CGO_ENABLED=0 GOOS=linux GOFIPS140=${GOFIPS140} go build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOFIPS140=${GOFIPS140} go build \
       -trimpath \
       -buildvcs=true \
       -ldflags="-s -w \
@@ -121,7 +129,7 @@ FROM builder-base AS snaplink-billing-builder
 RUN resolved_build_time="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"; \
     resolved_git_hash="${GIT_HASH:-$(git rev-parse HEAD 2>/dev/null || true)}"; \
     resolved_modified="${BUILD_MODIFIED:-$(test -z "$(git status --porcelain 2>/dev/null)" || echo true)}"; \
-    CGO_ENABLED=0 GOOS=linux GOFIPS140=${GOFIPS140} go build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOFIPS140=${GOFIPS140} go build \
       -trimpath \
       -buildvcs=true \
       -ldflags="-s -w \
@@ -140,7 +148,7 @@ FROM builder-base AS snaplink-stripe-adapter-builder
 RUN resolved_build_time="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"; \
     resolved_git_hash="${GIT_HASH:-$(git rev-parse HEAD 2>/dev/null || true)}"; \
     resolved_modified="${BUILD_MODIFIED:-$(test -z "$(git status --porcelain 2>/dev/null)" || echo true)}"; \
-    CGO_ENABLED=0 GOOS=linux GOFIPS140=${GOFIPS140} go build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOFIPS140=${GOFIPS140} go build \
       -trimpath \
       -buildvcs=true \
       -ldflags="-s -w \
@@ -159,7 +167,7 @@ FROM builder-base AS snaplink-audit-provisioner-builder
 RUN resolved_build_time="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"; \
     resolved_git_hash="${GIT_HASH:-$(git rev-parse HEAD 2>/dev/null || true)}"; \
     resolved_modified="${BUILD_MODIFIED:-$(test -z "$(git status --porcelain 2>/dev/null)" || echo true)}"; \
-    CGO_ENABLED=0 GOOS=linux GOFIPS140=${GOFIPS140} go build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOFIPS140=${GOFIPS140} go build \
       -trimpath \
       -buildvcs=true \
       -ldflags="-s -w \
@@ -178,7 +186,7 @@ RUN resolved_build_time="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"; \
 # tree. Identical hardening flags.
 FROM builder-base AS sso-mcp-builder
 
-RUN cd cmd/sso-mcp && CGO_ENABLED=0 GOOS=linux GOFIPS140=${GOFIPS140} go build \
+RUN cd cmd/sso-mcp && CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOFIPS140=${GOFIPS140} go build \
     -trimpath \
     -ldflags="-s -w" \
     -o /out/sso-mcp \

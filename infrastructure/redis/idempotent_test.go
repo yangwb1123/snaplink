@@ -6,6 +6,23 @@ import (
 	"time"
 )
 
+func TestIdempotentCacheNonpositiveTTLIsFinite(t *testing.T) {
+	for _, ttl := range []time.Duration{0, -time.Minute} {
+		mr, rdb := newTestClient(t)
+		cache := NewIdempotentCache(rdb)
+		if err := cache.Set(t.Context(), "operation", []byte("response"), ttl); err != nil {
+			t.Fatal(err)
+		}
+		if got := mr.TTL(idemKey("operation")); got != time.Minute {
+			t.Fatalf("TTL = %v, want one minute", got)
+		}
+		mr.FastForward(time.Minute)
+		if _, hit, err := cache.Get(t.Context(), "operation"); hit || err != nil {
+			t.Fatalf("expired response = %v %v", hit, err)
+		}
+	}
+}
+
 // TestIdempotentCache_RoundTripAndTTL proves the Redis-backed cache: Get
 // returns the Set body, a missing key is a miss, and a server-side TTL
 // expires the entry without a local prune loop.

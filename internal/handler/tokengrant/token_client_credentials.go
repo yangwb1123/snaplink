@@ -1,7 +1,9 @@
 package tokengrant
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oauth/scoperegistry"
@@ -69,6 +71,28 @@ func HandleClientCredentialsGrant(d ClientCredentialsDeps, ctx core.HandlerConte
 		core.KeyScope:         token.Scope,
 		core.KeyTokenStrategy: strategy,
 	})
+}
+
+// CachedClientCredentialsValid performs only reads: stale cache entries must
+// take the normal grant path, which owns the wire error and issuance policy.
+func CachedClientCredentialsValid(d ClientCredentialsDeps, ctx core.HandlerContext, client *core.Client, req oauth.TokenRequest, cached []byte) bool {
+	var token core.Token
+	if json.Unmarshal(cached, &token) != nil || token.AccessToken == "" {
+		return false
+	}
+	scopes, err := oauth.GrantedScopes(strings.Fields(req.Scope), client)
+	if err != nil || strings.Join(scopes, " ") != token.Scope {
+		return false
+	}
+	if len(scoperegistry.FilterRegistered(d.ScopeRegistry(), scopes)) != len(scopes) {
+		return false
+	}
+	_, issuer, err := d.IssuerForClient(client)
+	if err != nil {
+		return false
+	}
+	claims, err := issuer.Validate(ctx.Request().Context(), token.AccessToken)
+	return err == nil && claims != nil && claims.ClientID == client.ID && claims.TenantID == client.TenantID
 }
 
 func writeTokenIssueError(ctx core.HandlerContext, err error) {

@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -128,7 +130,29 @@ func CommitCapturedBody(ctx core.HandlerContext, key string, cache core.Idempote
 	if statusCode < 200 || statusCode >= 300 || len(body) == 0 {
 		return
 	}
-	_ = cache.Set(ctx.Request().Context(), key, body, 0)
+	ttl := capturedResponseTTL(body)
+	if ttl <= 0 {
+		return
+	}
+	_ = cache.Set(ctx.Request().Context(), key, body, ttl)
+}
+
+// The generic cache cannot infer a grant's security window. Keep storage
+// finite and never retain a token response beyond its remaining lifetime.
+func capturedResponseTTL(body []byte) time.Duration {
+	ttl := time.Minute
+	var response struct {
+		ExpiresIn *int64 `json:"expires_in"`
+	}
+	if json.Unmarshal(body, &response) == nil && response.ExpiresIn != nil {
+		if *response.ExpiresIn <= 0 {
+			return 0
+		}
+		if *response.ExpiresIn < 60 {
+			ttl = time.Duration(*response.ExpiresIn) * time.Second
+		}
+	}
+	return ttl
 }
 
 // Idempotency returns a core.MiddlewareFunc that:

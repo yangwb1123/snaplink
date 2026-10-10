@@ -6,6 +6,14 @@ GO        ?= go
 BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
+DOCKER    ?= docker
+DOCKER_TARGET ?= sso-server
+PLATFORM  ?= $(shell $(DOCKER) version --format '{{.Server.Os}}/{{.Server.Arch}}')
+PLATFORMS ?= linux/amd64,linux/arm64
+OCI_ARCHIVE ?= dist/images/$(DOCKER_TARGET)-$(IMAGE_TAG).oci.tar
+DOCKER_BUILD_ARGS ?=
+DOCKER_BUILD = $(DOCKER) buildx build --target "$(DOCKER_TARGET)" \
+	--build-arg "VERSION=$(VERSION)" $(DOCKER_BUILD_ARGS) -t "$(IMAGE):$(IMAGE_TAG)"
 PROFILE   ?= standard
 VERSION   ?= v0.0.0-dev
 MODULE_ARGS ?=
@@ -13,7 +21,7 @@ VALIDATION_POSTGRES_DSN := postgres://validation@postgres.invalid/snaplink?sslmo
 
 CLI = python cli.py
 
-.PHONY: help test ai-dev-test race bench vet fmt build configure build-profile build-prototype build-minimal build-full build-production build-small modules-list modules-plan modules-check modules-smoke capabilities-check capabilities-generate sdk-surface-check sdk-drift-check sdk-paradigm-check sdk-paradigm-list sdk-naming-check sdk-naming-list sdk-surface-diff docker docker-stripe-adapter ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve route-contract proto-openapi-parity adapters-check release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff helm-render docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
+.PHONY: help test ai-dev-test race bench vet fmt build configure build-profile build-prototype build-minimal build-full build-production build-small modules-list modules-plan modules-check modules-smoke capabilities-check capabilities-generate sdk-surface-check sdk-drift-check sdk-deploy-sync sdk-paradigm-check sdk-paradigm-list sdk-naming-check sdk-naming-list sdk-surface-diff docker docker-multiarch docker-push docker-stripe-adapter container-contracts ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve route-contract proto-openapi-parity adapters-check release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff helm-render docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -128,6 +136,9 @@ sdk-surface-check: ## Validate the generated-SDK surface registry, package versi
 sdk-drift-check: ## Regenerate SDKs in a temporary tree and sweep deploy copies.
 	$(CLI) sdk-drift check
 
+sdk-deploy-sync: ## Explicitly refresh the three derived OpenResty docs/SDK copies.
+	$(CLI) sdk-drift sync-deploy
+
 sdk-paradigm-check: ## Validate the hand-written SDK-layer capability registry and cross-language conformance fixtures.
 	$(CLI) sdk-paradigm check
 
@@ -188,11 +199,15 @@ config-validate: ## Validate all deploy config.yaml files against current server
 	done; \
 	exit $$fail
 
-docker: ## Build container image.
-	docker build -t $(IMAGE):$(IMAGE_TAG) .
+docker: ## Build and load one platform (PLATFORM; defaults to Docker server architecture).
+	@case "$(PLATFORM)" in ""|*,*) echo "docker requires one PLATFORM; use docker-multiarch or docker-push for multiple platforms" >&2; exit 1;; esac
+	$(DOCKER_BUILD) --platform "$(PLATFORM)" --load .
 
 docker-stripe-adapter: ## Build the standalone Stripe adapter container target.
 	docker build --target snaplink-stripe-adapter -t snaplink/stripe-adapter:$(IMAGE_TAG) .
+
+container-contracts: ## Check container startup, local acceptance and release security contracts.
+	python -m unittest checks.test_dockerfile checks.test_container_smoke checks.test_container_release
 
 proto-lint: ## Lint .proto files.
 	cd proto && $(GO) run github.com/bufbuild/buf/cmd/buf@latest lint
@@ -287,7 +302,7 @@ ci-modules: ## Build + test all nested modules.
 	cd cmd/sso-mcp && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd cmd/sso-operator && $(GO) build ./... && $(GO) test -race -count=1 ./...
 
-ci: fmt vet race build examples proto-lint ci-modules config-validate-all modules-check modules-smoke route-contract proto-openapi-parity capabilities-check sdk-surface-check sdk-drift-check sdk-paradigm-check sdk-naming-check profiles-evidence adapters-check ## Run CI checks.
+ci: fmt vet race build examples container-contracts proto-lint ci-modules config-validate-all modules-check modules-smoke route-contract proto-openapi-parity capabilities-check sdk-surface-check sdk-drift-check sdk-paradigm-check sdk-naming-check profiles-evidence adapters-check ## Run CI checks.
 
 ci-full: ci terraform-validate k8s-render ## Run all CI checks including IaC validation (requires kustomize + terraform).
 
@@ -397,14 +412,13 @@ adr-compliance: ## Check ADR compliance (ADR-0003, ADR-0004, ADR-0007).
 release: ## Build + publish to GitHub Releases (requires git tag).
 	goreleaser release --clean
 
-docker-push: ## Build + push multi-arch Docker image (requires git tag).
-	docker buildx build --platform linux/amd64,linux/arm64 \
-		-t ghcr.io/yangwb1123/sso-server:latest \
-		--push .
+docker-push: ## Build and push PLATFORMS to IMAGE:IMAGE_TAG (registry login required).
+	$(DOCKER_BUILD) --platform "$(PLATFORMS)" --push .
 
-docker-multiarch: ## Build local multi-arch manifest (no push).
-	docker buildx build --platform linux/amd64,linux/arm64 \
-		-t snaplink/sso-server:multiarch --load .
+docker-multiarch: ## Export PLATFORMS as an OCI archive under dist/images/ (no push/load).
+	@mkdir -p "$(dir $(OCI_ARCHIVE))"
+	$(DOCKER_BUILD) --platform "$(PLATFORMS)" \
+		--output "type=oci,dest=$(OCI_ARCHIVE)" .
 
 lint-all: ## Run golangci-lint on root + all nested modules.
 	golangci-lint run ./...

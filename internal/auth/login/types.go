@@ -6,6 +6,9 @@ import (
 
 // Request is the parsed /auth/login request body.
 type Request struct {
+	// ResumeSession is POST-only and requests OP-cookie authentication, not
+	// reuse of another client's tokens. Opaque PAR/JAR requests stay one-shot.
+	ResumeSession        bool              `json:"resume_session,omitempty"`
 	Provider             string            `json:"provider"`
 	Credential           map[string]string `json:"credential"`
 	ClientID             string            `json:"client_id"`

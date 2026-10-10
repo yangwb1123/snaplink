@@ -6,6 +6,31 @@
 #
 # See README.md for the etcdctl recipes that demonstrate the override.
 
+version: 1
+
+# Keep bootstrap evidence and the data it initialized on the same volume.
+# SQLite is development persistence for one replica, not shared HA storage.
+identity:
+  backend: sqlite
+  sqlite:
+    dsn: file:/var/lib/snaplink/identity.db?_pragma=busy_timeout(5000)
+
+permissions:
+  enabled: true
+  backend: sqlite
+  sqlite:
+    dsn: file:/var/lib/snaplink/permissions.db?_pragma=busy_timeout(5000)
+
+bootstrap:
+  state_path: /var/lib/snaplink/bootstrap.json
+
+keys:
+  signing:
+    alg: eddsa
+    key_file: /var/lib/snaplink/signing.pem
+    revocation_backend: sqlite
+    revocation_dsn: file:/var/lib/snaplink/revocations.db?_pragma=busy_timeout(5000)
+
 server:
   issuer: http://localhost:8080
   base_url: http://localhost:8080
@@ -19,6 +44,12 @@ server:
   # green. Other deploy trees (helm/baremetal/k8s) stay default-off — the
   # deploy sweep test pins this as the single flip point.
   require_form_content_type: true
+
+# Browser identity SSO is independent of RP application tokens. Production
+# uses one HTTPS OP origin, shared canonical sessions and shared signing keys.
+oidc:
+  browser_sso:
+    enabled: true
 
 logging:
   level: info
@@ -80,6 +111,11 @@ clients:
 # 400 invalid_scope-free under the enabled registry. sso-ctl config validate
 # fails pre-deploy on any future client scope outside matrix + extra_scopes.
 oauth:
+  auth_code:
+    enabled: true
+  backend: sqlite
+  sqlite:
+    dsn: file:/var/lib/snaplink/oauth.db?_pragma=busy_timeout(5000)
   scope_registry:
     enabled: true
     matrix: [admin:read, admin:write, billing:payment:order:read, billing:payment:write,

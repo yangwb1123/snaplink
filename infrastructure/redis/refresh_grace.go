@@ -2,9 +2,13 @@ package redis
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/yangwb1123/snaplink/shared/core"
 
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -12,9 +16,14 @@ import (
 // refreshGracePrefix -> the consumed refresh token's successor response, held
 // for exactly the rotation-grace window (the key's TTL). One key per token, so
 // Set/Get are single-key and inherently cluster-safe (no hash tag needed).
-const refreshGracePrefix = "sso:rtgrace:"
+const refreshGracePrefix = "sso:rtgrace:sha256:"
 
-func refreshGraceKey(token string) string { return refreshGracePrefix + token }
+// Legacy plaintext-key entries are deliberately not read; their bounded TTL
+// expires them. Rolling upgrades may require a fresh authorization flow.
+func refreshGraceKey(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return refreshGracePrefix + hex.EncodeToString(hash[:])
+}
 
 // refreshGraceOpTimeout bounds each grace op so a stalled Redis can never block
 // the refresh request path; the grace check is best-effort and fails closed on
@@ -58,13 +67,40 @@ func (s *RefreshGraceStore) Remember(token string, resp map[string]any, _ time.T
 	if s == nil || s.rdb == nil || token == "" || s.window <= 0 {
 		return
 	}
+	ttl := time.Until(core.RefreshGraceExpiresAt(resp, time.Now(), s.window))
+	if ttl <= 0 {
+		return
+	}
 	blob, err := json.Marshal(resp)
 	if err != nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), refreshGraceOpTimeout)
 	defer cancel()
-	_ = s.rdb.Set(ctx, refreshGraceKey(token), blob, s.window).Err()
+	_ = s.rdb.Set(ctx, refreshGraceKey(token), blob, ttl).Err()
+}
+
+// PreparePending atomically preserves any existing ready/in-flight entry.
+func (s *RefreshGraceStore) PreparePending(token string, resp map[string]any, _ time.Time) {
+	if s == nil || s.rdb == nil || token == "" {
+		return
+	}
+	now := time.Now()
+	body := core.RefreshGracePendingResponse(resp, now, s.window)
+	if body == nil {
+		return
+	}
+	blob, err := json.Marshal(body)
+	if err != nil {
+		return
+	}
+	ttl := time.Until(core.RefreshGraceExpiresAt(body, now, s.window))
+	if ttl <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), refreshGraceOpTimeout)
+	defer cancel()
+	_ = s.rdb.SetNX(ctx, refreshGraceKey(token), blob, ttl).Err()
 }
 
 // Lookup returns the remembered successor for token, or (nil,false) on ANY

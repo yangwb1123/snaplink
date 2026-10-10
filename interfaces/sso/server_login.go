@@ -54,7 +54,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	if handled {
 		return
 	}
-	ctx = authzCtx
+	ctx = s.browserResumeResponse(authzCtx, &req)
 
 	result, handled := s.credentialLoginStage(ctx, &req, client)
 	if handled {
@@ -253,7 +253,7 @@ func (s *Server) preAuthLoginGates(ctx HandlerContext, req *login.Request) (Hand
 // handled=true means a response was ALREADY written and the caller MUST
 // return.
 func (s *Server) credentialLoginStage(ctx HandlerContext, req *login.Request, client *Client) (*AuthResult, bool) {
-	result, handled := s.authenticateUser(ctx, req, client)
+	result, handled := s.authenticateCredentialOrSession(ctx, req, client)
 	if handled {
 		return nil, true
 	}
@@ -308,7 +308,7 @@ func (s *Server) bootstrapLoginRequest(ctx HandlerContext) (login.Request, bool)
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return req, false
 	}
-	if s.resolveLoginRequest(ctx, &req) {
+	if s.prepareBrowserResume(ctx, &req) || s.resolveLoginRequest(ctx, &req) {
 		return req, false
 	}
 	return req, true
@@ -492,5 +492,6 @@ func (s *Server) upsertLoginUser(ctx HandlerContext, result *AuthResult, state s
 // response. The code-flow branch mints no token until a later /token exchange.
 func (s *Server) recordCodeFlowSuccess(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, code, sessionID string) {
 	s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, sessionID, nil)
+	s.applyBrowserSessionCookie(ctx, result, req, sessionID)
 	s.renderAuthCodeResponse(ctx, req, client, code, sessionID)
 }

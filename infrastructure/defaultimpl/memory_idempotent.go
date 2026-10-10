@@ -1,6 +1,7 @@
 package defaultimpl
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"time"
@@ -28,6 +29,9 @@ type memIdempotentEntry struct {
 // the given ttl. A background goroutine prunes expired entries every
 // 5 minutes; call Close to stop it.
 func NewMemoryIdempotentCache(ttl time.Duration) *MemoryIdempotentCache {
+	if ttl <= 0 {
+		ttl = time.Minute
+	}
 	c := &MemoryIdempotentCache{
 		entries: make(map[string]memIdempotentEntry),
 		ttl:     ttl,
@@ -70,7 +74,7 @@ func (c *MemoryIdempotentCache) Get(_ context.Context, key string) ([]byte, bool
 	if !ok || time.Now().After(e.expiresAt) {
 		return nil, false, nil
 	}
-	return e.body, true, nil
+	return bytes.Clone(e.body), true, nil
 }
 
 // Set implements core.IdempotentCache.
@@ -81,7 +85,7 @@ func (c *MemoryIdempotentCache) Set(_ context.Context, key string, body []byte, 
 		ttl = c.ttl
 	}
 	c.entries[key] = memIdempotentEntry{
-		body:      body,
+		body:      bytes.Clone(body),
 		expiresAt: time.Now().Add(ttl),
 	}
 	return nil

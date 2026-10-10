@@ -4,22 +4,47 @@ package ssotest
 // mode has EXACTLY ONE flip point in the deploy tree —
 // server.require_form_content_type: true under ops/deploy/compose/
 // config.yaml. helm, baremetal, k8s, k8s-distributed and the kustomize
-// base stay default-off: the literal must appear in NO other file under
-// ops/deploy/. The key must also be documented in
-// docs/config-reference.md. Stdlib-only (line scan) — the compose
-// server: block is a flat, 2-space-indented YAML block, so no YAML
-// parser is needed.
+// base stay default-off: no other deployment setting may enable the key.
+// Documentation references, including copied OpenAPI descriptions, are not
+// settings. The key must also be documented in docs/config-reference.md.
 
 import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 )
 
 const formOnlyKey = "require_form_content_type"
+
+var formOnlySetting = regexp.MustCompile(`(^|[ {,])["']?require_form_content_type["']?\s*:`)
+
+func isFormOnlySetting(line string) bool {
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+		return false
+	}
+	if strings.HasPrefix(strings.TrimPrefix(line, "export "), "SSO_SERVER__REQUIRE_FORM_CONTENT_TYPE=") {
+		return true
+	}
+	return formOnlySetting.MatchString(line)
+}
+
+func TestFormOnlySettingRecognizesConfigurationNotDocumentation(t *testing.T) {
+	for _, line := range []string{"  require_form_content_type: true", `server: {"require_form_content_type": true}`, "SSO_SERVER__REQUIRE_FORM_CONTENT_TYPE=true", "export SSO_SERVER__REQUIRE_FORM_CONTENT_TYPE=true"} {
+		if !isFormOnlySetting(line) {
+			t.Errorf("missed setting %q", line)
+		}
+	}
+	for _, line := range []string{"# require_form_content_type: true", "`server.require_form_content_type: true`", "Strict wire mode (server.require_form_content_type)", "// require_form_content_type: true"} {
+		if isFormOnlySetting(line) {
+			t.Errorf("description mistaken for setting %q", line)
+		}
+	}
+}
 
 // repoRoot resolves the repository root from this package's directory
 // (test/), stable under any cwd.
@@ -54,9 +79,8 @@ func TestDeployTreeRequireFormContentTypeSingleFlipPoint(t *testing.T) {
 			composeConfig, formOnlyKey, strings.Count(string(raw), formOnlyKey))
 	}
 
-	// (b) Absence everywhere else: the literal appears in NO other file
-	// under ops/deploy/ (helm/baremetal/k8s/k8s-distributed/kustomize and
-	// README/env examples all stay default-off).
+	// (b) Scan settings in every deploy file, including embedded ConfigMaps
+	// and env overrides; descriptive references must not become false flips.
 	var hits []string
 	err = filepath.WalkDir(deployDir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -72,7 +96,7 @@ func TestDeployTreeRequireFormContentTypeSingleFlipPoint(t *testing.T) {
 				defer func() { _ = f.Close() }()
 				scanner := bufio.NewScanner(f)
 				for scanner.Scan() {
-					if strings.Contains(scanner.Text(), formOnlyKey) {
+					if isFormOnlySetting(scanner.Text()) {
 						hits = append(hits, path)
 						break
 					}
@@ -85,7 +109,7 @@ func TestDeployTreeRequireFormContentTypeSingleFlipPoint(t *testing.T) {
 		t.Fatalf("walk ops/deploy: %v", err)
 	}
 	if len(hits) != 0 {
-		t.Errorf("flip key appears outside compose/config.yaml: %v", hits)
+		t.Errorf("flip setting appears outside compose/config.yaml: %v", hits)
 	}
 
 	// (c) Documented: the key is documented in docs/config-reference.md.

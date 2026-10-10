@@ -40,6 +40,7 @@ type Server struct {
 	threatState
 	tokenExchangeChainState
 	authPipelineState
+	browserSSOState
 	notificationState
 }
 

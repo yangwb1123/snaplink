@@ -141,6 +141,31 @@ func TestRefreshGraceCache_NilAndEmptyGuards(t *testing.T) {
 	}
 }
 
+func TestPendingRefreshGraceRequiresExactEvidence(t *testing.T) {
+	base := map[string]any{
+		core.KeyRefreshGracePending: true, core.KeyRefreshGraceFamilyID: "family",
+		core.KeyRefreshGraceClientID: "client", core.KeyRefreshGraceJKT: "jkt", core.KeyRefreshGraceX5T: "cert",
+		core.KeyRefreshGraceDeadline: time.Now().Add(time.Minute).Format(time.RFC3339Nano),
+	}
+	if !matchingPendingRefreshGrace(base, "client", "family", "jkt", "cert") {
+		t.Fatal("valid intent did not match")
+	}
+	for key, value := range map[string]any{
+		core.KeyRefreshGracePending: "true", core.KeyRefreshGraceFamilyID: "other-family",
+		core.KeyRefreshGraceClientID: "other-client", core.KeyRefreshGraceJKT: "other-jkt",
+		core.KeyRefreshGraceX5T: "other-cert", core.KeyRefreshGraceDeadline: time.Now().Add(-time.Second).Format(time.RFC3339Nano),
+	} {
+		altered := make(map[string]any, len(base))
+		for field, original := range base {
+			altered[field] = original
+		}
+		altered[key] = value
+		if matchingPendingRefreshGrace(altered, "client", "family", "jkt", "cert") {
+			t.Fatalf("invalid evidence %s suppressed reuse policy", key)
+		}
+	}
+}
+
 // mapLen reads the cache's entry count under its own lock (test-local helper;
 // the field is package-private and tests live in the same package).
 func mapLen(c *RefreshGraceCache) int {

@@ -69,7 +69,9 @@ func TestManagerReschedulesFailedReplayAndScopesTenant(t *testing.T) {
 	store := NewMemoryStore(10)
 	issuer := &testIssuer{}
 	notifier := &testNotifier{failures: DefaultMaxAttempts}
-	mgr := NewManager(issuer, notifier, store, WithRetryInterval(time.Millisecond))
+	// This test exercises manual replay; the automatic worker has its own test.
+	// Keep the worker out of the lease race even under a slow race-enabled run.
+	mgr := NewManager(issuer, notifier, store, WithRetryInterval(time.Hour))
 	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
 	if err := mgr.RecordFailure(context.Background(), Failure{TenantID: "t1", ClientID: "c", Subject: "s", TokenSubject: "s", URI: "https://rp/bcl"}); err != nil {
 		t.Fatal(err)
@@ -83,7 +85,7 @@ func TestManagerReschedulesFailedReplayAndScopesTenant(t *testing.T) {
 		t.Fatalf("failed replay = %+v, %v", failed, err)
 	}
 	left, _ := mgr.ListFailures(context.Background(), "t1", 10)
-	if len(left) != 1 || left[0].LastError == "" {
+	if len(left) != 1 || left[0].LastError == "" || !left[0].NextAttemptAt.After(failed.LastFailedAt) {
 		t.Fatalf("failure was not rescheduled: %v", left)
 	}
 }

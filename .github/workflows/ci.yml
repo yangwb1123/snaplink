@@ -13,15 +13,13 @@
 #               (continue-on-error) so a freshly-published advisory can't
 #               wedge unrelated PRs, but it runs as a real, visible job.
 #   * proto   — buf lint (always) + buf breaking (PR only, vs base branch)
-#   * docker  — `docker build .` smoke (single-arch, no push) so a broken
-#               Dockerfile fails CI rather than being discovered when
-#               someone runs `make docker` locally
+#   * docker  — native amd64/arm64 image builds + runtime/probe smoke, no push,
+#               so cross-compilation and architecture mismatches fail CI
 #   * openapi — kin-openapi validate on docs/openapi.yaml so schema
 #               typos / orphan refs fail the PR
 #
-# Intentionally NOT in scope for v1: container image push, multi-arch
-# matrix, release-tag automation. Each needs a registry choice and a
-# signing story; layer them on once the repo has a remote.
+# PR builds never publish images. Release publication and signing remain
+# separate from this read-only CI workflow.
 
 name: ci
 
@@ -382,14 +380,21 @@ jobs:
         run: make docs-validate
 
   docker:
-    name: docker build (smoke)
-    runs-on: ubuntu-latest
+    name: docker build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
-      # buildx (with the docker driver, not docker-container) enables the
-      # build-push-action's cache + future multi-arch story without a
-      # registry login. Single-platform here keeps the run fast.
+      # Each architecture runs natively; cross-compilation needs no QEMU.
+      # docker-container supports both registry and OCI exporters.
       - uses: docker/setup-buildx-action@v3
 
       - name: Dockerfile target contract
@@ -399,13 +404,14 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          pull: true
           push: false
           # GitHub Actions cache backend — survives across runs on the
           # same ref without external infra.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          # Single-arch smoke is enough to catch Dockerfile breakage.
-          platforms: linux/amd64
+          cache-from: type=gha,scope=sso-server-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=sso-server-${{ matrix.arch }}
+          platforms: linux/${{ matrix.arch }}
+          load: true
           tags: snaplink/sso-server:ci
 
       - name: build snaplink-billing target (no push)
@@ -413,10 +419,12 @@ jobs:
         with:
           context: .
           target: snaplink-billing
+          pull: true
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
+          cache-from: type=gha,scope=billing-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=billing-${{ matrix.arch }}
+          platforms: linux/${{ matrix.arch }}
+          load: true
           tags: snaplink/billing:ci
 
       - name: build snaplink-stripe-adapter target (no push)
@@ -424,10 +432,12 @@ jobs:
         with:
           context: .
           target: snaplink-stripe-adapter
+          pull: true
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
+          cache-from: type=gha,scope=stripe-adapter-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=stripe-adapter-${{ matrix.arch }}
+          platforms: linux/${{ matrix.arch }}
+          load: true
           tags: snaplink/stripe-adapter:ci
 
       - name: build snaplink-audit-provisioner target (no push)
@@ -435,11 +445,16 @@ jobs:
         with:
           context: .
           target: snaplink-audit-provisioner
+          pull: true
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
+          cache-from: type=gha,scope=audit-provisioner-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=audit-provisioner-${{ matrix.arch }}
+          platforms: linux/${{ matrix.arch }}
+          load: true
           tags: snaplink/audit-provisioner:ci
+
+      - name: Native startup, token and restart acceptance
+        run: python3 ops/scripts/container_smoke.py --image snaplink/sso-server:ci
 
   kustomize:
     # Render all Kustomize overlays to catch YAML syntax errors,

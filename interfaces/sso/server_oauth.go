@@ -465,7 +465,7 @@ func (s *Server) respondLoginProviders(ctx HandlerContext, req *login.Request) b
 		return false
 	}
 	if conn, ok := s.resolveHomeRealm(ctx, req.LoginHint); ok {
-		resp := map[string]any{keyHRConnectionRequired: true, keyHRConnectionID: conn.ID, keyHRType: string(conn.Type), keyHRTenantID: conn.TenantID, keyHRDisplayName: conn.DisplayName, keyAuthzRequestPassthrough: s.federatedContinuationSupported(ctx, req.ClientID), KeyIss: s.resolveIssuer(ctx)}
+		resp := s.browserSessionProbe(ctx, map[string]any{keyHRConnectionRequired: true, keyHRConnectionID: conn.ID, keyHRType: string(conn.Type), keyHRTenantID: conn.TenantID, keyHRDisplayName: conn.DisplayName, keyAuthzRequestPassthrough: s.federatedContinuationSupported(ctx, req.ClientID), KeyIss: s.resolveIssuer(ctx)})
 		// Login-path consumption of the admin-probe health: a degraded or unreachable
 		// IdP is flagged so the UI can grey it out before the user clicks
 		// into a timeout. Fail-open: a health read error leaves the flag
@@ -478,7 +478,7 @@ func (s *Server) respondLoginProviders(ctx HandlerContext, req *login.Request) b
 		ctx.JSON(http.StatusOK, resp)
 		return true
 	}
-	resp := map[string]any{KeyProviders: s.providersForClient(ctx, req.ClientID), KeyClientContext: buildClientContext(ctx), keyAuthzRequestPassthrough: s.federatedContinuationSupported(ctx, req.ClientID), KeyIss: s.resolveIssuer(ctx)}
+	resp := s.browserSessionProbe(ctx, map[string]any{KeyProviders: s.providersForClient(ctx, req.ClientID), KeyClientContext: buildClientContext(ctx), keyAuthzRequestPassthrough: s.federatedContinuationSupported(ctx, req.ClientID), KeyIss: s.resolveIssuer(ctx)})
 	if lp := s.loginPageURIForClient(ctx, req.ClientID); lp != "" {
 		resp[KeyLoginPageURI] = lp
 	}

@@ -58,6 +58,8 @@ func claimsFromPayload(p ed25519Payload, typ string) *sso.TokenClaims {
 
 func tokenUseFromPayload(p ed25519Payload, typ string) core.TokenUse {
 	switch typ {
+	case core.JWTTypBrowserSession:
+		return core.TokenUseBrowserSession
 	case jwtTypAT, "application/at+jwt":
 		return core.TokenUseAccessToken
 	case jwtTyp:

@@ -7,6 +7,17 @@
 /.venv/
 /.pytest_cache/
 /.pi/
+/sdks/rust/target/
+/sdks/python/build/
+/sdks/python/*.egg-info/
+/sdks/build/
+/sdks/*/build/
+/sdks/.gradle/
+**/node_modules/
+**/.build/
+**/.swiftpm/
+/ops/deploy/openresty/fullstack/static/
+/test/oidc-conformance/results/
 **/__pycache__/
 *.py[cod]
 *.cover
@@ -25,3 +36,5 @@ coverage.*
 /ops/deploy/compose/secrets/
 /ops/deploy/baremetal-ha/secrets/
 **/.env
+**/.env.*
+!**/.env.example

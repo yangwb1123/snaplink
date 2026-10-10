@@ -1,0 +1,208 @@
+# Operator opt-in stock SSO publication. PR CI and GoReleaser/GHCR are separate.
+name: dockerhub
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing protected stable tag (vX.Y.Z), reachable from the default branch
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dockerhub-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+      version: ${{ steps.release.outputs.version }}
+      image: ${{ steps.release.outputs.image }}
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: sso_test
+          POSTGRES_USER: sso
+          POSTGRES_PASSWORD: sso
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U sso -d sso_test"
+          --health-interval=10s --health-timeout=5s --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate opt-in, tag and repository
+        id: release
+        shell: bash
+        env:
+          ENABLED: ${{ vars.ENABLE_DOCKERHUB_PUBLICATION }}
+          IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+          VERSION: ${{ inputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          test "$ENABLED" = true
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          [[ "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$IMAGE" =~ ^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9._-]*$ ]]
+          git show-ref --verify "refs/tags/$VERSION"
+          sha="$(git rev-parse "refs/tags/$VERSION^{commit}")"
+          git merge-base --is-ancestor "$sha" "origin/$DEFAULT_BRANCH"
+          git checkout --detach "$sha"
+          printf 'sha=%s\nversion=%s\nimage=%s\n' "$sha" "$VERSION" "$IMAGE" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install gate dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libltdl-dev
+          python -m pip install --disable-pip-version-check "PyYAML>=6.0"
+      - name: Complete handoff gate on the exact release commit
+        env:
+          SSO_TEST_POSTGRES_DSN: postgres://sso:sso@localhost:5432/sso_test?sslmode=disable
+          SSO_TEST_POSTGRES_DIALECT: postgres
+        run: |
+          make ci
+          git diff --exit-code
+
+  native:
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      - name: Install OCI image transfer tool
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: sso-server
+          platforms: linux/${{ matrix.arch }}
+          build-args: VERSION=${{ needs.verify.outputs.version }}
+          pull: true
+          push: false
+          outputs: type=oci,dest=${{ runner.temp }}/sso-${{ matrix.arch }}.oci.tar
+          tags: snaplink/sso-server:release-test
+          sbom: true
+          provenance: mode=max
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.verify.outputs.sha }}
+            org.opencontainers.image.version=${{ needs.verify.outputs.version }}
+      - name: Load the exact OCI platform that will be published
+        env:
+          ARCH: ${{ matrix.arch }}
+          ARCHIVE: ${{ runner.temp }}/sso-${{ matrix.arch }}.oci.tar
+        run: |
+          skopeo copy --override-os linux --override-arch "$ARCH" \
+            "oci-archive:$ARCHIVE" docker-daemon:snaplink/sso-server:release-test
+      - name: Native startup, token and restart acceptance
+        run: python3 ops/scripts/container_smoke.py --image snaplink/sso-server:release-test
+      - name: Block high and critical image findings
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: snaplink/sso-server:release-test
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dockerhub-sso-${{ matrix.arch }}
+          path: ${{ runner.temp }}/sso-${{ matrix.arch }}.oci.tar
+          compression-level: 0
+          if-no-files-found: error
+
+  publish:
+    needs: [verify, native]
+    runs-on: ubuntu-latest
+    # Configure required reviewers and default-branch restrictions before opt-in.
+    environment: dockerhub
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IMAGE: ${{ needs.verify.outputs.image }}
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      - uses: sigstore/cosign-installer@v3
+      - name: Install OCI image transfer tool
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dockerhub-sso-*
+          path: ${{ runner.temp }}/dockerhub-images
+          merge-multiple: true
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Promote the exact tested OCI artifacts, without rebuilding
+        env:
+          ARCHIVE_DIR: ${{ runner.temp }}/dockerhub-images
+        shell: bash
+        run: |
+          set -euo pipefail
+          sources=()
+          for arch in amd64 arm64; do
+            candidate="$IMAGE:build-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$arch"
+            skopeo copy --all --preserve-digests --authfile "$HOME/.docker/config.json" \
+              "oci-archive:$ARCHIVE_DIR/sso-$arch.oci.tar" "docker://$candidate"
+            digest="$(skopeo inspect --authfile "$HOME/.docker/config.json" --format '{{.Digest}}' "docker://$candidate")"
+            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+            sources+=("$IMAGE@$digest")
+          done
+          docker buildx imagetools create --dry-run "${sources[@]}" > release-manifest.json
+          python3 ops/scripts/container_manifest.py release-manifest.json
+          docker buildx imagetools create --tag "$IMAGE:$VERSION" "${sources[@]}"
+      - name: Verify published index and sign the immutable digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(skopeo inspect --authfile "$HOME/.docker/config.json" --format '{{.Digest}}' "docker://$IMAGE:$VERSION")"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker buildx imagetools inspect --raw "$IMAGE@$digest" > release-manifest.json
+          python3 ops/scripts/container_manifest.py release-manifest.json --digest "$digest"
+          cosign sign --yes "$IMAGE@$digest"
+          cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "https://github.com/$GITHUB_WORKFLOW_REF" \
+            "$IMAGE@$digest" > release-signature.json
+          printf '%s@%s\n' "$IMAGE" "$digest" > release-digest.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dockerhub-${{ needs.verify.outputs.version }}-evidence
+          path: |
+            release-manifest.json
+            release-signature.json
+            release-digest.txt
+          if-no-files-found: error

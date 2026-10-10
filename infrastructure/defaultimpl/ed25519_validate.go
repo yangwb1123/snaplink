@@ -14,7 +14,16 @@ import (
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
-func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (_ *sso.TokenClaims, resultErr error) {
+func (j *Ed25519JWTIssuer) Validate(ctx context.Context, token string) (*sso.TokenClaims, error) {
+	return j.validateJWT(ctx, token, false)
+}
+
+// ValidateBrowserSession accepts only the purpose-separated OP-cookie typ.
+func (j *Ed25519JWTIssuer) ValidateBrowserSession(ctx context.Context, token string) (*sso.TokenClaims, error) {
+	return j.validateJWT(ctx, token, true)
+}
+
+func (j *Ed25519JWTIssuer) validateJWT(_ context.Context, token string, browserSession bool) (_ *sso.TokenClaims, resultErr error) {
 	defer func() {
 		if resultErr != nil {
 			resultErr = fmt.Errorf("%w: %v", core.ErrTokenValidationRejected, resultErr)
@@ -32,7 +41,7 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (_ *sso.Tok
 		return nil, errors.New("ed25519: token revoked")
 	}
 
-	h, err := j.parseAndGuardHeader(parts[0])
+	h, err := j.parseAndGuardHeaderForPurpose(parts[0], browserSession)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +65,10 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (_ *sso.Tok
 // against a token meant for a different shape (ID token,
 // generic JWT) being accepted as an access token.
 func (j *Ed25519JWTIssuer) parseAndGuardHeader(headerB64 string) (ed25519Header, error) {
+	return j.parseAndGuardHeaderForPurpose(headerB64, false)
+}
+
+func (j *Ed25519JWTIssuer) parseAndGuardHeaderForPurpose(headerB64 string, browserSession bool) (ed25519Header, error) {
 	headerBytes, err := base64.RawURLEncoding.DecodeString(headerB64)
 	if err != nil {
 		return ed25519Header{}, fmt.Errorf("ed25519: header decode: %w", err)
@@ -70,7 +83,11 @@ func (j *Ed25519JWTIssuer) parseAndGuardHeader(headerB64 string) (ed25519Header,
 	// Empty typ is tolerated for legacy tokens minted before this
 	// gate landed (back-compat); a non-empty typ MUST be in the
 	// allowlist.
-	if h.Typ != "" {
+	if browserSession {
+		if h.Typ != core.JWTTypBrowserSession {
+			return ed25519Header{}, errors.New("ed25519: not an OP identity cookie")
+		}
+	} else if h.Typ != "" {
 		if _, ok := supportedJWTTypes[h.Typ]; !ok {
 			return ed25519Header{}, fmt.Errorf("ed25519: typ %q not in allowlist", h.Typ)
 		}

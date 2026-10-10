@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // createRefreshGraceSQL is the schema for the refresh-rotation grace cache.
@@ -53,8 +55,8 @@ type RefreshGraceStore struct {
 
 // NewRefreshGraceStoreWithDSN opens a dedicated SQLite connection, ensures the
 // schema, and starts the background cleanup goroutine with the given window
-// duration as TTL. cleanupInterval <= 0 disables the background goroutine
-// (lazy cleanup on write only). Caller must call Close() at shutdown.
+// duration as TTL. cleanupInterval <= 0 selects the default cleanup interval.
+// Caller must call Close() at shutdown.
 func NewRefreshGraceStoreWithDSN(dsn string, window, cleanupInterval time.Duration) (*RefreshGraceStore, error) {
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -75,8 +77,8 @@ func NewRefreshGraceStoreWithDSN(dsn string, window, cleanupInterval time.Durati
 }
 
 // NewRefreshGraceStore wraps an existing *sql.DB, ensures the schema, and
-// starts the background cleanup goroutine. cleanupInterval <= 0 disables the
-// background goroutine. The caller owns the *sql.DB lifecycle — Close() will
+// starts the background cleanup goroutine; cleanupInterval <= 0 selects the
+// default interval. The caller owns the *sql.DB lifecycle — Close() will
 // NOT close the DB.
 func NewRefreshGraceStore(db *sql.DB, window, cleanupInterval time.Duration) (*RefreshGraceStore, error) {
 	if err := ensureSchema(db, "refresh_grace_cache", createRefreshGraceSQL); err != nil {
@@ -205,21 +207,50 @@ func (s *RefreshGraceStore) Remember(token string, resp map[string]any, now time
 	if s == nil || s.db == nil || token == "" || s.window <= 0 {
 		return
 	}
+	expiresAt := core.RefreshGraceExpiresAt(resp, now, s.window)
+	if !now.Before(expiresAt) {
+		return
+	}
 	blob, err := json.Marshal(resp)
 	if err != nil {
 		return
 	}
 	hash := refreshGraceHash(token)
-	expiresAt := now.Add(s.window).UnixNano()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
 	// Lazy GC: sweep expired rows before writing to keep the table bounded.
 	// Cheap: indexed by expires_at, runs in O(expired count).
-	_, _ = s.db.ExecContext(context.Background(),
+	_, _ = s.db.ExecContext(ctx,
 		`DELETE FROM refresh_grace_cache WHERE expires_at <= ?`, now.UnixNano())
 
-	_, _ = s.db.ExecContext(context.Background(),
+	_, _ = s.db.ExecContext(ctx,
 		`INSERT OR REPLACE INTO refresh_grace_cache (consumed_token_hash, successor_response, expires_at) VALUES (?, ?, ?)`,
-		hash, blob, expiresAt)
+		hash, blob, expiresAt.UnixNano())
+}
+
+// PreparePending replaces expired state atomically, never a live response.
+func (s *RefreshGraceStore) PreparePending(token string, resp map[string]any, now time.Time) {
+	if s == nil || s.db == nil || token == "" {
+		return
+	}
+	body := core.RefreshGracePendingResponse(resp, now, s.window)
+	if body == nil {
+		return
+	}
+	blob, err := json.Marshal(body)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, _ = s.db.ExecContext(ctx,
+		`INSERT INTO refresh_grace_cache (consumed_token_hash, successor_response, expires_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT (consumed_token_hash) DO UPDATE
+            SET successor_response = excluded.successor_response, expires_at = excluded.expires_at
+            WHERE refresh_grace_cache.expires_at <= ?`,
+		refreshGraceHash(token), blob, core.RefreshGraceExpiresAt(body, now, s.window).UnixNano(), now.UnixNano())
 }
 
 // Lookup returns the cached successor for token if it was rotated within the
@@ -244,7 +275,9 @@ func (s *RefreshGraceStore) Lookup(token string, now time.Time) (map[string]any,
 
 	var blob []byte
 	var expiresAt int64
-	err := s.db.QueryRowContext(context.Background(),
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err := s.db.QueryRowContext(ctx,
 		`SELECT successor_response, expires_at FROM refresh_grace_cache WHERE consumed_token_hash = ?`,
 		hash).Scan(&blob, &expiresAt)
 	if err != nil {

@@ -409,6 +409,9 @@ func (s *Server) consumeTokenRateQuota(ctx HandlerContext, client *Client) bool 
 }
 
 func (s *Server) dispatchTokenGrantWithQuota(ctx HandlerContext, client *Client, req oauth.TokenRequest, dpopJKT, mtlsX5T, idemKey string, idemRW *middleware.CaptureWriter) {
+	if idemRW != nil {
+		defer idemRW.Unlock()
+	}
 	if !s.consumeTokenRateQuota(ctx, client) {
 		s.dispatchTokenGrant(ctx, client, req, dpopJKT, mtlsX5T)
 	}

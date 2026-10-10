@@ -1061,6 +1061,12 @@ export interface LocalUserResponse {
 export interface LoginDiscoveryResponse {
   /** True only when top-level federated GET can preserve the complete */
   authorization_request_passthrough_supported?: boolean;
+  /** A valid OP identity cookie and its canonical live session were verified. Not an authorization decision. */
+  op_session_available?: boolean;
+  /** Identity-session verification failed; availability is unknown, not false. */
+  op_session_error?: "temporarily_unavailable";
+  /** Present as true only when browser identity SSO is configured. */
+  op_session_supported?: boolean;
   /** Authenticator names this client may use. */
   providers: string[];
   /** Optional home-realm login-discovery marker. Present as `true` when */
@@ -1086,7 +1092,7 @@ export interface LoginRequest {
   presentation_locale?: string;
   /** Optional hosted-login UI hint persisted as the shared */
   presentation_theme_mode?: "light" | "dark" | "auto";
-  /** Authenticator name; omit for discovery. */
+  /** Authenticator name; omit for discovery or OP-cookie resume_session. */
   provider?: string;
   /** Registered redirect URI bound to the authorization code. */
   redirect_uri?: string;
@@ -1094,6 +1100,8 @@ export interface LoginRequest {
   resource?: string[];
   /** Request an OAuth 2.0 authorization code instead of direct token minting. */
   response_type?: "code";
+  /** Opt-in POST-only OP-cookie authentication, not application-token */
+  resume_session?: boolean;
   scope?: string[];
   /** Opaque value echoed back to redirect-based flows. */
   state?: string;

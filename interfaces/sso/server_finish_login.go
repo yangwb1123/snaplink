@@ -201,6 +201,7 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 	s.recordLoginHistory(ctx, result, devID, deviceCtx)
 	s.recordLoginSecurityEvents(ctx, result, client.ID, deviceCtx)
 	s.addDeviceContextToResponse(resp, deviceCtx)
+	s.applyBrowserSessionCookie(ctx, result, req, session.ID)
 	ctx.JSON(http.StatusOK, resp)
 }
 

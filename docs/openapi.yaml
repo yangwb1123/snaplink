@@ -613,7 +613,7 @@ paths:
       tags: [auth]
       summary: Authenticate and receive a token.
       description: |
-        Two-mode endpoint:
+        Authentication, provider discovery, and optional browser-identity SSO:
 
         * **Discovery** (omit `provider`): returns the list of
           authenticator names this client may use. Useful for SPAs
@@ -639,7 +639,32 @@ paths:
         mirroring `/token`'s DPoP gate. Omitting the header keeps the
         code unbound — fully backwards compatible.
 
-        **Silent renewal** (`prompt=none`) requires a valid ID Token hint and
+        **Browser identity SSO** (`oidc.browser_sso.enabled`, default off):
+        provider discovery reports `op_session_supported` and
+        `op_session_available`. A canonical-store outage reports
+        `op_session_error: temporarily_unavailable`, not an absent session.
+        Terminal fresh authentication sets a host-only HttpOnly
+        `snaplink_op_session` cookie, Secure for HTTPS issuers, SameSite=Lax,
+        Path=/, bounded by original authentication plus eight hours and the
+        canonical session expiry. This purpose-separated identity cookie is
+        not an access token or an RP ID-token hint; generic token verification
+        rejects it. `resume_session: true` with `response_type: code`, no
+        provider/credential/hint and the complete current RP parameters
+        restores the OP authentication event while separately enforcing this
+        RP's client/tenant/provider, scopes/resources, PKCE, risk/MFA, consent
+        and authorization delivery. Each RP gets its own session/code/tokens.
+        Cookie auth_time, AMR and ACR remain unchanged, and resume does not
+        extend cookie lifetime. A missing/expired/revoked session or forced
+        reauthentication returns `login_required`; infrastructure failure
+        returns 503 `temporarily_unavailable`. In an ordinary interactive
+        request the hosted page falls back to primary authentication on
+        `login_required`; explicit `prompt=none` delivers the error to the RP.
+        Prompt=none returns consent_required/interaction_required without any
+        interactive challenge. Opaque PAR/JAR requests are rejected before
+        consumption by automatic resume and retain their original flow.
+
+        **Legacy silent renewal** (`prompt=none` without `resume_session`)
+        requires a valid ID Token hint and
         the exact session named by its `sid` to remain live; access tokens are
         not accepted as hints. The ID Token binds the scopes, RFC 8707
         resources, and RFC 9396 authorization details originally granted.
@@ -724,7 +749,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: A fail-closed authentication Hook timed out (`hook_timeout`).
+          description: A fail-closed authentication Hook timed out (`hook_timeout`), or OP identity/session verification is unavailable (`temporarily_unavailable`).
           content:
             application/json:
               schema:
@@ -1228,8 +1253,21 @@ paths:
         **Tenant token quota** — when `tenant.resource_quota` is wired, an
         authenticated request whose client is bound to the resolved tenant is
         charged immediately before real grant dispatch. A successful
-        `Idempotency-Key` replay is served before the charge and therefore
-        counts only once. Exhaustion returns the generic `429 rate_limited`
+        SDK-wired built-in `client_credentials` `Idempotency-Key` replay is
+        served before the charge and therefore counts only once. Its response
+        cache is bounded to one minute or the token lifetime and rechecks
+        current client scopes and token validity. Stateful and custom grants
+        never use this generic cache; refresh retries use only the configured
+        rotation-grace window, with fresh client/sender, scope, lifecycle,
+        session, original grant deadline and immediate-successor checks.
+        Opt-in stock grace backends also record a bounded in-flight intent
+        before consume. A same-client/sender retry waits briefly for completion;
+        an incomplete valid intent yields ordinary `400 invalid_grant` without
+        revoking the in-flight family. It never mints another successor. Missing,
+        expired or mismatched intent retains strict family-reuse handling.
+        Clients should serialize refreshes; custom stores without pending
+        preparation retain completed-response replay only.
+        Exhaustion returns the generic `429 rate_limited`
         response with `Retry-After`, `Cache-Control: no-store`, and
         `Pragma: no-cache`; it never returns a tenant identifier. A quota-store
         operational error fails open and is recorded internally as
@@ -15105,9 +15143,20 @@ components:
       type: object
       required: [client_id]
       properties:
+        resume_session:
+          type: boolean
+          default: false
+          description: |
+            Opt-in POST-only OP-cookie authentication, not application-token
+            renewal. Requires response_type=code and omitted/empty provider,
+            credential and id_token_hint; preserves the complete current RP
+            authorization request. request_uri, request and a submitted
+            login_transaction_id are rejected before any one-use consumption.
+            Prompt/login freshness/account selection, ACR, independent consent
+            and risk/MFA requirements are not bypassed.
         provider:
           type: string
-          description: Authenticator name; omit for discovery.
+          description: Authenticator name; omit for discovery or OP-cookie resume_session.
           example: password
         client_id:
           type: string
@@ -15332,6 +15381,16 @@ components:
       type: object
       required: [providers]
       properties:
+        op_session_supported:
+          type: boolean
+          description: Present as true only when browser identity SSO is configured.
+        op_session_available:
+          type: boolean
+          description: A valid OP identity cookie and its canonical live session were verified. Not an authorization decision.
+        op_session_error:
+          type: string
+          enum: [temporarily_unavailable]
+          description: Identity-session verification failed; availability is unknown, not false.
         providers:
           type: array
           items:

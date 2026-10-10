@@ -23,12 +23,24 @@ services:
       - --advertise-client-urls=http://etcd:2379
       - --data-dir=/etcd-data
     ports:
-      - "2379:2379"
+      - "127.0.0.1:2379:2379"
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 5s
       timeout: 3s
       retries: 5
+
+  sso-state-init:
+    image: busybox:1.37
+    user: "0:0"
+    read_only: true
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt: [no-new-privileges:true]
+    command: ["sh", "-c", "chown 65532:65532 /state && chmod 0700 /state"]
+    volumes:
+      - sso-data:/state
 
   sso-server:
     build:
@@ -38,6 +50,9 @@ services:
       context: ../../..
       dockerfile: Dockerfile
     container_name: snaplink-sso
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     command:
       - "--config=/etc/sso/config.yaml"
       - "--etcd-endpoints=etcd:2379"
@@ -46,9 +61,9 @@ services:
       - "--grpc-insecure"
     ports:
       # Browser-facing HTTP (REST + JWKS + /livez + /readyz + /metrics).
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
       # gRPC back-channel (Authorizer + AuditWriter + Discovery).
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     # 12-factor env overrides via the SSO_ source. Add entries like:
     #   environment:
     #     SSO_LOGGING__LEVEL: debug
@@ -57,12 +72,18 @@ services:
     # path until you opt in.
     volumes:
       - ./config.yaml:/etc/sso/config.yaml:ro
+      - sso-data:/var/lib/snaplink
     depends_on:
       etcd:
         condition: service_healthy
-    # NO container healthcheck — the distroless/static base has no
-    # shell or HTTP client to exec. The host can curl :8080/livez
-    # directly to verify readiness.
+      sso-state-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   billing-postgres:
     image: postgres:16-alpine
@@ -86,7 +107,7 @@ services:
     image: caddy:2-alpine
     profiles: ["commerce", "payment"]
     ports:
-      - "8443:8443"
+      - "127.0.0.1:8443:8443"
     volumes:
       - ./billing.Caddyfile:/etc/caddy/Caddyfile:ro
       - billing-caddy-data:/data
@@ -149,7 +170,7 @@ services:
     image: caddy:2-alpine
     profiles: ["payment"]
     ports:
-      - "8445:8445"
+      - "127.0.0.1:8445:8445"
     volumes:
       - ./stripe.Caddyfile:/etc/caddy/Caddyfile:ro
       - stripe-caddy-data:/data
@@ -244,7 +265,7 @@ services:
       SNAPLINK_AUDIT_PROVISIONER_POLL_INTERVAL: ${AUDIT_PROVISIONER_POLL_INTERVAL:-30s}
       SNAPLINK_AUDIT_PROVISIONER_REQUEST_TIMEOUT: ${AUDIT_PROVISIONER_REQUEST_TIMEOUT:-5s}
     ports:
-      - "8092:8092"
+      - "127.0.0.1:8092:8092"
     volumes:
       - ../audit-provisioner/desired-state.example.json:/etc/snaplink-audit-provisioner/desired-state.json:ro
       - ${AUDIT_PROVISIONER_SECRET_FILE:-./secrets/audit-provisioner-client-secret}:/run/secrets/audit-provisioner-client-secret:ro
@@ -265,7 +286,7 @@ services:
       - "--web.console.libraries=/usr/share/prometheus/console_libraries"
       - "--web.console.templates=/usr/share/prometheus/consoles"
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../grafana/alerts.yaml:/etc/prometheus/alerts.yaml:ro
@@ -282,7 +303,7 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       # Provision Prometheus as default datasource + auto-load the
       # snaplink/sso dashboard so the operator can open Grafana and
@@ -294,6 +315,7 @@ services:
       - prometheus
 
 volumes:
+  sso-data:
   billing-postgres-data:
   billing-caddy-data:
   billing-caddy-config:

@@ -113,9 +113,10 @@ func HandleRefreshGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *cor
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
+	prepareRefreshGrace(d, ctx, client, refreshToken, dpopJKT, mtlsX5T)
 	info, err := store.Consume(ctx.Request().Context(), refreshToken)
 	if err != nil {
-		if refreshHandleConsumeError(d, ctx, client, store, refreshToken, info, err) {
+		if refreshHandleConsumeError(d, ctx, client, store, refreshToken, scope, dpopJKT, mtlsX5T, info, err) {
 			return
 		}
 		// Unknown / expired / already-consumed all map to invalid_grant
@@ -257,7 +258,7 @@ func refreshIssueAndRotate(d RefreshGrantDeps, ctx core.HandlerContext, client *
 	// just-consumed token so a benign concurrent re-presentation of the SAME
 	// token replays it instead of tripping family-reuse (refresh_grace.go).
 	if grace := d.RefreshGrace(); grace != nil {
-		grace.Remember(refreshToken, resp, time.Now())
+		rememberRefreshGrace(grace, refreshToken, resp, info.ExpiresAt, time.Duration(token.ExpiresIn)*time.Second)
 	}
 	ctx.JSON(http.StatusOK, resp)
 }
@@ -329,20 +330,22 @@ func refreshRotatedSubject(client *core.Client, info *oauth.RefreshToken, issued
 }
 
 // refreshHandleConsumeError handles a failed single-use Consume. It returns true
-// ONLY when it has already written the response (the grace-window replay): the
+// ONLY when it wrote a replay or bounded pending denial: the
 // caller must then return without writing anything else. On the reuse path it
 // kills the family (FAIL-CLOSED) but returns false so the caller emits the
 // shared invalid_grant — keeping the wire shape byte-identical to the prior
 // inline handler and the unknown/expired/consumed paths indistinguishable.
-func refreshHandleConsumeError(d RefreshGrantDeps, ctx core.HandlerContext, client *core.Client, store oauth.RefreshTokenStore, refreshToken string, info *oauth.RefreshToken, err error) bool {
+func refreshHandleConsumeError(d RefreshGrantDeps, ctx core.HandlerContext, client *core.Client, store oauth.RefreshTokenStore, refreshToken, scope, dpopJKT, mtlsX5T string, info *oauth.RefreshToken, err error) bool {
 	// Refresh double-submit grace: if THIS token was rotated within the
 	// grace window, replay the SAME successor it already produced —
 	// idempotent, so a legitimate concurrent double-submit doesn't trip
 	// the family-reuse kill below (a logout storm). A genuine post-window
 	// replay finds no entry and falls through (BCP §4.13 unweakened).
-	if grace := d.RefreshGrace(); grace != nil {
-		if cached, ok := grace.Lookup(refreshToken, time.Now()); ok {
-			ctx.JSON(http.StatusOK, cached)
+	if errors.Is(err, oauth.ErrRefreshTokenReused) && info != nil {
+		replay := func() bool {
+			return replayRefreshGrace(d, ctx, client, store, refreshToken, scope, dpopJKT, mtlsX5T, info.FamilyID)
+		}
+		if replay() || awaitPendingRefreshGrace(d, ctx, client, refreshToken, info.FamilyID, dpopJKT, mtlsX5T, replay) {
 			return true
 		}
 	}

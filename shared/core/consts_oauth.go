@@ -2,6 +2,19 @@ package core
 
 import "time"
 
+// OP cookies have a dedicated verifier, never the API/ID-token-hint verifier.
+const JWTTypBrowserSession = "snaplink-op-session+jwt"
+
+// Refresh-grace evidence is cache-internal, never a token response field.
+const (
+	KeyRefreshGraceDeadline = "_grant_deadline"
+	KeyRefreshGracePending  = "_grant_pending"
+	KeyRefreshGraceFamilyID = "_grant_family_id"
+	KeyRefreshGraceClientID = "_grant_client_id"
+	KeyRefreshGraceJKT      = "_grant_jkt"
+	KeyRefreshGraceX5T      = "_grant_x5t"
+)
+
 // MTLSCertNotAfterContextKey carries the presented mTLS certificate's absolute
 // expiry through a request-scoped HandlerContext to token issuance.
 const MTLSCertNotAfterContextKey = "mtls:cert_not_after"

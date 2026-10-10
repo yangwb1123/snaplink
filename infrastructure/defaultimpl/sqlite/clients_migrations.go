@@ -105,4 +105,13 @@ ALTER TABLE clients ADD COLUMN secret_overlap_until INTEGER NOT NULL DEFAULT 0;`
 		Version: 8,
 		SQL:     `ALTER TABLE clients ADD COLUMN redirect_uri_patterns TEXT NOT NULL DEFAULT '[]';`,
 	},
+	{
+		// Policies are independent columns, never derived from editable attributes.
+		// Existing rows keep their previous effective zero-value policies.
+		Version: 9,
+		SQL: `
+ALTER TABLE clients ADD COLUMN skip_consent INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN consent_refresh_interval INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN allow_passwordless_only INTEGER NOT NULL DEFAULT 0;`,
+	},
 }

@@ -103,6 +103,53 @@ def _make_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Pat
     }
 
 
+def test_sync_refreshes_only_declared_copies(tree: dict[str, Path]):
+    untouched = tree["static"] / "other.txt"
+    untouched.write_text("external frontend")
+    originals = {key: tree[key].read_bytes() for key in ("ts", "py", "openapi")}
+    for key in ("static_ts", "static_py", "static_openapi"):
+        tree[key].write_bytes(b"stale")
+    assert sdk_drift.run(["sync-deploy"]) == 0
+    assert tree["static_ts"].read_bytes() == originals["ts"]
+    assert tree["static_py"].read_bytes() == originals["py"]
+    assert tree["static_openapi"].read_bytes() == originals["openapi"]
+    assert untouched.read_text() == "external frontend"
+    assert all(tree[key].read_bytes() == value for key, value in originals.items())
+
+
+def test_sync_refuses_unverified_canonical_sources(tree: dict[str, Path]):
+    before = tree["static_ts"].read_bytes()
+    tree["ts"].write_bytes(b"hand-edited generated payload")
+    assert sdk_drift.run(["sync-deploy"]) == 1
+    assert tree["static_ts"].read_bytes() == before
+
+
+def test_sync_refuses_absent_static_tree(tree: dict[str, Path]):
+    shutil.rmtree(tree["static"])
+    assert sdk_drift.run(["sync-deploy"]) == 1
+    assert not tree["static"].exists()
+
+
+def test_sync_rejects_symlink_target_without_mutation(tree: dict[str, Path], tmp_path: Path):
+    outside = tmp_path / "outside.ts"
+    outside.write_text("not an artifact")
+    before = tree["static_openapi"].read_bytes()
+    tree["static_ts"].unlink()
+    tree["static_ts"].symlink_to(outside)
+    assert sdk_drift.run(["sync-deploy"]) == 1
+    assert outside.read_text() == "not an artifact"
+    assert tree["static_openapi"].read_bytes() == before
+
+
+def test_sync_rejects_directory_escape(tree: dict[str, Path], tmp_path: Path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    shutil.rmtree(tree["static"] / "docs/sdks")
+    (tree["static"] / "docs/sdks").symlink_to(outside, target_is_directory=True)
+    assert sdk_drift.run(["sync-deploy"]) == 1
+    assert list(outside.iterdir()) == []
+
+
 def test_clean_tree_passes(tree: dict[str, Path], capsys: pytest.CaptureFixture[str]):
     assert sdk_drift.run(["check"]) == 0
     output = capsys.readouterr().out

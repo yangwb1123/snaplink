@@ -3,8 +3,46 @@ package core
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"time"
 )
+
+// RefreshGracePendingResponse clones a bounded intent marker. Its serialized
+// deadline must survive even a stale lookup after a backend's TTL is lost.
+func RefreshGracePendingResponse(resp map[string]any, now time.Time, window time.Duration) map[string]any {
+	_, present := resp[KeyRefreshGraceDeadline]
+	if !present || resp[KeyRefreshGracePending] != true {
+		return nil
+	}
+	deadline := RefreshGraceExpiresAt(resp, now, window)
+	if !deadline.After(now) {
+		return nil
+	}
+	body := maps.Clone(resp)
+	body[KeyRefreshGraceDeadline] = deadline.Format(time.RFC3339Nano)
+	return body
+}
+
+// RefreshGraceExpiresAt bounds cache retention to both the configured window
+// and the original grant/access deadline. Malformed deadline evidence fails
+// closed; legacy generic Remember callers without evidence retain their TTL.
+func RefreshGraceExpiresAt(resp map[string]any, now time.Time, window time.Duration) time.Time {
+	expiresAt := now.Add(window)
+	if raw, present := resp[KeyRefreshGraceDeadline]; present {
+		value, ok := raw.(string)
+		if !ok {
+			return time.Time{}
+		}
+		deadline, err := time.Parse(time.RFC3339Nano, value)
+		if err != nil {
+			return time.Time{}
+		}
+		if deadline.Before(expiresAt) {
+			expiresAt = deadline
+		}
+	}
+	return expiresAt
+}
 
 // ErrTokenValidationRejected marks malformed, unknown, expired, revoked, or
 // otherwise invalid tokens; unmarked validation errors indicate failures.
@@ -27,9 +65,10 @@ type Token struct {
 type TokenUse string
 
 const (
-	TokenUseUnknown     TokenUse = ""
-	TokenUseAccessToken TokenUse = "access_token"
-	TokenUseIDToken     TokenUse = "id_token"
+	TokenUseUnknown        TokenUse = ""
+	TokenUseAccessToken    TokenUse = "access_token"
+	TokenUseIDToken        TokenUse = "id_token"
+	TokenUseBrowserSession TokenUse = "browser_op_session"
 )
 
 // TokenClaims holds the validated claims from a token.
@@ -129,13 +168,13 @@ type TokenClaims struct {
 // IsAccessTokenClaims rejects only claims explicitly authenticated as an ID
 // token. Unknown remains accepted for custom/opaque and legacy issuers.
 func IsAccessTokenClaims(claims *TokenClaims) bool {
-	return claims != nil && claims.TokenUse != TokenUseIDToken
+	return claims != nil && (claims.TokenUse == TokenUseUnknown || claims.TokenUse == TokenUseAccessToken)
 }
 
 // IsIDTokenClaims rejects only claims explicitly authenticated as an access
 // token. Unknown remains accepted for custom/opaque and legacy issuers.
 func IsIDTokenClaims(claims *TokenClaims) bool {
-	return claims != nil && claims.TokenUse != TokenUseAccessToken
+	return claims != nil && (claims.TokenUse == TokenUseUnknown || claims.TokenUse == TokenUseIDToken)
 }
 
 // TokenClaimsMatchDeclaredType binds RFC 8693-style token_type parameters to

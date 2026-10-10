@@ -358,6 +358,20 @@ func shutdownWatchLoops(ctx context.Context, a *app) {
 	waitForStop(ctx, a.keyRotationStop)
 }
 
+// closeGraceAfterPrune includes database release in the existing drain signal,
+// keeping shutdown deadline-aware while preserving worker-before-close order.
+func closeGraceAfterPrune(pruned <-chan struct{}, store io.Closer, logger spi.Logger) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-pruned
+		if err := store.Close(); err != nil {
+			logger.Error("refresh grace database close failed", "err", err)
+		}
+	}()
+	return done
+}
+
 // shutdownSchedulers stops the background retention/prune schedulers (audit +
 // snapshot retention, push + CIBA pruners). Each is cancelled then waited on
 // under the shared deadline; a missed deadline is logged but not fatal.

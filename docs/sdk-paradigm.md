@@ -21,12 +21,13 @@ transport, session, entitlement, preferences, and runtime behaviour of each SDK
 A language is released as a package only if it appears in
 `ops/scripts/sdk_versions.py`; the paradigm gate requires every such package to
 declare a language entry, so a new published SDK cannot ship ungoverned. Go is
-declared with `package: false` because it is versioned by the root module.
-The Kotlin and Swift directories contain unpublished identity-only experiments;
-they are inventoried in [`sdks/README.md`](../sdks/README.md) but are not
-language entries in this five-language full-SDK parity gate. They must enter the
-package/version and paradigm gates before release approval, after their mobile
-contracts and platform acceptance are complete.
+a separate nested module at `sdks/go`, with `sdks/go/v...` release tags; its
+`package: false` registry entry means the central manifest-version script does
+not manage that Go module's release, not that the root module owns it.
+Kotlin and Swift are registered native SDKs still onboarding to the
+five-language full-SDK parity floor. Their source/registry entries do not prove
+mobile platform or release acceptance; those contracts must be validated
+before publication. See [`sdks/README.md`](../sdks/README.md).
 
 ## 2. Capability declaration
 

@@ -39,6 +39,7 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 	// distinct from a per-token revoke, which may leave other sessions/tabs
 	// alive. No-op unless security headers are enabled.
 	s.ClearSiteData(ctx)
+	s.clearBrowserSession(ctx)
 	ctx.JSON(http.StatusOK, map[string]any{
 		KeyStatus:  StatusLoggedOut,
 		KeyRevoked: revoked,

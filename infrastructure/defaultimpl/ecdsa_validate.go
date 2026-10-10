@@ -16,7 +16,16 @@ import (
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
-func (j *ECDSAJWTIssuer) Validate(_ context.Context, token string) (_ *sso.TokenClaims, resultErr error) {
+func (j *ECDSAJWTIssuer) Validate(ctx context.Context, token string) (*sso.TokenClaims, error) {
+	return j.validateJWT(ctx, token, false)
+}
+
+// ValidateBrowserSession accepts only the purpose-separated OP-cookie typ.
+func (j *ECDSAJWTIssuer) ValidateBrowserSession(ctx context.Context, token string) (*sso.TokenClaims, error) {
+	return j.validateJWT(ctx, token, true)
+}
+
+func (j *ECDSAJWTIssuer) validateJWT(_ context.Context, token string, browserSession bool) (_ *sso.TokenClaims, resultErr error) {
 	defer func() {
 		if resultErr != nil {
 			resultErr = fmt.Errorf("%w: %v", core.ErrTokenValidationRejected, resultErr)
@@ -34,7 +43,7 @@ func (j *ECDSAJWTIssuer) Validate(_ context.Context, token string) (_ *sso.Token
 		return nil, errors.New("ecdsa: token revoked")
 	}
 
-	h, err := j.parseAndGuardHeader(parts[0])
+	h, err := j.parseAndGuardHeaderForPurpose(parts[0], browserSession)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +65,10 @@ func (j *ECDSAJWTIssuer) Validate(_ context.Context, token string) (_ *sso.Token
 // reaching the ECDSA verify path — the structural guarantee that an
 // RP can't pick the verification algorithm.
 func (j *ECDSAJWTIssuer) parseAndGuardHeader(headerB64 string) (ecdsaHeader, error) {
+	return j.parseAndGuardHeaderForPurpose(headerB64, false)
+}
+
+func (j *ECDSAJWTIssuer) parseAndGuardHeaderForPurpose(headerB64 string, browserSession bool) (ecdsaHeader, error) {
 	headerBytes, err := base64.RawURLEncoding.DecodeString(headerB64)
 	if err != nil {
 		return ecdsaHeader{}, fmt.Errorf("ecdsa: header decode: %w", err)
@@ -67,7 +80,11 @@ func (j *ECDSAJWTIssuer) parseAndGuardHeader(headerB64 string) (ecdsaHeader, err
 	if _, ok := supportedES256Algs[h.Alg]; !ok {
 		return ecdsaHeader{}, fmt.Errorf("ecdsa: alg %q not in allowlist", h.Alg)
 	}
-	if h.Typ != "" {
+	if browserSession {
+		if h.Typ != core.JWTTypBrowserSession {
+			return ecdsaHeader{}, errors.New("ecdsa: not an OP identity cookie")
+		}
+	} else if h.Typ != "" {
 		if _, ok := supportedJWTTypes[h.Typ]; !ok {
 			return ecdsaHeader{}, fmt.Errorf("ecdsa: typ %q not in allowlist", h.Typ)
 		}

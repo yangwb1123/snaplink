@@ -103,6 +103,14 @@ const clientSchemaV6 = `
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS redirect_uri_patterns TEXT NOT NULL DEFAULT '[]';
 `
 
+// Login policies cannot be inferred from caller-editable attributes. Existing
+// rows retain the effective zero-value policies used before this migration.
+const clientSchemaV7 = `
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS skip_consent INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS consent_refresh_interval BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS allow_passwordless_only INTEGER NOT NULL DEFAULT 0;
+`
+
 var clientMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: clientSchema},
 	{Version: 2, Name: "secret_rotation_and_trust_score", SQL: clientSchemaV2},
@@ -110,6 +118,7 @@ var clientMigrations = []migrate.Migration{
 	{Version: 4, Name: "client_secret_expiry", SQL: clientSchemaV4},
 	{Version: 5, Name: "client_id_token_signed_response_alg", SQL: clientSchemaV5},
 	{Version: 6, Name: "client_redirect_uri_patterns", SQL: clientSchemaV6},
+	{Version: 7, Name: "client_login_policies", SQL: clientSchemaV7},
 }
 
 // Statements derived once from clientColumns so the INSERT / upsert / UPDATE /

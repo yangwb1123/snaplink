@@ -187,6 +187,7 @@ const (
 	ErrMissingUserCode            = "missing_user_code"
 	ErrInvalidUserCode            = "invalid_user_code"
 	ErrLoginRequired              = "login_required"
+	ErrTemporarilyUnavailable     = "temporarily_unavailable"
 	ErrInteractionRequired        = "interaction_required"
 	ErrConsentRequired            = "consent_required"
 	ErrAccountSelectionRequired   = "account_selection_required"
