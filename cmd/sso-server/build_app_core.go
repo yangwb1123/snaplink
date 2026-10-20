@@ -57,7 +57,7 @@ func (b *appBuilder) wireIdentitySigning() error {
 	// accepted so an operator doing a canary rollback sees a clear error
 	// instead of silent data corruption. The check is SQLite-dialect-specific
 	// (it probes sqlite_master), so skip it for postgres-backed stores — their
-	// own migrate runs at construction; a postgres canary gate is a follow-up.
+	// constructors enforce native migration maxima before this helper.
 	b.schemaCtx = context.Background()
 	identityIsPG := strings.EqualFold(strings.TrimSpace(cfg.Identity.Backend), "postgres")
 	if !identityIsPG {
@@ -98,7 +98,7 @@ func (b *appBuilder) wireSigningIssuer() error {
 		sso.TokenStrategySession: sessionIssuer,
 	}
 
-	b.opts = append(cfg.ServerOptions(),
+	b.opts = append(append(b.opts, cfg.ServerOptions()...),
 		sso.WithRouter(sso.NewStdRouter()),
 		sso.WithLogger(logger),
 		sso.WithTracing("sso-server"), // single correlation switch: span tree + X-Trace-Id/X-Request-Id + audit trace_id; no-op until tracing.Init activates
@@ -478,6 +478,7 @@ func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.passwordResetRevoker = b.passwordResetRevoker
 	a.pushPruneCancel, a.pushPruneDone = b.pushPruneCancel, b.pushPruneDone
 	a.cibaPruneCancel, a.cibaPruneDone = b.cibaPruneCancel, b.cibaPruneDone
+	a.refreshGracePruneCancel, a.refreshGracePruneDone = b.refreshGracePruneCancel, b.refreshGracePruneDone
 	a.netStop, a.netCancel = b.netStop, b.netCancel
 	a.drReadiness, a.drReplicationCancel, a.drReplicationDone = drFields(rt.dr)
 	a.configAuditStore = b.configAuditStore

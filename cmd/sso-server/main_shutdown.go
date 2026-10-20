@@ -74,6 +74,10 @@ func applyReload(logger spi.Logger, reloader *configreload.Reloader) {
 }
 
 func (b *appBuilder) closeBuildFailure() {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	stopScheduler(ctx, b.logger, b.refreshGracePruneCancel, b.refreshGracePruneDone,
+		"refresh grace pruner did not exit cleanly")
 	closeIfCloser(b.tenantUserStore)
 	if b.netCancel != nil {
 		b.netCancel()

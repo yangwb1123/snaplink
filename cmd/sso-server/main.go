@@ -263,7 +263,7 @@ type app struct {
 	cibaPruneDone   <-chan struct{}
 
 	// refreshGracePruneCancel + refreshGracePruneDone — same pattern for
-	// the refresh_grace_cache cleanup goroutine. SQLite backend only.
+	// the refresh_grace_cache cleanup/close lifecycle (SQLite/PostgreSQL).
 	refreshGracePruneCancel context.CancelFunc
 	refreshGracePruneDone   <-chan struct{}
 
