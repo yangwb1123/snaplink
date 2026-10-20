@@ -2229,10 +2229,11 @@ paths:
       summary: Revoke the current bearer token and / or named session.
       description: |
         Body is optional; bearer-only logouts are allowed. When both
-        a session id and a bearer are supplied, both are revoked
-        (covers the "log me out everywhere" case where the SPA holds
-        a JWT but the device that started the session is gone). When OIDC
-        Back-Channel Logout is enabled, RP delivery survives client disconnect,
+        a session id and a bearer are supplied, both are revoked. This does
+        not by itself revoke every independently authorized RP session.
+        Success and error responses carry `Cache-Control: no-store` and
+        `Pragma: no-cache`. When OIDC Back-Channel Logout is enabled,
+        RP delivery survives client disconnect,
         retries transient failures up to three total attempts within one
         five-second budget, and emits one final success/failure audit result.
       operationId: postLogout
@@ -2247,12 +2248,18 @@ paths:
       responses:
         "200":
           description: Logged out.
+          headers:
+            Cache-Control: { schema: { type: string, enum: [no-store] } }
+            Pragma: { schema: { type: string, enum: [no-cache] } }
           content:
             application/json:
               schema:
                 type: object
         "400":
           description: Neither session id nor bearer supplied.
+          headers:
+            Cache-Control: { schema: { type: string, enum: [no-store] } }
+            Pragma: { schema: { type: string, enum: [no-cache] } }
           content:
             application/json:
               schema:

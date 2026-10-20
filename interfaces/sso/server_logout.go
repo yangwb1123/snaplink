@@ -15,6 +15,7 @@ import (
 )
 
 func (s *Server) handleLogout(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
 	var req struct {
 		SessionID string `json:"session_id"`
 	}
