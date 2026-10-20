@@ -15,6 +15,9 @@ import (
 
 // matter whether MFA gated the request or not.
 func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.Request, client *Client) {
+	if result.AuthTime.IsZero() {
+		result.AuthTime = time.Now()
+	}
 	state := req.State
 	if s.upsertLoginUser(ctx, result, state) {
 		return
@@ -226,7 +229,7 @@ func (s *Server) augmentDirectMintResponse(ctx HandlerContext, result *AuthResul
 			// later refresh rotation re-stamps the SAME authentication context
 			// (mirrors the access token's Subject above) instead of collapsing
 			// amr to the provider and dropping acr/auth_time.
-			oauth.RefreshAuthContext{AMR: handler.AmrForResult(result), ACR: result.AchievedACR, AuthTime: time.Now(), Roles: result.Roles},
+			oauth.RefreshAuthContext{AMR: handler.AmrForResult(result), ACR: result.AchievedACR, AuthTime: result.AuthTime, Roles: result.Roles},
 			client.RefreshTokenTTL, "") // login flow: no DPoP at /auth/login; refresh token unbound
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", result.UserID)
@@ -306,7 +309,7 @@ func (s *Server) emitLoginIDToken(ctx HandlerContext, result *AuthResult, req *l
 		Subject:              issuedSub,
 		Audience:             client.ID,
 		Nonce:                req.Nonce,
-		AuthTime:             time.Now(),
+		AuthTime:             result.AuthTime,
 		AMR:                  handler.AmrForResult(result),
 		ACR:                  result.AchievedACR,
 		Claims:               claims,

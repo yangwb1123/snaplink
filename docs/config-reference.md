@@ -109,6 +109,14 @@ waits for the replay worker to stop before Redis closes.
 | `security.client_registration_rate_limit.{disabled,per_sec,burst}` | Narrow, IP-keyed rate limit on `POST /register` (RFC 7591 DCR) — UNLIKE every other `security.*` block above, the section being absent/zero is NOT "disabled": `sso.NewServer` always seeds a conservative built-in limiter (5 req/min/IP, burst 5) so an unauthenticated registration endpoint is never left completely unthrottled just because an operator didn't configure it. Set `disabled: true` to turn it off entirely (e.g. already throttled at an edge/WAF); set `per_sec`+`burst` (both `> 0`) to override the built-in rate without disabling it. Independent of `security.rate_limit` (which already supports a `/register` prefix rule via `security.rate_limit.prefixes`, but only takes effect when `security.rate_limit.enabled` is also true) — this guard needs no such opt-in. Rejects with the standard `rate_limited` 429 + `Retry-After` (see Rate limiting + payload in [error-codes.md](error-codes.md)). Maps to `sso.WithClientRegistrationRateLimit`; not part of the `security.rate_limit.*` SIGHUP hot-reload rebuild (see Hot Reload below) — a change here needs a restart |
 | `security.cors.{enabled,allowed_origins,allowed_methods,allowed_headers,exposed_headers,allow_credentials,max_age,path_overrides}` | CORS is installed only when `enabled: true` and either the default `allowed_origins` list or `path_overrides` is non-empty; an empty default list with no overrides is identity/no CORS. Origins are exact matches unless the list contains `*`; with `allow_credentials: true`, `*` echoes the request origin as required by the CORS specification. `path_overrides` maps URL path prefixes to one-level policies; the longest matching prefix wins, each key must start with `/`, and an override's `enabled` field is ignored (an empty `allowed_origins` entry emits no CORS headers for that prefix). Changes require a restart; this block is not in the SIGHUP hot-reload set |
 
+For a verified login whose authenticator omitted `AuthResult.AuthTime`, the
+login terminal stage now records one authentication time before consent and
+session/code/token side effects. An existing authenticator or browser-resume
+time is never replaced. Canonical session metadata, the OP cookie, code-bound
+access/ID tokens and direct-mint access/ID/refresh lineage carry that same event;
+slow session creation or delayed code exchange cannot make it newer. This also
+applies with browser SSO disabled and adds no configuration switch.
+
 ## Signing Keys
 
 | Key | Effect |
