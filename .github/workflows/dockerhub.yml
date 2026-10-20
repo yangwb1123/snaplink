@@ -123,17 +123,27 @@ jobs:
             "oci-archive:$ARCHIVE" docker-daemon:snaplink/sso-server:release-test
       - name: Native startup, token and restart acceptance
         run: python3 ops/scripts/container_smoke.py --image snaplink/sso-server:release-test
-      - name: Block high and critical image findings
+      - name: Extract original OCI layout for scanning
+        env:
+          ARCHIVE: ${{ runner.temp }}/sso-${{ matrix.arch }}.oci.tar
+          LAYOUT: ${{ runner.temp }}/sso-scan-${{ matrix.arch }}
+        run: python3 ops/scripts/container_archive.py "$ARCHIVE" "$LAYOUT" --platform "linux/${{ matrix.arch }}"
+      - name: Block high and critical findings in the original OCI bytes
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: snaplink/sso-server:release-test
+          scan-type: image
+          input: ${{ runner.temp }}/sso-scan-${{ matrix.arch }}
+          format: json
+          output: ${{ runner.temp }}/sso-${{ matrix.arch }}-scan.json
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: false
       - uses: actions/upload-artifact@v4
         with:
           name: dockerhub-sso-${{ matrix.arch }}
-          path: ${{ runner.temp }}/sso-${{ matrix.arch }}.oci.tar
+          path: |
+            ${{ runner.temp }}/sso-${{ matrix.arch }}.oci.tar
+            ${{ runner.temp }}/sso-${{ matrix.arch }}-scan.json
           compression-level: 0
           if-no-files-found: error
 
