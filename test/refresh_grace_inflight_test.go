@@ -23,13 +23,16 @@ import (
 type observedRefreshStore struct {
 	*defaultimpl.MemoryRefreshTokenStore
 	reused chan struct{}
+	trace  *inflightTrace
 }
 
 func (s *observedRefreshStore) Consume(ctx context.Context, token string) (*oauth.RefreshToken, error) {
+	defer s.trace.finish(s.trace.begin(inflightConsume))
 	info, err := s.MemoryRefreshTokenStore.Consume(ctx, token)
 	if errors.Is(err, oauth.ErrRefreshTokenReused) {
 		select {
 		case s.reused <- struct{}{}:
+			s.trace.mark(inflightReuseSent)
 		default:
 		}
 	}
@@ -41,17 +44,23 @@ type blockedRefreshIssuer struct {
 	first   atomic.Bool
 	entered chan struct{}
 	release chan struct{}
+	trace   *inflightTrace
 }
 
 func (i *blockedRefreshIssuer) Issue(ctx context.Context, subject *core.Subject, scopes []string) (*core.Token, error) {
+	defer i.trace.finish(i.trace.begin(inflightIssue))
 	if i.first.CompareAndSwap(false, true) {
+		i.trace.mark(inflightIssuerEntered)
 		close(i.entered)
 		select {
 		case <-i.release:
+			i.trace.mark(inflightIssuerReleased)
 		case <-ctx.Done():
+			i.trace.mark(inflightIssuerCanceled)
 			return nil, ctx.Err()
 		}
 	}
+	defer i.trace.finish(i.trace.begin(inflightSigning))
 	return i.TokenIssuer.Issue(ctx, subject, scopes)
 }
 
@@ -107,22 +116,24 @@ func (s completedOnlyGraceStore) Lookup(token string, now time.Time) (map[string
 
 func newInflightServers(t *testing.T, grace tokengrant.RefreshGraceStore) (*httptest.Server, *httptest.Server, *observedRefreshStore, *blockedRefreshIssuer) {
 	t.Helper()
+	trace := newInflightTrace()
 	clients := defaultimpl.NewMemoryClientStore()
 	for _, id := range []string{rfClientID, "other-client"} {
 		clients.AddSeed(&sso.Client{ID: id, Secret: rfSecret, Active: true, TokenStrategy: "jwt"})
 	}
-	store := &observedRefreshStore{MemoryRefreshTokenStore: defaultimpl.NewMemoryRefreshTokenStore(), reused: make(chan struct{}, 1)}
+	store := &observedRefreshStore{MemoryRefreshTokenStore: defaultimpl.NewMemoryRefreshTokenStore(), reused: make(chan struct{}, 1), trace: trace}
 	for _, token := range []string{"original", "probe"} {
 		if err := store.Issue(t.Context(), token, &oauth.RefreshToken{UserID: rfUser, ClientID: rfClientID, FamilyID: "family", Scopes: []string{"read"}, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	issuer := &blockedRefreshIssuer{TokenIssuer: defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute)), entered: make(chan struct{}), release: make(chan struct{})}
-	opts := []sso.Option{sso.WithClientStore(clients), sso.WithTokenIssuer("jwt", issuer), sso.WithDefaultTokenStrategy("jwt"), sso.WithRefreshTokenStore(store, time.Hour), sso.WithRefreshRotationGraceStore(grace)}
-	first := httptest.NewServer(sso.NewServer(opts...).Handler())
-	second := httptest.NewServer(sso.NewServer(opts...).Handler())
+	issuer := &blockedRefreshIssuer{TokenIssuer: defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute)), entered: make(chan struct{}), release: make(chan struct{}), trace: trace}
+	opts := []sso.Option{sso.WithClientStore(&inflightTraceClients{MemoryClientStore: clients, trace: trace}), sso.WithTokenIssuer("jwt", issuer), sso.WithDefaultTokenStrategy("jwt"), sso.WithRefreshTokenStore(store, time.Hour), sso.WithRefreshRotationGraceStore(traceInflightGrace(grace, trace))}
+	first := httptest.NewServer(traceInflightHandler(trace, inflightFirstHTTP, sso.NewServer(opts...).Handler()))
+	second := httptest.NewServer(traceInflightHandler(trace, inflightSecondHTTP, sso.NewServer(opts...).Handler()))
 	t.Cleanup(first.Close)
 	t.Cleanup(second.Close)
+	t.Cleanup(func() { trace.report(t.Failed(), t.Logf) })
 	return first, second, store, issuer
 }
 
@@ -141,17 +152,33 @@ func TestRefreshGraceInflightAcrossServers(t *testing.T) {
 					grace = completedOnlyGraceStore{store: grace}
 				}
 				first, second, store, issuer := newInflightServers(t, grace)
+				trace := issuer.trace
+				baselinePhase := trace.begin(inflightBaselineRequest)
 				baseline := postNamedRefresh(t.Context(), second.URL, rfClientID, "missing")
+				trace.finish(baselinePhase)
 				if baseline.err != nil || baseline.status != http.StatusBadRequest || baseline.body[core.KeyError] != core.ErrInvalidGrant {
 					t.Fatal("unknown refresh did not return the oracle-safe baseline")
 				}
 				var release sync.Once
-				unblock := func() { release.Do(func() { close(issuer.release) }) }
+				unblock := func() {
+					release.Do(func() {
+						phase := trace.begin(inflightFixtureRelease)
+						close(issuer.release)
+						trace.finish(phase)
+					})
+				}
 				defer unblock()
 				winner := make(chan inflightResponse, 1)
-				go func() { winner <- postInflightRefresh(first.URL, rfClientID) }()
+				trace.mark(inflightWinnerLaunch)
+				go func() {
+					phase := trace.begin(inflightWinnerRequest)
+					response := postInflightRefresh(first.URL, rfClientID)
+					trace.finish(phase)
+					winner <- response
+				}()
 				select {
 				case <-issuer.entered:
+					trace.mark(inflightIssuerObserved)
 				case <-time.After(3 * time.Second):
 					t.Fatal("winner did not reach blocked issuance")
 				}
@@ -165,9 +192,16 @@ func TestRefreshGraceInflightAcrossServers(t *testing.T) {
 				loser := make(chan inflightResponse, 1)
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				go func() { loser <- postInflightRefreshContext(ctx, second.URL, client) }()
+				trace.mark(inflightLoserLaunch)
+				go func() {
+					phase := trace.begin(inflightLoserRequest)
+					response := postInflightRefreshContext(ctx, second.URL, client)
+					trace.finish(phase)
+					loser <- response
+				}()
 				select {
 				case <-store.reused:
+					trace.mark(inflightReuseObserved)
 				case <-time.After(3 * time.Second):
 					t.Fatal("loser did not observe atomic consume reuse")
 				}
@@ -205,7 +239,9 @@ func TestRefreshGraceInflightAcrossServers(t *testing.T) {
 				if mode == "completed-during-wait" && (other.status != http.StatusOK || other.body[core.KeyRefreshToken] != issued.body[core.KeyRefreshToken]) {
 					t.Fatal("concurrent retry did not replay the completed successor")
 				}
+				retryPhase := trace.begin(inflightRetryRequest)
 				retry := postInflightRefresh(second.URL, rfClientID)
+				trace.finish(retryPhase)
 				if retry.err != nil || retry.status != http.StatusOK || retry.body[core.KeyRefreshToken] != issued.body[core.KeyRefreshToken] {
 					t.Fatal("bounded pending denial killed the valid family")
 				}
