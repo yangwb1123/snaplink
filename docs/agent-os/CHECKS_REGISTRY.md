@@ -29,8 +29,9 @@ Catalog of the Python engineering helpers. Committed Go gates are specified in
 | `sdk_drift.py` | Regenerates canonical TypeScript/Python SDKs in a temporary tree and sweeps optional deploy copies for byte drift | `sdk-drift check`, `make sdk-drift-check` |
 | `ops/scripts/module_catalog.py` | Strict module/profile validation and capability planning | `modules check`, `modules list`, `modules plan`, `modules graph`, `modules why` |
 | `ops/scripts/capability_registry.py` | Validates product availability against runtime gates/module capabilities and detects generated feature-matrix drift | `capabilities check`, `capabilities generate`, `capabilities list` |
-| `ops/scripts/sdk_surface.py` | Orchestrates generated-SDK registry validation, explicit-baseline operation/schema diffing, and regeneration | `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `sdk-surface generate`, `sdk-surface list` |
-| `ops/scripts/sdk_versions.py` | Reads the four fixed SDK manifests, validates each package's SemVer 2.0.0 independently, and checks the TypeScript lock root | `sdk-surface versions`; also runs inside `sdk-surface check` |
+| `ops/scripts/sdk_surface.py` | Orchestrates generated-SDK registry/coverage validation, explicit-baseline operation/schema diffing, and regeneration | `sdk-surface check`, `sdk-surface coverage`, `sdk-surface diff --baseline-ref <ref>`, `sdk-surface generate`, `sdk-surface list` |
+| `ops/scripts/sdk_surface_coverage.py` | Strict local decision sidecar, duplicate-safe HTTP inventory and deterministic declaration/boundary report; not a second generation allowlist | Called by `sdk-surface check` and `sdk-surface coverage` |
+| `ops/scripts/sdk_versions.py` | Audits seven fixed SDK identities, validates manifest SemVer where present, and checks the TypeScript lock root; Go/Swift versions derive from their own tags | `sdk-surface versions`; also runs inside `sdk-surface check` |
 | `ops/scripts/sdk_toml.py` | Stdlib TOML loader with a fixed-format fallback for older repository tooling | Called by `sdk_versions.py` |
 | `ops/scripts/sdk_schema.py` | Bounded `components.schemas` structural compatibility comparison using PyYAML; conservative for composition/unsupported keyword changes | Called by `sdk-surface diff` |
 | `ops/scripts/sdk_baseline.py` | Reads registry + OpenAPI from one local git ref without fetch/shell, or reports a closed baseline error | Called by `sdk-surface diff` |
@@ -49,7 +50,7 @@ Run `python cli.py check-test` for check-module tests and
 |---|---|
 | Fast loop | `check`, `check-filesize` |
 | Composite reports | `harness`, `accept`, `evaluate` |
-| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `check-proto-openapi-parity`, `adapters`, `capabilities check`, `sdk-surface versions`, `sdk-surface check`, `sdk-surface diff --baseline-ref <ref>`, `sdk-drift check`, `sdk-paradigm check`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
+| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `check-proto-openapi-parity`, `adapters`, `capabilities check`, `sdk-surface versions`, `sdk-surface check`, `sdk-surface coverage`, `sdk-surface diff --baseline-ref <ref>`, `sdk-drift check`, `sdk-paradigm check`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
 | Scaffolding | `generate` |
 | Diagnostics | `diagnose`, `trend`, `health-report`, `self-test` |
 | Test execution | `test`, `race`, `bench`, `check-test`, `skill-test` |
@@ -75,15 +76,31 @@ Run `python cli.py check-test` for check-module tests and
   `make test-e2e`.
 - `capability_registry.py` describes product-level capability domains, not
   every protocol row or every profile's resolved dependency closure.
-- `sdk-surface versions` is a read-only, non-networked gate over four audited
-  paths: the TypeScript `package.json` and `package-lock.json`, Python
-  `pyproject.toml`, Rust `Cargo.toml`, and PHP `composer.json`. It rejects
+- `sdk-surface versions` is a read-only, non-networked gate over seven fixed SDK
+  identities: TypeScript (and its lock root), Python, Rust, PHP, Kotlin, Swift
+  and the independent `sdks/go` module. Go and Swift derive release versions
+  from tags, not manifest version fields; central auditing does not transfer Go
+  publication ownership to the root module. It rejects
   missing or malformed manifests, missing/non-string/invalid SemVer versions,
   and a TypeScript lock-root mismatch. Each package version is validated
   independently; cross-package version equality is not required. It reads only
   package-root metadata, never dependency versions, and does not publish or
   change any file. `sdk-surface check` and `make ci` run the same gate;
   versioned package publication remains an external release boundary.
+- `sdk-surface check` also requires exact coverage decisions in
+  `ops/build/sdk-surface-coverage.json`: every OpenAPI HTTP operation is either
+  selected by the sole generator allowlist or explicitly unselected with matching
+  operationId/method/path. New unclassified operations, stale/overlapping/duplicate
+  exclusions, missing group reasons, duplicate raw YAML keys/operationIds, invalid
+  versions/fields/text and escaping/missing file references fail closed. There is
+  no automatic catch-all exclusion or network access. `sdk-surface coverage`
+  prints stable sorted JSON with decisions, media types and OpenAPI security
+  declarations (operation/root/unspecified, preserving explicit empty arrays),
+  plus manually maintained exposure/authentication/default/licensing boundaries.
+  This is decision completeness, not full API support, runtime exposure/auth
+  verification, a license grant or platform acceptance. Selected HTML/SSE methods
+  retain their existing generator limitations. Tests live in
+  `test_sdk_surface_coverage.py`; no historical diff baseline needs the sidecar.
 - `sdk-surface diff` compares the committed registry's group/operation data and,
   when available, a bounded structural subset of OpenAPI `components.schemas`.
   It requires exactly one explicit local baseline (`--baseline-ref` or
@@ -107,7 +124,11 @@ Run `python cli.py check-test` for check-module tests and
   TypeScript and Python clients. The registry is the only source of
   truth; the checker never infers a capability from source. A `present` entry
   must name a real file and a symbol the checker finds in it, so renaming a
-  symbol fails until the registry is edited deliberately. A `missing` entry must
+  symbol fails until the registry is edited deliberately. This presence check is
+  not proof of public access or executed native fixtures. Swift remains onboarding;
+  its internal transport/store seams are `missing`, and existing but unaccepted
+  clear/entitlement source is explicitly recorded as validation debt. The narrow
+  `test_sdk_paradigm_source.py` audit does not execute Swift or change parity. A `missing` entry must
   name the wave that closes it and may not name a file or symbol. A capability
   declared `parity` must be present in every language, so the eight parity
   capabilities cannot erode; downgrading one to `divergent` is a contract change

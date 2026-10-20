@@ -1,0 +1,281 @@
+{
+  "$schema": "./sdk-surface-coverage.schema.json",
+  "schema_version": 1,
+  "included_groups": [
+    {
+      "id": "admin",
+      "rationale": "Preserve the existing curated management allowlist. It is not the entire admin API: configuration writes, expiring clients and permission catalog/SoD remain explicit SDK debt. Selected HTML API-docs and SSE event methods remain compatible but do not prove streaming or HTML client support.",
+      "exposure": "Requires actual admin/gateway composition and each operation's stores or handlers; a documented or selected method does not mount a route.",
+      "authentication": "Admin bearer and admin:read/admin:write method scopes plus operation-specific governance; see the middleware, not merely OpenAPI security.",
+      "defaults": "admin_api gate omitted/true permits already wired routes; false hides gated routes. Optional stores, snapshots, replay and docs UI remain separately configured.",
+      "licensing": "Admin selection grants no commercial entitlement. Build profiles, tenant plans and deployment rights remain separate under docs/commercial-model.md.",
+      "references": ["interfaces/sso/server_routes_admin.go", "interfaces/admin/middleware.go", "docs/config-reference.md", "docs/commercial-model.md"]
+    },
+    {
+      "id": "auth",
+      "rationale": "Preserve the existing OAuth/OIDC, login and credential-lifecycle generated methods; CIBA remains separately excluded. Selection is not complete flow or browser acceptance.",
+      "exposure": "Core SSO mounting plus conditional self-registration, password and registration stores/handlers; browser UIs remain external.",
+      "authentication": "Endpoint-specific client authentication, PKCE, credential or registration bearer contracts. An absent OpenAPI bearer declaration does not imply anonymous access.",
+      "defaults": "Existing endpoint/store/feature conditions are unchanged; generating a method neither enables a grant nor registers a client.",
+      "licensing": "No license policy is added by generation; artifact/profile, entitlement and deployment boundaries remain separate.",
+      "references": ["interfaces/sso/server_routes.go", "docs/openapi.yaml", "docs/config-reference.md", "docs/commercial-model.md"]
+    },
+    {
+      "id": "authorization",
+      "rationale": "Preserve selected FGA/ReBAC tuple, check and graph calls without treating the SDK as the authorization authority.",
+      "exposure": "ReBAC store and engine wiring determine the mounted product endpoints.",
+      "authentication": "Machine client-credentials and endpoint-specific scope/tenant checks; OpenAPI security is only the published declaration.",
+      "defaults": "No store/engine or policy is created by this inventory; feature/composition conditions remain with the server.",
+      "licensing": "Licensed feature-to-configuration mapping is operator-owned, not a runtime license check performed by this tool.",
+      "references": ["interfaces/sso/server_routes.go", "docs/openapi.yaml", "docs/commercial-model.md"]
+    },
+    {
+      "id": "discovery",
+      "rationale": "Retain the historical mixed metadata/bootstrap/probe group, including the HTML check-session iframe. JSON-oriented generation is not proof of every selected media type or browser behavior.",
+      "exposure": "Discovery and JWKS reflect server state; setup, netpolicy, version preview and iframe have their own wiring/gates.",
+      "authentication": "Operation-specific: GET /api/v1/netpolicy/resolve-me is intentionally open current-request peer/host classification using r.RemoteAddr and r.Host, with no bearer authentication by this handler or AdminMiddleware. Managed /api/v1/netpolicy/classify (arbitrary inputs) and /api/v1/netpolicy/policies* instead require admin bearer with method scopes (GET admin:read, mutations admin:write) when AdminMiddleware is installed; SDK/custom compositions must supply equivalent protection, and stock admin-disabled wiring leaves these managed routes unauthenticated. Public metadata/probes and guarded bootstrap retain separate contracts. Missing OpenAPI security alone does not prove public access.",
+      "defaults": "setup_wizard.enabled defaults false; omitted feature gates do not construct missing dependencies. Other defaults are operation-specific.",
+      "licensing": "Discovery presence or SDK selection does not grant licensed features or establish production topology.",
+      "references": ["interfaces/sso/server_routes.go", "interfaces/sso/server_routes_admin.go", "platform/netpolicy/handlers.go", "platform/netpolicy/handlers_test.go", "interfaces/admin/middleware.go", "test/admin_middleware_test.go", "cmd/sso-server/build_http.go", "docs/config-reference.md", "docs/openapi.yaml", "docs/commercial-model.md"]
+    },
+    {
+      "id": "federation",
+      "rationale": "Retain the existing federation metadata/trust-chain selection without claiming interoperability certification.",
+      "exposure": "Federation configuration, keys and endpoint wiring plus the live federation gate determine availability.",
+      "authentication": "Federation trust, signature, SSRF and endpoint validation are separate from any OpenAPI bearer declaration.",
+      "defaults": "Omitted/true gate permits configured routes only; it does not provision trust anchors, keys or subordinate stores.",
+      "licensing": "Federation grants map to precompiled modules/configuration under the commercial model; selection is not a license decision.",
+      "references": ["interfaces/sso/server_routes.go", "docs/config-reference.md", "docs/commercial-model.md"]
+    },
+    {
+      "id": "me",
+      "rationale": "Preserve selected subject device, permission, role, menu and activation/account projections; notifications remain explicitly unselected SDK debt.",
+      "exposure": "Subject-facing endpoints require their provider/store/activation wiring; commercial management is not mounted by this group.",
+      "authentication": "Current subject bearer and endpoint-specific client/tenant binding; activation tickets do not replace bearer authorization.",
+      "defaults": "Selection changes no self-service gate, device store or activation provider default.",
+      "licensing": "Account-context is a server-derived experience projection, not client authority or a grant to paid features.",
+      "references": ["interfaces/sso/server_me.go", "docs/openapi.yaml", "docs/config-reference.md", "docs/commercial-model.md"]
+    },
+    {
+      "id": "mesh",
+      "rationale": "Retain the existing mesh external-authorization method; this is not a generic browser API or a new trusted-header contract.",
+      "exposure": "Requires the mesh/gateway deployment and its actual authorization wiring.",
+      "authentication": "Validates the intercepted bearer with DPoP/mTLS sender constraints and residency; derived X-Auth-* never trusts request identity. Trusted peer/proxy handling belongs to the mesh owner.",
+      "defaults": "No trusted proxy, peer identity or edge header policy is configured by generation.",
+      "licensing": "Artifact availability and deployment rights remain independent from this selected method.",
+      "references": ["interfaces/sso/mesh_authz.go", "docs/openapi.yaml", "docs/config-reference.md", "docs/commercial-model.md"]
+    },
+    {
+      "id": "operational",
+      "rationale": "Preserve status/liveness/readiness clients without claiming metrics support, health correctness, capacity or availability SLA.",
+      "exposure": "Stock probes and runtime status depend on the HTTP composition; probes remain outside rate limiting.",
+      "authentication": "Operation-specific probe/status declarations; edge exposure must be configured separately.",
+      "defaults": "Readiness checks reflect configured dependencies; selection does not establish a healthy backend or production acceptance.",
+      "licensing": "A full binary or reachable probe is not an HA subscription or operational SLA.",
+      "references": ["interfaces/sso/server_routes.go", "docs/openapi.yaml", "docs/config-reference.md", "docs/commercial-model.md"]
+    },
+    {
+      "id": "scim",
+      "rationale": "Retain the selected SCIM provisioning operations; generated request/response methods are not complete SCIM conformance acceptance.",
+      "exposure": "SCIM composition, stores and provisioning handlers must actually be installed.",
+      "authentication": "Stock fronts SCIM with AdminMiddleware bearer plus admin:read/admin:write and operation-specific tenant/subject rules; custom compositions must supply equivalent authorization.",
+      "defaults": "Stock SCIM requires admin auth enabled; Groups additionally needs scim.groups.enabled and a permissions provider. This coverage decision enables no route or permission.",
+      "licensing": "SCIM feature grants are mapped to precompiled modules/configuration by the deployment operator under the commercial model.",
+      "references": ["cmd/sso-server/build_http.go", "interfaces/admin/middleware.go", "docs/openapi.yaml", "docs/config-reference.md", "docs/commercial-model.md"]
+    },
+    {
+      "id": "self-service",
+      "rationale": "Preserve the existing self-service subset; selected methods do not cover notification REST/SSE or supply a browser portal.",
+      "exposure": "Live self_service gate plus each password/MFA/identity/consent/privacy/org store and handler; branding is independently gated.",
+      "authentication": "Subject bearer, ownership and tenant checks, with endpoint-specific invitation/verification credentials; not every method shares one bearer rule.",
+      "defaults": "Omitted/true gates permit wired routes only; individual optional stores can leave routes unmounted.",
+      "licensing": "SDK calls grant no commercial entitlement, and external portal deployment remains separately owned.",
+      "references": ["interfaces/sso/server_me.go", "docs/config-reference.md", "docs/openapi.yaml", "docs/commercial-model.md"]
+    },
+    {
+      "id": "ssf",
+      "rationale": "Retain selected Shared Signals metadata, receive and stream-management methods without inferring delivery/recovery or certification acceptance.",
+      "exposure": "CAEP/SSF receiver, transmitter and management wiring plus live feature gating determine availability.",
+      "authentication": "Receiver SET signature/issuer/audience/replay validation and management authorization are distinct from metadata and from OpenAPI bearer declarations.",
+      "defaults": "The caep gate cannot construct an unwired receiver; SDK selection changes no fail-closed or delivery policy.",
+      "licensing": "Module/configuration and commercial entitlements remain separate; no license enforcement is introduced here.",
+      "references": ["interfaces/sso/server_routes.go", "docs/config-reference.md", "docs/openapi.yaml", "docs/commercial-model.md"]
+    },
+    {
+      "id": "userinfo",
+      "rationale": "Preserve the generated OIDC subject-profile read, not full OIDC or ID-token verification acceptance.",
+      "exposure": "OIDC endpoint wiring and live oidc gate determine reachability.",
+      "authentication": "Validated subject bearer with endpoint scope/claims rules; the server remains authoritative.",
+      "defaults": "Omitted/true gate permits the configured endpoint; no credential or session is created by generation.",
+      "licensing": "The generated operation is not a paid-feature grant or a publication decision.",
+      "references": ["interfaces/sso/server_routes.go", "docs/openapi.yaml", "docs/config-reference.md", "docs/commercial-model.md"]
+    },
+    {
+      "id": "webauthn",
+      "rationale": "Retain existing WebAuthn ceremony methods without claiming browser/device acceptance or primary-passkey recovery.",
+      "exposure": "Authenticator/registrar stores and actual ceremony mounting are independently required.",
+      "authentication": "Ceremony challenge, origin/RP and session/user validation plus endpoint-specific bearer rules; no oracle distinction is added.",
+      "defaults": "Selection does not enable an authenticator, provision a credential or install a browser UI.",
+      "licensing": "Configured authenticator availability and commercial deployment rights remain independent from the allowlist.",
+      "references": ["docs/openapi.yaml", "docs/config-reference.md", "docs/commercial-model.md"]
+    }
+  ],
+  "excluded_groups": [
+    {
+      "id": "ciba",
+      "rationale": "Retain the deliberate existing CIBA exclusion until a bounded end-to-end CIBA SDK contract is implemented and accepted; the server operation already exists.",
+      "exposure": "Live ciba gate is separate from CIBA store, authenticator/user resolution and delivery transport wiring.",
+      "authentication": "Confidential client authentication requires a non-empty secret (Basic takes precedence over body credentials) or a verified private_key_jwt assertion. Registered public clients with token_endpoint_auth_method=\"none\" may supply client_id without a secret or assertion; this identifies the client, not proof of possession. Both paths enforce registered/active client, tenant, resource and scope checks; absent OpenAPI bearer security is not unrestricted anonymous access.",
+      "defaults": "Omitted/true ciba gate permits the route, which can return 501 without a CIBA store; gate false hides it. This inventory enables nothing.",
+      "licensing": "CIBA configuration and deployment/commercial rights remain with their owners; exclusion is not a license prohibition.",
+      "references": ["protocols/oauth/handle_ciba.go", "protocols/oauth/handle_ciba_test.go", "interfaces/sso/server_routes.go", "docs/openapi.yaml", "docs/config-reference.md", "docs/commercial-model.md"],
+      "operations": [{"operationId": "postBackchannelAuthentication", "method": "POST", "path": "/backchannel-authentication"}]
+    },
+    {
+      "id": "notification-rest",
+      "rationale": "Explicit generated-SDK coverage debt for existing JSON inbox and preference operations, not a claim that the server lacks notifications.",
+      "exposure": "Inbox/read needs NotificationStore; preference operations need NotificationPreferenceStore; all use the live self_service gate.",
+      "authentication": "Subject bearer with tenant/ownership checks; requests cannot select another subject's inbox.",
+      "defaults": "Stock notifications.enabled defaults false and BuildNotifications returns no options when disabled; selection does not wire stores.",
+      "licensing": "Notification product rights/quotas and platform notification wiring are distinct; no new free/paid or runtime license policy is inferred.",
+      "references": ["interfaces/sso/server_me.go", "cmd/sso-server/serverbuildplatform/email_sender.go", "docs/config-reference.md", "docs/commercial-model.md"],
+      "operations": [
+        {"operationId": "listMyNotifications", "method": "GET", "path": "/me/notifications"},
+        {"operationId": "markMyNotificationRead", "method": "POST", "path": "/me/notifications/{id}/read"},
+        {"operationId": "getMyNotificationPreferences", "method": "GET", "path": "/me/notifications/preferences"},
+        {"operationId": "replaceMyNotificationPreferences", "method": "PUT", "path": "/me/notifications/preferences"}
+      ]
+    },
+    {
+      "id": "notification-sse",
+      "rationale": "SSE subscription, cancellation and reconnection are not modeled by a normal JSON return value; retain exclusion until a streaming contract is accepted.",
+      "exposure": "Requires inbox store AND notification broker, under the self_service gate.",
+      "authentication": "Subject bearer and subject-filtered events; it is not an unauthenticated event feed.",
+      "defaults": "notifications.enabled defaults false; stock enabled wiring supplies a broker, but embedders must wire it explicitly.",
+      "licensing": "SSE transport availability is not notification product entitlement or delivery SLA.",
+      "references": ["interfaces/sso/server_me.go", "cmd/sso-server/serverbuildplatform/email_sender.go", "docs/config-reference.md", "docs/commercial-model.md"],
+      "operations": [{"operationId": "streamMyNotifications", "method": "GET", "path": "/me/notifications/stream"}]
+    },
+    {
+      "id": "metrics",
+      "rationale": "Prometheus text exposition is not a supported JSON client result; this does not remove the existing metrics endpoint.",
+      "exposure": "Metrics handler and edge/network exposure belong to the operational composition.",
+      "authentication": "OpenAPI has no security declaration; it does not verify a deployment's edge protection or authorize external scraping.",
+      "defaults": "Existing metrics wiring and observability defaults are unchanged; no endpoint exposure is implied by this decision.",
+      "licensing": "Observability availability is not a production SLA or commercial entitlement decision.",
+      "references": ["docs/openapi.yaml", "docs/config-reference.md", "docs/commercial-model.md"],
+      "operations": [{"operationId": "getMetrics", "method": "GET", "path": "/metrics"}]
+    },
+    {
+      "id": "config-governance-writes",
+      "rationale": "Existing JSON management operations are explicit SDK debt. Approval, reason, digest/CAS and canary governance deserve their own SDK acceptance, not an unreviewed bulk addition.",
+      "exposure": "Requires admin API wiring, a snapshot source AND config audit store; canary/atomic rollback have additional store/probe requirements.",
+      "authentication": "Admin bearer with admin:write, mandatory approve=true and reason; apply digest and optional expected-version/canary contracts remain authoritative.",
+      "defaults": "Absent required wiring leaves routes unmounted; canary is opt-in and does not change the live running configuration.",
+      "licensing": "Operator governance and commercial deployment rights remain independent; exclusion is not a licensing decision.",
+      "references": ["interfaces/sso/server_backup.go", "interfaces/admin/middleware.go", "docs/openapi.yaml", "docs/commercial-model.md"],
+      "operations": [
+        {"operationId": "postConfigApply", "method": "POST", "path": "/api/v1/admin/config/apply"},
+        {"operationId": "postConfigRollback", "method": "POST", "path": "/api/v1/admin/config/rollback"}
+      ]
+    },
+    {
+      "id": "expiring-clients",
+      "rationale": "The existing admin gateway/API query is explicit generated-SDK coverage debt, not an absent or unsupported server feature.",
+      "exposure": "Requires actual admin/gateway and client-store wiring.",
+      "authentication": "Admin bearer and admin:read plus the query's tenant/filter boundaries.",
+      "defaults": "Admin feature/dependency conditions remain unchanged; a documented query is not proof of default exposure.",
+      "licensing": "Client lifecycle governance does not acquire a commercial grant from either inclusion or exclusion.",
+      "references": ["interfaces/grpcserver/grpcadmin/admin_paginate.go", "interfaces/admin/middleware.go", "docs/openapi.yaml", "docs/config-reference.md", "docs/commercial-model.md"],
+      "operations": [{"operationId": "adminClientListExpiring", "method": "GET", "path": "/api/v1/admin/clients/expiring"}]
+    },
+    {
+      "id": "permission-catalog-sod",
+      "rationale": "Existing resource catalog, static/dynamic separation-of-duty and session-role APIs are explicit SDK debt; preserve the selected role/assignment methods without claiming full permission coverage.",
+      "exposure": "Requires admin/gateway permission provider and the corresponding resource/conflict/session capabilities.",
+      "authentication": "Admin bearer with admin:read/admin:write, client/tenant bucket and session-role governance checks.",
+      "defaults": "Selection does not install a provider or expose unavailable optional capabilities; existing admin gates remain unchanged.",
+      "licensing": "Permission configuration and licensed grants remain operator/server concerns, not this inventory's decisions.",
+      "references": ["interfaces/grpcserver/grpcadmin/admin_permissions.go", "interfaces/grpcserver/grpcadmin/admin_domains.go", "interfaces/admin/middleware.go", "docs/openapi.yaml", "docs/config-reference.md", "docs/commercial-model.md"],
+      "operations": [
+        {"operationId": "permissionListResources", "method": "GET", "path": "/api/v1/admin/permissions/{client_id}/resources"},
+        {"operationId": "permissionRegisterResource", "method": "POST", "path": "/api/v1/admin/permissions/{client_id}/resources"},
+        {"operationId": "permissionGetResource", "method": "GET", "path": "/api/v1/admin/permissions/{client_id}/resources/{id}"},
+        {"operationId": "permissionDeleteResource", "method": "DELETE", "path": "/api/v1/admin/permissions/{client_id}/resources/{id}"},
+        {"operationId": "permissionSetConflictSets", "method": "PUT", "path": "/api/v1/admin/permissions/{client_id}/sod/conflicts"},
+        {"operationId": "permissionListConflictSets", "method": "GET", "path": "/api/v1/admin/permissions/{client_id}/sod/conflicts"},
+        {"operationId": "permissionSetActivationConflictSets", "method": "PUT", "path": "/api/v1/admin/permissions/{client_id}/dsod/conflicts"},
+        {"operationId": "permissionListActivationConflictSets", "method": "GET", "path": "/api/v1/admin/permissions/{client_id}/dsod/conflicts"},
+        {"operationId": "permissionActivateRoles", "method": "PUT", "path": "/api/v1/admin/permissions/{client_id}/sessions/{session_id}/roles"},
+        {"operationId": "permissionListActiveRoles", "method": "GET", "path": "/api/v1/admin/permissions/{client_id}/sessions/{session_id}/roles"},
+        {"operationId": "permissionDeactivateSession", "method": "DELETE", "path": "/api/v1/admin/permissions/{client_id}/sessions/{session_id}/roles"}
+      ]
+    },
+    {
+      "id": "billing-management",
+      "rationale": "Existing commercial management APIs belong to the separately deployed Billing/custom composition boundary, not the default generated SSO client. This is unselected SDK scope, not missing server functionality.",
+      "exposure": "snaplink-billing mounts commerce handlers with durable stores and a complete admin route contract; embedders must supply equivalent upstream authorization.",
+      "authentication": "Validated issuer/audience bearer plus exact admin:read/admin:write route contracts; financial mutations preserve tenant, idempotency and lifecycle rules.",
+      "defaults": "Not default stock sso-server routes. Separate Billing configuration and storage are required; no service is started by generation.",
+      "licensing": "Billing plans, subscriptions, entitlements and wallet facts are a separate commercial/data owner; no free/paid permission or production license is inferred.",
+      "references": ["interfaces/commerce/api.go", "cmd/snaplink-billing/app.go", "docs/commercial-model.md", "docs/openapi.yaml"],
+      "operations": [
+        {"operationId": "listCommercePlans", "method": "GET", "path": "/api/v1/admin/commerce/plans"},
+        {"operationId": "publishCommercePlan", "method": "POST", "path": "/api/v1/admin/commerce/plans"},
+        {"operationId": "listTenantCommerceSubscriptions", "method": "GET", "path": "/api/v1/admin/commerce/tenants/{tenant_id}/subscriptions"},
+        {"operationId": "createTenantCommerceSubscription", "method": "POST", "path": "/api/v1/admin/commerce/tenants/{tenant_id}/subscriptions"},
+        {"operationId": "transitionCommerceSubscription", "method": "PATCH", "path": "/api/v1/admin/commerce/subscriptions/{id}/status"},
+        {"operationId": "changeCommerceSubscriptionPlan", "method": "PATCH", "path": "/api/v1/admin/commerce/subscriptions/{id}/plan"},
+        {"operationId": "renewCommerceSubscription", "method": "POST", "path": "/api/v1/admin/commerce/subscriptions/{id}/renew"},
+        {"operationId": "getTenantCommerceEntitlement", "method": "GET", "path": "/api/v1/admin/commerce/tenants/{tenant_id}/entitlement"},
+        {"operationId": "getTenantCommerceWallet", "method": "GET", "path": "/api/v1/admin/commerce/tenants/{tenant_id}/wallet"},
+        {"operationId": "listTenantCommerceWalletEntries", "method": "GET", "path": "/api/v1/admin/commerce/tenants/{tenant_id}/wallet/entries"},
+        {"operationId": "postTenantCommerceWalletAdjustment", "method": "POST", "path": "/api/v1/admin/commerce/tenants/{tenant_id}/wallet/adjustments"},
+        {"operationId": "listTenantCommercePaymentOrders", "method": "GET", "path": "/api/v1/admin/commerce/tenants/{tenant_id}/payments/orders"},
+        {"operationId": "createTenantCommerceTopUpOrder", "method": "POST", "path": "/api/v1/admin/commerce/tenants/{tenant_id}/payments/orders"},
+        {"operationId": "getTenantCommercePaymentOrder", "method": "GET", "path": "/api/v1/admin/commerce/tenants/{tenant_id}/payments/orders/{order_id}"},
+        {"operationId": "listTenantCommercePaymentEvents", "method": "GET", "path": "/api/v1/admin/commerce/tenants/{tenant_id}/payments/orders/{order_id}/events"},
+        {"operationId": "reconcileTenantCommercePayments", "method": "POST", "path": "/api/v1/admin/commerce/tenants/{tenant_id}/payments/reconcile"}
+      ]
+    },
+    {
+      "id": "payment-machine",
+      "rationale": "Purpose-specific out-of-process payment-adapter calls need their own client contract, not browser admin methods. Raw provider webhooks and secrets remain outside these normalized endpoints.",
+      "exposure": "Separate Billing composition explicitly installs payment routes with a required machine gate and PaymentSources resolver.",
+      "authentication": "Validated client-credentials identity shape, purpose-specific payment scopes and server-owned client/tenant/payment-provider binding. Path/body values cannot grant authority.",
+      "defaults": "Not mounted by default stock SSO; missing gate/resolver prevents payment route installation. Existing financial idempotency remains unchanged.",
+      "licensing": "The payment-adapter and Billing boundaries are separate deployments and do not grant a tenant plan or alter licensing policy.",
+      "references": ["interfaces/commerce/payment_auth.go", "interfaces/commerce/payment_ingest.go", "cmd/snaplink-billing/app.go", "docs/commercial-model.md"],
+      "operations": [
+        {"operationId": "readCommercePaymentOrderForAdapter", "method": "GET", "path": "/api/v1/commerce/tenants/{tenant_id}/payments/orders/{order_id}"},
+        {"operationId": "ingestNormalizedCommercePaymentEvent", "method": "POST", "path": "/api/v1/commerce/tenants/{tenant_id}/payments/orders/{order_id}/events"}
+      ]
+    },
+    {
+      "id": "metering-machine",
+      "rationale": "Usage append/reserve/commit/release and machine entitlement reads are a dedicated machine integration with binding/idempotency obligations, not general generated SSO-client calls.",
+      "exposure": "Separate Billing/custom composition needs usage ledger, entitlements and server-owned source resolver plus upstream RS middleware.",
+      "authentication": "Issuer/audience validated client-credentials identity, metering:write or billing:entitlement:read and enabled source binding. Tenant/source are server-derived, never selected by request data.",
+      "defaults": "No default stock SSO mounting; missing dependencies fail construction. Reservation and idempotency limits stay with the ledger owner.",
+      "licensing": "Usage facts and entitlement projections implement the existing commercial model; SDK omission neither disables billing nor grants limits.",
+      "references": ["interfaces/metering/api.go", "interfaces/metering/auth.go", "cmd/snaplink-billing/app.go", "docs/commercial-model.md"],
+      "operations": [
+        {"operationId": "appendMachineUsage", "method": "POST", "path": "/api/v1/metering/usage"},
+        {"operationId": "reserveMachineUsage", "method": "POST", "path": "/api/v1/metering/reservations"},
+        {"operationId": "commitMachineUsageReservation", "method": "POST", "path": "/api/v1/metering/reservations/{reservation_id}/commit"},
+        {"operationId": "releaseMachineUsageReservation", "method": "DELETE", "path": "/api/v1/metering/reservations/{reservation_id}"},
+        {"operationId": "getMachineEntitlement", "method": "GET", "path": "/api/v1/metering/entitlement"}
+      ]
+    },
+    {
+      "id": "quota-projection-machine",
+      "rationale": "Internal monotonic commercial quota projection is a dedicated trusted machine ingress, not an endpoint to bulk-add to a general application SDK.",
+      "exposure": "Stock mounts only with projection_ingress.enabled and a projection-capable quota backend; audience and source registry are explicitly configured.",
+      "authentication": "Client-credentials identity, configured exact audience, tenant-quota:projection:write and exact enabled client_id/source_system server binding; body tenant_id grants no authority.",
+      "defaults": "Ingress is not enabled implicitly. Route enablement/backend/audience remain cold; source-only desired state may reload under the existing registry contract.",
+      "licensing": "Projects existing entitlements under docs/commercial-model.md; it is not a new runtime license decision or authorization to alter another tenant's quota.",
+      "references": ["cmd/sso-server/tenant_quota_projection.go", "docs/openapi.yaml", "docs/config-reference.md", "docs/commercial-model.md"],
+      "operations": [{"operationId": "applyTenantQuotaProjection", "method": "PUT", "path": "/api/v1/internal/tenant-quota/projection"}]
+    }
+  ]
+}

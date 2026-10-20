@@ -31,7 +31,7 @@
       {
         "id": "go",
         "package": false,
-        "notes": "sdks/go plus interfaces/ssoclient; versioned by the root Go module, so it carries no package manifest",
+        "notes": "sdks/go is an independent module with its own sdks/go/v<version> tags. The central version gate audits its go.mod identity/directive, not a manifest release version or root-module publication ownership. interfaces/ssoclient remains root server-library code.",
         "onboarded": true
       },
       {
@@ -43,7 +43,7 @@
       {
         "id": "swift",
         "package": true,
-        "notes": "sdks/swift; SwiftPM artifact SnaplinkSSO, versioned from the release tag rather than the manifest",
+        "notes": "sdks/swift; SwiftPM artifact SnaplinkSSO, versioned from the release tag rather than the manifest. Cycle-02 is a declaration/source audit only; Apple/native/consumer acceptance was not executed and onboarding remains incomplete.",
         "onboarded": false
       }
     ]
@@ -89,9 +89,9 @@
           "note": "Public context/store constructor overloads inject one normalized HTTP executor across OAuth, activation, preferences and authorization reads. OAuth wire types remain internal; the SDK retains PKCE, token validation, storage and refresh serialization. The shared response boundary validates status and UTF-8 byte limits even for injected transports. SnaplinkOkHttpTransport enforces no cookies, redirects or cache and a bounded call deadline. Covered by TransportInjectionTest and an external Android consumer compile."
         },
         "swift": {
-          "status": "present",
-          "file": "sdks/swift/Sources/Errors.swift",
-          "symbol": "protocol OAuthTransport: Sendable"
+          "status": "missing",
+          "plan": "Onboarding: design and review a caller-usable public transport seam and public initializer, then validate an external consumer; no API change in cycle-02.",
+          "note": "OAuthTransport in sdks/swift/Sources/Errors.swift and the injecting initializers in sdks/swift/Sources/SnaplinkAuthClient.swift are internal. @testable injection is not a public consumer seam. Native/consumer acceptance was not executed in cycle-02."
         }
       }
     },
@@ -135,7 +135,8 @@
         "swift": {
           "status": "present",
           "file": "sdks/swift/Sources/SnaplinkAuthClient.swift",
-          "symbol": "public func beginAuthorization() throws -> URL"
+          "symbol": "public func beginAuthorization() throws -> URL",
+          "note": "Public beginAuthorization/handleAuthorizationCallback source and sdks/swift/Tests/SnaplinkAuthClientTests.swift exist; source presence is not browser/Keychain acceptance. Native acceptance was not executed in cycle-02."
         }
       }
     },
@@ -177,10 +178,9 @@
           "note": "The seam carries the transaction, token, and activation records as opaque strings, so the record encoding and per-configuration key derivation stay in the client. AndroidSecureStore remains the default, so SnaplinkAuthClient(context, configuration) is unchanged; secure record writes and reads for a restart, per-configuration isolation, and storage faults failing closed are covered by sdks/kotlin/test/SecureStoreTest.kt."
         },
         "swift": {
-          "status": "present",
-          "file": "sdks/swift/Sources/Errors.swift",
-          "symbol": "protocol SnaplinkSecureStore: Sendable",
-          "note": "A public protocol, so a caller can supply KeychainSecureStore or a test double."
+          "status": "missing",
+          "plan": "Onboarding: review a public secure/state-store protocol and public injection initializer with external-consumer and storage semantics validation; no API change in cycle-02.",
+          "note": "SnaplinkSecureStore in sdks/swift/Sources/Errors.swift and injecting initializers in sdks/swift/Sources/SnaplinkAuthClient.swift are internal. Only the configuration initializer is public; @testable does not prove caller injection. Native/consumer acceptance was not executed in cycle-02."
         }
       }
     },
@@ -223,8 +223,8 @@
         },
         "swift": {
           "status": "missing",
-          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. No in-memory store ships alongside the Keychain-backed one.",
-          "note": "No in-memory store ships alongside the Keychain-backed one."
+          "plan": "Onboarding: separately review and implement a public development-only memory store if required; generation does not supply this capability.",
+          "note": "No production in-memory store ships alongside Keychain; MemorySecureStore in sdks/swift/Tests/SnaplinkAuthClientTests.swift is a private test helper only. Native acceptance was not executed in cycle-02."
         }
       }
     },
@@ -267,7 +267,8 @@
         "swift": {
           "status": "present",
           "file": "sdks/swift/Sources/SnaplinkAuthClient.swift",
-          "symbol": "public func accessToken() async throws -> String"
+          "symbol": "public func accessToken() async throws -> String",
+          "note": "Public source exists, but native accessToken() can refresh over the network near expiry; it is not an unconditional local/no-round-trip query. sdks/swift/Tests/SnaplinkAuthClientTests.swift exists; native acceptance was not executed in cycle-02."
         }
       }
     },
@@ -310,8 +311,8 @@
         },
         "swift": {
           "status": "missing",
-          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. Callers infer it from accessToken().",
-          "note": "Callers infer it from accessToken()."
+          "plan": "Onboarding: review a genuinely local/no-network usable-session query with expiry and storage-error semantics.",
+          "note": "No dedicated local isLoggedIn query exists. accessToken() and currentSession() may refresh and are not equivalent. Native acceptance was not executed in cycle-02."
         }
       }
     },
@@ -354,8 +355,8 @@
         },
         "swift": {
           "status": "missing",
-          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. logout() revokes and clears; there is no local-only reset.",
-          "note": "logout() revokes and clears; there is no local-only reset."
+          "plan": "Onboarding: close native lifecycle/security validation and independent review debt for the existing clear() implementation before capability acceptance.",
+          "note": "source exists: public clear() in sdks/swift/Sources/SnaplinkAuthClient.swift; sdks/swift/Tests/SnaplinkAuthClientTests.swift includes testClearDropsLocalSessionAndPendingTransactionWithoutRevocation. Local clear is distinct from revoking logout. Native acceptance was not executed in cycle-02; missing records validation debt, not absent source."
         }
       }
     },
@@ -399,7 +400,8 @@
         "swift": {
           "status": "present",
           "file": "sdks/swift/Sources/SnaplinkAuthClient.swift",
-          "symbol": "public func logout() async throws"
+          "symbol": "public func logout() async throws",
+          "note": "Public source clears local credentials first and then attempts server revocation; adjacent failure/lifecycle tests exist in sdks/swift/Tests/SnaplinkAuthClientTests.swift. Native acceptance was not executed in cycle-02."
         }
       }
     },
@@ -446,7 +448,7 @@
           "status": "present",
           "file": "sdks/swift/Sources/SnaplinkAuthClient.swift",
           "symbol": "Task { try await transport.refresh(refreshToken) }",
-          "note": "Refresh remains implicit in accessToken() under a single-flight lock; this is the documented native-mobile divergence from explicit hosted-login refresh."
+          "note": "Refresh remains implicit in accessToken() with a per-instance single-flight task; this is the native-mobile divergence from explicit hosted-login refresh. Adjacent tests exist in sdks/swift/Tests/SnaplinkAuthClientTests.swift; native acceptance was not executed in cycle-02."
         }
       }
     },
@@ -490,8 +492,8 @@
         },
         "swift": {
           "status": "missing",
-          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. Commercial activation is not implemented.",
-          "note": "Commercial activation is not implemented."
+          "plan": "Onboarding: close native activation, credential-handling validation and independent review debt for the existing setup/claim implementation.",
+          "note": "source exists: public setup(_:) and pending-ticket claim in sdks/swift/Sources/SnaplinkAuthClient.swift; sdks/swift/Tests/SnaplinkAuthClientTests.swift includes testSetupSendsOnlyTheCredentialAndStoresTheTicket, with wire tests in sdks/swift/Tests/CommerceTransportTests.swift. Native acceptance was not executed in cycle-02; missing records validation debt."
         }
       }
     },
@@ -534,8 +536,8 @@
         },
         "swift": {
           "status": "missing",
-          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. The product and tenant projection is not read.",
-          "note": "The product and tenant projection is not read."
+          "plan": "Onboarding: close native account-context authorization/decoding validation and independent review debt for the existing read.",
+          "note": "source exists: public accountContext(productID:) in sdks/swift/Sources/SnaplinkAuthClient.swift; sdks/swift/Tests/SnaplinkAuthClientTests.swift includes testAccountContextUsesTheCurrentBearerAndRequiresLogin, with wire tests in sdks/swift/Tests/CommerceTransportTests.swift. Native acceptance was not executed in cycle-02; missing is not a claim that the read is absent."
         }
       }
     },
@@ -583,8 +585,8 @@
         },
         "swift": {
           "status": "missing",
-          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. No entitlement model is exposed.",
-          "note": "No entitlement model is exposed."
+          "plan": "Onboarding: close native shared-fixture validation and independent review debt for the existing typed entitlement model.",
+          "note": "source exists: public SnaplinkFeature, SnaplinkLimit and SnaplinkEntitlement in sdks/swift/Sources/Entitlement.swift; sdks/swift/Tests/EntitlementConformanceTests.swift references the shared fixture. Native acceptance was not executed in cycle-02; test/source presence does not prove fixture passage."
         }
       }
     },
@@ -632,8 +634,8 @@
         },
         "swift": {
           "status": "missing",
-          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. An offline deployment on this SDK still has to reach the server for a paid-feature decision, which docs/commercial-model.md forbids.",
-          "note": "An offline deployment on this SDK still has to reach the server for a paid-feature decision, which docs/commercial-model.md forbids."
+          "plan": "Onboarding: close native signature/trust/shared-fixture validation and independent review debt for the existing local verifier.",
+          "note": "source exists: public SnaplinkLicenseFileVerifier in sdks/swift/Sources/LicenseFile.swift uses local CryptoKit verification with caller-supplied trust; sdks/swift/Tests/LicenseFileConformanceTests.swift references the shared fixture. Native acceptance was not executed in cycle-02; this is not a claim that a vendor network call is required."
         }
       }
     },
@@ -679,8 +681,8 @@
         },
         "swift": {
           "status": "missing",
-          "plan": "W5 generator coverage does not apply; see the swift SDK roadmap. No preference handoff is emitted on the authorization request.",
-          "note": "No preference handoff is emitted on the authorization request."
+          "plan": "Onboarding: separately review and wire the existing preference helper into actual authorization URL construction, with replacement/omission and native validation.",
+          "note": "Public buildLoginHandoff exists in sdks/swift/Sources/PresentationPreferences.swift with sdks/swift/Tests/PresentationPreferencesTests.swift, but is not wired into beginAuthorization()/OAuthProtocol.buildAuthorizationURL. The codec alone does not establish handoff. Native acceptance was not executed in cycle-02."
         }
       }
     },
@@ -725,7 +727,8 @@
         "swift": {
           "status": "present",
           "file": "sdks/swift/Sources/SnaplinkAuthClient.swift",
-          "symbol": "public func accessToken() async throws -> String"
+          "symbol": "public func accessToken() async throws -> String",
+          "note": "Public actor/async source composes with Swift concurrency; sdks/swift/Tests/SnaplinkAuthClientTests.swift is source evidence only. Native runtime acceptance was not executed in cycle-02."
         }
       }
     },
@@ -773,8 +776,8 @@
         },
         "swift": {
           "status": "missing",
-          "note": "No permission or menu read at all.",
-          "plan": "Onboarding: add the assembled authorization read."
+          "note": "No assembled typed identity/permissions/roles/menu authorization read is exposed by sdks/swift/Sources/SnaplinkAuthClient.swift. Commerce/preferences helpers are not that aggregation. Native acceptance was not executed in cycle-02.",
+          "plan": "Onboarding: separately design, implement and validate the assembled authorization read; no functionality is added in cycle-02."
         }
       }
     }
