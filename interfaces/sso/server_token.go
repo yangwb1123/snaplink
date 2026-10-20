@@ -78,11 +78,12 @@ func (s *Server) beginTokenIdempotency(ctx HandlerContext, client *Client, req o
 		return "", nil, false
 	}
 	idemKey = tokenIdempotencyCacheKey(client.ID, rawKey, req, dpopJKT, mtlsX5T)
-	s.idempotentMu.Lock()
+	mu := s.tokenIdempotencyMutex(idemKey)
+	mu.Lock()
 	owned := true
 	defer func() {
 		if owned {
-			s.idempotentMu.Unlock()
+			mu.Unlock()
 		}
 	}()
 	if cached, ok, _ := s.idempotentCache.Get(ctx.Request().Context(), idemKey); ok && tokengrant.CachedClientCredentialsValid(s, ctx, client, req, cached) {
@@ -92,7 +93,7 @@ func (s *Server) beginTokenIdempotency(ctx HandlerContext, client *Client, req o
 		middleware.ReplayCachedResponse(ctx, cached)
 		return idemKey, nil, true
 	}
-	idemRW = middleware.InstallCapture(ctx, s.idempotentMu.Unlock)
+	idemRW = middleware.InstallCapture(ctx, mu.Unlock)
 	owned = false
 	return idemKey, idemRW, false
 }

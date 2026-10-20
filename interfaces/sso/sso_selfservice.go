@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"sync"
 	"time"
@@ -297,8 +298,8 @@ type selfServiceState struct {
 	// idempotentCache provides idempotency-key semantics for /token
 	// (WithIdempotentStore). When non-nil, the token handler checks for
 	// an Idempotency-Key header and caches successful responses.
-	idempotentCache core.IdempotentCache
-	idempotentMu    sync.Mutex
+	idempotentCache   core.IdempotentCache
+	idempotentStripes [256]sync.Mutex
 
 	// userLifecycleStore backs the user-lifecycle state-machine admin endpoints
 	// (GET/POST /api/v1/admin/users/:id/lifecycle) and the auto-deprovisioning
@@ -341,6 +342,13 @@ type selfServiceState struct {
 	// Server.RunDataRetentionSweep in a goroutine, same discipline as
 	// RunBreakGlassSweeper.
 	dataRetention compliance.RetentionConfig
+}
+
+// Fixed instance-local coordination: collisions wait but never share cache keys.
+// The complete existing fingerprint selects a stripe without per-key state.
+func (s *Server) tokenIdempotencyMutex(cacheKey string) *sync.Mutex {
+	sum := sha256.Sum256([]byte(cacheKey))
+	return &s.idempotentStripes[sum[0]]
 }
 
 // mountSelfServiceProfile registers authenticated /me* routes while preserving

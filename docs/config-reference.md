@@ -33,7 +33,14 @@ only built-in `client_credentials` responses, scoped to the authenticated
 client/request/sender fingerprint, for at most one minute or the access-token
 lifetime. Replays recheck scopes and token validity. Stateful/custom grants
 always reach their own validation; refresh retries use rotation grace only.
-Redis Get/Set shares completed responses, not cross-replica first-miss ownership.
+Coordination is local to each `Server`: 256 fixed mutex stripes are selected
+from SHA-256 of the complete existing cache fingerprint. Same-fingerprint
+requests serialize through cache commit; different stripes can progress
+independently. Different fingerprints may collide and wait, but never share
+cache identity. The fixed capacity bounds only coordination state, not cached
+responses or waiting requests; lock waiting is not context-cancellable.
+Redis Get/Set shares completed responses, not cross-replica first-miss ownership
+or exactly-once issuance. Cache failures retain the existing degradation behavior.
 
 ## Clients
 

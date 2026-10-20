@@ -7,6 +7,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	"github.com/yangwb1123/snaplink/platform/signingkeys"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // AuditorSinkForTest exposes the recorder's current sink so a test can
@@ -174,3 +175,8 @@ func (f *flakyBus) ForceCloseForTest() { f.forceClose() }
 
 // SubscribeCountForTest reports how many times Subscribe has been called.
 func (f *flakyBus) SubscribeCountForTest() int { return f.subscribeCount() }
+
+// TokenIdempotencyCacheKeyForTest exposes the existing fingerprint, not a new API.
+func TokenIdempotencyCacheKeyForTest(clientID, rawKey string, req oauth.TokenRequest, dpopJKT, mtlsX5T string) string {
+	return tokenIdempotencyCacheKey(clientID, rawKey, req, dpopJKT, mtlsX5T)
+}
