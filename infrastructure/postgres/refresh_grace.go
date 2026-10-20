@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yangwb1123/snaplink/platform/migrate"
@@ -49,10 +51,11 @@ const refreshGraceDefaultCleanupInterval = 5 * time.Minute
 // returns false on ANY uncertainty, so the fail-closed contract is never
 // weakened.
 type RefreshGraceStore struct {
-	db     *sql.DB
-	window time.Duration
-	cancel context.CancelFunc
-	done   chan struct{}
+	db        atomic.Pointer[sql.DB]
+	window    time.Duration
+	cancel    context.CancelFunc
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // NewRefreshGraceStoreWithDB wraps an existing *sql.DB (shared-pool
@@ -72,11 +75,11 @@ func NewRefreshGraceStoreWithDB(db *sql.DB, dialect Dialect, window, cleanupInte
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &RefreshGraceStore{
-		db:     db,
 		window: window,
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
+	s.db.Store(db)
 	go s.cleanupLoop(ctx, cleanupInterval)
 	return s, nil
 }
@@ -93,26 +96,27 @@ func (s *RefreshGraceStore) cleanupLoop(ctx context.Context, interval time.Durat
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_, _ = s.db.ExecContext(ctx,
-				`DELETE FROM refresh_grace_cache WHERE expires_at <= $1`,
-				time.Now().UnixNano())
+			_, _ = s.PruneExpired(ctx)
 		}
 	}
 }
 
-// Close stops the background cleanup goroutine. The shared pool is owned by
-// the caller. Idempotent.
+// Close retires the wrapper and drains pruning, never closing the caller's
+// pool. Concurrent callers join the same close; operations already holding a
+// database snapshot can finish without serializing SQL or cancelling peers.
 func (s *RefreshGraceStore) Close() error {
 	if s == nil {
 		return nil
 	}
-	if s.cancel != nil {
-		s.cancel()
-	}
-	if s.done != nil {
-		<-s.done
-	}
-	s.db = nil
+	s.closeOnce.Do(func() {
+		s.db.Swap(nil)
+		if s.cancel != nil {
+			s.cancel()
+		}
+		if s.done != nil {
+			<-s.done
+		}
+	})
 	return nil
 }
 
@@ -136,23 +140,31 @@ func (s *RefreshGraceStore) CleanupDone() <-chan struct{} {
 
 // Ping reports connection health for /readyz wiring.
 func (s *RefreshGraceStore) Ping(ctx context.Context) error {
-	if s == nil || s.db == nil {
+	db := s.DB()
+	if db == nil {
 		return errors.New("postgres: refresh grace store closed")
 	}
-	return s.db.PingContext(ctx)
+	return db.PingContext(ctx)
 }
 
-// DB exposes the underlying *sql.DB for the storage-health schema reporter.
-// Nil after Close; callers MUST NOT close it.
-func (s *RefreshGraceStore) DB() *sql.DB { return s.db }
+// DB exposes a database snapshot for the storage-health schema reporter.
+// Nil after Close; callers MUST NOT close it. A pre-close snapshot can still
+// use the caller-owned pool after this wrapper has retired.
+func (s *RefreshGraceStore) DB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db.Load()
+}
 
 // PruneExpired deletes every entry whose expires_at has passed. Exported for
 // the background cleanup loop and for operator-facing admin endpoints.
 func (s *RefreshGraceStore) PruneExpired(ctx context.Context) (int64, error) {
-	if s == nil || s.db == nil {
+	db := s.DB()
+	if db == nil {
 		return 0, errors.New("postgres: refresh grace store closed")
 	}
-	res, err := s.db.ExecContext(ctx,
+	res, err := db.ExecContext(ctx,
 		`DELETE FROM refresh_grace_cache WHERE expires_at <= $1`,
 		time.Now().UnixNano())
 	if err != nil {
@@ -180,7 +192,8 @@ func refreshGraceHash(token string) string {
 // detection). A best-effort lazy GC runs before the insert to keep the table
 // bounded by the active-window key count, matching the SQLite peer.
 func (s *RefreshGraceStore) Remember(token string, resp map[string]any, now time.Time) {
-	if s == nil || s.db == nil || token == "" || s.window <= 0 {
+	db := s.DB()
+	if db == nil || token == "" || s.window <= 0 {
 		return
 	}
 	deadline := core.RefreshGraceExpiresAt(resp, now, s.window)
@@ -195,9 +208,9 @@ func (s *RefreshGraceStore) Remember(token string, resp map[string]any, now time
 	expiresAt := deadline.UnixNano()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, _ = s.db.ExecContext(ctx,
+	_, _ = db.ExecContext(ctx,
 		`DELETE FROM refresh_grace_cache WHERE expires_at <= $1`, now.UnixNano())
-	_, _ = s.db.ExecContext(ctx,
+	_, _ = db.ExecContext(ctx,
 		`INSERT INTO refresh_grace_cache (consumed_token_hash, successor_response, expires_at)
          VALUES ($1, $2, $3)
          ON CONFLICT (consumed_token_hash) DO UPDATE
@@ -208,7 +221,8 @@ func (s *RefreshGraceStore) Remember(token string, resp map[string]any, now time
 
 // PreparePending atomically retains live state, replacing only expired rows.
 func (s *RefreshGraceStore) PreparePending(token string, resp map[string]any, now time.Time) {
-	if s == nil || s.db == nil || token == "" {
+	db := s.DB()
+	if db == nil || token == "" {
 		return
 	}
 	body := core.RefreshGracePendingResponse(resp, now, s.window)
@@ -221,7 +235,7 @@ func (s *RefreshGraceStore) PreparePending(token string, resp map[string]any, no
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, _ = s.db.ExecContext(ctx,
+	_, _ = db.ExecContext(ctx,
 		`INSERT INTO refresh_grace_cache (consumed_token_hash, successor_response, expires_at)
          VALUES ($1, $2, $3)
          ON CONFLICT (consumed_token_hash) DO UPDATE
@@ -240,7 +254,8 @@ func (s *RefreshGraceStore) PreparePending(token string, resp map[string]any, no
 // rows are pruned by the background cleanupLoop and Remember's lazy GC, not
 // by Lookup.
 func (s *RefreshGraceStore) Lookup(token string, now time.Time) (map[string]any, bool) {
-	if s == nil || s.db == nil || token == "" {
+	db := s.DB()
+	if db == nil || token == "" {
 		return nil, false
 	}
 	hash := refreshGraceHash(token)
@@ -248,7 +263,7 @@ func (s *RefreshGraceStore) Lookup(token string, now time.Time) (map[string]any,
 	var expiresAt int64
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	err := s.db.QueryRowContext(ctx,
+	err := db.QueryRowContext(ctx,
 		`SELECT successor_response, expires_at FROM refresh_grace_cache WHERE consumed_token_hash = $1`,
 		hash).Scan(&blob, &expiresAt)
 	if err != nil {
