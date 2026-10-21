@@ -20,7 +20,7 @@ jobs:
     name: goreleaser
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # goreleaser's changelog needs full history to diff tags.
           fetch-depth: 0
