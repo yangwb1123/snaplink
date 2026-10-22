@@ -136,10 +136,11 @@ type Config struct {
 	StartTLS bool
 
 	// TLSConfig is an OPTIONAL fully-formed *tls.Config for the ldaps:// /
-	// StartTLS connection. When nil a config is built from CACertPEM +
-	// ServerName + InsecureSkipVerify below. When non-nil it is used verbatim
-	// (the operator owns it). The directory's certificate is ALWAYS verified
-	// unless InsecureSkipVerify / AllowInsecure is set.
+	// StartTLS connection. It does not enable TLS: select ldaps:// or set
+	// StartTLS. When nil a config is built from CACertPEM + ServerName +
+	// InsecureSkipVerify below. When non-nil it is used verbatim (the operator
+	// owns its verification policy). The built-from-fields config verifies the
+	// directory's certificate unless InsecureSkipVerify is explicitly allowed.
 	TLSConfig *tls.Config
 
 	// CACertPEM is an OPTIONAL PEM bundle of CA certificate(s) that signed the
@@ -181,85 +182,16 @@ type Config struct {
 // plaintext, or a filter missing its placeholder, would be a security
 // regression, not a runtime warning).
 func (c *Config) Validate() error {
-	if c.Name == "" {
-		return errors.New("ldap: Name required")
-	}
-	if len(c.URLs) == 0 {
-		return errors.New("ldap: at least one URL required")
-	}
-	if c.BaseDN == "" {
-		return errors.New("ldap: BaseDN required")
-	}
-
-	// A BindDN with no password is almost always a misconfiguration that would
-	// silently degrade to an UNAUTHENTICATED bind (RFC 4513 §5.1.2: a non-empty
-	// DN with an empty password is an unauthenticated bind, which many
-	// directories accept and which then runs the "service" search with
-	// anonymous rights). Reject it rather than let the search leg run with
-	// surprising privileges. Anonymous search (empty BindDN) stays allowed.
-	if c.BindDN != "" && c.BindPassword == "" {
-		return errors.New("ldap: BindPassword required when BindDN is set (an empty password is an unauthenticated bind)")
-	}
-
-	tlsConfigured := c.TLSConfig != nil
-	scheme, err := c.urlsScheme()
-	if err != nil {
+	if err := c.validateRequiredFields(); err != nil {
 		return err
 	}
-	usesLDAPS := scheme == "ldaps"
-
-	// TLS gate: credentials (service-account + end-user passwords) must travel
-	// over TLS. Satisfied by ldaps:// URLs, by StartTLS on ldap:// URLs, or by
-	// an operator-supplied TLSConfig (which implies they intend TLS). Only an
-	// explicit AllowInsecure opt-out (dev only) bypasses it.
-	if !usesLDAPS && !c.StartTLS && !tlsConfigured && !c.AllowInsecure {
-		return errors.New("ldap: TLS required — use an ldaps:// URL, set StartTLS, or supply TLSConfig (set AllowInsecure only for development)")
+	if err := c.validateTLS(); err != nil {
+		return err
 	}
-	// InsecureSkipVerify is itself a credential-exposure footgun: gate it behind
-	// the same explicit AllowInsecure acknowledgement so it can't be set in
-	// isolation. (An operator-supplied TLSConfig owns its own verification, so
-	// this only governs the built-from-fields path.)
-	if c.InsecureSkipVerify && !c.AllowInsecure && !tlsConfigured {
-		return errors.New("ldap: InsecureSkipVerify requires AllowInsecure (it disables certificate verification — development only)")
+	if err := c.validateUserFilter(); err != nil {
+		return err
 	}
-
-	filter := c.UserFilter
-	if filter == "" {
-		filter = DefaultUserFilter
-	}
-	if !strings.Contains(filter, usernamePlaceholder) {
-		// Without the placeholder the username would never be substituted — the
-		// filter would match the same (wrong) set for every login. A
-		// configuration this broken must fail loud at boot.
-		return fmt.Errorf("ldap: UserFilter must contain the %q username placeholder, got %q", usernamePlaceholder, filter)
-	}
-	// Reject MULTIPLE placeholders: substitution uses fmt.Sprintf with a single
-	// argument, so a second %s would render as "%!s(MISSING)" and silently
-	// corrupt the filter. One, and only one.
-	if strings.Count(filter, usernamePlaceholder) != 1 {
-		return fmt.Errorf("ldap: UserFilter must contain exactly one %q placeholder, got %q", usernamePlaceholder, filter)
-	}
-
-	// The GroupFilter placeholder discipline is validated UNCONDITIONALLY whenever
-	// a GroupFilter is set — even alongside GroupAttribute (a misconfig where the
-	// memberOf path wins and the GroupFilter is dead config). Previously this
-	// check was nested under `GroupAttribute == ""`, so a GroupFilter with a wrong
-	// placeholder count set next to a GroupAttribute passed boot SILENTLY; if the
-	// operator later removed GroupAttribute the broken filter would surface only
-	// at runtime as a corrupted "%!s(MISSING)" filter. Fail loud at boot instead.
-	if c.GroupFilter != "" && strings.Count(c.GroupFilter, usernamePlaceholder) != 1 {
-		return fmt.Errorf("ldap: GroupFilter must contain exactly one %q placeholder, got %q", usernamePlaceholder, c.GroupFilter)
-	}
-
-	// The group second-search path (only taken when GroupAttribute is empty) needs
-	// BOTH its base and its filter — one without the other can't perform the
-	// reverse-membership search. (The placeholder count is already enforced above.)
-	if c.GroupAttribute == "" && (c.GroupBaseDN != "" || c.GroupFilter != "") {
-		if c.GroupBaseDN == "" || c.GroupFilter == "" {
-			return errors.New("ldap: GroupBaseDN and GroupFilter must both be set for group-search resolution")
-		}
-	}
-	return nil
+	return c.validateGroupSearch()
 }
 
 // urlsScheme validates every URL parses and returns the COMMON scheme. Mixed

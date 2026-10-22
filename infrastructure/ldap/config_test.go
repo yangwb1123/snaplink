@@ -49,8 +49,8 @@ func TestValidate_RequiresBaseDN(t *testing.T) {
 	mustValidateErr(t, c, "BaseDN")
 }
 
-// THE TLS GATE: a plain ldap:// without StartTLS, without TLSConfig, and
-// without AllowInsecure must be REJECTED — credentials would cross plaintext.
+// THE TLS GATE: a plain ldap:// without StartTLS and without AllowInsecure
+// must be REJECTED — TLS settings alone do not prevent plaintext credentials.
 func TestValidate_TLSRequired_PlainLDAPRejected(t *testing.T) {
 	t.Parallel()
 	c := baseValidCfg()
@@ -78,13 +78,66 @@ func TestValidate_TLS_AllowInsecureOptOut(t *testing.T) {
 	}
 }
 
-func TestValidate_TLS_SuppliedTLSConfigSatisfiesGate(t *testing.T) {
+func TestValidate_TLS_SuppliedTLSConfigRequiresTransport(t *testing.T) {
+	t.Parallel()
+	for _, urls := range [][]string{
+		{"ldap://dir.example.com:389"},
+		{"ldap://dir.example.com:389", "ldap://backup.example.com:389"},
+	} {
+		c := baseValidCfg()
+		c.URLs = urls
+		c.TLSConfig = &tls.Config{ServerName: "dir.example.com"}
+		mustValidateErr(t, c, "TLS required")
+	}
+}
+
+func TestValidate_TLS_SuppliedTLSConfigWithTransport(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		url           string
+		startTLS      bool
+		allowInsecure bool
+	}{
+		{name: "LDAPS", url: "ldaps://dir.example.com:636"},
+		{name: "StartTLS", url: "ldap://dir.example.com:389", startTLS: true},
+		{name: "development opt-out", url: "ldap://dir.example.com:389", allowInsecure: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := baseValidCfg()
+			c.URLs = []string{tc.url}
+			c.StartTLS = tc.startTLS
+			c.AllowInsecure = tc.allowInsecure
+			c.TLSConfig = &tls.Config{ServerName: "dir.example.com"}
+			if err := c.Validate(); err != nil {
+				t.Fatalf("explicit transport policy with TLSConfig rejected: %v", err)
+			}
+			a, err := New(c)
+			if err != nil {
+				t.Fatalf("New rejected explicit transport policy with TLSConfig: %v", err)
+			}
+			if a.cfg.StartTLS != c.StartTLS || a.cfg.AllowInsecure != c.AllowInsecure || a.cfg.TLSConfig != c.TLSConfig {
+				t.Error("New changed the explicit transport policy or supplied TLSConfig")
+			}
+		})
+	}
+}
+
+func TestNew_TLSConfigOnly_FailsClosedBeforeDial(t *testing.T) {
 	t.Parallel()
 	c := baseValidCfg()
 	c.URLs = []string{"ldap://dir.example.com:389"}
 	c.TLSConfig = &tls.Config{ServerName: "dir.example.com"}
-	if err := c.Validate(); err != nil {
-		t.Fatalf("ldap:// + TLSConfig rejected: %v", err)
+	d := &fakeDialer{dir: newFakeDirectory()}
+	a, err := New(c, withDialer(d))
+	if err == nil || !strings.Contains(err.Error(), "TLS required") {
+		t.Errorf("New must reject TLSConfig-only plaintext with TLS required, got err = %v", err)
+	}
+	if a != nil {
+		t.Error("New returned an authenticator for TLSConfig-only plaintext")
+	}
+	if len(d.dialed) != 0 {
+		t.Errorf("New performed %d dials before rejecting the config", len(d.dialed))
 	}
 }
 
@@ -214,6 +267,92 @@ func TestValidate_GroupFilter_WellFormedWithGroupAttribute_OK(t *testing.T) {
 	c.GroupFilter = "(&(objectClass=posixGroup)(memberUid=%s))"
 	if err := c.Validate(); err != nil {
 		t.Fatalf("well-formed GroupFilter alongside GroupAttribute rejected: %v", err)
+	}
+}
+
+func TestValidate_ErrorOrderPreserved(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{
+			name: "name before URLs",
+			mutate: func(c *Config) {
+				c.Name, c.URLs = "", nil
+			},
+			want: "ldap: Name required",
+		},
+		{
+			name: "URLs before base",
+			mutate: func(c *Config) {
+				c.URLs, c.BaseDN = nil, ""
+			},
+			want: "ldap: at least one URL required",
+		},
+		{
+			name: "base before service password",
+			mutate: func(c *Config) {
+				c.BaseDN, c.BindPassword = "", ""
+			},
+			want: "ldap: BaseDN required",
+		},
+		{
+			name: "service password before URL scheme",
+			mutate: func(c *Config) {
+				c.BindPassword = ""
+				c.URLs = []string{"https://dir.example.com"}
+			},
+			want: "ldap: BindPassword required when BindDN is set (an empty password is an unauthenticated bind)",
+		},
+		{
+			name: "common scheme before TLS admission",
+			mutate: func(c *Config) {
+				c.URLs = []string{"ldap://first.example.com:389", "ldaps://second.example.com:636"}
+			},
+			want: "ldap: all URLs must use the same scheme (do not mix ldap:// and ldaps:// — a failover hop could downgrade TLS)",
+		},
+		{
+			name: "TLS admission before verification and filters",
+			mutate: func(c *Config) {
+				c.URLs = []string{"ldap://dir.example.com:389"}
+				c.InsecureSkipVerify = true
+				c.UserFilter = "(objectClass=person)"
+			},
+			want: "ldap: TLS required — use an ldaps:// URL or set StartTLS (set AllowInsecure only for development)",
+		},
+		{
+			name: "verification before user filter",
+			mutate: func(c *Config) {
+				c.InsecureSkipVerify = true
+				c.UserFilter = "(objectClass=person)"
+			},
+			want: "ldap: InsecureSkipVerify requires AllowInsecure (it disables certificate verification — development only)",
+		},
+		{
+			name: "user filter before group filter",
+			mutate: func(c *Config) {
+				c.UserFilter = "(objectClass=person)"
+				c.GroupFilter = "(objectClass=groupOfNames)"
+			},
+			want: `ldap: UserFilter must contain the "%s" username placeholder, got "(objectClass=person)"`,
+		},
+		{
+			name: "group placeholder before search pairing",
+			mutate: func(c *Config) {
+				c.GroupFilter = "(objectClass=groupOfNames)"
+			},
+			want: `ldap: GroupFilter must contain exactly one "%s" placeholder, got "(objectClass=groupOfNames)"`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := baseValidCfg()
+			tc.mutate(&c)
+			if err := c.Validate(); err == nil || err.Error() != tc.want {
+				t.Errorf("Validate err = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
