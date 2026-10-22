@@ -66,8 +66,15 @@ func New(cfg Config) (*Sender, error) {
 		cfg.BaseURL = defaultBaseURL
 	}
 	return &Sender{
-		cfg:    cfg,
-		client: &http.Client{Timeout: cfg.HTTPTimeout},
+		cfg: cfg,
+		client: &http.Client{
+			Timeout: cfg.HTTPTimeout,
+			// Never replay the OTP body or Basic credentials to a redirect
+			// target: return the 3xx to Send's existing status-only handling.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}, nil
 }
 
