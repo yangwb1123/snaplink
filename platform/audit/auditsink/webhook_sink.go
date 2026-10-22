@@ -129,7 +129,7 @@ func (w *WebhookSink) Record(ctx context.Context, e *auditspi.Event) error {
 	defer func() { _ = resp.Body.Close() }()
 	span.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		err := fmt.Errorf("audit webhook: status %d", resp.StatusCode)
 		tracing.SetError(span, err)
 		return err
