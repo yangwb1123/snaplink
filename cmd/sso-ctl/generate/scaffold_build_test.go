@@ -1,26 +1,42 @@
 package generate
 
 import (
+	"bytes"
+	_ "embed"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"testing"
+
+	"github.com/yangwb1123/snaplink/test/testkit/sourcepath"
 )
 
-// repoRoot returns the absolute path to the module root: three directories
-// up from this test file (cmd/sso-ctl/generate -> cmd/sso-ctl -> cmd ->
-// root). Derived from runtime.Caller rather than os.Getwd so it's correct
-// regardless of where `go test` is invoked from.
+//go:embed scaffold_build_test.go
+var scaffoldBuildSource []byte
+
+var scaffoldSourceRoot, scaffoldBindingError = sourcepath.Bind("cmd/sso-ctl/generate/scaffold_build_test.go", scaffoldBuildSource)
+
+// repoRoot preserves the source tree bound before tests can change cwd.
 func repoRoot(t *testing.T) string {
 	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed to resolve this test file's path")
+	if scaffoldBindingError != nil {
+		t.Fatal(scaffoldBindingError)
 	}
-	return filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
+	return scaffoldSourceRoot
+}
+
+func TestSourceRootBindingSurvivesCWDChange(t *testing.T) {
+	want := repoRoot(t)
+	t.Chdir(t.TempDir())
+	if got := repoRoot(t); got != want {
+		t.Fatalf("scaffold source root changed with cwd: %q, want %q", got, want)
+	}
+	data, err := os.ReadFile(filepath.Join(want, "cmd", "sso-ctl", "generate", "scaffold_build_test.go"))
+	if err != nil || !bytes.Equal(data, scaffoldBuildSource) {
+		t.Fatalf("bound scaffold test source mismatch: %v", err)
+	}
 }
 
 var moduleDirectiveRE = regexp.MustCompile(`(?m)^module (\S+)[\t ]*$`)
