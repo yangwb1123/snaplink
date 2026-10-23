@@ -43,8 +43,12 @@ type auth0User struct {
 
 func parseAuth0(r io.Reader) ([]importedUser, error) {
 	var raw []auth0User
-	if err := json.NewDecoder(r).Decode(&raw); err != nil {
+	dec := json.NewDecoder(r)
+	if err := dec.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("decode auth0 json: %w", err)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("decode auth0 json: trailing data after top-level array")
 	}
 	out := make([]importedUser, 0, len(raw))
 	for _, u := range raw {
