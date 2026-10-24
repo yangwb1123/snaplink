@@ -119,7 +119,7 @@ export interface AdminClient {
     allowed_scopes?: string[];
     /** Unix timestamp. 0 means the secret never expires (legacy/public */
     client_secret_expires_at?: number;
-    /** Read-only grant-type allowlist, enforced at /token */
+    /** Read-only grant-type allowlist for /token, initial refresh and CIBA initiation. */
     grant_types?: string[];
     id?: string;
     /** Hosted-login continuation URL for OIDC/SAML federation. HTTPS is */
@@ -681,6 +681,7 @@ export interface DeviceCodeRequest {
     client_id: string;
     nonce?: string;
     resource?: string[];
+    /** Space-delimited client-authorized scopes. Explicit offline_access */
     scope?: string;
 }
 export interface DeviceCodeResponse {
@@ -915,6 +916,12 @@ export interface LocalUserResponse {
 export interface LoginDiscoveryResponse {
     /** True only when top-level federated GET can preserve the complete */
     authorization_request_passthrough_supported?: boolean;
+    /** A valid OP identity cookie and its canonical live session were verified. Not an authorization decision. */
+    op_session_available?: boolean;
+    /** Identity-session verification failed; availability is unknown, not false. */
+    op_session_error?: "temporarily_unavailable";
+    /** Present as true only when browser identity SSO is configured. */
+    op_session_supported?: boolean;
     /** Authenticator names this client may use. */
     providers: string[];
     /** Optional home-realm login-discovery marker. Present as `true` when */
@@ -939,7 +946,7 @@ export interface LoginRequest {
     presentation_locale?: string;
     /** Optional hosted-login UI hint persisted as the shared */
     presentation_theme_mode?: "light" | "dark" | "auto";
-    /** Authenticator name; omit for discovery. */
+    /** Authenticator name; omit for discovery or OP-cookie resume_session. */
     provider?: string;
     /** Registered redirect URI bound to the authorization code. */
     redirect_uri?: string;
@@ -947,6 +954,8 @@ export interface LoginRequest {
     resource?: string[];
     /** Request an OAuth 2.0 authorization code instead of direct token minting. */
     response_type?: "code";
+    /** Opt-in POST-only OP-cookie authentication, not application-token */
+    resume_session?: boolean;
     scope?: string[];
     /** Opaque value echoed back to redirect-based flows. */
     state?: string;
@@ -978,6 +987,7 @@ export interface LoginResponse {
     redirect_uri?: string;
     /** True only after redirect_uri passed the registered-client checks. */
     redirect_uri_validated?: boolean;
+    /** For direct-mint /auth/login, requires exact offline_access in the */
     refresh_token?: string;
     /** Effective mode; defaults to query for code and fragment for token responses. */
     response_mode?: string;
@@ -1512,7 +1522,7 @@ export interface TokenIssuance {
     id_token?: string;
     /** RFC 8693 §2.2.1 — present on token-exchange responses. */
     issued_token_type?: "urn:ietf:params:oauth:token-type:access_token" | "urn:ietf:params:oauth:token-type:refresh_token" | "urn:ietf:params:oauth:token-type:txn-token";
-    /** Present when a refresh token was issued. Family-rotated */
+    /** Present when a refresh token was issued. For authorization_code, */
     refresh_token?: string;
     /** Space-delimited granted scopes. */
     scope?: string;

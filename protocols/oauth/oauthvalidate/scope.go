@@ -62,12 +62,10 @@ func SplitScope(s string) []string {
 //     granted set is the (validated) requested set.
 //
 //  4. Non-empty AllowedScopes + EMPTY request ⇒ DEFAULT to a copy of
-//     AllowedScopes MINUS openid. This is the "every token carries its
-//     entitled scope" guarantee: a client that authenticated but named
-//     no scope still gets a token bearing exactly what it is entitled
-//     to, instead of a scope-less token. openid is NOT injected into the
-//     default (it is the opt-in OIDC trigger per rule 1; auto-adding it
-//     would issue an unrequested id_token).
+//     AllowedScopes MINUS openid and offline_access. Resource entitlements
+//     remain defaulted, but the two protocol permissions require an explicit
+//     request: openid opts into an ID token and offline_access authorizes a
+//     refresh token. An allowlist ceiling alone is not offline authorization.
 //
 // The returned slice is order-preserving and de-duplicated; empties are
 // trimmed. The caller passes the already-split request (oauth.SplitScope
@@ -88,16 +86,13 @@ func GrantedScopes(requested []string, client *core.Client) ([]string, error) {
 	}
 
 	// Rule 4: nothing requested ⇒ default to the client's resource
-	// entitlement so the token always carries a scope. openid is
-	// DELIBERATELY excluded from the default even when it sits in
-	// AllowedScopes: it is the OIDC ID-token trigger, opt-in per rule 1,
-	// and auto-including it would mint an id_token for a client that
-	// never asked for OIDC (changing OIDC behavior, not just scope). A
-	// client that wants openid must request it explicitly.
+	// entitlement. Explicit protocol permissions openid and offline_access
+	// are excluded even when allowed: default resource scopes must not mint
+	// an unrequested ID token or authorize unrequested offline credentials.
 	if len(req) == 0 {
 		def := make([]string, 0, len(client.AllowedScopes))
 		for _, a := range client.AllowedScopes {
-			if a == core.ScopeOpenID {
+			if a == core.ScopeOpenID || a == core.ScopeOfflineAccess {
 				continue
 			}
 			def = append(def, a)

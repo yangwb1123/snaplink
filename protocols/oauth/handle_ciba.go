@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/tenant"
@@ -95,6 +96,11 @@ func HandleBackchannelAuth(d CIBADeps, ctx core.HandlerContext) {
 
 	client, ok := authenticateCIBAClient(d, ctx, &req)
 	if !ok {
+		return
+	}
+	// Authorize before resolving user hints or creating notification side effects.
+	if len(client.GrantTypes) > 0 && !slices.Contains(client.GrantTypes, GrantCIBA) {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrUnauthorizedClient))
 		return
 	}
 	if !validateCIBARequestShape(d, ctx, &req) {

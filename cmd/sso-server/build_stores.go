@@ -33,6 +33,14 @@ import (
 // background-worker handoffs.
 func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr error) {
 	b := &appBuilder{cfg: cfg, logger: logger}
+	// Install failure cleanup before any allocation or foundation wiring: a
+	// later failure must release the shared pools above and drain a partially
+	// built classifier, notary, or retention loop.
+	defer func() {
+		if retErr != nil {
+			b.closeBuildFailure()
+		}
+	}()
 	// The peer-trust checker must exist before any wireXxx phase runs: the
 	// region resolver (wireDomains) and the mTLS header extractor (wireEdge)
 	// both take it as their trusted-proxies gate.
@@ -52,13 +60,6 @@ func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr erro
 	if err := b.enforceHACoherence(); err != nil {
 		return nil, err
 	}
-	// Install failure cleanup before foundation wiring so a partially built
-	// classifier, notary, or retention loop is drained if foundation fails.
-	defer func() {
-		if retErr != nil {
-			b.closeBuildFailure()
-		}
-	}()
 	if err := b.wireFoundation(); err != nil {
 		return nil, err
 	}

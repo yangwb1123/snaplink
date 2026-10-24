@@ -123,7 +123,8 @@ type SigningConfig struct {
 	// "" (default) = in-process only; "memory" = process-lifetime test store;
 	// "sqlite" = single-replica durable store (requires RevocationDSN); "redis"
 	// = shared multi-replica store using the top-level redis block. The store is
-	// seeded at boot and after invalidation-bus recovery. A declared multi-replica
+	// seeded at boot and after invalidation-bus recovery. "postgres" uses the shared
+	// postgres.dsn pool for durable seeding, not live propagation. A declared multi-replica
 	// topology with CrossReplicaRevocation requires redis so a replica can recover
 	// revocations missed during a bus outage.
 	RevocationBackend string `yaml:"revocation_backend"`

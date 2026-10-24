@@ -399,6 +399,7 @@ func TestPKCE_AuthCodeFollowedByRefreshGrantIgnoresPKCE(t *testing.T) {
 		"redirect_uri":          pkceRedirect,
 		"code_challenge":        challenge,
 		"code_challenge_method": "S256",
+		"scope":                 []string{"offline_access"},
 	})
 	lresp, err := http.Post(httpSrv.URL+"/auth/login", "application/json", bytes.NewReader(loginBody))
 	if err != nil {

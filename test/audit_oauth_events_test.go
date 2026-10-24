@@ -45,7 +45,7 @@ func newOAuthAuditHarness(t *testing.T) *oauthAuditHarness {
 		ID: oaClientID, Secret: oaSecret, Active: true,
 		AllowedAuthenticators: []string{"password"},
 		TokenStrategy:         "jwt",
-		AllowedScopes:         []string{"openid", "profile"},
+		AllowedScopes:         []string{"openid", "profile", "offline_access"},
 	})
 	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
 		func(_ context.Context, _, _ string) (*sso.AuthResult, error) {
@@ -280,6 +280,7 @@ func loginAndGetTokens(t *testing.T, h *oauthAuditHarness) (string, string) {
 	body, _ := json.Marshal(map[string]any{
 		"provider":   "password",
 		"client_id":  oaClientID,
+		"scope":      []string{"profile", "offline_access"},
 		"credential": map[string]string{"username": "x", "password": "y"},
 	})
 	resp, err := http.Post(h.srv.URL+"/auth/login", "application/json", bytes.NewReader(body))

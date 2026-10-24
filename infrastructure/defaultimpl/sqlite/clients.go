@@ -57,6 +57,13 @@ func NewClientStore(dsn string) (*ClientStore, error) {
 // runs the same migration NewClientStore's own-DB path does.
 func NewClientStoreWithDB(db *sql.DB) *ClientStore {
 	_ = migrate.Run(context.Background(), db, "clients", clientMigrations)
+	return NewClientStoreWithoutMigrations(db)
+}
+
+// NewClientStoreWithoutMigrations only wraps db; the caller must initialize and
+// validate its schema. It does not establish read-only access or synthesize
+// missing columns. Close retains ClientStore's existing shared-DB behavior.
+func NewClientStoreWithoutMigrations(db *sql.DB) *ClientStore {
 	cs := &ClientStore{}
 	cs.db.Store(db)
 	return cs

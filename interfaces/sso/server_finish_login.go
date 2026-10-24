@@ -213,12 +213,13 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 // unchanged. Each step FAILS OPEN: an outage logs a logger.Error and omits only
 // that field, never blocking the login.
 func (s *Server) augmentDirectMintResponse(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, session *Session, issuedSub string, token *Token, resp map[string]any) {
-	// When a oauth.RefreshTokenStore is wired, server-managed refresh tokens
-	// override whatever the underlying TokenIssuer returned — that way the OAuth
-	// refresh_token grant works uniformly regardless of which issuer minted the
-	// access token. Fail-open: a refresh-token store outage doesn't block the
-	// login (user gets an access_token until expiry), surfaced as a logger.Error.
-	if s.refreshTokenStore != nil {
+	// Effective offline_access authorizes either refresh source. Managed storage
+	// overrides the issuer even on failure: log + omit, never issuer fallback.
+	if !slices.Contains(req.Scope, core.ScopeOfflineAccess) {
+		delete(resp, KeyRefreshToken)
+	}
+	if slices.Contains(req.Scope, core.ScopeOfflineAccess) && s.refreshTokenStore != nil {
+		delete(resp, KeyRefreshToken)
 		rt, err := s.issueRefreshToken(ctx.Request().Context(),
 			result.UserID, client.ID, result.Provider, req.Scope, result.Attributes, "", req.Resource,
 			req.AuthorizationDetails, session.ID,

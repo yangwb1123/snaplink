@@ -213,8 +213,9 @@ func TestResourceIndicators_TokenEndpointRejectsUnregistered(t *testing.T) {
 func TestResourceIndicators_RefreshPropagatesResources(t *testing.T) {
 	srv, _ := newResourceHarness(t, []string{riAllowedRes})
 
-	// Login with resource → mint refresh_token tagged with that resource.
+	// Explicit offline grant + resource binds the refresh token's resource.
 	body, _ := json.Marshal(map[string]any{
+		"scope":      []string{"offline_access"},
 		"provider":   "password",
 		"client_id":  riClientID,
 		"credential": map[string]string{"username": "x", "password": "y"},

@@ -196,7 +196,7 @@ class AdminClient(TypedDict, total=False):
     allowed_authenticators: List[str]
     allowed_scopes: List[str]
     client_secret_expires_at: int  # Unix timestamp. 0 means the secret never expires (legacy/public
-    grant_types: List[str]  # Read-only grant-type allowlist, enforced at /token
+    grant_types: List[str]  # Read-only grant-type allowlist for /token, initial refresh and CIBA initiation.
     id: str
     login_page_uri: str  # Hosted-login continuation URL for OIDC/SAML federation. HTTPS is
     name: str
@@ -723,7 +723,7 @@ class DeviceCodeRequest(TypedDict, total=False):
     client_id: str
     nonce: str
     resource: List[str]
-    scope: str
+    scope: str  # Space-delimited client-authorized scopes. Explicit offline_access
 
 
 class DeviceCodeResponse(TypedDict, total=False):
@@ -989,7 +989,7 @@ class LoginResponse(TypedDict, total=False):
     recommended_language: str  # BCP-47 tag; populated when geo middleware is wired.
     redirect_uri: str  # Effective post-PAR/JAR authorization response target.
     redirect_uri_validated: bool  # True only after redirect_uri passed the registered-client checks.
-    refresh_token: str
+    refresh_token: str  # For direct-mint /auth/login, requires exact offline_access in the
     response_mode: str  # Effective mode; defaults to query for code and fragment for token responses.
     roles: List[Role]  # Present when `permissions.embed_in_login: true`.
     scope: str  # Space-delimited scope list.
@@ -1451,7 +1451,7 @@ class TokenIssuance(TypedDict, total=False):
     expires_in: int  # Access-token lifetime in seconds.
     id_token: str  # Present when the client requested `openid` scope and
     issued_token_type: str  # RFC 8693 §2.2.1 — present on token-exchange responses.
-    refresh_token: str  # Present when a refresh token was issued. Family-rotated
+    refresh_token: str  # Present when a refresh token was issued. For authorization_code,
     scope: str  # Space-delimited granted scopes.
     token_type: str  # `Bearer` for the legacy path; `DPoP` when the issuance
 

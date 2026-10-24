@@ -30,7 +30,7 @@ is not part of default `make ci`:
 
 ```makefile
 proto-breaking: ## Check proto wire-breaking vs main.
-	cd proto && $(GO) run github.com/bufbuild/buf/cmd/buf@latest breaking \
+	cd proto && $(BUF) breaking \
 		--against "../.git#branch=main,subdir=proto"
 ```
 

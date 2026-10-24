@@ -154,14 +154,18 @@ type MTLSHeaderConfig struct {
 // 15min lockout, 1h sliding window) when <= 0.
 //
 // Backend choice:
+//
 //   - "" / "memory" (default) — single-replica; an attacker rotating
 //     targets across replicas evades each replica's local threshold.
+//
 //   - "sqlite" — cluster-shared file; the counter sums failures
 //     across every replica so the threshold is global.
 //
-// Redis / Memcached backends still need to be wired via the SDK
-// directly for high-write workloads where SQLite's lock contention
-// would dominate /auth/login latency.
+//   - "postgres" — shared postgres.dsn pool, with transactional row locking.
+//
+//   - "redis" — shared top-level client, with atomic server-side increments.
+//
+// Backend selection is not a data migration or topology certification.
 type AccountLockoutConfig struct {
 	Enabled         bool                       `yaml:"enabled"`
 	Backend         string                     `yaml:"backend"`

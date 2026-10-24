@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/infrastructure/postgres/permissioncatalog"
 	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
@@ -16,6 +17,7 @@ import (
 var permissionsMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline_permissions", SQL: permissionsSchema},
 	{Version: 2, Name: "separation_of_duty", SQL: permissionsSoDSchema},
+	{Version: 3, Name: "resource_catalog", SQL: permissioncatalog.Schema},
 }
 
 // permissionsSchema is the Postgres baseline for the three permissions tables
@@ -79,6 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_permissions_active_session
 // replica surfaces on every replica's next lookup. Semantics are pinned to the
 // memory peer via permissionstest.ConformanceSuite.
 type PermissionProvider struct {
+	*permissioncatalog.Catalog
 	db      *sql.DB
 	dialect Dialect
 }
@@ -101,10 +104,19 @@ func NewPermissionProvider(cfg Config) (*PermissionProvider, error) {
 // NewPermissionProviderWithDB wraps an existing shared *sql.DB. The caller owns
 // the connection lifecycle (shared-pool deployments).
 func NewPermissionProviderWithDB(db *sql.DB, dialect Dialect) (*PermissionProvider, error) {
+	if dialect.normalized() != DialectPostgres {
+		return nil, errors.New("postgres: resource catalog requires PostgreSQL dialect")
+	}
+	if db == nil {
+		return nil, errors.New("postgres: permissions shared pool required")
+	}
+	if err := CheckSchema(context.Background(), db, "permissions", migrate.MaxVersion(permissionsMigrations)); err != nil {
+		return nil, err
+	}
 	if err := Run(context.Background(), db, "permissions", permissionsMigrations, dialect); err != nil {
 		return nil, fmt.Errorf("postgres: migrate permissions: %w", err)
 	}
-	return &PermissionProvider{db: db, dialect: dialect.normalized()}, nil
+	return &PermissionProvider{Catalog: permissioncatalog.New(db), db: db, dialect: dialect.normalized()}, nil
 }
 
 // Close releases the connection. Idempotent. A shared-pool provider built via
@@ -137,4 +149,6 @@ var (
 	_ permissions.GroupMembershipWriter = (*PermissionProvider)(nil)
 	_ permissions.SoDProvider           = (*PermissionProvider)(nil)
 	_ permissions.SessionRoleActivator  = (*PermissionProvider)(nil)
+	_ permissions.ResourceProvider      = (*PermissionProvider)(nil)
+	_ permissions.ResourceCatalogLister = (*PermissionProvider)(nil)
 )

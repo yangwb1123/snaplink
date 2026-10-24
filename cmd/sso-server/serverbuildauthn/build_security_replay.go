@@ -15,6 +15,7 @@ import (
 
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
 	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	"github.com/yangwb1123/snaplink/infrastructure/postgres/securitystore"
 	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 
 	"github.com/yangwb1123/snaplink/protocols/oidc/bcl"
@@ -90,6 +91,28 @@ func BuildAccountLockout(cfg config.AccountLockoutConfig, rdb goredis.Cmdable) (
 	default:
 		return nil, "", fmt.Errorf("unknown security.account_lockout.backend %q", cfg.Backend)
 	}
+}
+
+// BuildAccountLockoutWithPostgres adds an explicit shared-pool path without
+// changing the existing builder API or falling back when the pool is missing.
+func BuildAccountLockoutWithPostgres(cfg config.AccountLockoutConfig, rdb goredis.Cmdable, db *sql.DB, dialect postgresbackend.Dialect) (security.AccountLockout, string, error) {
+	if !strings.EqualFold(strings.TrimSpace(cfg.Backend), "postgres") {
+		return BuildAccountLockout(cfg, rdb)
+	}
+	store, err := securitystore.NewAccountLockoutWithDB(db, dialect)
+	if err != nil {
+		return nil, "", err
+	}
+	if cfg.MaxFailures > 0 {
+		store.MaxFailures = cfg.MaxFailures
+	}
+	if cfg.LockoutDuration > 0 {
+		store.LockoutDuration = cfg.LockoutDuration
+	}
+	if cfg.FailureWindow > 0 {
+		store.FailureWindow = cfg.FailureWindow
+	}
+	return store, "postgres (durable shared counter)", nil
 }
 
 // buildRedisLockout constructs the Redis-backed lockout (atomic INCR+threshold

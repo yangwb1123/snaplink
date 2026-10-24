@@ -3,6 +3,7 @@
 # Keep: `make <target>` works on Linux/macOS via thin wrappers.
 
 GO        ?= go
+BUF        = GOTOOLCHAIN=go1.26.9 $(GO) run github.com/bufbuild/buf/cmd/buf@v1.73.0
 BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
@@ -210,13 +211,13 @@ container-contracts: ## Check container startup, local acceptance and release se
 	python -m unittest checks.test_dockerfile checks.test_container_smoke checks.test_container_release
 
 proto-lint: ## Lint .proto files.
-	cd proto && $(GO) run github.com/bufbuild/buf/cmd/buf@latest lint
+	cd proto && $(BUF) lint
 
 proto-gen: ## Generate Go code from .proto files.
-	cd proto && buf generate
+	cd proto && $(BUF) generate
 
 proto-breaking: ## Check proto wire-breaking vs main.
-	cd proto && $(GO) run github.com/bufbuild/buf/cmd/buf@latest breaking \
+	cd proto && $(BUF) breaking \
 		--against "../.git#branch=main,subdir=proto"
 
 docs-validate: route-contract capabilities-check ## Validate OpenAPI and generated capability docs.

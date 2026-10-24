@@ -97,7 +97,7 @@ func newStrictFormHarness(t *testing.T, passPAR bool) (*httptest.Server, *mintCo
 func strictLogin(t *testing.T, srv *httptest.Server) (access, refresh string) {
 	t.Helper()
 	jsonBody := `{"provider":"password","client_id":"` + formOnlyClientID +
-		`","credential":{"username":"x","password":"y"}}`
+		`","scope":["offline_access"],"credential":{"username":"x","password":"y"}}`
 	resp, err := http.Post(srv.URL+"/auth/login", "application/json", strings.NewReader(jsonBody))
 	if err != nil {
 		t.Fatalf("login: %v", err)

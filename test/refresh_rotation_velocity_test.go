@@ -82,7 +82,7 @@ func newRotationVelocityHarness(t *testing.T, store oauth.RefreshTokenStore) (*h
 func rvLogin(t *testing.T, srv *httptest.Server) string {
 	t.Helper()
 	body := `{"provider":"password","client_id":"` + rvClientID +
-		`","credential":{"username":"x","password":"y"}}`
+		`","scope":["offline_access"],"credential":{"username":"x","password":"y"}}`
 	resp, err := http.Post(srv.URL+"/auth/login", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("login: %v", err)

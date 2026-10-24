@@ -107,6 +107,64 @@ server; the frontend renders the form and calls the API):
    byte-identical across unknown/disabled/broken providers — the frontend
    must render a single generic "cannot sign in" state, never per-cause text.
 
+### Code exchange, direct-login and device offline access
+
+An authorization-code exchange returns a server-managed `refresh_token` only
+when its effective code-bound scopes still contain exact `offline_access`, a
+refresh store is wired, and a nonempty current-client grant list contains exact
+`refresh_token`. Nil/empty grant lists retain legacy compatibility. Denial omits
+refresh before managed-store access; scope allowlists or editable attributes do
+not override it. The client must allow and explicitly request the offline scope
+at login; allowing it alone does not authorize offline access. Omitting scope
+defaults resource scopes but excludes `openid` and `offline_access`. Token-time
+narrowing can remove offline access, never add it to the stored code's grant.
+Access/ID-token issuance is unaffected when refresh is omitted; authorized
+refresh-store errors retain the existing log-and-omit behavior. Existing refresh
+families and other grant types retain their own policies.
+
+Legacy direct-mint `/auth/login` also requires exact effective `offline_access`,
+including after conditional-access narrowing. Without it the refresh field is
+omitted, including any value supplied by a custom issuer; sessions/access/ID
+issuance remains independent. A configured managed store overrides the issuer:
+its errors log and omit refresh, never fall back to an issuer refresh. With no
+managed store, an explicitly authorized issuer-provided refresh is still allowed;
+that seam does not guarantee redemption by this server's `/token`. OAuth2.1 strict
+mode continues to reject direct mint. WebAuthn ceremonies and other initial grant
+paths are not certified by this direct-login guard.
+
+Device authorization independently requires exact `offline_access` in the
+approved stored device-code scopes, a wired refresh store, and the existing
+client `refresh_token` grant policy. Request the scope at `/device/code`, not
+only at the later `/token` poll; poll scope does not replace or expand the stored
+grant. Empty/omitted scope and allowlists alone do not authorize offline use.
+Without authorization, refresh is absent with no managed issuance attempt.
+Access/ID-token issuance remains independent. Authorized store errors log and
+omit refresh without issuer fallback; the device response never forwards an
+issuer refresh value, including when managed storage is unwired. Existing refresh
+families remain valid. WebAuthn, CIBA and token-exchange remain separate policies.
+
+CIBA request initiation at `/backchannel-authentication` requires exact
+`urn:openid:params:grant-type:ciba` in a nonempty client grant list. Otherwise
+it returns `400 unauthorized_client` before resolving hints, verifying user codes
+or creating/delivering a pending request. Client authentication, active/tenant
+and resource checks keep their existing precedence. Nil/empty grant lists remain
+unrestricted. This does not revalidate or revoke already-pending requests after
+client policy changes; approval-time push revalidation remains separate.
+
+CIBA initial refresh issuance additionally respects explicit client grant lists:
+when `GrantTypes` is nonempty it must contain exact `refresh_token`, for poll,
+ping collection and push alike. Denial omits refresh before managed-store access;
+access/ID issuance stays independent. Nil/empty grant lists retain unrestricted
+legacy behavior. CIBA's existing scope semantics are unchanged: this is not a new
+`offline_access` requirement. Unwired storage or authorized issuance errors omit
+refresh without forwarding an issuer refresh value. Existing-family rotation
+retains its own policy, including families without offline scope.
+
+Stock browser-session anchoring requires explicit `oidc.browser_sso.enabled`;
+default-off code flows are still allowed without an OP session. Do not invent a
+session ID, infer an application session lifetime from the OP cookie, or treat a
+successful code exchange as proof of logout/expiry enforcement without an anchor.
+
 ## 4. Consent contract
 
 Consent is opt-in per deployment (`self_service.consent` + per-client

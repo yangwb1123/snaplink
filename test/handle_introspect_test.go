@@ -60,7 +60,7 @@ func loginForTokens(t *testing.T, srv *httptest.Server) (access, refresh string)
 		"provider":   "password",
 		"client_id":  introClient,
 		"credential": map[string]string{"username": "x", "password": "y"},
-		"scope":      []string{"read", "write"},
+		"scope":      []string{"read", "write", "offline_access"},
 	})
 	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
 	if err != nil {

@@ -73,9 +73,13 @@ func newDeviceServerWithOptions(t *testing.T, ttl, interval time.Duration, grant
 }
 
 // requestDeviceCode posts /device/code → (device_code, user_code, body).
-func requestDeviceCode(t *testing.T, srv *httptest.Server) (string, string, map[string]any) {
+func requestDeviceCode(t *testing.T, srv *httptest.Server, scopes ...string) (string, string, map[string]any) {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{"client_id": devClient})
+	request := map[string]any{"client_id": devClient}
+	if len(scopes) != 0 {
+		request["scope"] = strings.Join(scopes, " ")
+	}
+	body, _ := json.Marshal(request)
 	resp, err := http.Post(srv.URL+"/device/code", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /device/code: %v", err)
@@ -257,7 +261,7 @@ func TestDevice_FullApprovalRoundTripMintsTokens(t *testing.T) {
 
 func TestDevice_RefreshTokenRequiresExplicitlyAllowedGrant(t *testing.T) {
 	srv := newDeviceServerWithGrantTypes(t, time.Minute, time.Millisecond, []string{sso.GrantDeviceCode})
-	dc, uc, _ := requestDeviceCode(t, srv)
+	dc, uc, _ := requestDeviceCode(t, srv, "offline_access")
 	bearer := userBearerToken(t, srv)
 	if status := verifyUserCode(t, srv, bearer, uc, true); status != http.StatusOK {
 		t.Fatalf("verify status = %d", status)
@@ -287,7 +291,7 @@ func TestDevice_RefreshTokenRemainsAvailableToAllowedAndUnrestrictedClients(t *t
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := newDeviceServerWithGrantTypes(t, time.Minute, time.Millisecond, tt.grantTypes)
-			dc, uc, _ := requestDeviceCode(t, srv)
+			dc, uc, _ := requestDeviceCode(t, srv, "offline_access")
 			bearer := userBearerToken(t, srv)
 			if status := verifyUserCode(t, srv, bearer, uc, true); status != http.StatusOK {
 				t.Fatalf("verify status = %d", status)

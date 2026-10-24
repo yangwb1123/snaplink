@@ -219,7 +219,7 @@ func rcovDirectLogin(t *testing.T, s *rcovServer) (access, refresh string) {
 		"provider":   "password",
 		"client_id":  rcovClient,
 		"credential": map[string]string{"username": rcovUsername, "password": rcovPassword},
-		"scope":      []string{"openid", "profile", "email"},
+		"scope":      []string{"openid", "profile", "email", "offline_access"},
 	})
 	if status != http.StatusOK {
 		t.Fatalf("login status=%d body=%v", status, out)
