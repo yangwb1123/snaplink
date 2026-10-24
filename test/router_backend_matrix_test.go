@@ -44,12 +44,12 @@ type matrixResponse struct {
 }
 
 // newMatrixHarness builds a testkit harness on the supplied router.
-func newMatrixHarness(t *testing.T, rt sso.Router) *testkit.Harness {
+func newMatrixHarness(t *testing.T, rt sso.Router, extra ...testkit.Option) *testkit.Harness {
 	t.Helper()
 	rt.GET(matrixProbePath, func(ctx sso.HandlerContext) {
 		ctx.JSON(http.StatusOK, map[string]string{"probe": "ok"})
 	})
-	h := testkit.NewServer(testkit.WithRouter(rt))
+	h := testkit.NewServer(append(extra, testkit.WithRouter(rt))...)
 	t.Cleanup(h.Close)
 	return h
 }
@@ -144,17 +144,17 @@ func pkceS256(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-// matrixLoginBody is the password login payload for the seeded harness user.
-func matrixLoginBody() map[string]any {
+// matrixLoginBody requests only explicit scopes for the seeded harness user.
+func matrixLoginBody(scopes ...string) map[string]any {
 	return map[string]any{
+		"scope":      scopes,
 		"provider":   "password",
 		"client_id":  testkit.DefaultClientID,
 		"credential": map[string]string{"username": testkit.DefaultUsername, "password": testkit.DefaultPassword},
 	}
 }
 
-// authCodeForm is the authorization_code exchange form, optionally carrying
-// the PKCE verifier.
+// authCodeForm exchanges a code, optionally with its PKCE verifier.
 func authCodeForm(code, verifier string) url.Values {
 	f := url.Values{
 		"grant_type":    {"authorization_code"},
@@ -260,10 +260,10 @@ func TestRouterBackendMatrix_AuthorizationCodePKCE(t *testing.T) {
 func TestRouterBackendMatrix_RefreshRotation(t *testing.T) {
 	for _, b := range routerBackends {
 		t.Run(b.name, func(t *testing.T) {
-			h := newMatrixHarness(t, b.new())
+			h := newMatrixHarness(t, b.new(), testkit.WithClient(testkit.DefaultClientID, testkit.DefaultClientSecret, "openid", "offline_access"))
 
-			// Login returns refresh_token in the raw body (LoginResult omits it).
-			resp, out := matrixJSON(t, h, http.MethodPost, "/auth/login", matrixLoginBody(), "")
+			// Explicitly authorize refresh; LoginResult omits the raw field.
+			resp, out := matrixJSON(t, h, http.MethodPost, "/auth/login", matrixLoginBody("offline_access"), "")
 			if resp.status != http.StatusOK {
 				t.Fatalf("login = %d %v", resp.status, out)
 			}

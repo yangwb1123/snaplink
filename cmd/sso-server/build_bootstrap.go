@@ -7,7 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildauthn"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	"github.com/yangwb1123/snaplink/infrastructure/postgres/securitystore"
 	"github.com/yangwb1123/snaplink/platform/bootstrap"
 	"github.com/yangwb1123/snaplink/platform/bootstrap/builtin"
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -331,6 +335,33 @@ func (b *appBuilder) wirePostgres() error {
 // generated — fine for single-replica or dev, but DOES break nonce
 // continuity across replicas, so multi-replica deployments MUST
 // supply a key file.
+// wireAccountLockout binds the security SPI to the shared pool and routes its
+// boot gate by the explicit backend, never by DB()'s dialect-neutral type.
+func (b *appBuilder) wireAccountLockout() error {
+	al := b.cfg.Security.AccountLockout
+	if !al.Enabled {
+		return nil
+	}
+	lockout, mode, err := serverbuildauthn.BuildAccountLockoutWithPostgres(al, b.redis, b.pgDB, b.pgDialect)
+	if err != nil {
+		return fmt.Errorf("account lockout: %w", err)
+	}
+	backend := strings.ToLower(strings.TrimSpace(al.Backend))
+	if err := b.checkStoreSchema(backend, "account_lockout", lockout, sqlitestores.AccountLockoutMaxVersion(), securitystore.AccountLockoutMaxVersion()); err != nil {
+		return err
+	}
+	name := "sqlite-account-lockout" // preserve existing readiness labels
+	if backend == "postgres" {
+		name = "postgres-account-lockout"
+	}
+	b.opts = append(b.opts, sso.WithAccountLockout(lockout))
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, name, lockout)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, name, lockout)
+	b.logger.Info("security: account lockout enabled", "backend", mode,
+		"max_failures", al.MaxFailures, "lockout_duration", al.LockoutDuration, "failure_window", al.FailureWindow)
+	return nil
+}
+
 // serverbuildauthn.BuildPairwiseSubjectStore picks the pairwise reverse-lookup
 // backend. memory keeps the single-replica story; sqlite shares
 // (pairwise → local) so /userinfo + revoke + end_session on any

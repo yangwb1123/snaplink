@@ -275,7 +275,7 @@ func TestScopeRegistry_RefreshChainPreservesOIDCScopes(t *testing.T) {
 	t.Run("pre-enablement family fails closed at rotation", func(t *testing.T) {
 		// Direct mint (outside /token jurisdiction) with an unregistered
 		// scope — exactly a family minted before the registry flip.
-		st, login := srLogin(t, srv, srClientAny, []string{"anything"})
+		st, login := srLogin(t, srv, srClientAny, []string{"anything", "offline_access"})
 		if st != http.StatusOK {
 			t.Fatalf("login: status=%d body=%v", st, login)
 		}

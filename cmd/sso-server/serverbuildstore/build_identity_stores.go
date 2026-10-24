@@ -324,21 +324,20 @@ func BuildUserProvider(cfg config.IdentityConfig, pg *sql.DB, dialect postgresba
 	}
 }
 
-// BuildSessionManager picks the SessionManager backend. Same memory|
-// sqlite selector as the rest of identity-domain stores so operators
-// running TokenStrategySession across multiple replicas get cross-
-// replica session redemption against a shared SQLite file.
-func BuildSessionManager(cfg config.IdentityConfig, ttl time.Duration, rdb goredis.Cmdable, pgDB *sql.DB, pgDialect postgresbackend.Dialect) (sso.SessionManager, error) {
-	// Sessions may run on a different backend than clients/users: the hot,
-	// ephemeral session store belongs in Redis Cluster for HA while identity
-	// stays on a durable DB. session_backend overrides; empty falls back to
-	// the identity backend. Postgres is a valid option for unified-stack
-	// deployments (sessions are hot/ephemeral, but at moderate scale Postgres
-	// handles them fine — for high traffic prefer redis or sqlite).
+// SessionBackend resolves the normalized session override, falling back to
+// identity.backend. Construction and boot schema checks must use one policy.
+func SessionBackend(cfg config.IdentityConfig) string {
 	backend := strings.ToLower(strings.TrimSpace(cfg.SessionBackend))
 	if backend == "" {
 		backend = strings.ToLower(strings.TrimSpace(cfg.Backend))
 	}
+	return backend
+}
+
+// BuildSessionManager constructs the effective memory, SQLite, Redis, or
+// PostgreSQL session manager independently of the client/user store backend.
+func BuildSessionManager(cfg config.IdentityConfig, ttl time.Duration, rdb goredis.Cmdable, pgDB *sql.DB, pgDialect postgresbackend.Dialect) (sso.SessionManager, error) {
+	backend := SessionBackend(cfg)
 	switch backend {
 	case "", "memory":
 		s := defaultimpl.NewMemorySessionManager(ttl)

@@ -56,7 +56,8 @@ func servingRegionFrom(ctx core.HandlerContext) string {
 }
 
 // HandleAuthCodeGrant processes the RFC 6749 §4.1.3 authorization_code token
-// exchange. Behavior is byte-identical to the prior root handler.
+// exchange. Refresh issuance requires the code-bound offline_access grant and
+// the current client's refresh-token grant policy.
 //
 // Oracle-leak collapse (AGENTS.md §3): unknown / expired / consumed code,
 // client mismatch, redirect_uri mismatch, PKCE failure, and RFC 9449 §10
@@ -226,10 +227,14 @@ func authCodeValidate(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core
 	return info, true
 }
 
-// authCodeIssueRefresh fail-OPENs (log + continue): a refresh issuance error
-// never aborts the access-token response. Family seed "" starts a new family.
+// authCodeIssueRefresh requires effective code-bound offline_access and exact
+// refresh_token in nonempty client grant lists before any refresh-store contact.
+// Nil/empty lists retain legacy compatibility. Authorized issuance fail-OPENs
+// (log + continue); family seed "" starts a family. Access/ID issuance is separate.
 func authCodeIssueRefresh(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core.Client, info *oauth.AuthCode, scopes []string, dpopJKT string, resp map[string]any) {
-	if d.RefreshTokenStore() == nil {
+	if !slices.Contains(scopes, core.ScopeOfflineAccess) ||
+		(len(client.GrantTypes) > 0 && !slices.Contains(client.GrantTypes, core.GrantRefreshToken)) ||
+		d.RefreshTokenStore() == nil {
 		return
 	}
 	rt, err := d.IssueRefreshToken(ctx.Request().Context(),

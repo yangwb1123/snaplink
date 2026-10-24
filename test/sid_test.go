@@ -119,7 +119,7 @@ func TestSID_StampedOnIDTokenAfterLogin(t *testing.T) {
 
 func TestSID_StableAcrossRefreshRotation(t *testing.T) {
 	srv := newSIDHarness(t)
-	body := loginSID(t, srv, []string{"openid"})
+	body := loginSID(t, srv, []string{"openid", "offline_access"})
 	originalAccess, _ := body["access_token"].(string)
 	originalSID, _ := decodeAccessTokenPayload(t, originalAccess)["sid"].(string)
 	if originalSID == "" {

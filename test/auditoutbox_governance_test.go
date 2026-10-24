@@ -134,7 +134,7 @@ func newGovernanceHarness(t *testing.T) (
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
 		ID: govClientID, Secret: "gov-secret", Active: true, TenantID: govTenantID,
-		AllowedAuthenticators: []string{"password"}, AllowedScopes: []string{"openid"}, TokenStrategy: "jwt",
+		AllowedAuthenticators: []string{"password"}, AllowedScopes: []string{"openid", "offline_access"}, TokenStrategy: "jwt",
 	})
 	roster := defaultimpl.NewMemoryTenantUserStore()
 	if err := roster.Add(ctx, &core.TenantMembership{TenantID: govTenantID, UserID: govUserID, Role: core.TenantRoleAdmin}); err != nil {
@@ -233,14 +233,13 @@ func startRelay(t *testing.T, outbox commerce.OutboxStore, client auditgovernanc
 }
 
 // attemptLoginScope is attemptLogin with an explicit scope parameter
-// (refresh-token issuance is scoped: an unscoped login has nothing to
-// persist).
-func attemptLoginScope(t *testing.T, srv *httptest.Server, password, scope string) (int, map[string]any) {
+// (managed refresh issuance requires explicit offline_access).
+func attemptLoginScope(t *testing.T, srv *httptest.Server, password string, scopes ...string) (int, map[string]any) {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"provider":   "password",
 		"client_id":  govClientID,
-		"scope":      []string{scope},
+		"scope":      scopes,
 		"credential": map[string]string{"username": govUserID, "password": password},
 	})
 	if err != nil {
@@ -431,10 +430,10 @@ func TestGovernanceConnector_TokenIssuedRolesProjection(t *testing.T) {
 	ctx := context.Background()
 
 	// /auth/login (direct mint) returns a refresh token once the refresh
-	// store is wired and a scope is requested; the RFC 6749 refresh grant
+	// store is wired and offline_access is requested; the RFC 6749 refresh grant
 	// then emits the token_issued event through the shared
 	// recordTokenIssued funnel.
-	status, loginBody := attemptLoginScope(t, srv, govPassword, "openid")
+	status, loginBody := attemptLoginScope(t, srv, govPassword, "openid", "offline_access")
 	if status != http.StatusOK {
 		t.Fatalf("login status=%d, want 200", status)
 	}

@@ -176,7 +176,7 @@ export interface AdminClient {
   allowed_scopes?: string[];
   /** Unix timestamp. 0 means the secret never expires (legacy/public */
   client_secret_expires_at?: number;
-  /** Read-only grant-type allowlist, enforced at /token */
+  /** Read-only grant-type allowlist for /token, initial refresh and CIBA initiation. */
   grant_types?: string[];
   id?: string;
   /** Hosted-login continuation URL for OIDC/SAML federation. HTTPS is */
@@ -790,6 +790,7 @@ export interface DeviceCodeRequest {
   client_id: string;
   nonce?: string;
   resource?: string[];
+  /** Space-delimited client-authorized scopes. Explicit offline_access */
   scope?: string;
 }
 
@@ -1134,6 +1135,7 @@ export interface LoginResponse {
   redirect_uri?: string;
   /** True only after redirect_uri passed the registered-client checks. */
   redirect_uri_validated?: boolean;
+  /** For direct-mint /auth/login, requires exact offline_access in the */
   refresh_token?: string;
   /** Effective mode; defaults to query for code and fragment for token responses. */
   response_mode?: string;
@@ -1694,7 +1696,7 @@ export interface TokenIssuance {
   id_token?: string;
   /** RFC 8693 §2.2.1 — present on token-exchange responses. */
   issued_token_type?: "urn:ietf:params:oauth:token-type:access_token" | "urn:ietf:params:oauth:token-type:refresh_token" | "urn:ietf:params:oauth:token-type:txn-token";
-  /** Present when a refresh token was issued. Family-rotated */
+  /** Present when a refresh token was issued. For authorization_code, */
   refresh_token?: string;
   /** Space-delimited granted scopes. */
   scope?: string;

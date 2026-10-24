@@ -139,22 +139,8 @@ func (b *appBuilder) wireMTLSLockoutProxiesCORS() error {
 		b.opts = append(b.opts, sso.WithClientCertExtractor(extractor))
 		logger.Info("security: mTLS bound tokens enabled", "extractor", mode)
 	}
-	if al := cfg.Security.AccountLockout; al.Enabled {
-		lockout, mode, err := serverbuildauthn.BuildAccountLockout(al, b.redis)
-		if err != nil {
-			return fmt.Errorf("account lockout: %w", err)
-		}
-		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, lockout, "account_lockout", sqlitestores.AccountLockoutMaxVersion()); err != nil {
-			return fmt.Errorf("schema check account_lockout: %w", err)
-		}
-		b.opts = append(b.opts, sso.WithAccountLockout(lockout))
-		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-account-lockout", lockout)
-		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-account-lockout", lockout)
-		logger.Info("security: account lockout enabled",
-			"backend", mode,
-			"max_failures", al.MaxFailures,
-			"lockout_duration", al.LockoutDuration,
-			"failure_window", al.FailureWindow)
+	if err := b.wireAccountLockout(); err != nil {
+		return err
 	}
 	if tp := cfg.Security.TrustedProxies; len(tp.CIDRs) > 0 {
 		tpOpt, err := sso.WithTrustedProxies(tp.CIDRs, tp.Hops)

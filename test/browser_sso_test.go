@@ -44,7 +44,7 @@ func newBrowserHarness(t *testing.T, enabled, consent bool, extra ...sso.Option)
 	clients := defaultimpl.NewMemoryClientStore()
 	for _, id := range []string{"rp-a", "rp-b"} {
 		clients.AddSeed(&sso.Client{ID: id, Name: id, Active: true, TokenStrategy: "jwt", RequirePKCE: true, TokenEndpointAuthMethod: "none",
-			AllowedScopes: []string{"openid", id + ":read"}, AllowedResources: []string{id + "-api"},
+			AllowedScopes: []string{"openid", id + ":read", "offline_access"}, AllowedResources: []string{id + "-api"},
 			AllowedAuthenticators: []string{"password"}, RedirectURIs: []string{"https://" + id + ".example/callback"}, SkipConsent: id == "rp-a"})
 	}
 	password := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(func(_ context.Context, user, password string) (*sso.AuthResult, error) {
@@ -83,6 +83,12 @@ func browserRequest(client string, resume bool) map[string]any {
 		body["provider"] = "password"
 		body["credential"] = map[string]string{"username": "alice", "password": "test-password"}
 	}
+	return body
+}
+
+func browserOfflineRequest(client string, resume bool) map[string]any {
+	body := browserRequest(client, resume)
+	body["scope"] = []string{"openid", client + ":read", "offline_access"}
 	return body
 }
 
@@ -135,7 +141,7 @@ func browserCookie(t *testing.T, h *browserHarness) *http.Cookie {
 
 func TestE2E_BrowserSSO_SecondRPHasIndependentGrant(t *testing.T) {
 	h := newBrowserHarness(t, true, false)
-	status, a, headers := browserPost(t, h, "/auth/login", browserRequest("rp-a", false))
+	status, a, headers := browserPost(t, h, "/auth/login", browserOfflineRequest("rp-a", false))
 	if status != 200 || a["code"] == nil {
 		t.Fatalf("first RP login: %d error=%v", status, a["error"])
 	}
@@ -148,7 +154,7 @@ func TestE2E_BrowserSSO_SecondRPHasIndependentGrant(t *testing.T) {
 	if status != 200 || discovery[browsersso.KeySupported] != true || discovery[browsersso.KeyAvailable] != true {
 		t.Fatal("cookie session not discoverable")
 	}
-	status, b, _ := browserPost(t, h, "/auth/login", browserRequest("rp-b", true))
+	status, b, _ := browserPost(t, h, "/auth/login", browserOfflineRequest("rp-b", true))
 	if status != 200 || b["code"] == nil {
 		t.Fatalf("second RP resume: %d error=%v", status, b["error"])
 	}
@@ -167,7 +173,7 @@ func TestE2E_BrowserSSO_SecondRPHasIndependentGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if aClaims.ClientID != "rp-a" || bClaims.ClientID != "rp-b" || strings.Join(bClaims.Audience, " ") != "rp-b-api" || strings.Join(bClaims.Scopes, " ") != "openid rp-b:read" {
+	if aClaims.ClientID != "rp-a" || bClaims.ClientID != "rp-b" || strings.Join(bClaims.Audience, " ") != "rp-b-api" || strings.Join(bClaims.Scopes, " ") != "openid rp-b:read offline_access" {
 		t.Fatal("RP authorization binding leaked")
 	}
 	if aClaims.SID == "" || bClaims.SID == "" || aClaims.SID == bClaims.SID {

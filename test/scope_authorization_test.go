@@ -39,6 +39,7 @@ const (
 
 type scopeHarness struct {
 	srv     *httptest.Server
+	refresh oauth.RefreshTokenStore
 	devices oauth.DeviceCodeStore
 	ciba    oauth.CIBAStore
 }
@@ -77,6 +78,7 @@ func newScopeHarness(t *testing.T) *scopeHarness {
 	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))
 	devices := defaultimpl.NewMemoryDeviceCodeStore()
 	cibaStore := defaultimpl.NewMemoryCIBAStore()
+	refresh := defaultimpl.NewMemoryRefreshTokenStore()
 	cibaTransport := oauth.CIBATransportFunc(func(_ context.Context, _, _ string, _ map[string]string) error { return nil })
 
 	srv := sso.NewServer(
@@ -88,13 +90,13 @@ func newScopeHarness(t *testing.T) *scopeHarness {
 		sso.WithDefaultTokenStrategy("jwt"),
 		sso.WithIDTokenIssuer(issuer),
 		sso.WithAuthCodeStore(defaultimpl.NewMemoryAuthCodeStore(), time.Minute),
-		sso.WithRefreshTokenStore(defaultimpl.NewMemoryRefreshTokenStore(), time.Hour),
+		sso.WithRefreshTokenStore(refresh, time.Hour),
 		sso.WithDeviceCodeStore(devices, scDeviceCodeTTL, scDevicePollInter, ""),
 		sso.WithCIBA(cibaStore, cibaTransport, 2*time.Minute, scDevicePollInter),
 	)
 	httpSrv := httptest.NewServer(srv.Handler())
 	t.Cleanup(httpSrv.Close)
-	return &scopeHarness{srv: httpSrv, devices: devices, ciba: cibaStore}
+	return &scopeHarness{srv: httpSrv, refresh: refresh, devices: devices, ciba: cibaStore}
 }
 
 func scPostJSON(t *testing.T, srv *httptest.Server, path string, body map[string]any) (int, map[string]any) {
@@ -585,16 +587,14 @@ func TestScope_TokenExchange_SubsetStillEnforced(t *testing.T) {
 // against AllowedScopes (RFC 6749 §6 only requires ⊆ original).
 func TestScope_Refresh_KeepsSubsetSemantics(t *testing.T) {
 	h := newScopeHarness(t)
-	// First issuance via login (defaults to ["api:read"]).
-	_, login := scPostJSON(t, h.srv, "/auth/login", map[string]any{
-		"provider":   "password",
-		"client_id":  scClientRestricted,
-		"credential": map[string]string{"username": "x", "password": "y"},
-		"scope":      []string{"api:read"},
+	// Seed an existing authorized family without offline_access: the initial
+	// direct-mint guard must not retroactively invalidate old families.
+	refresh, err := oauth.IssueRefreshToken(t.Context(), oauth.IssueRefreshTokenParams{
+		RefreshTokenStore: h.refresh, RefreshTokenTTL: time.Hour,
+		UserID: scUser, ClientID: scClientRestricted, Scopes: []string{"api:read"},
 	})
-	refresh, _ := login["refresh_token"].(string)
-	if refresh == "" {
-		t.Fatalf("no refresh token: %v", login)
+	if err != nil || refresh == "" {
+		t.Fatalf("existing-family fixture: %v", err)
 	}
 	// Refresh keeping the same scope succeeds.
 	st, out := scPostForm(t, h.srv, "/token", url.Values{

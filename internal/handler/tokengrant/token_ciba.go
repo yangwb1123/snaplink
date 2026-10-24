@@ -249,11 +249,10 @@ func cibaPollGate(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client,
 	return r, now, true
 }
 
-// cibaIssueRefresh mints and records the refresh token when a refresh store is
-// configured, mutating resp. Refresh issuance is fail-open: an error is logged
-// and the token simply omitted.
+// cibaIssueRefresh respects explicit client refresh-grant restrictions before
+// accessing the store. Authorized issuance errors still log and omit refresh.
 func cibaIssueRefresh(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client, r *oauth.CIBARequest, provider string, now time.Time, dpopJKT string, resp map[string]any) {
-	if d.RefreshTokenStore() == nil {
+	if (len(client.GrantTypes) > 0 && !slices.Contains(client.GrantTypes, core.GrantRefreshToken)) || d.RefreshTokenStore() == nil {
 		return
 	}
 	rt, err := d.IssueRefreshToken(ctx.Request().Context(),

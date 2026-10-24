@@ -25,7 +25,10 @@ the whole release gate: run the committed Go gates and `make ci` as well.
 
 Coverage is also printed as "Section 4" by `checks/acceptance.py`. It is
 blocking: a failing test subprocess, unresolved package target, or missing
-coverage row fails the acceptance command.
+coverage row fails the acceptance command. Failed coverage prints captured
+child stdout followed by stderr; this is not interleaved chronology and does not
+recover any missing original failure trace. See
+[coverage failure diagnostics](COVERAGE_FAILURE_DIAGNOSTICS.md).
 
 > U4/U6/U7 are placeholders in the current acceptance suite. Their underlying
 > gates exist and already run inside `go test ./...` (per-function complexity,

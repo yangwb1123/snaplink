@@ -63,7 +63,7 @@ func loginFormHarness(t *testing.T, srv *httptest.Server) (access, refresh strin
 	}.Encode())
 	// Login still uses JSON; build a JSON post here directly.
 	jsonBody := `{"provider":"password","client_id":"` + formClientID +
-		`","credential":{"username":"x","password":"y"}}`
+		`","scope":["offline_access"],"credential":{"username":"x","password":"y"}}`
 	_ = body
 	resp, err := http.Post(srv.URL+"/auth/login", "application/json", strings.NewReader(jsonBody))
 	if err != nil {

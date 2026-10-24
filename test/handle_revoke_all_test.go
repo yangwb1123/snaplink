@@ -60,6 +60,7 @@ func newRevokeAllServer(t *testing.T) (*httptest.Server, *defaultimpl.MemoryRefr
 func loginAndCaptureTokens(t *testing.T, srv *httptest.Server) (string, string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{
+		"scope":      []string{"offline_access"},
 		"provider":   "password",
 		"client_id":  raClient,
 		"credential": map[string]string{"username": "x", "password": "y"},

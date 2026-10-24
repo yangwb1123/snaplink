@@ -112,7 +112,7 @@ waits for the replay worker to stop before Redis closes.
 | `keys.rotation.grace_period` | Overlap window the demoted key stays verify-only. Also the DEFAULT for on-demand `POST /api/v1/admin/keys/rotate` (see below); when unset the admin rotate falls back to a 24h constant. MUST be >= the max access-token TTL or tokens minted just before a rotation are stranded |
 | `POST /api/v1/admin/keys/rotate`, `GET /api/v1/admin/keys` | On-demand `KeyAdminService` (admin:write / admin:read): rotate the primary signing key now (reusing the scheduled side effects) or list public key metadata. Request `grace_seconds` (>=60) overrides `grace_period`; external-signer builds refuse (412), non-rotatable issuers return 501 |
 | `keys.rotation.coordinated_cutover` | `WithCoordinatedKeyRotation`: broadcasts demoted+new kids + `now+GracePeriod` retire deadline over `cluster.Bus` (`KindSigningKeyRotation`); FAIL-SAFE: deferred retire only widens verify window, never retires early |
-| `keys.signing.revocation_backend` | `With{Algo}RevocationStore` for restart/recovery-safe revocation; `SeedRevocations` re-seeds at boot and after invalidation-bus recovery. `redis` uses the shared top-level client and is required when `server.topology.mode=multi` and `cluster.cross_replica_revocation=true`; memory/SQLite cannot recover an event missed by another pod. |
+| `keys.signing.revocation_backend` | `With{Algo}RevocationStore` for restart/recovery-safe revocation; `SeedRevocations` re-seeds at boot and after invalidation-bus recovery. `postgres` uses the shared `postgres.dsn` pool, preserving full token keys and Unix-second expiry; boot seeding fails rather than returns a partial deny-set above 100,000 tokens or 16 MiB of token bytes, with a 10-second seeding deadline. Persistence is not live propagation: `redis` remains required when `server.topology.mode=multi` and `cluster.cross_replica_revocation=true`. |
 | `keys.signing_key_registry.{backend,replica_id,lease_ttl}` | Opt-in leaderless aggregation (`memory`\|`etcd`). `WithSigningKeyReplicaID` REQUIRED when wired. Degraded → `/readyz` 503 + `signing_key_aggregation_degraded` audit |
 | `keys.signing.fips_mode` | Off by default. When `true`, `BuildSigningIssuer` requires the binary's Go Cryptographic Module to actually be active (`GOFIPS140`/`GODEBUG=fips140`) and validates `keys.signing.alg` against a FIPS 186-5-approved allowlist (default: all four supported algs — see [docs/fips.md](fips.md) for why Ed25519 is included) before constructing the issuer |
 | `keys.signing.fips_allowed_algs` | Optional narrower allowlist consulted only when `fips_mode` is `true`; empty (default) = the package's full approved set |
@@ -142,7 +142,7 @@ Values below are exactly what the binary's boot-time dispatch accepts
 | WebAuthn passkey credentials | `webauthn.storage.users.backend` | `memory` · `sqlite` · `postgres` |
 | WebAuthn ceremony sessions | `webauthn.storage.sessions.backend` | `memory` · `sqlite` · `redis` |
 | JTI replay | `security.jti_replay.backend` | `memory` · `sqlite` · `redis` |
-| Account lockout | `security.account_lockout.backend` | `memory` · `sqlite` · `redis` |
+| Account lockout | `security.account_lockout.backend` | `memory` · `sqlite` · `redis` · `postgres` (shared pool; PostgreSQL dialect only) |
 | Rate limiter | `security.rate_limit.backend` | `memory` · `sqlite` · `redis` (redis = cluster-shared smooth token bucket: burst + per-second refill against the server clock, so the effective limit is exactly the configured one across replicas with no fixed-window edge burst) |
 | Pairwise subjects | `server.pairwise_subjects.backend` | `memory` · `sqlite` · `postgres` |
 | BCL subject-client index | `backchannel_logout.index.backend` | `memory` · `sqlite` · `redis` |
@@ -161,12 +161,34 @@ Values below are exactly what the binary's boot-time dispatch accepts
 | Permissions | `permissions.backend` | `memory` · `sqlite` · `postgres` |
 | ReBAC / FGA tuples + check | `rebac.{enabled,backend}` · `rebac.sqlite.dsn` | off unless enabled · `memory` (single replica) · `sqlite` (shared) |
 | Anomaly detectors | `anomaly.{recent_login,ip_failure}.backend` | `memory` · `sqlite` |
-| Signing-key revocation | `keys.signing.revocation_backend` | off · `memory` · `sqlite` · `redis` |
+| Signing-key revocation | `keys.signing.revocation_backend` | off · `memory` · `sqlite` · `redis` · `postgres` (shared pool; PostgreSQL dialect only) |
 | Signing-key registry | `keys.signing_key_registry.backend` | off · `memory` · `etcd` |
 | Cross-replica bus | `cluster.bus.backend` | off · `memory` · `etcd` · `redis` |
 | Service registry | `registry.backend` | `memory` · `etcd` |
 | Network policy store | `network.store` | `memory` · `etcd` |
 | Bootstrap lock | `bootstrap.lock.backend` | `noop` · `file` · `etcd` |
+
+The PostgreSQL permissions provider includes the resource-catalog SPI through
+additive `schema_migrations_permissions` version 3. Existing versions 1–2 are
+unchanged. Resource attributes/required permissions remain JSON text; creation
+and update times are exact BIGINT Unix nanoseconds. Scoped reads retain byte-wise
+ID ordering. The internal NUL-separated dispatch tuple uses BYTEA, not TEXT;
+SQLite-to-PostgreSQL transfer therefore requires an explicit reviewed mapping,
+not a common-column copy. Resource reads reject rather than truncate above
+100,000 scanned rows or 16 MiB of JSON text; a resolution error is not a public
+catalog miss. This extended provider requires the PostgreSQL dialect and rejects
+CockroachDB at boot (the prior role-only provider accepted that dialect; extending
+its catalog there requires separate capability evidence). Native PostgreSQL text/key limits still apply and arbitrary-size
+opaque keys are not certified.
+
+PostgreSQL account lockout retains the opaque client/identifier key, failure
+window/reset policy and nanosecond timestamps. A transactional no-op conflict
+UPDATE plus row lock serializes first failures against success resets across
+pools. An uncertain commit is returned as an error, never automatically replayed.
+The lockout/revocation adapters retire themselves without closing the
+composition-owned pool. Selecting any backend changes configuration, not data:
+complete migration, restore, key continuity and production acceptance remain
+separate requirements.
 
 The stock server does not select Redis as a permissions backend. Embedding
 callers that construct `infrastructure/redis.NewPermissionProvider` can opt

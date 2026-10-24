@@ -1940,6 +1940,14 @@ paths:
         credentials take precedence over body credentials; private_key_jwt is
         accepted through `client_assertion`.
 
+        A nonempty client `grant_types` list must contain exact
+        `urn:openid:params:grant-type:ciba`; otherwise `unauthorized_client` is
+        returned after existing client/resource validation but before user-hint
+        resolution, user-code verification or pending/challenge side effects.
+        Nil/empty lists retain unrestricted legacy behavior. Scopes do not
+        authorize grant types. Existing requests and approval-time policy
+        revalidation are separate; no new offline-scope requirement is added.
+
         `requested_expiry` may shorten the server-configured request lifetime
         but can never extend it. `user_code` is accepted only when the SDK has
         a dedicated `WithCIBAUserCodeVerifier`; the value is verified after
@@ -1968,8 +1976,8 @@ paths:
                 $ref: "#/components/schemas/CIBABackchannelResponse"
         "400":
           description: |
-            invalid_request, invalid_scope, invalid_target, unknown_user_id,
-            missing_user_code, or invalid_user_code.
+            unauthorized_client, invalid_request, invalid_scope, invalid_target,
+            unknown_user_id, missing_user_code, or invalid_user_code.
           content:
             application/json:
               schema:
@@ -15267,6 +15275,14 @@ components:
           description: Token lifetime in seconds.
         refresh_token:
           type: string
+          description: |
+            For direct-mint /auth/login, requires exact offline_access in the
+            effective client-authorized scopes after policy narrowing; otherwise
+            omitted, including issuer-provided values. A configured managed
+            store overrides the issuer and errors log + omit (no issuer fallback).
+            Without managed storage, an explicitly authorized issuer-provided
+            refresh remains allowed; server /token redemption is not guaranteed.
+            Other login ceremonies have separately governed refresh policies.
         id_token:
           type: string
           description: OIDC ID token, present when the granted scope includes openid.
@@ -15853,8 +15869,27 @@ components:
         refresh_token:
           type: string
           description: |
-            Present when a refresh token was issued. Family-rotated
-            on every grant=refresh_token call when
+            Present when a refresh token was issued. For authorization_code,
+            issuance requires exact offline_access in the effective code-bound
+            scopes, a wired refresh store and exact refresh_token in a nonempty
+            current-client grant list (nil/empty keeps legacy compatibility).
+            Denial omits refresh before store access, independent of access/ID
+            issuance. Login must explicitly request offline scope; an allowlist,
+            editable attributes or omitted scope cannot grant offline access.
+            Token-time scope narrowing may remove it, never add it. An authorized
+            refresh-store outage still logs and omits this field without aborting
+            access/ID-token issuance. Device authorization also requires exact
+            offline_access in the approved stored device-code scopes, a wired
+            refresh store, and the client's refresh_token grant when GrantTypes
+            is explicit. Request offline_access at /device/code; poll scope does
+            not replace or expand the stored grant. Device issuance errors omit
+            refresh without issuer fallback. CIBA initial issuance also requires
+            exact refresh_token in a nonempty client GrantTypes list, for poll,
+            ping collection and push. Nil/empty grant lists retain legacy behavior;
+            CIBA scope semantics are unchanged (no new offline_access requirement).
+            Denial, unwired storage or authorized store errors omit refresh without
+            forwarding an issuer refresh value. Other grants retain their policies.
+            Family-rotated on every grant=refresh_token call when
             `RefreshTokenFamilyTracker` is wired.
         scope:
           type: string
@@ -16112,6 +16147,12 @@ components:
           type: string
         scope:
           type: string
+          description: |
+            Space-delimited client-authorized scopes. Explicit offline_access
+            must survive in the approved stored device grant for an initial
+            refresh token; client scope/grant allowlists alone do not suffice.
+            Omitted/empty scope defaults resource scopes, excluding openid and
+            offline_access. A token poll cannot add offline access to this grant.
         nonce:
           type: string
         resource:
@@ -17138,8 +17179,11 @@ components:
           type: array
           items: { type: string }
           description: |
-            Read-only grant-type allowlist, enforced at /token
-            (unauthorized_client). Mutations never consume this field.
+            Read-only grant-type allowlist for /token, initial refresh and CIBA initiation.
+            Excluded requested grants return unauthorized_client; empty is unrestricted.
+            Initial code/device/CIBA refresh needs exact refresh_token in nonempty
+            lists; denial omits refresh while access/ID issuance is independent.
+            Mutations never consume this field.
 
     ListClientsResponse:
       type: object

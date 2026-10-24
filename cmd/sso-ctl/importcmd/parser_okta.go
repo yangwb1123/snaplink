@@ -91,8 +91,22 @@ func decodeOktaArray(dec *json.Decoder) ([]oktaUser, error) {
 		}
 		out = append(out, u)
 	}
-	if _, err := dec.Token(); err != nil && !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("decode okta users array: %w", err)
+	if dec.More() {
+		return nil, fmt.Errorf("decode okta users array: unexpected leftover element")
+	}
+	closing, err := dec.Token()
+	if err != nil {
+		// A truncated array (premature EOF) must never be reported as success.
+		return nil, fmt.Errorf("decode okta users array: missing closing delimiter: %w", err)
+	}
+	if delim, ok := closing.(json.Delim); !ok || delim != ']' {
+		return nil, fmt.Errorf("decode okta users array: unexpected token %v (want ']')", closing)
+	}
+	if trailing, err := dec.Token(); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return nil, fmt.Errorf("decode okta users array: %w", err)
+		}
+		return nil, fmt.Errorf("decode okta users array: trailing data after closing delimiter: %v", trailing)
 	}
 	return out, nil
 }

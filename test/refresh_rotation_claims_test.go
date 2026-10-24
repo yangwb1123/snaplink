@@ -81,7 +81,7 @@ func TestRefreshRotation_PreservesAMRACRAuthTime(t *testing.T) {
 	const code = "code-rotation-amr"
 	if err := store.Issue(context.Background(), code, &oauth.AuthCode{
 		UserID: codeUser, ClientID: codeClient, RedirectURI: codeRedirectURI,
-		Scopes:      []string{"openid"},
+		Scopes:      []string{"openid", "offline_access"},
 		Provider:    "password",
 		AuthMethods: []string{"pwd", "otp", "mfa"},
 		ACR:         "urn:acr:high",
@@ -142,7 +142,7 @@ func TestRefreshRotation_TenantIDPresentRolesAbsent(t *testing.T) {
 	const code = "code-rotation-roles-absent"
 	if err := store.Issue(context.Background(), code, &oauth.AuthCode{
 		UserID: codeUser, ClientID: codeClient, RedirectURI: codeRedirectURI,
-		Scopes:    []string{"openid"},
+		Scopes:    []string{"openid", "offline_access"},
 		Provider:  "password",
 		AuthTime:  time.Now(),
 		ExpiresAt: time.Now().Add(5 * time.Minute),
