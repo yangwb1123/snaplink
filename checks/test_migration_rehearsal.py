@@ -34,13 +34,14 @@ def inspect_ok(**over):
                 Config=dict(Labels={'abr.owner': 'l'}),
                 HostConfig=dict(Memory=1 << 30, MemorySwap=1 << 30, NanoCpus=2_000_000_000,
                                 Tmpfs={'/var/lib/postgresql/data': 'rw,noexec,nosuid,size=768m'}),
-                Mounts=[dict(Type='tmpfs')],
+                Mounts=[],
                 NetworkSettings=dict(Ports={'5432/tcp': [dict(HostIp='127.0.0.1', HostPort='32829')]}))
     body.update(over)
     return body
 
 
 def test_ownership_check_accepts_exact_owned_container():
+    # docker keeps --tmpfs in HostConfig.Tmpfs; an empty Mounts list is healthy, not a defect.
     port = rehearsal_cli.verify_ownership(inspect_ok(), 'a' * 64, 'abr-x', 'l', rehearsal_cli.IMAGE_PIN)
     assert port == 32829
 

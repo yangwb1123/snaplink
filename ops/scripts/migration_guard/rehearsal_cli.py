@@ -75,8 +75,10 @@ def verify_ownership(body, cid, name, label, image):
         raise GuardFailure("rehearsal_resource_caps_mismatch")
     if host.get("Tmpfs") != TMPFS:
         raise GuardFailure("rehearsal_tmpfs_layout_mismatch")
+    # docker reports --tmpfs under HostConfig.Tmpfs; Mounts carries bind/volume mounts only,
+    # so an empty Mounts list is the expected healthy state and any non-tmpfs entry is a refusal.
     mounts = body.get("Mounts") or []
-    if not mounts or any(m.get("Type") != "tmpfs" for m in mounts):
+    if any(m.get("Type") != "tmpfs" for m in mounts):
         raise GuardFailure("rehearsal_tmpfs_only_storage_required")
     ports = ((body.get("NetworkSettings") or {}).get("Ports") or {}).get("5432/tcp") or []
     if len(ports) != 1 or ports[0].get("HostIp") != "127.0.0.1":
