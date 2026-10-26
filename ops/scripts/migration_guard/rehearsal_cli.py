@@ -227,6 +227,8 @@ def step_plan(args):
         names.append("readpath")
     if getattr(args, "sso_server", None):
         names.append("smoke")
+    if getattr(args, "drift_check", False):
+        names.append("drift_check")
     if getattr(args, "write_check", False):
         names.append("write_check")
     return names
@@ -258,6 +260,8 @@ def run_command(args, root):
         steps.append(("readpath", lambda: readpath_candidate(root, args.readpath, args.readpath_expect)))
     if getattr(args, "sso_server", None):
         steps.append(("smoke", lambda: smoke_candidate(root, args.sso_server)))
+    if getattr(args, "drift_check", False):
+        steps.append(("drift_check", lambda: native_history_drift(root)))
     # write_check runs last: it mutates the disposable candidate, so every row-count
     # comparison above must already have been taken.
     if getattr(args, "write_check", False):
@@ -377,6 +381,31 @@ def verify_candidate(root, args):
     if report.get("result") != "passed":
         raise GuardFailure("rehearsal_verify_failed")
     return report
+
+
+def native_history_tables(report):
+    tables = {}
+    for entry in report.get("native_history_after", {}).get("tables", []):
+        name = entry.get("table", "")
+        if name.startswith("schema_migrations"):
+            tables[name] = entry.get("rows")
+    return tables
+
+
+def native_history_drift(root):
+    """Runtime store migrations must not silently add native migration history rows."""
+    report = json.loads((root / "import-report.json").read_text())
+    recorded = native_history_tables(report)
+    if not recorded:
+        raise GuardFailure("rehearsal_native_history_missing_from_import_report")
+    current = {name: scalar_int(psql_scalar(root, "SELECT count(*) FROM " + name + ";")) for name in sorted(recorded)}
+    added = {name: current[name] - recorded[name] for name in recorded if current[name] != recorded[name]}
+    result = dict(result="passed" if not added else "failed", recorded_rows=recorded, current_rows=current,
+                  drift=added, scope="native migration history drift check;NOT cutover approval")
+    write_private(root / "native-history-drift.json", result)
+    if added:
+        raise GuardFailure("rehearsal_native_history_drifted")
+    return result
 
 
 def psql_scalar(root, sql):
@@ -705,6 +734,8 @@ def parser():
     three.add_argument("--policy-template")
     three.add_argument("--base-commit", help="40-hex commit the reviewed schema was built from")
     three.add_argument("--sso-server", help="prebuilt sso-server binary to smoke against the candidate")
+    three.add_argument("--drift-check", action="store_true",
+                       help="compare native migration history with what the import recorded")
     three.add_argument("--write-check", action="store_true",
                        help="after import, prove the migrated audit sequence accepts a new row above the historical floor")
     three.add_argument("--replay-guard", action="store_true",

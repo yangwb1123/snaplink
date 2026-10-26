@@ -403,3 +403,32 @@ def test_smoke_environment_is_scrubbed_of_rehearsal_variables(monkeypatch):
     env = rehearsal_cli.smoke_env()
     assert "SSO_SERVER" not in env, "SSO_* variables become server config and corrupt the file"
     assert env.get("PATH") == "/usr/bin"
+
+
+def test_native_history_tables_only_takes_migration_tables():
+    report = dict(native_history_after=dict(tables=[
+        dict(table="schema_migrations_clients", rows=8), dict(table="clients", rows=10)]))
+    assert rehearsal_cli.native_history_tables(report) == {"schema_migrations_clients": 8}
+    assert rehearsal_cli.native_history_tables(dict()) == {}
+
+
+def test_native_history_drift_fails_when_rows_were_added(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "import-report.json", dict(native_history_after=dict(
+        tables=[dict(table="schema_migrations_clients", rows=8)])))
+    monkeypatch.setattr(rehearsal_cli, "psql_scalar", lambda root, sql: "9")
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.native_history_drift(root)
+    record = json.loads((root / "native-history-drift.json").read_text())
+    assert record["result"] == "failed" and record["drift"] == {"schema_migrations_clients": 1}
+
+
+def test_native_history_drift_passes_when_unchanged(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "import-report.json", dict(native_history_after=dict(
+        tables=[dict(table="schema_migrations_clients", rows=8)])))
+    monkeypatch.setattr(rehearsal_cli, "psql_scalar", lambda root, sql: "8")
+    record = rehearsal_cli.native_history_drift(root)
+    assert record["result"] == "passed" and record["drift"] == {}
