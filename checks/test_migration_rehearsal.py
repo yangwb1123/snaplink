@@ -101,3 +101,47 @@ def test_run_steps_passes_when_all_steps_and_cleanup_succeed():
     out = rehearsal_cli.run_steps([("provision", lambda: calls.append("p"))], lambda: calls.append("c"))
     assert out["result"] == "passed" and calls == ["p", "c"]
     assert out["cleanup"]["result"] == "passed" and out["failure"] is None
+
+
+def test_candidate_name_is_derived_and_bounded():
+    assert rehearsal_cli.candidate_name("snaplink_mig_run3") == "snaplink_mig_run3_cand"
+    assert rehearsal_cli.candidate_name("snaplink_mig_x" * 4).startswith("snaplink_mig_")
+    with pytest.raises(GuardFailure):
+        rehearsal_cli.candidate_name("not_a_candidate")
+
+
+def test_initialise_candidate_writes_owned_connection_and_runs_the_initializer(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "fixture-receipt.json",
+                                dict(container_id="a" * 64, name="abr-x", label="l",
+                                     image_id=rehearsal_cli.IMAGE_PIN, database="snaplink_mig_run",
+                                     port=32829))
+    rehearsal_cli.write_private(root / "test-connection.json",
+                                dict(host="127.0.0.1", port=32829, user="u", database="snaplink_mig_run",
+                                     password="p", owner_token="b" * 48))
+    statements, launched = [], []
+    monkeypatch.setattr(rehearsal_cli, "psql", lambda connection: (["psql"], {}))
+    monkeypatch.setattr(rehearsal_cli, "execute_sql", lambda argv, env, sql: statements.append(sql))
+    monkeypatch.setattr(rehearsal_cli, "run_bounded",
+                        lambda argv, timeout, **kw: (launched.append(argv),
+                                                     type("R", (), {"returncode": 0})())[1])
+    _receipt, candidate = rehearsal_cli.initialise_candidate(root, "snaplink_mig_run", "/bin/schema-init")
+    assert candidate == "snaplink_mig_run_cand"
+    assert any("CREATE DATABASE snaplink_mig_run_cand" in sql for sql in statements)
+    assert any("migration_guard.ownership" in sql for sql in statements)
+    owned = json.loads((root / "candidate-connection.json").read_text())
+    assert owned["database"] == candidate and len(owned["owner_token"]) == 48
+    assert launched == [["/bin/schema-init", str(root / "candidate-connection.json")]]
+
+
+def test_initialise_candidate_refuses_a_root_mismatch(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "fixture-receipt.json", dict(container_id="a" * 64))
+    rehearsal_cli.write_private(root / "test-connection.json",
+                                dict(host="127.0.0.1", port=1, user="u", database="snaplink_mig_other",
+                                     password="p", owner_token="b" * 48))
+    monkeypatch.setattr(rehearsal_cli, "psql", lambda connection: (["psql"], {}))
+    with pytest.raises(GuardFailure):
+        rehearsal_cli.initialise_candidate(root, "snaplink_mig_run", "/bin/true")

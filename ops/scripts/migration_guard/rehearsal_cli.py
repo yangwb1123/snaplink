@@ -213,17 +213,7 @@ def run_command(args, root):
     verification stay with their own entrypoints, which the evidence file names.
     """
     def initialise():
-        receipt = json.loads((root / "fixture-receipt.json").read_text())
-        connection = dict(json.loads((root / "test-connection.json").read_text()))
-        candidate = "snaplink_mig_" + args.database.split("snaplink_mig_", 1)[-1][:20] + "_cand"
-        if not DATABASE.fullmatch(candidate):
-            raise GuardFailure("rehearsal_candidate_name_invalid")
-        argv, env = _psql(connection)
-        _sql(argv, env, "CREATE DATABASE " + candidate + ";")
-        child = run_bounded([args.schema_init, str(root / "test-connection.json")], 300)
-        if child.returncode:
-            raise GuardFailure("rehearsal_schema_init_failed")
-        return receipt, candidate
+        return initialise_candidate(root, args.database, args.schema_init)
 
     steps = [("provision", lambda: provision(root, args.container, args.label, args.database, args.user)),
              ("schema_init", initialise)]
@@ -231,6 +221,48 @@ def run_command(args, root):
     write_private(Path(args.evidence), report)
     print(json.dumps({"result": report["result"], "evidence": args.evidence}))
     return 0 if report["result"] == "passed" else 1
+
+
+def initialise_candidate(root, database, schema_init):
+    """Create the owned candidate database, its ownership row and the canonical schema."""
+    receipt = json.loads((root / "fixture-receipt.json").read_text())
+    connection = dict(json.loads((root / "test-connection.json").read_text()))
+    if connection.get("database") != database:
+        raise GuardFailure("rehearsal_root_connection_mismatch")
+    candidate = candidate_name(database)
+    argv, env = psql(connection)
+    execute_sql(argv, env, "CREATE DATABASE " + candidate + ";")
+    token = os.urandom(24).hex()
+    owned = dict(connection, database=candidate, owner_token=token)
+    owned_argv, owned_env = psql(owned)
+    execute_sql(owned_argv, owned_env,
+                "CREATE SCHEMA migration_guard;"
+                "CREATE TABLE migration_guard.ownership(token TEXT PRIMARY KEY);"
+                "INSERT INTO migration_guard.ownership VALUES('" + token + "');")
+    path = root / "candidate-connection.json"
+    write_private(path, owned)
+    child = run_bounded([schema_init, str(path)], 300)
+    if child.returncode:
+        raise GuardFailure("rehearsal_schema_init_failed")
+    return receipt, candidate
+
+
+def candidate_name(database):
+    if not database.startswith("snaplink_mig_"):
+        raise GuardFailure("rehearsal_dedicated_candidate_database_required")
+    suffix = database.split("snaplink_mig_", 1)[1][:20]
+    candidate = "snaplink_mig_" + suffix + "_cand"
+    if not DATABASE.fullmatch(candidate):
+        raise GuardFailure("rehearsal_candidate_name_invalid")
+    return candidate
+
+
+def psql(connection):
+    return _psql(connection)
+
+
+def execute_sql(argv, env, statement):
+    return _sql(argv, env, statement)
 
 
 def _psql(connection):
