@@ -79,3 +79,25 @@ per-table counts), TLS, multi-replica or Redis behaviour, authenticated HTTP
 flows, cutover approval, or any production or 30-day observation. Credentials in
 this dataset are bcrypt hashes, so an authenticated migration smoke requires a
 known secret or a rotation rather than reading one out of the source.
+
+## Known gap: bootstrap admin password is not a usable credential
+
+A rehearsal with `bootstrap.disabled: false`, `permissions.backend: postgres`
+and `authenticators.password.enabled: true` boots on the migrated candidate and
+seeds the admin user, the confidential `sso-admin` client, the public
+`sso-admin-console` PKCE client and the `sso-admin` role. It also writes the
+one-shot password file at mode 0600.
+
+That password cannot be used to log in. `stepSeedAdminUser`
+(`platform/bootstrap/builtin/builtin.go`) generates it, prints it through
+`PasswordPrinter` and stores only the user record; `stepClearSeededPassword`
+then removes any seeded password from attributes. Observed on a fresh
+candidate: `password_credentials` had zero rows for the admin, the user carried
+no attributes, and `POST /auth/login` with `provider=password` returned
+`401 invalid_credentials`.
+
+Consequences for this rehearsal: the authenticated HTTP surface is **not**
+verified, and a migration cutover cannot rely on the bootstrap banner for a
+first login. Two follow-ups are needed and are deliberately not done here:
+either seed a durable credential (and document rotation), or provide an
+explicit credential-write step before authenticated acceptance.
