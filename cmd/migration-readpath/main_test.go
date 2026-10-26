@@ -88,6 +88,27 @@ func TestExpectedUnreadableIsPartOfTheContract(t *testing.T) {
 	}
 }
 
+func TestEqualSortedIgnoresOrderButNotContent(t *testing.T) {
+	if !equalSorted([]string{"b", "a"}, []string{"a", "b"}) {
+		t.Fatal("role code comparison must be order-insensitive")
+	}
+	if equalSorted([]string{"a"}, []string{"a", "b"}) || equalSorted([]string{"a"}, []string{"b"}) {
+		t.Fatal("different role code sets must fail")
+	}
+}
+
+func TestRoleAndMenuCasesRequireIdentity(t *testing.T) {
+	if err := validate(expectations{Roles: []roleCase{{UserID: "u"}}}); err == nil {
+		t.Fatal("role case without a client must be rejected")
+	}
+	if err := validate(expectations{Clients: []clientCase{{ID: "c"}}, Menus: []menuCase{}}); err != nil {
+		t.Fatalf("a run may omit menu cases: %v", err)
+	}
+	if err := validate(expectations{Menus: []menuCase{{ClientID: "c", Items: 2}}}); err != nil {
+		t.Fatalf("valid menu case rejected: %v", err)
+	}
+}
+
 func TestCaseResultsAndDigestComparison(t *testing.T) {
 	ok := []caseResult{{Kind: "clients", ID: "a", OK: true}, {Kind: "users", ID: "b", OK: true}}
 	if !allOK(ok) {

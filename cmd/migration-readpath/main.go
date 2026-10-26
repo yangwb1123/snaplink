@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -45,10 +46,23 @@ type sessionCase struct {
 	ExpectUnreadable bool `json:"expect_unreadable"`
 }
 
+type roleCase struct {
+	UserID   string   `json:"user_id"`
+	ClientID string   `json:"client_id"`
+	Codes    []string `json:"codes"`
+}
+
+type menuCase struct {
+	ClientID string `json:"client_id"`
+	Items    int    `json:"items"`
+}
+
 type expectations struct {
 	Clients  []clientCase  `json:"clients"`
 	Users    []userCase    `json:"users"`
 	Sessions []sessionCase `json:"sessions"`
+	Roles    []roleCase    `json:"roles"`
+	Menus    []menuCase    `json:"menus"`
 }
 
 type caseResult struct {
@@ -74,7 +88,7 @@ type report struct {
 }
 
 func validate(values expectations) error {
-	total := len(values.Clients) + len(values.Users) + len(values.Sessions)
+	total := len(values.Clients) + len(values.Users) + len(values.Sessions) + len(values.Roles) + len(values.Menus)
 	if total == 0 {
 		return errors.New("at least one expectation is required")
 	}
@@ -96,6 +110,16 @@ func validate(values expectations) error {
 			return errors.New("session case requires id")
 		}
 	}
+	for _, r := range values.Roles {
+		if r.UserID == "" || r.ClientID == "" {
+			return errors.New("role case requires user_id and client_id")
+		}
+	}
+	for _, m := range values.Menus {
+		if m.ClientID == "" {
+			return errors.New("menu case requires client_id")
+		}
+	}
 	return nil
 }
 
@@ -108,7 +132,7 @@ func tableDigest(ctx context.Context, db *sql.DB, table string) (digest, error) 
 
 func digests(ctx context.Context, db *sql.DB) (map[string]digest, error) {
 	out := map[string]digest{}
-	for _, table := range []string{"clients", "users", "sessions"} {
+	for _, table := range []string{"clients", "users", "sessions", "permissions_assignments", "permissions_roles", "permissions_menus"} {
 		value, err := tableDigest(ctx, db, table)
 		if err != nil {
 			return nil, err
@@ -167,6 +191,56 @@ func checkSessions(ctx context.Context, manager *postgres.SessionManager, cases 
 		out = append(out, caseResult{Kind: "sessions", ID: want.ID, OK: ok, Detail: mismatch(ok, "session fields differ")})
 	}
 	return out
+}
+
+func checkRoles(ctx context.Context, provider *postgres.PermissionProvider, cases []roleCase) []caseResult {
+	var out []caseResult
+	for _, want := range cases {
+		roles, err := provider.Roles(ctx, want.UserID, want.ClientID)
+		if err != nil {
+			out = append(out, caseResult{Kind: "permissions_roles", ID: want.UserID + "|" + want.ClientID, Detail: "unreadable"})
+			continue
+		}
+		codes := make([]string, 0, len(roles))
+		for _, role := range roles {
+			codes = append(codes, role.Code)
+		}
+		ok := equalSorted(codes, want.Codes)
+		out = append(out, caseResult{Kind: "permissions_roles", ID: want.UserID + "|" + want.ClientID, OK: ok,
+			Detail: mismatch(ok, "role codes differ")})
+	}
+	return out
+}
+
+func checkMenus(ctx context.Context, provider *postgres.PermissionProvider, cases []menuCase) []caseResult {
+	var out []caseResult
+	for _, want := range cases {
+		tree, err := provider.GetMenus(ctx, want.ClientID)
+		if err != nil {
+			out = append(out, caseResult{Kind: "permissions_menus", ID: want.ClientID, Detail: "unreadable"})
+			continue
+		}
+		ok := len(tree) == want.Items
+		out = append(out, caseResult{Kind: "permissions_menus", ID: want.ClientID, OK: ok,
+			Detail: mismatch(ok, "menu item count differs")})
+	}
+	return out
+}
+
+func equalSorted(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	a := append([]string(nil), got...)
+	b := append([]string(nil), want...)
+	sort.Strings(a)
+	sort.Strings(b)
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func mismatch(ok bool, detail string) string {
@@ -257,12 +331,22 @@ func evaluate(ctx context.Context, db *sql.DB, values expectations) (report, err
 	cases := checkClients(ctx, clients, values.Clients)
 	cases = append(cases, checkUsers(ctx, users, values.Users)...)
 	cases = append(cases, checkSessions(ctx, sessions, values.Sessions)...)
+	permissionsProvider, err := postgres.NewPermissionProviderWithDB(db, postgres.DialectPostgres)
+	if err != nil {
+		return report{}, errors.New("permission provider unavailable")
+	}
+	cases = append(cases, checkRoles(ctx, permissionsProvider, values.Roles)...)
+	cases = append(cases, checkMenus(ctx, permissionsProvider, values.Menus)...)
 	after, err := digests(ctx, db)
 	if err != nil {
 		return report{}, errors.New("post-read digest failed")
 	}
-	unchanged := before["clients"] == after["clients"] && before["users"] == after["users"] &&
-		before["sessions"] == after["sessions"]
+	unchanged := true
+	for name := range before {
+		if before[name] != after[name] {
+			unchanged = false
+		}
+	}
 	result := report{Result: "failed", Scope: "server-store read path over migrated rows;NOT cutover",
 		Cases: cases, Before: before, After: after, ExistingRowsUnchanged: unchanged, MigrationsRun: true}
 	if allOK(cases) && unchanged {
