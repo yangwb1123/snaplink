@@ -531,3 +531,34 @@ def test_concurrency_guard_fails_when_rows_double(tmp_path, monkeypatch):
     monkeypatch.setattr(rehearsal_cli, "table_counts", counts)
     with pytest.raises(rehearsal_cli.GuardFailure):
         rehearsal_cli.concurrency_guard(root, args, "snaplink_mig_run_cand")
+
+
+def storage_body(**over):
+    body = dict(Id="a" * 64, Name="/abr-x", Image=rehearsal_cli.IMAGE_PIN,
+                Config=dict(Labels={"abr.owner": "l"}),
+                HostConfig=dict(Memory=1 << 30, MemorySwap=1 << 30, NanoCpus=2_000_000_000),
+                Mounts=[], NetworkSettings=dict(Ports={"5432/tcp": [dict(HostIp="127.0.0.1", HostPort="32829")]}))
+    body.update(over)
+    return body
+
+
+def test_storage_kind_defaults_to_tmpfs_and_requires_exact_layout():
+    body = storage_body(HostConfig=dict(Memory=1 << 30, MemorySwap=1 << 30, NanoCpus=2_000_000_000,
+                                        Tmpfs=dict(rehearsal_cli.TMPFS)))
+    assert rehearsal_cli.storage_kind(body, "l") == "tmpfs"
+    body["HostConfig"] = dict(body["HostConfig"], Tmpfs={"/var/lib/postgresql/data": "rw"})
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.storage_kind(body, "l")
+
+
+def test_storage_kind_accepts_only_a_labelled_owned_volume(monkeypatch):
+    body = storage_body(Mounts=[dict(Type="volume", Name="abr-x-data",
+                                     Destination="/var/lib/postgresql/data")])
+    monkeypatch.setattr(rehearsal_cli, "volume_inspect", lambda name: dict(Labels={"abr.owner": "l"}))
+    assert rehearsal_cli.storage_kind(body, "l") == "volume"
+    monkeypatch.setattr(rehearsal_cli, "volume_inspect", lambda name: dict(Labels={"abr.owner": "other"}))
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.storage_kind(body, "l")
+    body["Mounts"] = [dict(Type="bind", Destination="/var/lib/postgresql/data")]
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.storage_kind(body, "l")

@@ -315,7 +315,7 @@ migration-rehearsal: ## Owned SQLite->PostgreSQL rehearsal (requires SNAPSHOT, S
 	@test -n "$(REHEARSAL_ROOT)" || { echo "REHEARSAL_ROOT is required (private 0700 directory)"; exit 2; }
 	python3 -B ops/scripts/migration_rehearsal.py run \
 	  --root "$(REHEARSAL_ROOT)" --container "$(REHEARSAL_CONTAINER)" --label "$(REHEARSAL_LABEL)" \
-	  --database "$(REHEARSAL_DATABASE)" --schema-init "$(SCHEMA_INIT)" \
+	  --database "$(REHEARSAL_DATABASE)" --schema-init "$(SCHEMA_INIT)" $(if $(DURABLE_STORAGE),--durable-storage,) \
 	  --evidence "$(REHEARSAL_ROOT)/orchestration.json" \
 	  --source-snapshot "$(SNAPSHOT)" --source-sha256 "$(SNAPSHOT_SHA256)" \
 	  --policy-template "$(POLICY_TEMPLATE)" --base-commit "$(BASE_COMMIT)" \

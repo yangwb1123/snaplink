@@ -83,13 +83,9 @@ def verify_ownership(body, cid, name, label, image):
     host = body.get("HostConfig") or {}
     if host.get("Memory") != 1 << 30 or host.get("MemorySwap") != 1 << 30 or host.get("NanoCpus") != 2_000_000_000:
         raise GuardFailure("rehearsal_resource_caps_mismatch")
-    if host.get("Tmpfs") != TMPFS:
+    storage = storage_kind(body, label)
+    if storage == "tmpfs" and host.get("Tmpfs") != TMPFS:
         raise GuardFailure("rehearsal_tmpfs_layout_mismatch")
-    # docker reports --tmpfs under HostConfig.Tmpfs; Mounts carries bind/volume mounts only,
-    # so an empty Mounts list is the expected healthy state and any non-tmpfs entry is a refusal.
-    mounts = body.get("Mounts") or []
-    if any(m.get("Type") != "tmpfs" for m in mounts):
-        raise GuardFailure("rehearsal_tmpfs_only_storage_required")
     ports = ((body.get("NetworkSettings") or {}).get("Ports") or {}).get("5432/tcp") or []
     if len(ports) != 1 or ports[0].get("HostIp") != "127.0.0.1":
         raise GuardFailure("rehearsal_loopback_binding_required")
@@ -97,6 +93,39 @@ def verify_ownership(body, cid, name, label, image):
     if not 1 <= port <= 65535:
         raise GuardFailure("rehearsal_port_out_of_range")
     return port
+
+
+def storage_kind(body, label):
+    """Classify the data mount: tmpfs by default, or one labelled owned volume.
+
+    Any other mount shape is refused, and a volume must carry the rehearsal's own
+    label so an unrelated volume can never be adopted.
+    """
+    host = body.get("HostConfig") or {}
+    mounts = body.get("Mounts") or []
+    if host.get("Tmpfs") == TMPFS and not mounts:
+        return "tmpfs"
+    if len(mounts) == 1:
+        mount = mounts[0]
+        if mount.get("Type") != "volume" or mount.get("Destination") != "/var/lib/postgresql/data":
+            raise GuardFailure("rehearsal_storage_layout_unsupported")
+        volume = volume_inspect(mount.get("Name"))
+        if (volume.get("Labels") or {}).get("abr.owner") != label:
+            raise GuardFailure("rehearsal_volume_owner_label_mismatch")
+        return "volume"
+    raise GuardFailure("rehearsal_storage_layout_unsupported")
+
+
+def volume_inspect(name):
+    if not name:
+        raise GuardFailure("rehearsal_volume_name_missing")
+    result = run_bounded(["docker", "volume", "inspect", name], 20)
+    if result.returncode:
+        raise GuardFailure("rehearsal_volume_inspect_failed")
+    body = json.loads(result.stdout.decode())
+    if not isinstance(body, list) or len(body) != 1:
+        raise GuardFailure("rehearsal_volume_inspect_invalid")
+    return body[0]
 
 
 def close_receipt(root, inspect_body=None, remove=None):
@@ -121,6 +150,14 @@ def close_receipt(root, inspect_body=None, remove=None):
         refused = probe.connect_ex(("127.0.0.1", port)) != 0
     if not refused:
         raise GuardFailure("rehearsal_port_still_accepting")
+    if receipt.get("storage") == "volume":
+        volume = receipt["name"] + "-data"
+        owned = volume_inspect(volume)
+        if (owned.get("Labels") or {}).get("abr.owner") != receipt["label"]:
+            raise GuardFailure("rehearsal_volume_owner_label_mismatch")
+        removed = run_bounded(["docker", "volume", "rm", volume], 60)
+        if removed.returncode:
+            raise GuardFailure("rehearsal_volume_removal_failed")
     for name in ("postgres.env", "test-connection.json", "candidate-connection.json", "ci.dsn", "ci-postgres.env"):
         candidate = root / name
         if candidate.exists() or candidate.is_symlink():
@@ -134,7 +171,7 @@ def run_bounded(argv, timeout, cwd=None, env=None, stdin=None):
     return subprocess.run(argv, capture_output=True, timeout=timeout, cwd=cwd, env=env, input=stdin)
 
 
-def provision(root, container, label, database, user, timeout=90):
+def provision(root, container, label, database, user, timeout=90, durable=False):
     root = private_dir(root)
     provision_args(dict(root=root, image=IMAGE_PIN, database=database, container=container, label=label))
     password = secrets.token_urlsafe(32)
@@ -144,9 +181,15 @@ def provision(root, container, label, database, user, timeout=90):
         stream.flush()
         os.fsync(stream.fileno())
     os.chmod(env_file, 0o600)
+    storage_args = ["--tmpfs", "/var/lib/postgresql/data:rw,noexec,nosuid,size=768m"]
+    if durable:
+        volume = container + "-data"
+        created = run_bounded(["docker", "volume", "create", "--label", "abr.owner=" + label, volume], 20)
+        if created.returncode:
+            raise GuardFailure("rehearsal_volume_create_failed")
+        storage_args = ["--mount", "type=volume,source=" + volume + ",destination=/var/lib/postgresql/data"]
     command = ["docker", "run", "--pull=never", "--detach", "--name", container, "--label", "abr.owner=" + label,
-               "--cpus", "2", "--memory", "1g", "--memory-swap", "1g",
-               "--tmpfs", "/var/lib/postgresql/data:rw,noexec,nosuid,size=768m",
+               "--cpus", "2", "--memory", "1g", "--memory-swap", "1g", *storage_args,
                "--env-file", str(env_file), "-p", "127.0.0.1::5432", IMAGE_PIN, "-c", "max_connections=100"]
     started = run_bounded(command, timeout)
     if started.returncode:
@@ -166,7 +209,7 @@ def provision(root, container, label, database, user, timeout=90):
     else:
         raise GuardFailure("rehearsal_readiness_timeout")
     receipt = dict(container_id=cid, name=container, label=label, image_id=IMAGE_PIN, database=database,
-                   port=port, created=body.get("Created"))
+                   port=port, created=body.get("Created"), storage=storage_kind(body, label))
     write_private(root / "fixture-receipt.json", receipt)
     connection = dict(host="127.0.0.1", port=port, user=user, database=database, password=password,
                       owner_token=secrets.token_hex(24))
@@ -842,6 +885,8 @@ def parser():
     three.add_argument("--label", required=True)
     three.add_argument("--database", required=True)
     three.add_argument("--schema-init", required=True, help="prebuilt schema initializer for this revision")
+    three.add_argument("--durable-storage", action="store_true",
+                       help="use one labelled named volume instead of tmpfs for the data directory")
     three.add_argument("--user", default="migration_test")
     three.add_argument("--evidence", required=True)
     three.add_argument("--source-snapshot")

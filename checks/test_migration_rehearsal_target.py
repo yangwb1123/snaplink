@@ -37,7 +37,7 @@ def test_makefile_invokes_the_entry_script_not_the_package_module():
 
 def test_makefile_forwards_every_opt_in_step():
     makefile = (Path.cwd() / "Makefile").read_text()
-    for flag in ("--replay-guard", "--concurrency-guard", "--determinism", "--drift-check", "--write-check", "--readpath", "--sso-server"):
+    for flag in ("--replay-guard", "--concurrency-guard", "--durable-storage", "--determinism", "--drift-check", "--write-check", "--readpath", "--sso-server"):
         assert flag in makefile, flag
 
 

@@ -9,8 +9,11 @@ only: it does **not** authorize cutover, production contact or a 30-day claim.
 One invocation performs, in order:
 
 1. `provision` — starts the digest-pinned PostgreSQL image with loopback-only
-   binding, 1 GiB memory/swap, 2 CPUs and tmpfs-only storage, then proves
-   ownership from the live `docker inspect` result.
+   binding, 1 GiB memory/swap and 2 CPUs, then proves ownership from the live
+   `docker inspect` result. Storage is tmpfs by default; `DURABLE_STORAGE=1`
+   uses one labelled named volume instead, so fsync/persistence behaviour can
+   be exercised on a real filesystem. A volume is only adopted when it carries
+   the rehearsal's own owner label, and it is removed on close.
 2. `schema_init` — creates `snaplink_mig_<name>_cand`, its
    `migration_guard.ownership` row and the canonical schema built by the
    supplied initializer.
@@ -53,7 +56,7 @@ One invocation performs, in order:
 | `SCHEMA_INIT` | yes | prebuilt schema initializer for that revision |
 | `REHEARSAL_ROOT` | yes | private `0700` working directory |
 | `REHEARSAL_CONTAINER` / `REHEARSAL_LABEL` / `REHEARSAL_DATABASE` | yes | owned container identity and dedicated `snaplink_mig_*` database |
-| `REPLAY_GUARD`, `CONCURRENCY_GUARD`, `DETERMINISM`, `DRIFT_CHECK`, `WRITE_CHECK` | no | enable the corresponding steps |
+| `REPLAY_GUARD`, `CONCURRENCY_GUARD`, `DETERMINISM`, `DRIFT_CHECK`, `WRITE_CHECK`, `DURABLE_STORAGE` | no | enable the corresponding steps |
 | `REHEARSAL_READPATH`, `REHEARSAL_READPATH_EXPECT` | no | prebuilt `cmd/migration-readpath` and its expectation JSON |
 | `REHEARSAL_SSO_SERVER` | no | prebuilt `sso-server` for the smoke step. `SSO_*` names are avoided: the server maps them into its own config tree |
 
