@@ -393,8 +393,20 @@ def determinism_check(root, args, candidate):
     if not DATABASE.fullmatch(second):
         raise GuardFailure("rehearsal_determinism_candidate_name_invalid")
     connection_path = create_candidate(root, second, args.schema_init, "candidate-connection-b.json")
-    import_policy, import_contract, import_intent = root / "policy.json", root / "schema-contract.json", root / "intent.json"
+    import_policy, import_contract = root / "policy.json", root / "schema-contract.json"
     source = inspect_snapshot(Path(args.source_snapshot), args.source_sha256, timeout=120)
+    # A fresh intent is required: the first one is bound to candidate A's database and owner token.
+    connection = json.loads(connection_path.read_text())
+    policy = json.loads(import_policy.read_text())
+    import_intent = root / "intent-b.json"
+    write_private(import_intent, dict(
+        version=1, scope="owned_candidate_import_v1", source_sha256=source["sha256"],
+        policy_sha256=digest(policy), schema_contract_sha256=_sha(import_contract),
+        target_shape_sha256=policy["target_shape_sha256"], target_database=second,
+        target_owner_sha256=hashlib.sha256(connection["owner_token"].encode()).hexdigest(),
+        expires_at=int(time.time()) + 3600, candidate_exclusive=True,
+        source_is_final_cutover_snapshot=False, historical_audit_chain_certified=False,
+        sequence_mode="pg_transactional_restart_v1"))
     stderr = io.StringIO()
     argv = ["--snapshot", args.source_snapshot, "--snapshot-sha256", source["sha256"],
             "--target-connection-file", str(connection_path),

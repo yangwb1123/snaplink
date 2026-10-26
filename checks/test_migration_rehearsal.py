@@ -434,42 +434,44 @@ def test_native_history_drift_passes_when_unchanged(tmp_path, monkeypatch):
     assert record["result"] == "passed" and record["drift"] == {}
 
 
-def test_determinism_step_compares_projections(tmp_path, monkeypatch):
+def determinism_fixture(tmp_path, monkeypatch, second_digest):
     root = tmp_path / "run"
     root.mkdir(mode=0o700)
     rehearsal_cli.write_private(root / "import-report.json", dict(
         target_projection=dict(tables=[dict(table="clients", projected_content_sha256="a" * 64)])))
-    monkeypatch.setattr(rehearsal_cli, "create_candidate", lambda *a, **k: tmp_path / "conn-b.json")
-    monkeypatch.setattr(rehearsal_cli, "inspect_snapshot", lambda p, s, timeout: dict(sha256=s))
-    monkeypatch.setattr(rehearsal_cli, "_sha", lambda p: "b" * 64)
+    rehearsal_cli.write_private(root / "policy.json", dict(version=2, mappings=[], target_shape_sha256="d" * 64))
+    rehearsal_cli.write_private(root / "schema-contract.json", dict(version=1))
+
+    def create(root_arg, name, schema_init, connection_name="candidate-connection.json"):
+        path = root_arg / connection_name
+        rehearsal_cli.write_private(path, dict(host="127.0.0.1", port=1, user="u", database=name,
+                                               password="p", owner_token="c" * 48))
+        return path
 
     def fake_import(argv):
         rehearsal_cli.write_private(root / "import-report-b.json", dict(result="passed", target_projection=dict(
-            tables=[dict(table="clients", projected_content_sha256="a" * 64)])))
+            tables=[dict(table="clients", projected_content_sha256=second_digest)])))
         return 0
 
+    monkeypatch.setattr(rehearsal_cli, "create_candidate", create)
+    monkeypatch.setattr(rehearsal_cli, "inspect_snapshot", lambda p, s, timeout: dict(sha256=s))
+    monkeypatch.setattr(rehearsal_cli, "_sha", lambda p: "b" * 64)
     monkeypatch.setattr(rehearsal_cli, "import_main", fake_import)
     args = type("A", (), dict(source_snapshot="/s", source_sha256="a" * 64, schema_init="/i"))()
+    return root, args
+
+
+def test_determinism_step_compares_projections(tmp_path, monkeypatch):
+    root, args = determinism_fixture(tmp_path, monkeypatch, "a" * 64)
     record = rehearsal_cli.determinism_check(root, args, "snaplink_mig_run_cand")
     assert record["result"] == "passed" and record["differing_tables"] == []
+    intent_b = json.loads((root / "intent-b.json").read_text())
+    assert intent_b["target_database"] == "snaplink_mig_run_cand_b"
+    assert intent_b["target_owner_sha256"] == hashlib.sha256(("c" * 48).encode()).hexdigest()
 
 
 def test_determinism_fails_on_a_differing_table(tmp_path, monkeypatch):
-    root = tmp_path / "run"
-    root.mkdir(mode=0o700)
-    rehearsal_cli.write_private(root / "import-report.json", dict(
-        target_projection=dict(tables=[dict(table="clients", projected_content_sha256="a" * 64)])))
-    monkeypatch.setattr(rehearsal_cli, "create_candidate", lambda *a, **k: tmp_path / "conn-b.json")
-    monkeypatch.setattr(rehearsal_cli, "inspect_snapshot", lambda p, s, timeout: dict(sha256=s))
-    monkeypatch.setattr(rehearsal_cli, "_sha", lambda p: "b" * 64)
-
-    def fake_import(argv):
-        rehearsal_cli.write_private(root / "import-report-b.json", dict(result="passed", target_projection=dict(
-            tables=[dict(table="clients", projected_content_sha256="c" * 64)])))
-        return 0
-
-    monkeypatch.setattr(rehearsal_cli, "import_main", fake_import)
-    args = type("A", (), dict(source_snapshot="/s", source_sha256="a" * 64, schema_init="/i"))()
+    root, args = determinism_fixture(tmp_path, monkeypatch, "e" * 64)
     with pytest.raises(rehearsal_cli.GuardFailure):
         rehearsal_cli.determinism_check(root, args, "snaplink_mig_run_cand")
     assert json.loads((root / "determinism.json").read_text())["differing_tables"] == ["clients"]
