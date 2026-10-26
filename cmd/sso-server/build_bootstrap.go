@@ -79,6 +79,9 @@ func buildAdminSeed(cfg *config.Config, a *app, logger spi.Logger) *builtin.Admi
 		AdminClientID:  cfg.Bootstrap.AdminClientID,
 		AdminRoleCode:  cfg.Bootstrap.AdminRoleCode,
 		AdminClientApp: cfg.Bootstrap.AdminClientApp,
+		// The generated password is only printed after this store accepts it, so an
+		// operator never receives a credential that cannot log in.
+		Passwords: a.passwordStore,
 	}
 	path := cfg.Bootstrap.AdminPasswordFile
 	if path == "" {

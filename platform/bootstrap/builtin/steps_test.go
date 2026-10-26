@@ -3,6 +3,7 @@ package builtin_test
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"os"
 	"slices"
 	"strings"
@@ -37,6 +38,7 @@ func fullSeed(t *testing.T) (*builtin.AdminSeed, *capturePrinter) {
 		Users:           defaultimpl.NewMemoryUserProvider(),
 		Clients:         defaultimpl.NewMemoryClientStore(),
 		Netpolicy:       netmemory.New(),
+		Passwords:       defaultimpl.NewMemoryPasswordCredentialStore(),
 		PasswordPrinter: printer.Print,
 	}, printer
 }
@@ -127,9 +129,12 @@ func TestSteps_SeedsAdminUser(t *testing.T) {
 		t.Errorf("seeded_password must not persist in user attributes: %+v", u.Attributes)
 	}
 
-	// The password is still printed exactly once so the operator can capture it.
+	// The printed password must be a usable credential, not a decorative string.
 	if len(printer.calls) != 1 {
-		t.Errorf("PasswordPrinter called %d times, want 1", len(printer.calls))
+		t.Fatalf("PasswordPrinter called %d times, want 1", len(printer.calls))
+	}
+	if err := seed.Passwords.VerifyPassword(context.Background(), "admin", printer.calls[0]); err != nil {
+		t.Errorf("printed admin password does not verify against the stored credential: %v", err)
 	}
 	// 24-byte secret → base64.RawURLEncoding length = ceil(24*4/3) = 32 chars.
 	if len(printer.calls[0]) != 32 {
@@ -463,3 +468,46 @@ func runStepsAfterVersion(t *testing.T, seed *builtin.AdminSeed, version int) {
 func contains(haystack []string, needle string) bool {
 	return slices.Contains(haystack, needle)
 }
+
+func TestSteps_NoCredentialStorePrintsNoPassword(t *testing.T) {
+	t.Parallel()
+	seed, printer := fullSeed(t)
+	seed.Passwords = nil
+	runAllSteps(t, seed)
+
+	// Without a credential store the generated password cannot authenticate, so an
+	// operator must never be handed one that looks usable.
+	if len(printer.calls) != 0 {
+		t.Fatalf("PasswordPrinter called %d times without a credential store, want 0: %v", len(printer.calls), printer.calls)
+	}
+	if _, err := seed.Users.GetByID(context.Background(), "admin"); err != nil {
+		t.Fatalf("admin user must still be seeded: %v", err)
+	}
+}
+
+func TestSteps_CredentialStoreFailureFailsTheStep(t *testing.T) {
+	t.Parallel()
+	seed, printer := fullSeed(t)
+	seed.Passwords = failingPasswordStore{}
+	steps := builtin.Steps(seed)
+	runner := bootstrap.NewRunner("sso-server", memory.New())
+	runner.Register(steps...)
+	if err := runner.Run(context.Background()); err == nil {
+		t.Fatal("a credential-store failure must fail the bootstrap step")
+	}
+	if len(printer.calls) != 0 {
+		t.Fatal("no password may be printed when persisting it failed")
+	}
+}
+
+type failingPasswordStore struct{}
+
+func (failingPasswordStore) SetPassword(context.Context, string, string) error {
+	return errStoreUnavailable
+}
+
+func (failingPasswordStore) VerifyPassword(context.Context, string, string) error {
+	return errStoreUnavailable
+}
+
+var errStoreUnavailable = errors.New("synthetic credential store unavailable")

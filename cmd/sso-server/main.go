@@ -177,6 +177,7 @@ type app struct {
 	// reads from.
 	clientStore           sso.ClientStore
 	userProvider          sso.UserProvider
+	passwordStore         sso.PasswordCredentialStore // seeded admin credential + self-service changes
 	sessionMgr            sso.SessionManager
 	consentStore          sso.ConsentStore              // for the GDPR eraser
 	mfaEnrollStore        sso.MFAEnrollmentStore        // for the GDPR eraser

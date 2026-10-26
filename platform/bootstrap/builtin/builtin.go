@@ -29,6 +29,10 @@ type AdminSeed struct {
 	Users       sso.UserProvider     // required
 	Clients     sso.ClientStore      // required for Step 4 (admin client)
 	Netpolicy   netpolicy.Store      // optional; Step 3 skips when nil
+	// Passwords persists the generated admin password so the printed value is
+	// actually usable. When nil the step still seeds the user but never prints
+	// a credential that cannot be used.
+	Passwords sso.PasswordCredentialStore
 
 	// Tunables.
 	AdminUserID    string // default "admin"
@@ -202,7 +206,15 @@ func stepSeedAdminUser(seed *AdminSeed) bootstrap.Step {
 				return fmt.Errorf("seed_admin_user: assign role: %w", err)
 			}
 		}
-		seed.PasswordPrinter(password)
+		if seed.Passwords != nil {
+			if err := seed.Passwords.SetPassword(ctx, user.ID, password); err != nil {
+				return fmt.Errorf("seed_admin_user: store credential: %w", err)
+			}
+			seed.PasswordPrinter(password)
+			return nil
+		}
+		// No credential store wired: print nothing. A password that cannot
+		// authenticate must never be handed to an operator.
 		return nil
 	})
 }
