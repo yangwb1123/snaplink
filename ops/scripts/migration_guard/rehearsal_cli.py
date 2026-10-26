@@ -164,6 +164,88 @@ def provision(root, container, label, database, user, timeout=90):
     return receipt
 
 
+def run_steps(steps, close):
+    """Execute rehearsal steps in order; always try to close the owned fixture.
+
+    A failing step stops the sequence, but cleanup still runs and its outcome is
+    reported separately: an unclosed owned container is worse than a failed step.
+    """
+    results = []
+    failure = None
+    for name, action in steps:
+        if failure is not None:
+            results.append(dict(step=name, result="not_executed", reason="previous step failed"))
+            continue
+        try:
+            action()
+            results.append(dict(step=name, result="passed"))
+        except Exception as exc:  # noqa: BLE001 - every step failure is recorded, never swallowed
+            failure = f"{name}: {exc}"
+            results.append(dict(step=name, result="failed", reason=str(exc)[:300]))
+    cleanup = dict(step="close", result="passed")
+    try:
+        close()
+    except Exception as exc:  # noqa: BLE001 - cleanup failure is reported, not hidden
+        cleanup = dict(step="close", result="failed", reason=str(exc)[:300])
+    return dict(result="failed" if failure or cleanup["result"] == "failed" else "passed",
+                failure=failure, steps=results, cleanup=cleanup,
+                scope="owned rehearsal orchestration;NOT cutover or production acceptance")
+
+
+def remove_container(cid):
+    done = run_bounded(["docker", "rm", "-f", cid], 60)
+    if done.returncode:
+        raise GuardFailure("rehearsal_removal_failed")
+
+
+def close_owned(root):
+    receipt = json.loads((root / "fixture-receipt.json").read_text())
+    inspected = run_bounded(["docker", "inspect", receipt["container_id"]], 20)
+    if inspected.returncode:
+        raise GuardFailure("rehearsal_inspect_failed")
+    return close_receipt(root, inspect_body=json.loads(inspected.stdout.decode())[0], remove=remove_container)
+
+
+def run_command(args, root):
+    """Orchestrate provision -> schema init -> (caller-driven import/verify) -> close.
+
+    Only the steps this module can prove by itself run here; import and content
+    verification stay with their own entrypoints, which the evidence file names.
+    """
+    def initialise():
+        receipt = json.loads((root / "fixture-receipt.json").read_text())
+        connection = dict(json.loads((root / "test-connection.json").read_text()))
+        candidate = "snaplink_mig_" + args.database.split("snaplink_mig_", 1)[-1][:20] + "_cand"
+        if not DATABASE.fullmatch(candidate):
+            raise GuardFailure("rehearsal_candidate_name_invalid")
+        argv, env = _psql(connection)
+        _sql(argv, env, "CREATE DATABASE " + candidate + ";")
+        child = run_bounded([args.schema_init, str(root / "test-connection.json")], 300)
+        if child.returncode:
+            raise GuardFailure("rehearsal_schema_init_failed")
+        return receipt, candidate
+
+    steps = [("provision", lambda: provision(root, args.container, args.label, args.database, args.user)),
+             ("schema_init", initialise)]
+    report = run_steps(steps, lambda: close_owned(root))
+    write_private(Path(args.evidence), report)
+    print(json.dumps({"result": report["result"], "evidence": args.evidence}))
+    return 0 if report["result"] == "passed" else 1
+
+
+def _psql(connection):
+    argv = ["psql", "-h", connection["host"], "-p", str(connection["port"]), "-U", connection["user"],
+            "-d", connection["database"], "-XAt", "-v", "ON_ERROR_STOP=1"]
+    env = dict(PGPASSWORD=connection["password"])
+    return argv, env
+
+
+def _sql(argv, env, statement):
+    result = run_bounded(argv, 30, env=env, stdin=statement.encode())
+    if result.returncode:
+        raise GuardFailure("rehearsal_sql_failed")
+
+
 def parser():
     top = argparse.ArgumentParser(description=__doc__)
     subs = top.add_subparsers(dest="action", required=True)
@@ -175,6 +257,14 @@ def parser():
     one.add_argument("--user", default="migration_test")
     two = subs.add_parser("close")
     two.add_argument("--root", required=True)
+    three = subs.add_parser("run")
+    three.add_argument("--root", required=True)
+    three.add_argument("--container", required=True)
+    three.add_argument("--label", required=True)
+    three.add_argument("--database", required=True)
+    three.add_argument("--schema-init", required=True, help="prebuilt schema initializer for this revision")
+    three.add_argument("--user", default="migration_test")
+    three.add_argument("--evidence", required=True)
     return top
 
 
@@ -185,18 +275,14 @@ def main(argv=None):
             print(json.dumps(provision(args.root, args.container, args.label, args.database, args.user)))
             return 0
         root = private_dir(args.root)
+        if args.action == "run":
+            return run_command(args, root)
         receipt = json.loads((root / "fixture-receipt.json").read_text())
         inspected = run_bounded(["docker", "inspect", receipt["container_id"]], 20)
         if inspected.returncode:
             raise GuardFailure("rehearsal_inspect_failed")
         body = json.loads(inspected.stdout.decode())[0]
-
-        def remove(cid):
-            done = run_bounded(["docker", "rm", "-f", cid], 60)
-            if done.returncode:
-                raise GuardFailure("rehearsal_removal_failed")
-
-        close_receipt(root, inspect_body=body, remove=remove)
+        close_receipt(root, inspect_body=body, remove=remove_container)
         print(json.dumps(dict(result="closed")))
         return 0
     except (GuardFailure, OSError, ValueError) as exc:

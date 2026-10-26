@@ -75,3 +75,29 @@ def test_driver_has_no_shell_execution_and_is_bounded():
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'run':
             assert any(k.arg == 'timeout' for k in node.keywords), 'every subprocess.run needs a timeout'
+
+
+def test_run_steps_stops_after_failure_and_still_closes():
+    calls = []
+    steps = [("provision", lambda: calls.append("provision")),
+             ("import", lambda: (_ for _ in ()).throw(RuntimeError("import failed"))),
+             ("verify", lambda: calls.append("verify"))]
+    out = rehearsal_cli.run_steps(steps, lambda: calls.append("close"))
+    assert out["result"] == "failed"
+    assert [s["step"] for s in out["steps"]] == ["provision", "import", "verify"]
+    assert out["steps"][2]["result"] == "not_executed"
+    assert calls == ["provision", "close"], "later steps must not run, cleanup must"
+
+
+def test_run_steps_reports_cleanup_failure_separately():
+    out = rehearsal_cli.run_steps([], lambda: (_ for _ in ()).throw(RuntimeError("port still open")))
+    assert out["result"] == "failed"
+    assert out["cleanup"] == {"step": "close", "result": "failed", "reason": "port still open"}
+    assert out["failure"] is None
+
+
+def test_run_steps_passes_when_all_steps_and_cleanup_succeed():
+    calls = []
+    out = rehearsal_cli.run_steps([("provision", lambda: calls.append("p"))], lambda: calls.append("c"))
+    assert out["result"] == "passed" and calls == ["p", "c"]
+    assert out["cleanup"]["result"] == "passed" and out["failure"] is None
