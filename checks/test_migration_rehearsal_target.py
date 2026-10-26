@@ -33,3 +33,10 @@ def test_makefile_invokes_the_entry_script_not_the_package_module():
     text = (Path.cwd() / "Makefile").read_text()
     assert "ops/scripts/migration_rehearsal.py" in text
     assert "rehearsal_cli.py run" not in text
+
+
+def test_makefile_and_runbook_avoid_sso_prefixed_variables():
+    makefile = (Path.cwd() / "Makefile").read_text()
+    assert "REHEARSAL_SSO_SERVER" in makefile and '$(if $(SSO_SERVER)' not in makefile
+    doc = (Path.cwd() / "docs/agent-os/MIGRATION_REHEARSAL.md").read_text()
+    assert "REHEARSAL_SSO_SERVER" in doc and "maps them into its own config tree" in doc

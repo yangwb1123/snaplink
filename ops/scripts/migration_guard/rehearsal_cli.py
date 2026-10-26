@@ -548,13 +548,24 @@ def smoke_candidate(root, server_binary, attempts=3):
     raise GuardFailure("rehearsal_smoke_attempts_exhausted")
 
 
+def smoke_env():
+    """Scrubbed environment: the rehearsal's own variables must never become server config.
+
+    The server maps SSO_* environment variables into its config tree, so passing
+    the parent environment through turns e.g. SSO_SERVER=/path/to/binary into
+    `server: /path/to/binary` and the config fails to parse.
+    """
+    return {key: os.environ[key] for key in ("PATH", "HOME", "LANG", "LC_ALL") if key in os.environ}
+
+
 def smoke_attempt(root, server_binary):
     http_port, grpc_port = free_port(), free_port()
+    env = smoke_env()
     config_path = root / "server-config.yaml"
     config_path.write_text(server_config(root, http_port, grpc_port))
     os.chmod(config_path, 0o600)
     validate = run_bounded([server_binary, "-config", str(config_path), "-validate-only",
-                            "-grpc-listen", "127.0.0.1:%d" % grpc_port], 120, cwd=str(root))
+                            "-grpc-listen", "127.0.0.1:%d" % grpc_port], 120, cwd=str(root), env=env)
     if validate.returncode:
         detail = (getattr(validate, "stderr", b"") or b"").decode(errors="replace")[-400:] + \
             (getattr(validate, "stdout", b"") or b"").decode(errors="replace")[-400:]
@@ -566,7 +577,8 @@ def smoke_attempt(root, server_binary):
     log = (root / "server.log").open("wb")
     child = subprocess.Popen([server_binary, "-config", str(config_path),
                               "-grpc-listen", "127.0.0.1:%d" % grpc_port],
-                             stdout=log, stderr=subprocess.STDOUT, cwd=str(root), start_new_session=True)
+                             stdout=log, stderr=subprocess.STDOUT, cwd=str(root),
+                             env=dict(env, PYTHONDONTWRITEBYTECODE="1"), start_new_session=True)
     facts = dict(http_port=http_port, grpc_port=grpc_port)
     try:
         deadline = time.monotonic() + 60

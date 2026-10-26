@@ -45,8 +45,8 @@ One invocation performs, in order:
 | `REHEARSAL_ROOT` | yes | private `0700` working directory |
 | `REHEARSAL_CONTAINER` / `REHEARSAL_LABEL` / `REHEARSAL_DATABASE` | yes | owned container identity and dedicated `snaplink_mig_*` database |
 | `REPLAY_GUARD`, `WRITE_CHECK` | no | enable the corresponding steps |
-| `READPATH`, `READPATH_EXPECT` | no | prebuilt `cmd/migration-readpath` and its expectation JSON |
-| `SSO_SERVER` | no | prebuilt `sso-server` for the smoke step |
+| `REHEARSAL_READPATH`, `REHEARSAL_READPATH_EXPECT` | no | prebuilt `cmd/migration-readpath` and its expectation JSON |
+| `REHEARSAL_SSO_SERVER` | no | prebuilt `sso-server` for the smoke step. `SSO_*` names are avoided: the server maps them into its own config tree |
 
 ## Evidence
 
@@ -58,7 +58,7 @@ cleanup outcome), `import-report.json`, `verify-report.json`,
 
 ## Guarantees and non-claims
 
-Guaranteed: fail-closed step ordering, a refused populated replay, and cleanup
+Guaranteed: a scrubbed child environment for the server (rehearsal variables cannot become server config), fail-closed step ordering, a refused populated replay, and cleanup
 of the owned container even when a step fails. A foreign container is never
 provisioned over or removed.
 

@@ -395,3 +395,11 @@ def test_smoke_reports_attempt_history_on_success(tmp_path, monkeypatch):
     facts = rehearsal_cli.smoke_candidate(root, "/bin/x")
     assert facts["health"] == "ok"
     assert json.loads((root / "smoke-attempts.json").read_text())["attempts"] == [dict(attempt=1, result="passed")]
+
+
+def test_smoke_environment_is_scrubbed_of_rehearsal_variables(monkeypatch):
+    monkeypatch.setenv("SSO_SERVER", "/path/to/binary")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    env = rehearsal_cli.smoke_env()
+    assert "SSO_SERVER" not in env, "SSO_* variables become server config and corrupt the file"
+    assert env.get("PATH") == "/usr/bin"
