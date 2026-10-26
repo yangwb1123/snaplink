@@ -57,12 +57,23 @@ type menuCase struct {
 	Items    int    `json:"items"`
 }
 
+// businessTables is the closed set a rehearsal may count; table names never
+// reach SQL from free input.
+var businessTables = []string{
+	"account_lockouts", "audit_checkpoints", "audit_events", "auth_codes", "clients",
+	"password_credentials", "permissions_active_roles", "permissions_assignments",
+	"permissions_conflict_sets", "permissions_menus", "permissions_resources",
+	"permissions_roles", "refresh_rotation_windows", "refresh_token_families",
+	"refresh_tokens", "revocations", "sessions", "users",
+}
+
 type expectations struct {
-	Clients  []clientCase  `json:"clients"`
-	Users    []userCase    `json:"users"`
-	Sessions []sessionCase `json:"sessions"`
-	Roles    []roleCase    `json:"roles"`
-	Menus    []menuCase    `json:"menus"`
+	Clients  []clientCase   `json:"clients"`
+	Users    []userCase     `json:"users"`
+	Sessions []sessionCase  `json:"sessions"`
+	Roles    []roleCase     `json:"roles"`
+	Menus    []menuCase     `json:"menus"`
+	Counts   map[string]int `json:"counts"`
 }
 
 type caseResult struct {
@@ -85,16 +96,11 @@ type report struct {
 	After                 map[string]digest `json:"digests_after"`
 	ExistingRowsUnchanged bool              `json:"existing_rows_unchanged"`
 	MigrationsRun         bool              `json:"idempotent_store_migrations_ran"`
+	AuditChain            string            `json:"audit_chain"`
+	AuditChainLinkedRows  int               `json:"audit_chain_linked_rows"`
 }
 
-func validate(values expectations) error {
-	total := len(values.Clients) + len(values.Users) + len(values.Sessions) + len(values.Roles) + len(values.Menus)
-	if total == 0 {
-		return errors.New("at least one expectation is required")
-	}
-	if total > 200 {
-		return errors.New("expectation budget exceeded")
-	}
+func validateCases(values expectations) error {
 	for _, c := range values.Clients {
 		if c.ID == "" {
 			return errors.New("client case requires id")
@@ -110,6 +116,10 @@ func validate(values expectations) error {
 			return errors.New("session case requires id")
 		}
 	}
+	return nil
+}
+
+func validateAuthorisation(values expectations) error {
 	for _, r := range values.Roles {
 		if r.UserID == "" || r.ClientID == "" {
 			return errors.New("role case requires user_id and client_id")
@@ -121,6 +131,40 @@ func validate(values expectations) error {
 		}
 	}
 	return nil
+}
+
+func validateCounts(values expectations) error {
+	if len(values.Counts) > len(businessTables) {
+		return errors.New("count expectation budget exceeded")
+	}
+	allowed := map[string]bool{}
+	for _, name := range businessTables {
+		allowed[name] = true
+	}
+	for name, value := range values.Counts {
+		if !allowed[name] || value < 0 {
+			return errors.New("count expectation outside the closed business table set")
+		}
+	}
+	return nil
+}
+
+func validate(values expectations) error {
+	total := len(values.Clients) + len(values.Users) + len(values.Sessions) + len(values.Roles) +
+		len(values.Menus) + len(values.Counts)
+	if total == 0 {
+		return errors.New("at least one expectation is required")
+	}
+	if total > 200 {
+		return errors.New("expectation budget exceeded")
+	}
+	if err := validateCases(values); err != nil {
+		return err
+	}
+	if err := validateAuthorisation(values); err != nil {
+		return err
+	}
+	return validateCounts(values)
 }
 
 func tableDigest(ctx context.Context, db *sql.DB, table string) (digest, error) {
@@ -191,6 +235,29 @@ func checkSessions(ctx context.Context, manager *postgres.SessionManager, cases 
 		out = append(out, caseResult{Kind: "sessions", ID: want.ID, OK: ok, Detail: mismatch(ok, "session fields differ")})
 	}
 	return out
+}
+
+func checkCounts(ctx context.Context, db *sql.DB, want map[string]int) ([]caseResult, error) {
+	var out []caseResult
+	for _, table := range businessTables {
+		expected, ok := want[table]
+		if !ok {
+			continue
+		}
+		var got int
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&got); err != nil {
+			return nil, errors.New("count read failed")
+		}
+		out = append(out, caseResult{Kind: "counts", ID: table, OK: got == expected,
+			Detail: mismatch(got == expected, "row count differs")})
+	}
+	return out, nil
+}
+
+func auditChainState(ctx context.Context, db *sql.DB) (int, error) {
+	var linked int
+	err := db.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE prev_hash IS NOT NULL AND prev_hash <> ''`).Scan(&linked)
+	return linked, err
 }
 
 func checkRoles(ctx context.Context, provider *postgres.PermissionProvider, cases []roleCase) []caseResult {
@@ -311,32 +378,44 @@ func openDatabase(path string) (*sql.DB, error) {
 	return sql.Open("pgx", strings.TrimSpace(string(raw)))
 }
 
+func storeCases(ctx context.Context, db *sql.DB, values expectations) ([]caseResult, error) {
+	clients, err := postgres.NewClientStoreWithDB(db, postgres.DialectPostgres)
+	if err != nil {
+		return nil, errors.New("client store unavailable")
+	}
+	users, err := postgres.NewUserProviderWithDB(db, postgres.DialectPostgres)
+	if err != nil {
+		return nil, errors.New("user provider unavailable")
+	}
+	sessions, err := postgres.NewSessionManagerWithDB(db, postgres.DialectPostgres, time.Hour)
+	if err != nil {
+		return nil, errors.New("session manager unavailable")
+	}
+	cases := checkClients(ctx, clients, values.Clients)
+	cases = append(cases, checkUsers(ctx, users, values.Users)...)
+	cases = append(cases, checkSessions(ctx, sessions, values.Sessions)...)
+	provider, err := postgres.NewPermissionProviderWithDB(db, postgres.DialectPostgres)
+	if err != nil {
+		return nil, errors.New("permission provider unavailable")
+	}
+	cases = append(cases, checkRoles(ctx, provider, values.Roles)...)
+	cases = append(cases, checkMenus(ctx, provider, values.Menus)...)
+	counts, err := checkCounts(ctx, db, values.Counts)
+	if err != nil {
+		return nil, err
+	}
+	return append(cases, counts...), nil
+}
+
 func evaluate(ctx context.Context, db *sql.DB, values expectations) (report, error) {
 	before, err := digests(ctx, db)
 	if err != nil {
 		return report{}, errors.New("pre-read digest failed")
 	}
-	clients, err := postgres.NewClientStoreWithDB(db, postgres.DialectPostgres)
+	cases, err := storeCases(ctx, db, values)
 	if err != nil {
-		return report{}, errors.New("client store unavailable")
+		return report{}, err
 	}
-	users, err := postgres.NewUserProviderWithDB(db, postgres.DialectPostgres)
-	if err != nil {
-		return report{}, errors.New("user provider unavailable")
-	}
-	sessions, err := postgres.NewSessionManagerWithDB(db, postgres.DialectPostgres, time.Hour)
-	if err != nil {
-		return report{}, errors.New("session manager unavailable")
-	}
-	cases := checkClients(ctx, clients, values.Clients)
-	cases = append(cases, checkUsers(ctx, users, values.Users)...)
-	cases = append(cases, checkSessions(ctx, sessions, values.Sessions)...)
-	permissionsProvider, err := postgres.NewPermissionProviderWithDB(db, postgres.DialectPostgres)
-	if err != nil {
-		return report{}, errors.New("permission provider unavailable")
-	}
-	cases = append(cases, checkRoles(ctx, permissionsProvider, values.Roles)...)
-	cases = append(cases, checkMenus(ctx, permissionsProvider, values.Menus)...)
 	after, err := digests(ctx, db)
 	if err != nil {
 		return report{}, errors.New("post-read digest failed")
@@ -347,8 +426,18 @@ func evaluate(ctx context.Context, db *sql.DB, values expectations) (report, err
 			unchanged = false
 		}
 	}
+	linked, err := auditChainState(ctx, db)
+	if err != nil {
+		return report{}, errors.New("audit chain inspection failed")
+	}
 	result := report{Result: "failed", Scope: "server-store read path over migrated rows;NOT cutover",
-		Cases: cases, Before: before, After: after, ExistingRowsUnchanged: unchanged, MigrationsRun: true}
+		Cases: cases, Before: before, After: after, ExistingRowsUnchanged: unchanged, MigrationsRun: true,
+		AuditChainLinkedRows: linked}
+	if linked == 0 {
+		result.AuditChain = "not_applicable: migrated rows carry no prev_hash linkage"
+	} else {
+		result.AuditChain = "present: linkage counts reported, continuity not asserted"
+	}
 	if allOK(cases) && unchanged {
 		result.Result = "passed"
 	}

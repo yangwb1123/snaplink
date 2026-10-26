@@ -88,6 +88,21 @@ func TestExpectedUnreadableIsPartOfTheContract(t *testing.T) {
 	}
 }
 
+func TestCountExpectationsStayInsideTheClosedTableSet(t *testing.T) {
+	good := expectations{Clients: []clientCase{{ID: "c"}}, Counts: map[string]int{"audit_events": 3}}
+	if err := validate(good); err != nil {
+		t.Fatalf("closed-set table count rejected: %v", err)
+	}
+	unknown := expectations{Clients: []clientCase{{ID: "c"}}, Counts: map[string]int{"users;DROP TABLE users": 1}}
+	if err := validate(unknown); err == nil {
+		t.Fatal("arbitrary table name must be rejected before it reaches SQL")
+	}
+	negative := expectations{Clients: []clientCase{{ID: "c"}}, Counts: map[string]int{"users": -1}}
+	if err := validate(negative); err == nil {
+		t.Fatal("negative count must be rejected")
+	}
+}
+
 func TestEqualSortedIgnoresOrderButNotContent(t *testing.T) {
 	if !equalSorted([]string{"b", "a"}, []string{"a", "b"}) {
 		t.Fatal("role code comparison must be order-insensitive")
