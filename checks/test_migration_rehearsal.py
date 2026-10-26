@@ -1,5 +1,6 @@
 """The rehearsal driver must be explicit, owned, bounded and never touch foreign containers."""
 import ast
+import hashlib
 import json
 
 import pytest
@@ -172,3 +173,11 @@ def test_policy_template_without_mappings_is_refused(tmp_path, monkeypatch):
                               policy_template=str(template)))()
     with pytest.raises(GuardFailure):
         rehearsal_cli.bind_and_import_inputs(root, args, "snaplink_mig_run_cand")
+
+
+def test_sha_helper_hashes_bytes(tmp_path):
+    # Guards the orchestration's digest binding, which silently broke once when
+    # hashlib was not imported.
+    path = tmp_path / "f"
+    path.write_bytes(b"abc")
+    assert rehearsal_cli._sha(path) == hashlib.sha256(b"abc").hexdigest()

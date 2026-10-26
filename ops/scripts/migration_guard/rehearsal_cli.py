@@ -5,6 +5,7 @@ a container is only removed when the receipt, the live inspect body, the image
 digest, the loopback binding and the tmpfs-only layout all still match.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
