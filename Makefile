@@ -306,6 +306,23 @@ ci-modules: ## Build + test all nested modules.
 ci: fmt vet race build examples container-contracts proto-lint ci-modules config-validate-all modules-check modules-smoke route-contract proto-openapi-parity capabilities-check sdk-surface-check sdk-drift-check sdk-paradigm-check sdk-naming-check profiles-evidence adapters-check ## Run CI checks.
 
 ci-full: ci terraform-validate k8s-render ## Run all CI checks including IaC validation (requires kustomize + terraform).
+migration-rehearsal: ## Owned SQLite->PostgreSQL rehearsal (requires SNAPSHOT, SNAPSHOT_SHA256, POLICY_TEMPLATE, BASE_COMMIT, SCHEMA_INIT; optional SSO_SERVER, READPATH, READPATH_EXPECT).
+	@test -n "$(SNAPSHOT)" || { echo "SNAPSHOT is required (pinned SQLite backup)"; exit 2; }
+	@test -n "$(SNAPSHOT_SHA256)" || { echo "SNAPSHOT_SHA256 is required"; exit 2; }
+	@test -n "$(POLICY_TEMPLATE)" || { echo "POLICY_TEMPLATE is required (version 2 policy with mappings)"; exit 2; }
+	@test -n "$(BASE_COMMIT)" || { echo "BASE_COMMIT is required (40-hex reviewed commit)"; exit 2; }
+	@test -n "$(SCHEMA_INIT)" || { echo "SCHEMA_INIT is required (prebuilt schema initializer)"; exit 2; }
+	@test -n "$(REHEARSAL_ROOT)" || { echo "REHEARSAL_ROOT is required (private 0700 directory)"; exit 2; }
+	python3 -B ops/scripts/migration_guard/rehearsal_cli.py run \
+	  --root "$(REHEARSAL_ROOT)" --container "$(REHEARSAL_CONTAINER)" --label "$(REHEARSAL_LABEL)" \
+	  --database "$(REHEARSAL_DATABASE)" --schema-init "$(SCHEMA_INIT)" \
+	  --evidence "$(REHEARSAL_ROOT)/orchestration.json" \
+	  --source-snapshot "$(SNAPSHOT)" --source-sha256 "$(SNAPSHOT_SHA256)" \
+	  --policy-template "$(POLICY_TEMPLATE)" --base-commit "$(BASE_COMMIT)" \
+	  $(if $(REPLAY_GUARD),--replay-guard,) $(if $(WRITE_CHECK),--write-check,) \
+	  $(if $(READPATH),--readpath "$(READPATH)",) $(if $(READPATH_EXPECT),--readpath-expect "$(READPATH_EXPECT)",) \
+	  $(if $(SSO_SERVER),--sso-server "$(SSO_SERVER)",)
+
 
 mod-tidy-all: ## Run go mod tidy in all modules.
 	find . -name go.mod -not -path './.git/*' -execdir go mod tidy \;

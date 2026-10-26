@@ -1,0 +1,21 @@
+"""The rehearsal must stay discoverable and refuse to run with missing inputs."""
+import subprocess
+from pathlib import Path
+
+
+def test_make_target_is_documented_for_help():
+    text = (Path.cwd() / "Makefile").read_text()
+    line = next(l for l in text.splitlines() if l.startswith("migration-rehearsal:"))
+    assert "##" in line and "SNAPSHOT" in line
+
+
+def test_make_target_refuses_without_required_inputs():
+    result = subprocess.run(["make", "migration-rehearsal"], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 2
+    assert "SNAPSHOT is required" in (result.stdout + result.stderr)
+
+
+def test_runbook_states_the_non_claims():
+    doc = (Path.cwd() / "docs/agent-os/MIGRATION_REHEARSAL.md").read_text()
+    for phrase in ("does **not** authorize cutover", "authenticated HTTP", "bcrypt hashes"):
+        assert phrase in doc
