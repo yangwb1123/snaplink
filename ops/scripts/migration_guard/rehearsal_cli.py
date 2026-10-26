@@ -16,7 +16,12 @@ import sys
 import time
 from pathlib import Path
 
-from .snapshot import GuardFailure
+from .conversion_policy import digest, target_shape_sha256
+from .import_cli import main as import_main
+from .postgres import connection_file, inspect_target
+from .snapshot import GuardFailure, inspect_snapshot
+from .target_schema import inspect_native_schema
+from .verify_cli import main as verify_main
 
 IMAGE_PIN = "sha256:de3a4eab8fdfa507ea92aac488b916b08089e515db49b055fe71dfa271ba3a28"
 DATABASE = re.compile(r"snaplink_mig_[a-z0-9_]{1,32}")
@@ -207,20 +212,89 @@ def close_owned(root):
 
 
 def run_command(args, root):
-    """Orchestrate provision -> schema init -> (caller-driven import/verify) -> close.
+    """Orchestrate provision, owned init, optional import+verify, then close.
 
-    Only the steps this module can prove by itself run here; import and content
-    verification stay with their own entrypoints, which the evidence file names.
+    Import runs only when a snapshot, its digest and a policy template are
+    supplied; the template names the conversion decisions, while source and
+    target-shape digests are bound mechanically from the live objects.
     """
+    state = {}
+
     def initialise():
-        return initialise_candidate(root, args.database, args.schema_init)
+        state["candidate"] = initialise_candidate(root, args.database, args.schema_init)[1]
+
+    def bind_and_import():
+        return bind_and_import_inputs(root, args, state["candidate"])
 
     steps = [("provision", lambda: provision(root, args.container, args.label, args.database, args.user)),
              ("schema_init", initialise)]
+    if args.source_snapshot or args.source_sha256 or args.policy_template:
+        steps.append(("import", bind_and_import))
+        steps.append(("verify", lambda: verify_candidate(root, args)))
     report = run_steps(steps, lambda: close_owned(root))
     write_private(Path(args.evidence), report)
     print(json.dumps({"result": report["result"], "evidence": args.evidence}))
     return 0 if report["result"] == "passed" else 1
+
+
+def bind_and_import_inputs(root, args, candidate):
+    if not (args.source_snapshot and args.source_sha256 and args.policy_template):
+        raise GuardFailure("rehearsal_import_requires_snapshot_digest_and_policy_template")
+    connection = connection_file(root / "candidate-connection.json")
+    if connection["database"] != candidate:
+        raise GuardFailure("rehearsal_candidate_connection_mismatch")
+    source = inspect_snapshot(Path(args.source_snapshot), args.source_sha256, timeout=120)
+    target = inspect_target(root / "candidate-connection.json")
+    template = json.loads(Path(args.policy_template).read_text())
+    if template.get("version") != 2 or not isinstance(template.get("mappings"), list):
+        raise GuardFailure("rehearsal_policy_template_invalid")
+    policy = dict(template, source_sha256=source["sha256"], target_shape_sha256=target_shape_sha256(target))
+    observed = inspect_native_schema(root / "candidate-connection.json", source, target, policy)
+    contract = dict(version=1, algorithm="pg_native_schema_facets_v1", source_sha256=source["sha256"],
+                    target_shape_sha256=target_shape_sha256(target),
+                    schema_source=dict(base_commit="rehearsal", combination_sha256=digest(policy)),
+                    environment_sha256=observed["environment_sha256"],
+                    tables=[dict(table=n, facets=v["facets"]) for n, v in sorted(observed["tables"].items())])
+    policy_path, contract_path = root / "policy.json", root / "schema-contract.json"
+    write_private(policy_path, policy)
+    write_private(contract_path, contract)
+    intent = dict(version=1, scope="owned_candidate_import_v1", source_sha256=source["sha256"],
+                  policy_sha256=digest(policy), schema_contract_sha256=_sha(contract_path),
+                  target_shape_sha256=target_shape_sha256(target), target_database=candidate,
+                  target_owner_sha256=hashlib.sha256(connection["owner_token"].encode()).hexdigest(),
+                  expires_at=int(time.time()) + 3600, candidate_exclusive=True,
+                  source_is_final_cutover_snapshot=False, historical_audit_chain_certified=False,
+                  sequence_mode="pg_transactional_restart_v1")
+    intent_path = root / "intent.json"
+    write_private(intent_path, intent)
+    code = import_main(["--snapshot", args.source_snapshot, "--snapshot-sha256", source["sha256"],
+                        "--target-connection-file", str(root / "candidate-connection.json"),
+                        "--conversion-policy-file", str(policy_path),
+                        "--schema-contract-file", str(contract_path), "--schema-contract-sha256", _sha(contract_path),
+                        "--intent-file", str(intent_path), "--intent-sha256", _sha(intent_path),
+                        "--confirm-candidate-database", candidate,
+                        "--journal", str(root / "import-journal.jsonl"), "--report", str(root / "import-report.json")])
+    report = json.loads((root / "import-report.json").read_text())
+    if code != 0 or report.get("result") != "passed":
+        raise GuardFailure("rehearsal_import_failed")
+    return report
+
+
+def verify_candidate(root, args):
+    code = verify_main(["--snapshot", args.source_snapshot, "--snapshot-sha256", args.source_sha256,
+                        "--target-connection-file", str(root / "candidate-connection.json"),
+                        "--conversion-policy-file", str(root / "policy.json"),
+                        "--report", str(root / "verify-report.json"), "--timeout", "60"])
+    if code != 0:
+        raise GuardFailure("rehearsal_verify_failed")
+    report = json.loads((root / "verify-report.json").read_text())
+    if report.get("result") != "passed":
+        raise GuardFailure("rehearsal_verify_failed")
+    return report
+
+
+def _sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def initialise_candidate(root, database, schema_init):
@@ -297,6 +371,9 @@ def parser():
     three.add_argument("--schema-init", required=True, help="prebuilt schema initializer for this revision")
     three.add_argument("--user", default="migration_test")
     three.add_argument("--evidence", required=True)
+    three.add_argument("--source-snapshot")
+    three.add_argument("--source-sha256")
+    three.add_argument("--policy-template")
     return top
 
 

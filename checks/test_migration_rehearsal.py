@@ -145,3 +145,30 @@ def test_initialise_candidate_refuses_a_root_mismatch(tmp_path, monkeypatch):
     monkeypatch.setattr(rehearsal_cli, "psql", lambda connection: (["psql"], {}))
     with pytest.raises(GuardFailure):
         rehearsal_cli.initialise_candidate(root, "snaplink_mig_run", "/bin/true")
+
+
+def test_import_step_requires_snapshot_digest_and_policy_template(tmp_path):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    args = type("A", (), dict(source_snapshot=str(tmp_path / "s.sqlite"), source_sha256="",
+                               policy_template=""))()
+    with pytest.raises(GuardFailure):
+        rehearsal_cli.bind_and_import_inputs(root, args, "snaplink_mig_run_cand")
+
+
+def test_policy_template_without_mappings_is_refused(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "candidate-connection.json",
+                                dict(host="127.0.0.1", port=1, user="u", database="snaplink_mig_run_cand",
+                                     password="p", owner_token="b" * 48))
+    template = tmp_path / "policy.json"
+    template.write_text(json.dumps({"version": 2}))
+    monkeypatch.setattr(rehearsal_cli, "inspect_snapshot",
+                        lambda path, sha, timeout: dict(sha256=sha))
+    monkeypatch.setattr(rehearsal_cli, "inspect_target", lambda path: dict(tables={}))
+    monkeypatch.setattr(rehearsal_cli, "target_shape_sha256", lambda target: "c" * 64)
+    args = type("A", (), dict(source_snapshot=str(tmp_path / "s.sqlite"), source_sha256="a" * 64,
+                              policy_template=str(template)))()
+    with pytest.raises(GuardFailure):
+        rehearsal_cli.bind_and_import_inputs(root, args, "snaplink_mig_run_cand")
