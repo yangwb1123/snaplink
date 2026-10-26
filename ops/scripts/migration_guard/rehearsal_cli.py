@@ -234,6 +234,8 @@ def run_command(args, root):
     if args.source_snapshot or args.source_sha256 or args.policy_template:
         steps.append(("import", bind_and_import))
         steps.append(("verify", lambda: verify_candidate(root, args)))
+    if getattr(args, "readpath", None):
+        steps.append(("readpath", lambda: readpath_candidate(root, args.readpath, args.readpath_expect)))
     if getattr(args, "sso_server", None):
         steps.append(("smoke", lambda: smoke_candidate(root, args.sso_server)))
     report = run_steps(steps, lambda: close_owned(root))
@@ -298,6 +300,37 @@ def verify_candidate(root, args):
     report = json.loads((root / "verify-report.json").read_text())
     if report.get("result") != "passed":
         raise GuardFailure("rehearsal_verify_failed")
+    return report
+
+
+def readpath_args(dsn_path, expect_path, report_path):
+    # The store constructors migrate the candidate, so the acknowledgement flag is mandatory
+    # and the report path is always explicit.
+    return ["-dsn-file", str(dsn_path), "-expect", str(expect_path), "-allow-idempotent-migrations"]
+
+
+def readpath_candidate(root, binary, expect_path):
+    if not expect_path:
+        raise GuardFailure("rehearsal_readpath_expectations_required")
+    dsn_path = root / "probe.dsn"
+    connection = json.loads((root / "candidate-connection.json").read_text())
+    dsn = "postgres://%s:%s@%s:%d/%s?sslmode=disable&connect_timeout=5" % (
+        connection["user"], connection["password"], connection["host"], connection["port"], connection["database"])
+    dsn_path.write_text(dsn + "\n")
+    os.chmod(dsn_path, 0o600)
+    argv = [binary] + readpath_args(dsn_path, expect_path, root / "readpath-report.json")
+    result = run_bounded(argv, 180, cwd=str(root))
+    body = result.stdout.decode() if result.stdout else ""
+    report = {}
+    if body.strip():
+        try:
+            report = json.loads(body)
+        except ValueError:
+            raise GuardFailure("rehearsal_readpath_report_invalid")
+    write_private(root / "readpath-report.json", report)
+    dsn_path.unlink()
+    if result.returncode or report.get("result") != "passed" or report.get("existing_rows_unchanged") is not True:
+        raise GuardFailure("rehearsal_readpath_failed")
     return report
 
 
@@ -477,6 +510,8 @@ def parser():
     three.add_argument("--policy-template")
     three.add_argument("--base-commit", help="40-hex commit the reviewed schema was built from")
     three.add_argument("--sso-server", help="prebuilt sso-server binary to smoke against the candidate")
+    three.add_argument("--readpath", help="prebuilt migration-readpath binary")
+    three.add_argument("--readpath-expect", help="expectation JSON for the read-path samples")
     return top
 
 

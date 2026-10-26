@@ -231,3 +231,27 @@ def test_smoke_fails_closed_when_config_validation_fails(tmp_path, monkeypatch):
                         lambda *a, **k: type("R", (), {"returncode": 2})())
     with pytest.raises(rehearsal_cli.GuardFailure):
         rehearsal_cli.smoke_candidate(root, "/bin/false-server")
+
+
+def test_readpath_args_always_acknowledge_migrations(tmp_path):
+    argv = rehearsal_cli.readpath_args(tmp_path / "d", tmp_path / "e", tmp_path / "r")
+    assert argv[0::2] == ["-dsn-file", "-expect", "-allow-idempotent-migrations"]
+
+
+def test_readpath_requires_expectations(tmp_path):
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.readpath_candidate(tmp_path, "/bin/true", None)
+
+
+def test_readpath_fails_closed_on_reported_failure(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "candidate-connection.json",
+                                dict(host="127.0.0.1", port=1, user="u", database="snaplink_mig_run_cand",
+                                     password="p", owner_token="b" * 48))
+    monkeypatch.setattr(rehearsal_cli, "run_bounded",
+                        lambda *a, **k: type("R", (), {"returncode": 1, "stdout": b'{"result":"failed","existing_rows_unchanged":false}'})())
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.readpath_candidate(root, "/bin/x", str(tmp_path / "e.json"))
+    assert (root / "readpath-report.json").exists(), "the failing report is retained"
+    assert not (root / "probe.dsn").exists(), "the private DSN file must not be left behind"
