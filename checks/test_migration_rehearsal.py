@@ -302,3 +302,26 @@ def test_replay_guard_fails_when_counts_change(tmp_path, monkeypatch):
     args = type("A", (), dict(source_snapshot="/s", source_sha256="a" * 64))()
     with pytest.raises(rehearsal_cli.GuardFailure):
         rehearsal_cli.replay_guard(root, args, "snaplink_mig_run_cand")
+
+
+def test_write_check_requires_the_sequence_to_advance(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    values = iter(["9590", "9590", "9590", "9591"])
+    monkeypatch.setattr(rehearsal_cli, "psql_scalar", lambda root, sql: next(values))
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.write_check(root)
+    record = json.loads((root / "write-check.json").read_text())
+    assert record["result"] == "failed" and record["sequence_advanced"] is False
+    assert record["candidate_mutated"] is True
+
+
+def test_write_check_passes_and_declares_the_mutation(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    values = iter(["9590", "9590", "9591", "9591"])
+    monkeypatch.setattr(rehearsal_cli, "psql_scalar", lambda root, sql: next(values))
+    record = rehearsal_cli.write_check(root)
+    assert record["result"] == "passed" and record["inserted_seq"] == 9591
+    assert record["rows_after"] == record["rows_before"] + 1
+    assert record["candidate_mutated"] is True and "NOT cutover" in record["scope"]

@@ -236,6 +236,8 @@ def run_command(args, root):
     if args.source_snapshot or args.source_sha256 or args.policy_template:
         steps.append(("import", bind_and_import))
         steps.append(("verify", lambda: verify_candidate(root, args)))
+    if getattr(args, "write_check", False):
+        steps.append(("write_check", lambda: write_check(root)))
     if getattr(args, "replay_guard", False):
         steps.append(("replay_guard", lambda: replay_guard(root, args, state["candidate"])))
     if getattr(args, "readpath", None):
@@ -357,6 +359,44 @@ def verify_candidate(root, args):
     if report.get("result") != "passed":
         raise GuardFailure("rehearsal_verify_failed")
     return report
+
+
+def psql_scalar(root, sql):
+    connection = json.loads((root / "candidate-connection.json").read_text())
+    argv, env = psql(connection)
+    result = run_bounded(argv, 30, env=env, stdin=sql.encode())
+    if result.returncode:
+        raise GuardFailure("rehearsal_write_check_sql_failed")
+    return result.stdout.decode().strip()
+
+
+def write_check(root):
+    """Insert one audit row and require the migrated sequence to advance past the historical floor.
+
+    This mutates the disposable candidate on purpose; the report says so instead of
+    pretending the rehearsal stayed read-only.
+    """
+    before = int(psql_scalar(root, "SELECT count(*) FROM audit_events;") or 0)
+    floor = int(psql_scalar(root, "SELECT coalesce(max(seq),0) FROM audit_events;") or 0)
+    seq = int(psql_scalar(
+        root,
+        "INSERT INTO audit_events (id,type,outcome,ts_unix_ns,tenant_id,server_version) "
+        "VALUES ('rehearsal-write-check','rehearsal.write_check','success',"
+        + str(time.time_ns()) + ",'','rehearsal') RETURNING seq;",
+    ) or 0)
+    after = int(psql_scalar(root, "SELECT count(*) FROM audit_events;") or 0)
+    advanced = seq > floor
+    result = dict(result="passed" if advanced and after == before + 1 else "failed",
+                  rows_before=before, rows_after=after, historical_max_seq=floor, inserted_seq=seq,
+                  sequence_advanced=advanced, candidate_mutated=True,
+                  mutation="one audit_events row written through the migrated sequence",
+                  scope="write-path proof on a disposable candidate;NOT cutover approval")
+    write_private(root / "write-check.json", result)
+    if not advanced:
+        raise GuardFailure("rehearsal_write_check_sequence_not_advanced")
+    if after != before + 1:
+        raise GuardFailure("rehearsal_write_check_row_count_mismatch")
+    return result
 
 
 def table_counts(root):
@@ -589,6 +629,8 @@ def parser():
     three.add_argument("--policy-template")
     three.add_argument("--base-commit", help="40-hex commit the reviewed schema was built from")
     three.add_argument("--sso-server", help="prebuilt sso-server binary to smoke against the candidate")
+    three.add_argument("--write-check", action="store_true",
+                       help="after import, prove the migrated audit sequence accepts a new row above the historical floor")
     three.add_argument("--replay-guard", action="store_true",
                        help="after a successful import, prove a second import is refused and the candidate is unchanged")
     three.add_argument("--readpath", help="prebuilt migration-readpath binary")
