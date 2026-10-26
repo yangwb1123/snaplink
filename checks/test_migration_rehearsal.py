@@ -325,3 +325,11 @@ def test_write_check_passes_and_declares_the_mutation(tmp_path, monkeypatch):
     assert record["result"] == "passed" and record["inserted_seq"] == 9591
     assert record["rows_after"] == record["rows_before"] + 1
     assert record["candidate_mutated"] is True and "NOT cutover" in record["scope"]
+
+
+def test_scalar_int_takes_the_first_nonempty_line():
+    # psql with RETURNING also prints a command tag; the scalar parser must not choke on it.
+    assert rehearsal_cli.scalar_int("9591\nINSERT 0 1\n") == 9591
+    assert rehearsal_cli.scalar_int("\n67\n") == 67
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.scalar_int("\n\n")

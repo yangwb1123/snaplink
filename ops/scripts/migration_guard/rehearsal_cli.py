@@ -370,21 +370,31 @@ def psql_scalar(root, sql):
     return result.stdout.decode().strip()
 
 
+def scalar_int(text):
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line:
+            return int(line)
+    raise GuardFailure("rehearsal_scalar_missing")
+
+
 def write_check(root):
     """Insert one audit row and require the migrated sequence to advance past the historical floor.
 
     This mutates the disposable candidate on purpose; the report says so instead of
     pretending the rehearsal stayed read-only.
     """
-    before = int(psql_scalar(root, "SELECT count(*) FROM audit_events;") or 0)
-    floor = int(psql_scalar(root, "SELECT coalesce(max(seq),0) FROM audit_events;") or 0)
-    seq = int(psql_scalar(
+    before = scalar_int(psql_scalar(root, "SELECT count(*) FROM audit_events;"))
+    floor = scalar_int(psql_scalar(root, "SELECT coalesce(max(seq),0) FROM audit_events;"))
+    # A CTE keeps the command tag off the stream: a bare INSERT ... RETURNING also emits
+    # "INSERT 0 1", which made the scalar parse fail.
+    seq = scalar_int(psql_scalar(
         root,
-        "INSERT INTO audit_events (id,type,outcome,ts_unix_ns,tenant_id,server_version) "
+        "WITH ins AS (INSERT INTO audit_events (id,type,outcome,ts_unix_ns,tenant_id,server_version) "
         "VALUES ('rehearsal-write-check','rehearsal.write_check','success',"
-        + str(time.time_ns()) + ",'','rehearsal') RETURNING seq;",
-    ) or 0)
-    after = int(psql_scalar(root, "SELECT count(*) FROM audit_events;") or 0)
+        + str(time.time_ns()) + ",'','rehearsal') RETURNING seq) SELECT seq FROM ins;",
+    ))
+    after = scalar_int(psql_scalar(root, "SELECT count(*) FROM audit_events;"))
     advanced = seq > floor
     result = dict(result="passed" if advanced and after == before + 1 else "failed",
                   rows_before=before, rows_after=after, historical_max_seq=floor, inserted_seq=seq,
