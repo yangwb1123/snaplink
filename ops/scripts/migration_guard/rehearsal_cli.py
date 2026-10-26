@@ -525,8 +525,30 @@ def http_probe(port, path, timeout=5):
         return 0, b""
 
 
-def smoke_candidate(root, server_binary):
-    """Boot the real server against the imported candidate and probe public endpoints."""
+def smoke_candidate(root, server_binary, attempts=3):
+    """Boot the real server against the imported candidate and probe public endpoints.
+
+    Ports are chosen by binding and releasing, so another process can take one
+    between the choice and the bind. A rejected preflight is retried with fresh
+    ports a bounded number of times; every attempt is recorded.
+    """
+    history = []
+    for attempt in range(1, attempts + 1):
+        try:
+            facts = smoke_attempt(root, server_binary)
+        except GuardFailure as failure:
+            history.append(dict(attempt=attempt, result="failed", reason=str(failure)))
+            if str(failure) != "rehearsal_smoke_config_invalid" or attempt == attempts:
+                write_private(root / "smoke-attempts.json", dict(attempts=history))
+                raise
+            continue
+        history.append(dict(attempt=attempt, result="passed"))
+        write_private(root / "smoke-attempts.json", dict(attempts=history))
+        return facts
+    raise GuardFailure("rehearsal_smoke_attempts_exhausted")
+
+
+def smoke_attempt(root, server_binary):
     http_port, grpc_port = free_port(), free_port()
     config_path = root / "server-config.yaml"
     config_path.write_text(server_config(root, http_port, grpc_port))
@@ -534,6 +556,12 @@ def smoke_candidate(root, server_binary):
     validate = run_bounded([server_binary, "-config", str(config_path), "-validate-only",
                             "-grpc-listen", "127.0.0.1:%d" % grpc_port], 120, cwd=str(root))
     if validate.returncode:
+        detail = (getattr(validate, "stderr", b"") or b"").decode(errors="replace")[-400:] + \
+            (getattr(validate, "stdout", b"") or b"").decode(errors="replace")[-400:]
+        write_private(root / "smoke-validate-failure.json",
+                      dict(result="failed", exit_code=validate.returncode, detail=detail,
+                           argv=[server_binary, "-config", "<private>", "-validate-only",
+                                 "-grpc-listen", "127.0.0.1:%d" % grpc_port]))
         raise GuardFailure("rehearsal_smoke_config_invalid")
     log = (root / "server.log").open("wb")
     child = subprocess.Popen([server_binary, "-config", str(config_path),
@@ -572,6 +600,14 @@ def smoke_candidate(root, server_binary):
     if facts["server_exit"] != 0 or not closed:
         raise GuardFailure("rehearsal_smoke_stop_unclean")
     return facts
+
+
+
+
+
+
+
+
 
 
 def _sha(path):

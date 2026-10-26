@@ -348,3 +348,50 @@ def test_write_check_is_last_because_it_mutates_the_candidate():
                                    replay_guard=False, readpath=None, readpath_expect=None,
                                    sso_server=None, write_check=False))()
     assert rehearsal_cli.step_plan(read_only) == ["provision", "schema_init", "import", "verify"]
+
+
+def test_smoke_records_the_validator_output_when_config_is_rejected(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "candidate-connection.json",
+                                dict(host="127.0.0.1", port=1, user="u", database="snaplink_mig_run_cand",
+                                     password="p", owner_token="b" * 48))
+    monkeypatch.setattr(rehearsal_cli, "run_bounded",
+                        lambda *a, **k: type("R", (), {"returncode": 2, "stdout": b"", "stderr": b"bad config"})())
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.smoke_candidate(root, "/bin/x")
+    record = json.loads((root / "smoke-validate-failure.json").read_text())
+    assert record["exit_code"] == 2 and "bad config" in record["detail"]
+
+
+def test_smoke_retries_a_rejected_preflight_with_fresh_ports(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "candidate-connection.json",
+                                dict(host="127.0.0.1", port=1, user="u", database="snaplink_mig_run_cand",
+                                     password="p", owner_token="b" * 48))
+    calls = {"validate": 0}
+
+    def validate(argv, timeout, **kw):
+        calls["validate"] += 1
+        code = 2 if calls["validate"] < 3 else 0
+        return type("R", (), {"returncode": code, "stdout": b"", "stderr": b"port busy" if code else b""})()
+
+    monkeypatch.setattr(rehearsal_cli, "run_bounded", validate)
+    monkeypatch.setattr(rehearsal_cli, "free_port", lambda: 30000 + calls["validate"])
+    monkeypatch.setattr(rehearsal_cli, "smoke_attempt",
+                        lambda root, binary: (_ for _ in ()).throw(rehearsal_cli.GuardFailure("rehearsal_smoke_config_invalid")))
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.smoke_candidate(root, "/bin/x", attempts=2)
+    record = json.loads((root / "smoke-attempts.json").read_text())
+    assert [a["result"] for a in record["attempts"]] == ["failed", "failed"]
+
+
+def test_smoke_reports_attempt_history_on_success(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    monkeypatch.setattr(rehearsal_cli, "smoke_attempt",
+                        lambda root, binary: dict(health="ok", server_exit=0, port_closed_after_stop=True))
+    facts = rehearsal_cli.smoke_candidate(root, "/bin/x")
+    assert facts["health"] == "ok"
+    assert json.loads((root / "smoke-attempts.json").read_text())["attempts"] == [dict(attempt=1, result="passed")]
