@@ -562,3 +562,14 @@ def test_storage_kind_accepts_only_a_labelled_owned_volume(monkeypatch):
     body["Mounts"] = [dict(Type="bind", Destination="/var/lib/postgresql/data")]
     with pytest.raises(rehearsal_cli.GuardFailure):
         rehearsal_cli.storage_kind(body, "l")
+
+
+def test_provision_step_forwards_the_storage_choice(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(rehearsal_cli, "provision",
+                        lambda root, container, label, database, user, **kw: seen.update(kw))
+    base = dict(container="c", label="l", database="d", user="u")
+    rehearsal_cli.provision_step(tmp_path, type("A", (), dict(base, durable_storage=True))())
+    assert seen.get("durable") is True
+    rehearsal_cli.provision_step(tmp_path, type("A", (), base)())
+    assert seen.get("durable") is False

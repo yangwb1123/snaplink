@@ -296,7 +296,7 @@ def run_command(args, root):
     def bind_and_import():
         return bind_and_import_inputs(root, args, state["candidate"])
 
-    steps = [("provision", lambda: provision(root, args.container, args.label, args.database, args.user)),
+    steps = [("provision", lambda: provision_step(root, args)),
              ("schema_init", initialise)]
     if args.source_snapshot or args.source_sha256 or args.policy_template:
         steps.append(("import", bind_and_import))
@@ -824,6 +824,12 @@ def create_candidate(root, name, schema_init, connection_name="candidate-connect
     if child.returncode:
         raise GuardFailure("rehearsal_schema_init_failed")
     return path
+
+
+def provision_step(root, args):
+    """Wire the CLI's storage choice into provision; the flag is meaningless if unread."""
+    return provision(root, args.container, args.label, args.database, args.user,
+                     durable=getattr(args, "durable_storage", False))
 
 
 def initialise_candidate(root, database, schema_init):
