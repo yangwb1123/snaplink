@@ -87,3 +87,31 @@ def test_public_report_directory_is_rejected(tmp_path, monkeypatch):
 def test_unexpected_extra_argument_is_rejected(tmp_path):
     with pytest.raises(SystemExit):
         verify_cli.parser().parse_args(['--snapshot', 'x'])
+
+
+def test_schema_contract_is_checked_when_supplied(tmp_path, monkeypatch):
+    fake(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(verify_cli, "load_contract", lambda path, sha: {"version": 1})
+    def verify_schema(snapshot, connection, source, target, policy, contract, timeout):
+        seen["called"] = True
+        return dict(result="passed", declared_foreign_keys=[])
+    monkeypatch.setattr(verify_cli, "verify_schema", verify_schema)
+    ns, report = args(tmp_path)
+    ns.schema_contract_file = str(tmp_path / "contract.json")
+    ns.schema_contract_sha256 = "b" * 64
+    assert verify_cli.execute(ns) == 0
+    assert seen.get("called") is True
+    assert json.loads(report.read_text())["schema_result"] == "passed"
+
+
+def test_schema_failure_fails_the_report(tmp_path, monkeypatch):
+    fake(monkeypatch)
+    monkeypatch.setattr(verify_cli, "load_contract", lambda path, sha: {"version": 1})
+    monkeypatch.setattr(verify_cli, "verify_schema",
+                        lambda *a, **k: dict(result="failed", declared_foreign_keys=[]))
+    ns, report = args(tmp_path)
+    ns.schema_contract_file = str(tmp_path / "contract.json")
+    ns.schema_contract_sha256 = "b" * 64
+    assert verify_cli.execute(ns) == 1
+    assert json.loads(report.read_text())["result"] == "failed"

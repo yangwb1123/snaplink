@@ -7,7 +7,9 @@ from .cli import write_report
 from .conversion_policy import load_policy
 from .postgres import inspect_target
 from .sequence_inventory import verify_sequences
+from .schema_contract import load_contract
 from .snapshot import GuardFailure, inspect_snapshot
+from .target_schema import verify_schema
 from .target_content import verify_content
 
 
@@ -24,7 +26,12 @@ def execute(args):
     target = inspect_target(args.target_connection_file)
     content = verify_content(args.snapshot, args.target_connection_file, source, target, policy, timeout=timeout)
     sequences = verify_sequences(args.snapshot, args.target_connection_file, source, target, policy, timeout=timeout)
-    passed = content["result"] == "passed" and sequences["result"] == "passed"
+    schema = None
+    if getattr(args, "schema_contract_file", None):
+        contract = load_contract(args.schema_contract_file, args.schema_contract_sha256)
+        schema = verify_schema(args.snapshot, args.target_connection_file, source, target, policy, contract, timeout=timeout)
+    passed = (content["result"] == "passed" and sequences["result"] == "passed"
+              and (schema is None or schema["result"] == "passed"))
     report = dict(
         version=1,
         scope="owned_candidate_read_only_verification_v1",
@@ -33,6 +40,8 @@ def execute(args):
         target_tables=len(target["tables"]),
         content_result=content["result"],
         sequence_result=sequences["result"],
+        schema_result=None if schema is None else schema["result"],
+        schema_declared_fk_count=None if schema is None else len(schema.get("declared_foreign_keys", [])),
         sequence_blockers=sequences.get("blockers", []),
         verified_after_import=True,
         writes_performed=False,
@@ -52,6 +61,8 @@ def parser():
     arg_parser.add_argument("--target-connection-file", required=True)
     arg_parser.add_argument("--conversion-policy-file", required=True)
     arg_parser.add_argument("--report", required=True)
+    arg_parser.add_argument("--schema-contract-file")
+    arg_parser.add_argument("--schema-contract-sha256")
     arg_parser.add_argument("--timeout", type=int, default=60)
     return arg_parser
 

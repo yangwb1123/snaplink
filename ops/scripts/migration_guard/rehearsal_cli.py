@@ -382,6 +382,8 @@ def verify_candidate(root, args):
     code = verify_main(["--snapshot", args.source_snapshot, "--snapshot-sha256", args.source_sha256,
                         "--target-connection-file", str(root / "candidate-connection.json"),
                         "--conversion-policy-file", str(root / "policy.json"),
+                        "--schema-contract-file", str(root / "schema-contract.json"),
+                        "--schema-contract-sha256", _sha(root / "schema-contract.json"),
                         "--report", str(root / "verify-report.json"), "--timeout", "60"])
     if code != 0:
         raise GuardFailure("rehearsal_verify_failed")

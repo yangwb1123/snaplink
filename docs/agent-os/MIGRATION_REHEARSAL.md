@@ -18,7 +18,8 @@ One invocation performs, in order:
    supplied policy template, generates the schema contract and a one-hour
    candidate-only intent, then imports through the guard.
 4. `verify` — re-reads the candidate under a read-only repeatable-read snapshot
-   and compares content and sequence state with the source projection.
+   and compares content, sequence state and the schema contract facets
+   (including declared foreign keys) with the source projection.
 5. `replay_guard` (opt-in) — re-runs the import and requires it to be refused
    with all table counts unchanged.
 6. `concurrency_guard` (opt-in) — runs two imports against one fresh
