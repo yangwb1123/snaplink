@@ -234,6 +234,8 @@ def run_command(args, root):
     if args.source_snapshot or args.source_sha256 or args.policy_template:
         steps.append(("import", bind_and_import))
         steps.append(("verify", lambda: verify_candidate(root, args)))
+    if getattr(args, "replay_guard", False):
+        steps.append(("replay_guard", lambda: replay_guard(root, args, state["candidate"])))
     if getattr(args, "readpath", None):
         steps.append(("readpath", lambda: readpath_candidate(root, args.readpath, args.readpath_expect)))
     if getattr(args, "sso_server", None):
@@ -277,17 +279,22 @@ def bind_and_import_inputs(root, args, candidate):
                   sequence_mode="pg_transactional_restart_v1")
     intent_path = root / "intent.json"
     write_private(intent_path, intent)
-    code = import_main(["--snapshot", args.source_snapshot, "--snapshot-sha256", source["sha256"],
+    code = run_import(root, args, candidate, source, policy_path, contract_path, intent_path,
+                      "import-journal.jsonl", "import-report.json")
+    report = json.loads((root / "import-report.json").read_text())
+    if code != 0 or report.get("result") != "passed":
+        raise GuardFailure("rehearsal_import_failed")
+    return report
+
+
+def run_import(root, args, candidate, source, policy_path, contract_path, intent_path, journal, report_name):
+    return import_main(["--snapshot", args.source_snapshot, "--snapshot-sha256", source["sha256"],
                         "--target-connection-file", str(root / "candidate-connection.json"),
                         "--conversion-policy-file", str(policy_path),
                         "--schema-contract-file", str(contract_path), "--schema-contract-sha256", _sha(contract_path),
                         "--intent-file", str(intent_path), "--intent-sha256", _sha(intent_path),
                         "--confirm-candidate-database", candidate,
-                        "--journal", str(root / "import-journal.jsonl"), "--report", str(root / "import-report.json")])
-    report = json.loads((root / "import-report.json").read_text())
-    if code != 0 or report.get("result") != "passed":
-        raise GuardFailure("rehearsal_import_failed")
-    return report
+                        "--journal", str(root / journal), "--report", str(root / report_name)])
 
 
 def verify_candidate(root, args):
@@ -301,6 +308,48 @@ def verify_candidate(root, args):
     if report.get("result") != "passed":
         raise GuardFailure("rehearsal_verify_failed")
     return report
+
+
+def table_counts(root):
+    connection = json.loads((root / "candidate-connection.json").read_text())
+    argv, env = psql(connection)
+    out = {}
+    for name in business_tables():
+        argv, env = psql(connection)
+        result = run_bounded(argv, 30, env=env, stdin=("SELECT count(*) FROM " + name + ";").encode())
+        if result.returncode:
+            raise GuardFailure("rehearsal_replay_count_failed")
+        out[name] = int(result.stdout.decode().strip() or 0)
+    return out
+
+
+def business_tables():
+    # The closed set the migration guard itself treats as business content.
+    from .target_content import verify_content  # noqa: F401 - kept for import parity
+    return ["account_lockouts", "audit_checkpoints", "audit_events", "auth_codes", "clients",
+            "password_credentials", "permissions_active_roles", "permissions_assignments",
+            "permissions_conflict_sets", "permissions_menus", "permissions_resources",
+            "permissions_roles", "refresh_rotation_windows", "refresh_token_families",
+            "refresh_tokens", "revocations", "sessions", "users"]
+
+
+def replay_guard(root, args, candidate):
+    """A second import against the populated candidate must be refused, leaving it unchanged."""
+    before = table_counts(root)
+    source = inspect_snapshot(Path(args.source_snapshot), args.source_sha256, timeout=120)
+    code = run_import(root, args, candidate, source, root / "policy.json", root / "schema-contract.json",
+                      root / "intent.json", "import-journal-replay.jsonl", "import-report-replay.json")
+    after = table_counts(root)
+    report_path = root / "import-report-replay.json"
+    report = json.loads(report_path.read_text()) if report_path.is_file() else {}
+    result = dict(result="failed", first_import_refused=code != 0, counts_unchanged=before == after,
+                  reason=report.get("reason"), target_changed=report.get("target_changed"))
+    write_private(root / "replay-guard.json", result)
+    if code == 0:
+        raise GuardFailure("rehearsal_replay_was_accepted")
+    if before != after:
+        raise GuardFailure("rehearsal_replay_changed_the_candidate")
+    return result
 
 
 def readpath_args(dsn_path, expect_path, report_path):
@@ -510,6 +559,8 @@ def parser():
     three.add_argument("--policy-template")
     three.add_argument("--base-commit", help="40-hex commit the reviewed schema was built from")
     three.add_argument("--sso-server", help="prebuilt sso-server binary to smoke against the candidate")
+    three.add_argument("--replay-guard", action="store_true",
+                       help="after a successful import, prove a second import is refused and the candidate is unchanged")
     three.add_argument("--readpath", help="prebuilt migration-readpath binary")
     three.add_argument("--readpath-expect", help="expectation JSON for the read-path samples")
     return top

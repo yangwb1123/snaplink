@@ -255,3 +255,54 @@ def test_readpath_fails_closed_on_reported_failure(tmp_path, monkeypatch):
         rehearsal_cli.readpath_candidate(root, "/bin/x", str(tmp_path / "e.json"))
     assert (root / "readpath-report.json").exists(), "the failing report is retained"
     assert not (root / "probe.dsn").exists(), "the private DSN file must not be left behind"
+
+
+def test_replay_guard_refuses_when_the_second_import_succeeds(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "candidate-connection.json",
+                                dict(host="127.0.0.1", port=1, user="u", database="snaplink_mig_run_cand",
+                                     password="p", owner_token="b" * 48))
+    monkeypatch.setattr(rehearsal_cli, "table_counts", lambda root: {"users": 1})
+    monkeypatch.setattr(rehearsal_cli, "inspect_snapshot", lambda p, s, timeout: dict(sha256=s))
+    monkeypatch.setattr(rehearsal_cli, "run_import", lambda *a, **k: 0)
+    monkeypatch.setattr(rehearsal_cli, "psql", lambda connection: (["psql"], {}))
+    args = type("A", (), dict(source_snapshot="/s", source_sha256="a" * 64))()
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.replay_guard(root, args, "snaplink_mig_run_cand")
+
+
+def test_replay_guard_passes_on_refusal_with_unchanged_counts(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "candidate-connection.json",
+                                dict(host="127.0.0.1", port=1, user="u", database="snaplink_mig_run_cand",
+                                     password="p", owner_token="b" * 48))
+    rehearsal_cli.write_private(root / "import-report-replay.json",
+                                dict(result="failed", reason="import_empty_target_complete_shape_preflight_failed",
+                                     target_changed="unknown"))
+    monkeypatch.setattr(rehearsal_cli, "table_counts", lambda root: {"users": 67})
+    monkeypatch.setattr(rehearsal_cli, "inspect_snapshot", lambda p, s, timeout: dict(sha256=s))
+    monkeypatch.setattr(rehearsal_cli, "run_import", lambda *a, **k: 1)
+    monkeypatch.setattr(rehearsal_cli, "psql", lambda connection: (["psql"], {}))
+    args = type("A", (), dict(source_snapshot="/s", source_sha256="a" * 64))()
+    result = rehearsal_cli.replay_guard(root, args, "snaplink_mig_run_cand")
+    assert result["first_import_refused"] is True and result["counts_unchanged"] is True
+    assert result["reason"].startswith("import_")
+
+
+def test_replay_guard_fails_when_counts_change(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "candidate-connection.json",
+                                dict(host="127.0.0.1", port=1, user="u", database="snaplink_mig_run_cand",
+                                     password="p", owner_token="b" * 48))
+    rehearsal_cli.write_private(root / "import-report-replay.json", dict(result="failed", reason="import_x"))
+    calls = []
+    monkeypatch.setattr(rehearsal_cli, "table_counts",
+                        lambda root: calls.append(1) or ({"users": 1} if len(calls) == 1 else {"users": 2}))
+    monkeypatch.setattr(rehearsal_cli, "inspect_snapshot", lambda p, s, timeout: dict(sha256=s))
+    monkeypatch.setattr(rehearsal_cli, "run_import", lambda *a, **k: 1)
+    args = type("A", (), dict(source_snapshot="/s", source_sha256="a" * 64))()
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.replay_guard(root, args, "snaplink_mig_run_cand")
