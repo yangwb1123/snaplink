@@ -333,3 +333,18 @@ def test_scalar_int_takes_the_first_nonempty_line():
     assert rehearsal_cli.scalar_int("\n67\n") == 67
     with pytest.raises(rehearsal_cli.GuardFailure):
         rehearsal_cli.scalar_int("\n\n")
+
+
+def test_write_check_is_last_because_it_mutates_the_candidate():
+    args = type("A", (), dict(source_snapshot="/s", source_sha256="a" * 64, policy_template="/p",
+                               replay_guard=True, readpath="/r", readpath_expect="/e",
+                               sso_server="/b", write_check=True))()
+    plan = rehearsal_cli.step_plan(args)
+    assert plan[-1] == "write_check"
+    assert plan[:4] == ["provision", "schema_init", "import", "verify"]
+    assert plan.index("readpath") < plan.index("smoke") < plan.index("write_check")
+
+    read_only = type("A", (), dict(source_snapshot="/s", source_sha256="a" * 64, policy_template="/p",
+                                   replay_guard=False, readpath=None, readpath_expect=None,
+                                   sso_server=None, write_check=False))()
+    assert rehearsal_cli.step_plan(read_only) == ["provision", "schema_init", "import", "verify"]

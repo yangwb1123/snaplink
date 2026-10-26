@@ -216,6 +216,22 @@ def close_owned(root):
     return close_receipt(root, inspect_body=json.loads(inspected.stdout.decode())[0], remove=remove_container)
 
 
+def step_plan(args):
+    """Ordered step names; write_check is last because it mutates the candidate."""
+    names = ["provision", "schema_init"]
+    if args.source_snapshot or args.source_sha256 or args.policy_template:
+        names += ["import", "verify"]
+    if getattr(args, "replay_guard", False):
+        names.append("replay_guard")
+    if getattr(args, "readpath", None):
+        names.append("readpath")
+    if getattr(args, "sso_server", None):
+        names.append("smoke")
+    if getattr(args, "write_check", False):
+        names.append("write_check")
+    return names
+
+
 def run_command(args, root):
     """Orchestrate provision, owned init, optional import+verify, then close.
 
@@ -236,14 +252,16 @@ def run_command(args, root):
     if args.source_snapshot or args.source_sha256 or args.policy_template:
         steps.append(("import", bind_and_import))
         steps.append(("verify", lambda: verify_candidate(root, args)))
-    if getattr(args, "write_check", False):
-        steps.append(("write_check", lambda: write_check(root)))
     if getattr(args, "replay_guard", False):
         steps.append(("replay_guard", lambda: replay_guard(root, args, state["candidate"])))
     if getattr(args, "readpath", None):
         steps.append(("readpath", lambda: readpath_candidate(root, args.readpath, args.readpath_expect)))
     if getattr(args, "sso_server", None):
         steps.append(("smoke", lambda: smoke_candidate(root, args.sso_server)))
+    # write_check runs last: it mutates the disposable candidate, so every row-count
+    # comparison above must already have been taken.
+    if getattr(args, "write_check", False):
+        steps.append(("write_check", lambda: write_check(root)))
     report = run_steps(steps, lambda: close_owned(root))
     write_private(Path(args.evidence), report)
     print(json.dumps({"result": report["result"], "evidence": args.evidence}))
