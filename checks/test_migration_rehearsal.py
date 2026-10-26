@@ -2,6 +2,7 @@
 import ast
 import hashlib
 import json
+import socket
 
 import pytest
 
@@ -198,3 +199,35 @@ def test_sha_helper_hashes_bytes(tmp_path):
     path = tmp_path / "f"
     path.write_bytes(b"abc")
     assert rehearsal_cli._sha(path) == hashlib.sha256(b"abc").hexdigest()
+
+
+def test_server_config_binds_candidate_and_disables_bootstrap(tmp_path):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "candidate-connection.json",
+                                dict(host="127.0.0.1", port=32829, user="u", database="snaplink_mig_run_cand",
+                                     password="p", owner_token="b" * 48))
+    text = rehearsal_cli.server_config(root, 18080, 18081)
+    assert "snaplink_mig_run_cand" in text and "127.0.0.1:18080" in text
+    assert "backend: postgres" in text and "session_backend: postgres" in text
+    assert "disabled: true" in text
+    assert 'listen: "127.0.0.1:18080"' in text
+
+
+def test_free_port_returns_a_bindable_loopback_port():
+    port = rehearsal_cli.free_port()
+    assert 1 <= port <= 65535
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", port))
+
+
+def test_smoke_fails_closed_when_config_validation_fails(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "candidate-connection.json",
+                                dict(host="127.0.0.1", port=1, user="u", database="snaplink_mig_run_cand",
+                                     password="p", owner_token="b" * 48))
+    monkeypatch.setattr(rehearsal_cli, "run_bounded",
+                        lambda *a, **k: type("R", (), {"returncode": 2})())
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.smoke_candidate(root, "/bin/false-server")

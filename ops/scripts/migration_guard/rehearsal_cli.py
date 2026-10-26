@@ -6,12 +6,14 @@ digest, the loopback binding and the tmpfs-only layout all still match.
 """
 import argparse
 import hashlib
+import subprocess
 import json
 import os
 import re
 import secrets
 import socket
 import stat
+import time
 import subprocess
 import sys
 import time
@@ -232,6 +234,8 @@ def run_command(args, root):
     if args.source_snapshot or args.source_sha256 or args.policy_template:
         steps.append(("import", bind_and_import))
         steps.append(("verify", lambda: verify_candidate(root, args)))
+    if getattr(args, "sso_server", None):
+        steps.append(("smoke", lambda: smoke_candidate(root, args.sso_server)))
     report = run_steps(steps, lambda: close_owned(root))
     write_private(Path(args.evidence), report)
     print(json.dumps({"result": report["result"], "evidence": args.evidence}))
@@ -295,6 +299,99 @@ def verify_candidate(root, args):
     if report.get("result") != "passed":
         raise GuardFailure("rehearsal_verify_failed")
     return report
+
+
+def free_port():
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def server_config(root, http_port, grpc_port):
+    connection = json.loads((root / "candidate-connection.json").read_text())
+    dsn = "postgres://%s:%s@%s:%d/%s?sslmode=disable&connect_timeout=5" % (
+        connection["user"], connection["password"], connection["host"], connection["port"], connection["database"])
+    issuer = "http://127.0.0.1:%d" % http_port
+    return (
+        "version: 1\n"
+        "server:\n"
+        "  issuer: %s\n"
+        "  base_url: %s\n"
+        '  listen: "127.0.0.1:%d"\n'
+        "  topology:\n"
+        "    mode: single\n"
+        "    allow_per_pod_state: false\n"
+        "identity:\n"
+        "  backend: postgres\n"
+        "  session_backend: postgres\n"
+        "oauth:\n"
+        "  backend: postgres\n"
+        'postgres:\n'
+        '  dsn: "%s"\n'
+        "bootstrap:\n"
+        "  disabled: true\n"
+    ) % (issuer, issuer, http_port, dsn)
+
+
+def http_probe(port, path, timeout=5):
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:%d%s" % (port, path), timeout=timeout) as response:
+            return response.status, response.read(65536)
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read(65536) or b""
+    except urllib.error.URLError:
+        return 0, b""
+
+
+def smoke_candidate(root, server_binary):
+    """Boot the real server against the imported candidate and probe public endpoints."""
+    http_port, grpc_port = free_port(), free_port()
+    config_path = root / "server-config.yaml"
+    config_path.write_text(server_config(root, http_port, grpc_port))
+    os.chmod(config_path, 0o600)
+    validate = run_bounded([server_binary, "-config", str(config_path), "-validate-only",
+                            "-grpc-listen", "127.0.0.1:%d" % grpc_port], 120, cwd=str(root))
+    if validate.returncode:
+        raise GuardFailure("rehearsal_smoke_config_invalid")
+    log = (root / "server.log").open("wb")
+    child = subprocess.Popen([server_binary, "-config", str(config_path),
+                              "-grpc-listen", "127.0.0.1:%d" % grpc_port],
+                             stdout=log, stderr=subprocess.STDOUT, cwd=str(root), start_new_session=True)
+    facts = dict(http_port=http_port, grpc_port=grpc_port)
+    try:
+        deadline = time.monotonic() + 60
+        status = 0
+        while time.monotonic() < deadline and child.poll() is None:
+            status, body = http_probe(http_port, "/health")
+            if status == 200:
+                facts["health_sha256"] = hashlib.sha256(body).hexdigest()
+                break
+            time.sleep(0.5)
+        if status != 200:
+            raise GuardFailure("rehearsal_smoke_health_never_ready")
+        disc_status, disc_body = http_probe(http_port, "/.well-known/openid-configuration")
+        jwks_status, jwks_body = http_probe(http_port, "/.well-known/jwks.json")
+        facts.update(discovery_status=disc_status, discovery_sha256=hashlib.sha256(disc_body).hexdigest(),
+                     jwks_status=jwks_status, jwks_sha256=hashlib.sha256(jwks_body).hexdigest())
+        if disc_status != 200 or jwks_status != 200:
+            raise GuardFailure("rehearsal_smoke_public_surface_incomplete")
+    finally:
+        if child.poll() is None:
+            child.send_signal(subprocess.signal.SIGTERM)
+        try:
+            facts["server_exit"] = child.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            facts["server_exit"] = child.wait(timeout=10)
+        log.close()
+    closed = http_probe(http_port, "/health")[0] == 0
+    facts["port_closed_after_stop"] = closed
+    write_private(root / "smoke-facts.json", facts)
+    if facts["server_exit"] != 0 or not closed:
+        raise GuardFailure("rehearsal_smoke_stop_unclean")
+    return facts
 
 
 def _sha(path):
@@ -379,6 +476,7 @@ def parser():
     three.add_argument("--source-sha256")
     three.add_argument("--policy-template")
     three.add_argument("--base-commit", help="40-hex commit the reviewed schema was built from")
+    three.add_argument("--sso-server", help="prebuilt sso-server binary to smoke against the candidate")
     return top
 
 
