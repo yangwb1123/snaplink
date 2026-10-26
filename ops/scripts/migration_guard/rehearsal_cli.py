@@ -5,7 +5,9 @@ a container is only removed when the receipt, the live inspect body, the image
 digest, the loopback binding and the tmpfs-only layout all still match.
 """
 import argparse
+import contextlib
 import hashlib
+import io
 import subprocess
 import json
 import os
@@ -279,8 +281,8 @@ def bind_and_import_inputs(root, args, candidate):
                   sequence_mode="pg_transactional_restart_v1")
     intent_path = root / "intent.json"
     write_private(intent_path, intent)
-    code = run_import(root, args, candidate, source, policy_path, contract_path, intent_path,
-                      "import-journal.jsonl", "import-report.json")
+    code, _stderr = run_import(root, args, candidate, source, policy_path, contract_path, intent_path,
+                               "import-journal.jsonl", "import-report.json")
     report = json.loads((root / "import-report.json").read_text())
     if code != 0 or report.get("result") != "passed":
         raise GuardFailure("rehearsal_import_failed")
@@ -288,13 +290,60 @@ def bind_and_import_inputs(root, args, candidate):
 
 
 def run_import(root, args, candidate, source, policy_path, contract_path, intent_path, journal, report_name):
-    return import_main(["--snapshot", args.source_snapshot, "--snapshot-sha256", source["sha256"],
-                        "--target-connection-file", str(root / "candidate-connection.json"),
-                        "--conversion-policy-file", str(policy_path),
-                        "--schema-contract-file", str(contract_path), "--schema-contract-sha256", _sha(contract_path),
-                        "--intent-file", str(intent_path), "--intent-sha256", _sha(intent_path),
-                        "--confirm-candidate-database", candidate,
-                        "--journal", str(root / journal), "--report", str(root / report_name)])
+    """Run one import; the guard's own stderr verdict is captured, not swallowed."""
+    stderr = io.StringIO()
+    argv = ["--snapshot", args.source_snapshot, "--snapshot-sha256", source["sha256"],
+            "--target-connection-file", str(root / "candidate-connection.json"),
+            "--conversion-policy-file", str(policy_path),
+            "--schema-contract-file", str(contract_path), "--schema-contract-sha256", _sha(contract_path),
+            "--intent-file", str(intent_path), "--intent-sha256", _sha(intent_path),
+            "--confirm-candidate-database", candidate,
+            "--journal", str(root / journal), "--report", str(root / report_name)]
+    with contextlib.redirect_stderr(stderr):
+        code = import_main(argv)
+    return code, stderr.getvalue()
+
+
+def import_refusal_reason(root, stderr_text, report_name):
+    path = root / report_name
+    if path.is_file():
+        reason = json.loads(path.read_text()).get("reason")
+        if reason:
+            return reason
+    for line in reversed((stderr_text or "").strip().splitlines()):
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value, dict) and value.get("reason"):
+            return value["reason"]
+    return None
+
+
+def replay_guard(root, args, candidate):
+    """A second import against the populated candidate must be refused, leaving it unchanged."""
+    before = table_counts(root)
+    source = inspect_snapshot(Path(args.source_snapshot), args.source_sha256, timeout=120)
+    code, stderr_text = run_import(root, args, candidate, source, root / "policy.json",
+                                   root / "schema-contract.json", root / "intent.json",
+                                   "import-journal-replay.jsonl", "import-report-replay.json")
+    after = table_counts(root)
+    report_path = root / "import-report-replay.json"
+    report = json.loads(report_path.read_text()) if report_path.is_file() else {}
+    reason = import_refusal_reason(root, stderr_text, "import-report-replay.json")
+    unchanged = before == after
+    result = dict(result="passed" if code != 0 and reason and unchanged else "failed",
+                  first_import_refused=code != 0, counts_unchanged=unchanged, reason=reason,
+                  target_changed=report.get("target_changed"),
+                  scope="populated-replay refusal;NOT cutover approval")
+    write_private(root / "replay-guard.json", result)
+    if code == 0:
+        raise GuardFailure("rehearsal_replay_was_accepted")
+    if not reason:
+        raise GuardFailure("rehearsal_replay_refusal_unattributed")
+    if not unchanged:
+        raise GuardFailure("rehearsal_replay_changed_the_candidate")
+    return result
 
 
 def verify_candidate(root, args):
@@ -331,25 +380,6 @@ def business_tables():
             "permissions_conflict_sets", "permissions_menus", "permissions_resources",
             "permissions_roles", "refresh_rotation_windows", "refresh_token_families",
             "refresh_tokens", "revocations", "sessions", "users"]
-
-
-def replay_guard(root, args, candidate):
-    """A second import against the populated candidate must be refused, leaving it unchanged."""
-    before = table_counts(root)
-    source = inspect_snapshot(Path(args.source_snapshot), args.source_sha256, timeout=120)
-    code = run_import(root, args, candidate, source, root / "policy.json", root / "schema-contract.json",
-                      root / "intent.json", "import-journal-replay.jsonl", "import-report-replay.json")
-    after = table_counts(root)
-    report_path = root / "import-report-replay.json"
-    report = json.loads(report_path.read_text()) if report_path.is_file() else {}
-    result = dict(result="failed", first_import_refused=code != 0, counts_unchanged=before == after,
-                  reason=report.get("reason"), target_changed=report.get("target_changed"))
-    write_private(root / "replay-guard.json", result)
-    if code == 0:
-        raise GuardFailure("rehearsal_replay_was_accepted")
-    if before != after:
-        raise GuardFailure("rehearsal_replay_changed_the_candidate")
-    return result
 
 
 def readpath_args(dsn_path, expect_path, report_path):
