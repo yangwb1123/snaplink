@@ -246,6 +246,9 @@ def bind_and_import_inputs(root, args, candidate):
         raise GuardFailure("rehearsal_candidate_connection_mismatch")
     source = inspect_snapshot(Path(args.source_snapshot), args.source_sha256, timeout=120)
     target = inspect_target(root / "candidate-connection.json")
+    base_commit = getattr(args, "base_commit", None)
+    if not isinstance(base_commit, str) or re.fullmatch(r"[0-9a-f]{40}", base_commit) is None:
+        raise GuardFailure("rehearsal_base_commit_required")
     template = json.loads(Path(args.policy_template).read_text())
     if template.get("version") != 2 or not isinstance(template.get("mappings"), list):
         raise GuardFailure("rehearsal_policy_template_invalid")
@@ -253,7 +256,7 @@ def bind_and_import_inputs(root, args, candidate):
     observed = inspect_native_schema(root / "candidate-connection.json", source, target, policy)
     contract = dict(version=1, algorithm="pg_native_schema_facets_v1", source_sha256=source["sha256"],
                     target_shape_sha256=target_shape_sha256(target),
-                    schema_source=dict(base_commit="rehearsal", combination_sha256=digest(policy)),
+                    schema_source=dict(base_commit=base_commit, combination_sha256=digest(policy)),
                     environment_sha256=observed["environment_sha256"],
                     tables=[dict(table=n, facets=v["facets"]) for n, v in sorted(observed["tables"].items())])
     policy_path, contract_path = root / "policy.json", root / "schema-contract.json"
@@ -375,6 +378,7 @@ def parser():
     three.add_argument("--source-snapshot")
     three.add_argument("--source-sha256")
     three.add_argument("--policy-template")
+    three.add_argument("--base-commit", help="40-hex commit the reviewed schema was built from")
     return top
 
 
