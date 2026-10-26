@@ -227,6 +227,8 @@ def step_plan(args):
         names.append("readpath")
     if getattr(args, "sso_server", None):
         names.append("smoke")
+    if getattr(args, "determinism", False):
+        names.append("determinism")
     if getattr(args, "drift_check", False):
         names.append("drift_check")
     if getattr(args, "write_check", False):
@@ -260,6 +262,8 @@ def run_command(args, root):
         steps.append(("readpath", lambda: readpath_candidate(root, args.readpath, args.readpath_expect)))
     if getattr(args, "sso_server", None):
         steps.append(("smoke", lambda: smoke_candidate(root, args.sso_server)))
+    if getattr(args, "determinism", False):
+        steps.append(("determinism", lambda: determinism_check(root, args, state["candidate"])))
     if getattr(args, "drift_check", False):
         steps.append(("drift_check", lambda: native_history_drift(root)))
     # write_check runs last: it mutates the disposable candidate, so every row-count
@@ -381,6 +385,40 @@ def verify_candidate(root, args):
     if report.get("result") != "passed":
         raise GuardFailure("rehearsal_verify_failed")
     return report
+
+
+def determinism_check(root, args, candidate):
+    """A second independent import of the same snapshot must produce identical content digests."""
+    second = candidate + "_b"
+    if not DATABASE.fullmatch(second):
+        raise GuardFailure("rehearsal_determinism_candidate_name_invalid")
+    connection_path = create_candidate(root, second, args.schema_init, "candidate-connection-b.json")
+    import_policy, import_contract, import_intent = root / "policy.json", root / "schema-contract.json", root / "intent.json"
+    source = inspect_snapshot(Path(args.source_snapshot), args.source_sha256, timeout=120)
+    stderr = io.StringIO()
+    argv = ["--snapshot", args.source_snapshot, "--snapshot-sha256", source["sha256"],
+            "--target-connection-file", str(connection_path),
+            "--conversion-policy-file", str(import_policy),
+            "--schema-contract-file", str(import_contract), "--schema-contract-sha256", _sha(import_contract),
+            "--intent-file", str(import_intent), "--intent-sha256", _sha(import_intent),
+            "--confirm-candidate-database", second,
+            "--journal", str(root / "import-journal-b.jsonl"), "--report", str(root / "import-report-b.json")]
+    with contextlib.redirect_stderr(stderr):
+        code = import_main(argv)
+    report_b = json.loads((root / "import-report-b.json").read_text()) if (root / "import-report-b.json").is_file() else {}
+    if code != 0 or report_b.get("result") != "passed":
+        raise GuardFailure("rehearsal_determinism_second_import_failed")
+    report_a = json.loads((root / "import-report.json").read_text())
+    left = {t["table"]: t.get("projected_content_sha256") for t in report_a["target_projection"]["tables"]}
+    right = {t["table"]: t.get("projected_content_sha256") for t in report_b["target_projection"]["tables"]}
+    differing = sorted(name for name in set(left) | set(right) if left.get(name) != right.get(name))
+    result = dict(result="passed" if not differing else "failed", tables=len(left),
+                  differing_tables=differing, second_candidate=second,
+                  scope="cross-candidate determinism of the migrated projection;NOT cutover approval")
+    write_private(root / "determinism.json", result)
+    if differing:
+        raise GuardFailure("rehearsal_determinism_projection_differs")
+    return result
 
 
 def native_history_tables(report):
@@ -655,6 +693,25 @@ def _sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def create_candidate(root, name, schema_init, connection_name="candidate-connection.json"):
+    """Create one owned candidate database with its ownership row and canonical schema."""
+    connection = dict(json.loads((root / "test-connection.json").read_text()))
+    argv, env = psql(connection)
+    execute_sql(argv, env, "CREATE DATABASE " + name + ";")
+    token = os.urandom(24).hex()
+    owned = dict(connection, database=name, owner_token=token)
+    execute_sql(*psql(owned),
+                "CREATE SCHEMA migration_guard;"
+                "CREATE TABLE migration_guard.ownership(token TEXT PRIMARY KEY);"
+                "INSERT INTO migration_guard.ownership VALUES('" + token + "');")
+    path = root / connection_name
+    write_private(path, owned)
+    child = run_bounded([schema_init, str(path)], 300)
+    if child.returncode:
+        raise GuardFailure("rehearsal_schema_init_failed")
+    return path
+
+
 def initialise_candidate(root, database, schema_init):
     """Create the owned candidate database, its ownership row and the canonical schema."""
     receipt = json.loads((root / "fixture-receipt.json").read_text())
@@ -662,20 +719,7 @@ def initialise_candidate(root, database, schema_init):
     if connection.get("database") != database:
         raise GuardFailure("rehearsal_root_connection_mismatch")
     candidate = candidate_name(database)
-    argv, env = psql(connection)
-    execute_sql(argv, env, "CREATE DATABASE " + candidate + ";")
-    token = os.urandom(24).hex()
-    owned = dict(connection, database=candidate, owner_token=token)
-    owned_argv, owned_env = psql(owned)
-    execute_sql(owned_argv, owned_env,
-                "CREATE SCHEMA migration_guard;"
-                "CREATE TABLE migration_guard.ownership(token TEXT PRIMARY KEY);"
-                "INSERT INTO migration_guard.ownership VALUES('" + token + "');")
-    path = root / "candidate-connection.json"
-    write_private(path, owned)
-    child = run_bounded([schema_init, str(path)], 300)
-    if child.returncode:
-        raise GuardFailure("rehearsal_schema_init_failed")
+    create_candidate(root, candidate, schema_init)
     return receipt, candidate
 
 
@@ -734,6 +778,8 @@ def parser():
     three.add_argument("--policy-template")
     three.add_argument("--base-commit", help="40-hex commit the reviewed schema was built from")
     three.add_argument("--sso-server", help="prebuilt sso-server binary to smoke against the candidate")
+    three.add_argument("--determinism", action="store_true",
+                       help="import the same snapshot into a second owned candidate and require identical projections")
     three.add_argument("--drift-check", action="store_true",
                        help="compare native migration history with what the import recorded")
     three.add_argument("--write-check", action="store_true",

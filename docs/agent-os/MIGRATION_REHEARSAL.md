@@ -21,17 +21,20 @@ One invocation performs, in order:
    and compares content and sequence state with the source projection.
 5. `replay_guard` (opt-in) — re-runs the import and requires it to be refused
    with all table counts unchanged.
-6. `drift_check` (opt-in) — compares `schema_migrations*` row counts with what
+6. `determinism` (opt-in) — imports the same snapshot into a second owned
+   candidate and requires identical per-table content digests, so a
+   nondeterministic projection or ordering cannot pass unnoticed.
+7. `drift_check` (opt-in) — compares `schema_migrations*` row counts with what
    the import recorded; runtime store migrations must not add native history.
-7. `readpath` (opt-in) — reads migrated rows through the server's own stores
+8. `readpath` (opt-in) — reads migrated rows through the server's own stores
    and compares them with expectations derived from the source.
-8. `smoke` (opt-in) — boots the real `sso-server` against the candidate and
+9. `smoke` (opt-in) — boots the real `sso-server` against the candidate and
    probes `/health`, discovery and JWKS, then requires a clean SIGTERM exit and
    a closed port.
-9. `write_check` (opt-in) — writes one audit row and requires the migrated
+10. `write_check` (opt-in) — writes one audit row and requires the migrated
    sequence to advance past the historical maximum. This step mutates the
    disposable candidate and always runs last.
-10. `close` — always attempted, including after a failed step: it re-proves
+11. `close` — always attempted, including after a failed step: it re-proves
    ownership, removes only the owned container, verifies the port is refused and
    deletes private inputs.
 
@@ -46,7 +49,7 @@ One invocation performs, in order:
 | `SCHEMA_INIT` | yes | prebuilt schema initializer for that revision |
 | `REHEARSAL_ROOT` | yes | private `0700` working directory |
 | `REHEARSAL_CONTAINER` / `REHEARSAL_LABEL` / `REHEARSAL_DATABASE` | yes | owned container identity and dedicated `snaplink_mig_*` database |
-| `REPLAY_GUARD`, `DRIFT_CHECK`, `WRITE_CHECK` | no | enable the corresponding steps |
+| `REPLAY_GUARD`, `DETERMINISM`, `DRIFT_CHECK`, `WRITE_CHECK` | no | enable the corresponding steps |
 | `REHEARSAL_READPATH`, `REHEARSAL_READPATH_EXPECT` | no | prebuilt `cmd/migration-readpath` and its expectation JSON |
 | `REHEARSAL_SSO_SERVER` | no | prebuilt `sso-server` for the smoke step. `SSO_*` names are avoided: the server maps them into its own config tree |
 
