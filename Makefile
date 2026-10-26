@@ -313,7 +313,7 @@ migration-rehearsal: ## Owned SQLite->PostgreSQL rehearsal (requires SNAPSHOT, S
 	@test -n "$(BASE_COMMIT)" || { echo "BASE_COMMIT is required (40-hex reviewed commit)"; exit 2; }
 	@test -n "$(SCHEMA_INIT)" || { echo "SCHEMA_INIT is required (prebuilt schema initializer)"; exit 2; }
 	@test -n "$(REHEARSAL_ROOT)" || { echo "REHEARSAL_ROOT is required (private 0700 directory)"; exit 2; }
-	python3 -B ops/scripts/migration_guard/rehearsal_cli.py run \
+	python3 -B ops/scripts/migration_rehearsal.py run \
 	  --root "$(REHEARSAL_ROOT)" --container "$(REHEARSAL_CONTAINER)" --label "$(REHEARSAL_LABEL)" \
 	  --database "$(REHEARSAL_DATABASE)" --schema-init "$(SCHEMA_INIT)" \
 	  --evidence "$(REHEARSAL_ROOT)/orchestration.json" \

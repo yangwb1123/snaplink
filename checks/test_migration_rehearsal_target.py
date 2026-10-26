@@ -1,5 +1,6 @@
 """The rehearsal must stay discoverable and refuse to run with missing inputs."""
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -19,3 +20,16 @@ def test_runbook_states_the_non_claims():
     doc = (Path.cwd() / "docs/agent-os/MIGRATION_REHEARSAL.md").read_text()
     for phrase in ("does **not** authorize cutover", "authenticated HTTP", "bcrypt hashes"):
         assert phrase in doc
+
+
+def test_entry_script_exists_and_refuses_without_arguments():
+    script = Path.cwd() / "ops/scripts/migration_rehearsal.py"
+    assert script.is_file()
+    result = subprocess.run([sys.executable, "-B", str(script)], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 2, "argparse must reject a missing action"
+
+
+def test_makefile_invokes_the_entry_script_not_the_package_module():
+    text = (Path.cwd() / "Makefile").read_text()
+    assert "ops/scripts/migration_rehearsal.py" in text
+    assert "rehearsal_cli.py run" not in text
