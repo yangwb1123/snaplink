@@ -475,3 +475,59 @@ def test_determinism_fails_on_a_differing_table(tmp_path, monkeypatch):
     with pytest.raises(rehearsal_cli.GuardFailure):
         rehearsal_cli.determinism_check(root, args, "snaplink_mig_run_cand")
     assert json.loads((root / "determinism.json").read_text())["differing_tables"] == ["clients"]
+
+
+def concurrency_fixture(tmp_path, monkeypatch, codes):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "policy.json", dict(version=2, mappings=[], target_shape_sha256="d" * 64))
+    rehearsal_cli.write_private(root / "schema-contract.json", dict(version=1))
+
+    def create(root_arg, name, schema_init, connection_name="candidate-connection.json"):
+        path = root_arg / connection_name
+        rehearsal_cli.write_private(path, dict(host="127.0.0.1", port=1, user="u", database=name,
+                                               password="p", owner_token="c" * 48))
+        return path
+
+    issued = []
+
+    def fake_import(argv):
+        issued.append(argv)
+        return codes[len(issued) - 1]
+
+    monkeypatch.setattr(rehearsal_cli, "create_candidate", create)
+    monkeypatch.setattr(rehearsal_cli, "inspect_snapshot", lambda p, s, timeout: dict(sha256=s))
+    monkeypatch.setattr(rehearsal_cli, "_sha", lambda p: "b" * 64)
+    monkeypatch.setattr(rehearsal_cli, "import_main", fake_import)
+    monkeypatch.setattr(rehearsal_cli, "table_counts",
+                        lambda root_arg, connection_path=None: {"users": 67, "clients": 10})
+    args = type("A", (), dict(source_snapshot="/s", source_sha256="a" * 64, schema_init="/i"))()
+    return root, args, issued
+
+
+def test_concurrency_guard_accepts_one_winner(tmp_path, monkeypatch):
+    root, args, issued = concurrency_fixture(tmp_path, monkeypatch, [0, 1])
+    record = rehearsal_cli.concurrency_guard(root, args, "snaplink_mig_run_cand")
+    assert record["result"] == "passed" and len(record["applied"]) == 1
+    assert record["rows_match_single_import"] is True
+    assert len(issued) == 2, "both attempts must actually be issued"
+
+
+def test_concurrency_guard_fails_when_both_apply(tmp_path, monkeypatch):
+    root, args, _ = concurrency_fixture(tmp_path, monkeypatch, [0, 0])
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.concurrency_guard(root, args, "snaplink_mig_run_cand")
+    assert len(json.loads((root / "concurrency-guard.json").read_text())["applied"]) == 2
+
+
+def test_concurrency_guard_fails_when_rows_double(tmp_path, monkeypatch):
+    root, args, _ = concurrency_fixture(tmp_path, monkeypatch, [0, 1])
+    calls = {"n": 0}
+
+    def counts(root_arg, connection_path=None):
+        calls["n"] += 1
+        return {"users": 67} if calls["n"] == 1 else {"users": 134}
+
+    monkeypatch.setattr(rehearsal_cli, "table_counts", counts)
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.concurrency_guard(root, args, "snaplink_mig_run_cand")

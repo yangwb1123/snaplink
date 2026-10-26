@@ -319,7 +319,7 @@ migration-rehearsal: ## Owned SQLite->PostgreSQL rehearsal (requires SNAPSHOT, S
 	  --evidence "$(REHEARSAL_ROOT)/orchestration.json" \
 	  --source-snapshot "$(SNAPSHOT)" --source-sha256 "$(SNAPSHOT_SHA256)" \
 	  --policy-template "$(POLICY_TEMPLATE)" --base-commit "$(BASE_COMMIT)" \
-	  $(if $(REPLAY_GUARD),--replay-guard,) $(if $(DETERMINISM),--determinism,) $(if $(DRIFT_CHECK),--drift-check,) $(if $(WRITE_CHECK),--write-check,) \
+	  $(if $(REPLAY_GUARD),--replay-guard,) $(if $(CONCURRENCY_GUARD),--concurrency-guard,) $(if $(DETERMINISM),--determinism,) $(if $(DRIFT_CHECK),--drift-check,) $(if $(WRITE_CHECK),--write-check,) \
 	  $(if $(REHEARSAL_READPATH),--readpath "$(REHEARSAL_READPATH)",) $(if $(REHEARSAL_READPATH_EXPECT),--readpath-expect "$(REHEARSAL_READPATH_EXPECT)",) \
 	  $(if $(REHEARSAL_SSO_SERVER),--sso-server "$(REHEARSAL_SSO_SERVER)",)
 

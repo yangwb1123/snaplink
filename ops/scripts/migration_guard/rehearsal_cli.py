@@ -227,6 +227,8 @@ def step_plan(args):
         names.append("readpath")
     if getattr(args, "sso_server", None):
         names.append("smoke")
+    if getattr(args, "concurrency_guard", False):
+        names.append("concurrency_guard")
     if getattr(args, "determinism", False):
         names.append("determinism")
     if getattr(args, "drift_check", False):
@@ -262,6 +264,8 @@ def run_command(args, root):
         steps.append(("readpath", lambda: readpath_candidate(root, args.readpath, args.readpath_expect)))
     if getattr(args, "sso_server", None):
         steps.append(("smoke", lambda: smoke_candidate(root, args.sso_server)))
+    if getattr(args, "concurrency_guard", False):
+        steps.append(("concurrency_guard", lambda: concurrency_guard(root, args, state["candidate"])))
     if getattr(args, "determinism", False):
         steps.append(("determinism", lambda: determinism_check(root, args, state["candidate"])))
     if getattr(args, "drift_check", False):
@@ -387,6 +391,59 @@ def verify_candidate(root, args):
     return report
 
 
+def concurrency_guard(root, args, candidate_a):
+    """Two imports racing on one fresh candidate: at most one may apply, and rows must not double."""
+    import concurrent.futures
+    third = candidate_a + "_c"
+    if not DATABASE.fullmatch(third):
+        raise GuardFailure("rehearsal_concurrency_candidate_name_invalid")
+    connection_path = create_candidate(root, third, args.schema_init, "candidate-connection-c.json")
+    connection = json.loads(connection_path.read_text())
+    policy = json.loads((root / "policy.json").read_text())
+    source = inspect_snapshot(Path(args.source_snapshot), args.source_sha256, timeout=120)
+    intent = root / "intent-c.json"
+    write_private(intent, dict(
+        version=1, scope="owned_candidate_import_v1", source_sha256=source["sha256"],
+        policy_sha256=digest(policy), schema_contract_sha256=_sha(root / "schema-contract.json"),
+        target_shape_sha256=policy["target_shape_sha256"], target_database=third,
+        target_owner_sha256=hashlib.sha256(connection["owner_token"].encode()).hexdigest(),
+        expires_at=int(time.time()) + 3600, candidate_exclusive=True,
+        source_is_final_cutover_snapshot=False, historical_audit_chain_certified=False,
+        sequence_mode="pg_transactional_restart_v1"))
+
+    def attempt(tag):
+        stderr = io.StringIO()
+        argv = ["--snapshot", args.source_snapshot, "--snapshot-sha256", source["sha256"],
+                "--target-connection-file", str(connection_path),
+                "--conversion-policy-file", str(root / "policy.json"),
+                "--schema-contract-file", str(root / "schema-contract.json"),
+                "--schema-contract-sha256", _sha(root / "schema-contract.json"),
+                "--intent-file", str(intent), "--intent-sha256", _sha(intent),
+                "--confirm-candidate-database", third,
+                "--journal", str(root / ("import-journal-" + tag + ".jsonl")),
+                "--report", str(root / ("import-report-" + tag + ".json"))]
+        with contextlib.redirect_stderr(stderr):
+            code = import_main(argv)
+        return tag, code, stderr.getvalue()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = [future.result() for future in [pool.submit(attempt, tag) for tag in ("c1", "c2")]]
+    successes = [tag for tag, code, _ in outcomes if code == 0]
+    reasons = {tag: import_refusal_reason(root, text, "import-report-" + tag + ".json") for tag, code, text in outcomes if code != 0}
+    counts_third = table_counts(root, connection_path)
+    counts_first = table_counts(root)
+    result = dict(result="passed" if len(successes) <= 1 and counts_third == counts_first else "failed",
+                  applied=successes, refusals=reasons, rows_match_single_import=counts_third == counts_first,
+                  rows=sum(counts_third.values()),
+                  scope="concurrent-import admission on one owned candidate;NOT cutover approval")
+    write_private(root / "concurrency-guard.json", result)
+    if len(successes) > 1:
+        raise GuardFailure("rehearsal_concurrent_imports_both_applied")
+    if counts_third != counts_first:
+        raise GuardFailure("rehearsal_concurrent_import_rows_differ")
+    return result
+
+
 def determinism_check(root, args, candidate):
     """A second independent import of the same snapshot must produce identical content digests."""
     second = candidate + "_b"
@@ -506,8 +563,8 @@ def write_check(root):
     return result
 
 
-def table_counts(root):
-    connection = json.loads((root / "candidate-connection.json").read_text())
+def table_counts(root, connection_path=None):
+    connection = json.loads(((connection_path or (root / "candidate-connection.json"))).read_text())
     argv, env = psql(connection)
     out = {}
     for name in business_tables():
@@ -790,6 +847,8 @@ def parser():
     three.add_argument("--policy-template")
     three.add_argument("--base-commit", help="40-hex commit the reviewed schema was built from")
     three.add_argument("--sso-server", help="prebuilt sso-server binary to smoke against the candidate")
+    three.add_argument("--concurrency-guard", action="store_true",
+                       help="run two imports against one fresh candidate and require at most one to apply")
     three.add_argument("--determinism", action="store_true",
                        help="import the same snapshot into a second owned candidate and require identical projections")
     three.add_argument("--drift-check", action="store_true",
