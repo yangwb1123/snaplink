@@ -306,7 +306,7 @@ ci-modules: ## Build + test all nested modules.
 ci: fmt vet race build examples container-contracts proto-lint ci-modules config-validate-all modules-check modules-smoke route-contract proto-openapi-parity capabilities-check sdk-surface-check sdk-drift-check sdk-paradigm-check sdk-naming-check profiles-evidence adapters-check ## Run CI checks.
 
 ci-full: ci terraform-validate k8s-render ## Run all CI checks including IaC validation (requires kustomize + terraform).
-migration-rehearsal: ## Owned SQLite->PostgreSQL rehearsal (requires SNAPSHOT, SNAPSHOT_SHA256, POLICY_TEMPLATE, BASE_COMMIT, SCHEMA_INIT; optional REHEARSAL_SSO_SERVER, REHEARSAL_READPATH, REHEARSAL_READPATH_EXPECT; SSO_* names are avoided because the server maps them into its config).
+migration-rehearsal: ## Owned SQLite->PostgreSQL rehearsal (requires SNAPSHOT, SNAPSHOT_SHA256, POLICY_TEMPLATE, BASE_COMMIT, SCHEMA_INIT; opt-in REPLAY_GUARD, DRIFT_CHECK, WRITE_CHECK, optional REHEARSAL_SSO_SERVER, REHEARSAL_READPATH, REHEARSAL_READPATH_EXPECT; SSO_* names are avoided because the server maps them into its config).
 	@test -n "$(SNAPSHOT)" || { echo "SNAPSHOT is required (pinned SQLite backup)"; exit 2; }
 	@test -n "$(SNAPSHOT_SHA256)" || { echo "SNAPSHOT_SHA256 is required"; exit 2; }
 	@test -n "$(POLICY_TEMPLATE)" || { echo "POLICY_TEMPLATE is required (version 2 policy with mappings)"; exit 2; }
@@ -319,7 +319,7 @@ migration-rehearsal: ## Owned SQLite->PostgreSQL rehearsal (requires SNAPSHOT, S
 	  --evidence "$(REHEARSAL_ROOT)/orchestration.json" \
 	  --source-snapshot "$(SNAPSHOT)" --source-sha256 "$(SNAPSHOT_SHA256)" \
 	  --policy-template "$(POLICY_TEMPLATE)" --base-commit "$(BASE_COMMIT)" \
-	  $(if $(REPLAY_GUARD),--replay-guard,) $(if $(WRITE_CHECK),--write-check,) \
+	  $(if $(REPLAY_GUARD),--replay-guard,) $(if $(DRIFT_CHECK),--drift-check,) $(if $(WRITE_CHECK),--write-check,) \
 	  $(if $(REHEARSAL_READPATH),--readpath "$(REHEARSAL_READPATH)",) $(if $(REHEARSAL_READPATH_EXPECT),--readpath-expect "$(REHEARSAL_READPATH_EXPECT)",) \
 	  $(if $(REHEARSAL_SSO_SERVER),--sso-server "$(REHEARSAL_SSO_SERVER)",)
 

@@ -35,6 +35,12 @@ def test_makefile_invokes_the_entry_script_not_the_package_module():
     assert "rehearsal_cli.py run" not in text
 
 
+def test_makefile_forwards_every_opt_in_step():
+    makefile = (Path.cwd() / "Makefile").read_text()
+    for flag in ("--replay-guard", "--drift-check", "--write-check", "--readpath", "--sso-server"):
+        assert flag in makefile, flag
+
+
 def test_makefile_and_runbook_avoid_sso_prefixed_variables():
     makefile = (Path.cwd() / "Makefile").read_text()
     assert "REHEARSAL_SSO_SERVER" in makefile and '$(if $(SSO_SERVER)' not in makefile
