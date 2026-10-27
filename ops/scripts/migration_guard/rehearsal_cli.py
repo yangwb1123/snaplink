@@ -635,8 +635,17 @@ def business_tables():
             "refresh_tokens", "revocations", "sessions", "users"]
 
 
-def auth_config(root, dsn, http_port, password_file):
-    """Server config that can finish a browser-console admin login on an imported candidate."""
+def auth_config(root, dsn, http_port, password_file, known_hash_file=None):
+    """Server config that can finish a browser-console admin login on an imported candidate.
+
+    A migrated database already contains the admin user, so bootstrap does not
+    print a new password; the rehearsal therefore supplies its own known bcrypt
+    hash when one is available.
+    """
+    users = ""
+    if known_hash_file is not None:
+        users = ('    users:\n      - username: admin\n'
+                 '        bcrypt_hash_file: "%s"\n        subject_id: admin\n' % known_hash_file)
     return (
         'version: 1\nserver:\n  issuer: http://127.0.0.1:{p}\n  base_url: http://127.0.0.1:{p}\n'
         '  listen: "127.0.0.1:{p}"\n  topology:\n    mode: single\n    allow_per_pod_state: false\n'
@@ -644,6 +653,7 @@ def auth_config(root, dsn, http_port, password_file):
         'oauth:\n  backend: postgres\n  auth_code:\n    enabled: true\n'
         'permissions:\n  enabled: true\n  backend: postgres\n'
         'authenticators:\n  password:\n    enabled: true\n    imported_hash_login: true\n'
+        + users +
         'self_service:\n  password:\n    backend: postgres\n'
         'admin:\n  enabled: true\n  api_rest_enabled: true\n'
         'postgres:\n  dsn: "{dsn}"\n'
@@ -688,8 +698,17 @@ def auth_smoke(root, args):
         connection["user"], connection["password"], connection["host"], connection["port"], connection["database"])
     http_port, grpc_port = free_port(), free_port()
     password_file = root / "auth-admin-password.txt"
+    known_password, hash_file = None, None
+    if getattr(args, "sso_ctl", None):
+        known_password = "Rehearsal-" + secrets.token_urlsafe(18)
+        hash_file = root / "auth-admin.bcrypt"
+        hashed = run_bounded([args.sso_ctl, "hash", "--quiet"], 30, stdin=known_password.encode())
+        if hashed.returncode or not hashed.stdout.strip():
+            raise GuardFailure("rehearsal_auth_password_hash_failed")
+        hash_file.write_bytes(hashed.stdout)
+        os.chmod(hash_file, 0o600)
     config_path = root / "auth-server-config.yaml"
-    config_path.write_text(auth_config(root, dsn, http_port, password_file))
+    config_path.write_text(auth_config(root, dsn, http_port, password_file, hash_file))
     os.chmod(config_path, 0o600)
     env = smoke_env()
     flags = ["-config", str(config_path), "-grpc-listen", "127.0.0.1:%d" % grpc_port,
@@ -727,9 +746,14 @@ def auth_smoke(root, args):
         facts["health"] = status
         if status != 200:
             raise GuardFailure("rehearsal_auth_health_never_ready")
-        if not password_file.is_file():
-            raise GuardFailure("rehearsal_auth_password_not_persisted")
-        password = password_file.read_text().strip()
+        if known_password is not None:
+            password = known_password
+            facts["password_source"] = "sso-ctl bcrypt"
+        elif password_file.is_file():
+            password = password_file.read_text().strip()
+            facts["password_source"] = "bootstrap password file"
+        else:
+            raise GuardFailure("rehearsal_auth_password_not_available")
         verifier = secrets.token_urlsafe(48)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
         redirect = "http://127.0.0.1:%d/callback" % http_port
@@ -1042,6 +1066,7 @@ def parser():
                        help="run two imports against one fresh candidate and require at most one to apply")
     three.add_argument("--determinism", action="store_true",
                        help="import the same snapshot into a second owned candidate and require identical projections")
+    three.add_argument("--sso-ctl", help="prebuilt sso-ctl binary, used to hash the auth-smoke password")
     three.add_argument("--auth-smoke", action="store_true",
                        help="log in as the seeded admin through the console client and require admin REST 200")
     three.add_argument("--drift-check", action="store_true",

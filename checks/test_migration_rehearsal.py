@@ -600,3 +600,36 @@ def test_auth_smoke_step_is_ordered_before_the_write_check():
     plan = rehearsal_cli.step_plan(args)
     assert plan.index("auth_smoke") < plan.index("write_check")
     assert plan.index("auth_smoke") < plan.index("drift_check")
+
+
+def test_auth_config_can_carry_a_known_bcrypt_credential(tmp_path):
+    text = rehearsal_cli.auth_config(tmp_path, "postgres://u@h/db", 18080, tmp_path / "pw", tmp_path / "admin.bcrypt")
+    assert "bcrypt_hash_file" in text and "subject_id: admin" in text
+    without = rehearsal_cli.auth_config(tmp_path, "postgres://u@h/db", 18080, tmp_path / "pw")
+    assert "bcrypt_hash_file" not in without
+
+
+def test_auth_smoke_hashes_its_password_with_sso_ctl(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir(mode=0o700)
+    rehearsal_cli.write_private(root / "candidate-connection.json",
+                                dict(host="127.0.0.1", port=1, user="u", database="snaplink_mig_run_cand",
+                                     password="p", owner_token="b" * 48))
+    seen = {}
+
+    def run_bounded(argv, timeout, **kwargs):
+        if argv[:2] == ["/bin/sso-ctl", "hash"]:
+            seen["stdin"] = kwargs.get("stdin")
+            return type("R", (), {"returncode": 0, "stdout": b"$2b$12$hash\n", "stderr": b""})()
+        return type("R", (), {"returncode": 1, "stdout": b"", "stderr": b""})()
+
+    monkeypatch.setattr(rehearsal_cli, "run_bounded", run_bounded)
+    monkeypatch.setattr(rehearsal_cli, "free_port", lambda: 12345)
+    args = type("A", (), dict(sso_server="/bin/sso-server", sso_ctl="/bin/sso-ctl"))()
+    with pytest.raises(rehearsal_cli.GuardFailure):
+        rehearsal_cli.auth_smoke(root, args)
+    # the hash was produced from a generated password, and the config that was
+    # written carries it; the later failure is the (absent) server binary
+    assert seen.get("stdin") and seen["stdin"].startswith(b"Rehearsal-")
+    assert (root / "auth-admin.bcrypt").read_bytes() == b"$2b$12$hash\n"
+    assert "bcrypt_hash_file" in (root / "auth-server-config.yaml").read_text()

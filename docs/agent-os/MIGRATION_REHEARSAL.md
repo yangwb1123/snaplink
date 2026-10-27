@@ -58,7 +58,8 @@ One invocation performs, in order:
 | `REHEARSAL_CONTAINER` / `REHEARSAL_LABEL` / `REHEARSAL_DATABASE` | yes | owned container identity and dedicated `snaplink_mig_*` database |
 | `REPLAY_GUARD`, `CONCURRENCY_GUARD`, `DETERMINISM`, `AUTH_SMOKE`, `DRIFT_CHECK`, `WRITE_CHECK`, `DURABLE_STORAGE` | no | enable the corresponding steps |
 | `REHEARSAL_READPATH`, `REHEARSAL_READPATH_EXPECT` | no | prebuilt `cmd/migration-readpath` and its expectation JSON |
-| `REHEARSAL_SSO_SERVER` | no | prebuilt `sso-server` for the smoke step. `SSO_*` names are avoided: the server maps them into its own config tree |
+| `REHEARSAL_SSO_CTL` | no | prebuilt `sso-ctl`, used to hash the auth-smoke admin password |
+| `REHEARSAL_SSO_SERVER` | no | prebuilt `sso-server` for the smoke and auth-smoke steps. `SSO_*` names are avoided: the server maps them into its own config tree |
 
 ## Evidence
 
