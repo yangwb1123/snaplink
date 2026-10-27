@@ -573,3 +573,30 @@ def test_provision_step_forwards_the_storage_choice(tmp_path, monkeypatch):
     assert seen.get("durable") is True
     rehearsal_cli.provision_step(tmp_path, type("A", (), base)())
     assert seen.get("durable") is False
+
+
+def test_auth_verdict_requires_the_full_pair():
+    good = dict(login_status=200, token_status=200, admin_without_token=401, admin_with_token=200)
+    assert rehearsal_cli.auth_verdict(good)["result"] == "passed"
+    for broken in (dict(good, admin_with_token=403), dict(good, admin_without_token=200),
+                   dict(good, login_status=401), dict(good, token_status=500)):
+        assert rehearsal_cli.auth_verdict(broken)["result"] == "failed", broken
+    assert rehearsal_cli.auth_verdict({"login_status": 200})["missing"], "missing facts must be reported"
+
+
+def test_auth_config_enables_the_console_login_path(tmp_path):
+    text = rehearsal_cli.auth_config(tmp_path, "postgres://u@h/db", 18080, tmp_path / "pw")
+    for needle in ("auth_code:", "enabled: true", "admin_client_id: sso-admin-console",
+                   "api_rest_enabled: true", "backend: postgres", "127.0.0.1:18080"):
+        assert needle in text, needle
+    assert "sso-admin-console" in text and "imported_hash_login: true" in text
+
+
+def test_auth_smoke_step_is_ordered_before_the_write_check():
+    args = type("A", (), dict(source_snapshot="/s", source_sha256="a" * 64, policy_template="/p",
+                               replay_guard=False, concurrency_guard=False, determinism=False,
+                               auth_smoke=True, drift_check=True, write_check=True,
+                               readpath=None, readpath_expect=None, sso_server="/b"))()
+    plan = rehearsal_cli.step_plan(args)
+    assert plan.index("auth_smoke") < plan.index("write_check")
+    assert plan.index("auth_smoke") < plan.index("drift_check")

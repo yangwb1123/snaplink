@@ -56,7 +56,7 @@ One invocation performs, in order:
 | `SCHEMA_INIT` | yes | prebuilt schema initializer for that revision |
 | `REHEARSAL_ROOT` | yes | private `0700` working directory |
 | `REHEARSAL_CONTAINER` / `REHEARSAL_LABEL` / `REHEARSAL_DATABASE` | yes | owned container identity and dedicated `snaplink_mig_*` database |
-| `REPLAY_GUARD`, `CONCURRENCY_GUARD`, `DETERMINISM`, `DRIFT_CHECK`, `WRITE_CHECK`, `DURABLE_STORAGE` | no | enable the corresponding steps |
+| `REPLAY_GUARD`, `CONCURRENCY_GUARD`, `DETERMINISM`, `AUTH_SMOKE`, `DRIFT_CHECK`, `WRITE_CHECK`, `DURABLE_STORAGE` | no | enable the corresponding steps |
 | `REHEARSAL_READPATH`, `REHEARSAL_READPATH_EXPECT` | no | prebuilt `cmd/migration-readpath` and its expectation JSON |
 | `REHEARSAL_SSO_SERVER` | no | prebuilt `sso-server` for the smoke step. `SSO_*` names are avoided: the server maps them into its own config tree |
 

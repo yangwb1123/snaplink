@@ -274,6 +274,8 @@ def step_plan(args):
         names.append("concurrency_guard")
     if getattr(args, "determinism", False):
         names.append("determinism")
+    if getattr(args, "auth_smoke", False):
+        names.append("auth_smoke")
     if getattr(args, "drift_check", False):
         names.append("drift_check")
     if getattr(args, "write_check", False):
@@ -311,6 +313,8 @@ def run_command(args, root):
         steps.append(("concurrency_guard", lambda: concurrency_guard(root, args, state["candidate"])))
     if getattr(args, "determinism", False):
         steps.append(("determinism", lambda: determinism_check(root, args, state["candidate"])))
+    if getattr(args, "auth_smoke", False):
+        steps.append(("auth_smoke", lambda: auth_smoke(root, args)))
     if getattr(args, "drift_check", False):
         steps.append(("drift_check", lambda: native_history_drift(root)))
     # write_check runs last: it mutates the disposable candidate, so every row-count
@@ -631,6 +635,140 @@ def business_tables():
             "refresh_tokens", "revocations", "sessions", "users"]
 
 
+def auth_config(root, dsn, http_port, password_file):
+    """Server config that can finish a browser-console admin login on an imported candidate."""
+    return (
+        'version: 1\nserver:\n  issuer: http://127.0.0.1:{p}\n  base_url: http://127.0.0.1:{p}\n'
+        '  listen: "127.0.0.1:{p}"\n  topology:\n    mode: single\n    allow_per_pod_state: false\n'
+        'identity:\n  backend: postgres\n  session_backend: postgres\n'
+        'oauth:\n  backend: postgres\n  auth_code:\n    enabled: true\n'
+        'permissions:\n  enabled: true\n  backend: postgres\n'
+        'authenticators:\n  password:\n    enabled: true\n    imported_hash_login: true\n'
+        'self_service:\n  password:\n    backend: postgres\n'
+        'admin:\n  enabled: true\n  api_rest_enabled: true\n'
+        'postgres:\n  dsn: "{dsn}"\n'
+        'bootstrap:\n  disabled: false\n  admin_client_id: sso-admin-console\n'
+        '  admin_password_file: "{pw}"\n'
+    ).format(p=http_port, dsn=dsn, pw=password_file)
+
+
+def auth_verdict(facts):
+    """Only a 401-without-token and a 200-with-token pair proves the admin surface."""
+    required = ("login_status", "token_status", "admin_without_token", "admin_with_token")
+    missing = [key for key in required if key not in facts]
+    ok = (not missing and facts["login_status"] == 200 and facts["token_status"] == 200
+          and facts["admin_without_token"] == 401 and facts["admin_with_token"] == 200)
+    return dict(result="passed" if ok else "failed", missing=list(missing),
+                observed={key: facts.get(key) for key in required},
+                scope="authenticated admin surface on an imported candidate;NOT cutover approval")
+
+
+def register_console_redirect(root, client_id, redirect):
+    """Give the seeded public console client a loopback redirect on this disposable candidate."""
+    connection = json.loads((root / "candidate-connection.json").read_text())
+    from .postgres import psql_command
+    argv, env = psql_command(connection)
+    env.update(PGHOSTADDR="127.0.0.1", PGSSLMODE="disable",
+               PGOPTIONS="-c default_transaction_read_only=off -c statement_timeout=5000 -c lock_timeout=2000")
+    safe = lambda value: "'" + value.replace("'", "''") + "'"
+    statement = ("UPDATE clients SET redirect_uris = json_build_array(%s)::text, "
+                 "allowed_scopes = (allowed_scopes::jsonb || '[\"admin\"]'::jsonb)::text WHERE id = %s;"
+                 % (safe(redirect), safe(client_id)))
+    result = run_bounded(argv, 30, env=env, stdin=statement.encode())
+    if result.returncode:
+        raise GuardFailure("rehearsal_auth_redirect_registration_failed")
+
+
+def auth_smoke(root, args):
+    import base64
+    import urllib.error
+    import urllib.request
+    connection = json.loads((root / "candidate-connection.json").read_text())
+    dsn = "postgres://%s:%s@%s:%d/%s?sslmode=disable&connect_timeout=5" % (
+        connection["user"], connection["password"], connection["host"], connection["port"], connection["database"])
+    http_port, grpc_port = free_port(), free_port()
+    password_file = root / "auth-admin-password.txt"
+    config_path = root / "auth-server-config.yaml"
+    config_path.write_text(auth_config(root, dsn, http_port, password_file))
+    os.chmod(config_path, 0o600)
+    env = smoke_env()
+    flags = ["-config", str(config_path), "-grpc-listen", "127.0.0.1:%d" % grpc_port,
+             "-bootstrap-admin-password-file", str(password_file)]
+    validate = run_bounded([args.sso_server, *flags, "-validate-only"], 120, cwd=str(root), env=env)
+    if validate.returncode:
+        raise GuardFailure("rehearsal_auth_config_invalid")
+
+    def call(path, body=None, headers=None):
+        data = None if body is None else json.dumps(body).encode()
+        merged = {"Content-Type": "application/json"} if data else {}
+        merged.update(headers or {})
+        request = urllib.request.Request("http://127.0.0.1:%d%s" % (http_port, path), data=data, headers=merged)
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, response.read(65536)
+        except urllib.error.HTTPError as error:
+            return error.code, error.read(65536) or b""
+        except urllib.error.URLError:
+            return 0, b""
+
+    log = (root / "auth-server.log").open("wb")
+    child = subprocess.Popen([args.sso_server, *flags], stdout=log, stderr=subprocess.STDOUT,
+                             cwd=str(root), env=env, start_new_session=True)
+    facts = dict(http_port=http_port, grpc_port=grpc_port)
+    try:
+        status = 0
+        for _ in range(120):
+            if child.poll() is not None:
+                break
+            status, _ = call("/health")
+            if status == 200:
+                break
+            time.sleep(0.5)
+        facts["health"] = status
+        if status != 200:
+            raise GuardFailure("rehearsal_auth_health_never_ready")
+        if not password_file.is_file():
+            raise GuardFailure("rehearsal_auth_password_not_persisted")
+        password = password_file.read_text().strip()
+        verifier = secrets.token_urlsafe(48)
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        redirect = "http://127.0.0.1:%d/callback" % http_port
+        register_console_redirect(root, "sso-admin-console", redirect)
+        login_status, body = call("/auth/login", dict(
+            provider="password", credential={"username": "admin", "password": password},
+            client_id="sso-admin-console", scope=["openid", "admin"], state="st",
+            response_type="code", redirect_uri=redirect,
+            code_challenge=challenge, code_challenge_method="S256"))
+        facts["login_status"] = login_status
+        code = json.loads(body).get("code") if login_status == 200 else None
+        token_status, token_body = (0, b"")
+        if code:
+            token_status, token_body = call("/token", dict(grant_type="authorization_code", code=code,
+                                                           client_id="sso-admin-console",
+                                                           redirect_uri=redirect, code_verifier=verifier))
+        facts["token_status"] = token_status
+        access = json.loads(token_body).get("access_token") if token_status == 200 else None
+        if access:
+            facts["admin_without_token"] = call("/api/v1/admin/users")[0]
+            facts["admin_with_token"] = call("/api/v1/admin/users", headers={"Authorization": "Bearer " + access})[0]
+    finally:
+        if child.poll() is None:
+            child.send_signal(subprocess.signal.SIGTERM)
+        try:
+            facts["server_exit"] = child.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            facts["server_exit"] = child.wait(timeout=10)
+        log.close()
+        verdict = auth_verdict(facts)
+        write_private(root / "auth-smoke.json", dict(verdict, facts=facts))
+        if password_file.exists():
+            password_file.unlink()
+    if verdict["result"] != "passed":
+        raise GuardFailure("rehearsal_auth_admin_surface_failed")
+    return verdict
+
+
 def readpath_args(dsn_path, expect_path, report_path):
     # The store constructors migrate the candidate, so the acknowledgement flag is mandatory
     # and the report path is always explicit.
@@ -904,6 +1042,8 @@ def parser():
                        help="run two imports against one fresh candidate and require at most one to apply")
     three.add_argument("--determinism", action="store_true",
                        help="import the same snapshot into a second owned candidate and require identical projections")
+    three.add_argument("--auth-smoke", action="store_true",
+                       help="log in as the seeded admin through the console client and require admin REST 200")
     three.add_argument("--drift-check", action="store_true",
                        help="compare native migration history with what the import recorded")
     three.add_argument("--write-check", action="store_true",
