@@ -151,24 +151,38 @@ func applySeedDefaults(seed *AdminSeed) {
 }
 
 // stepSeedAdminRole is version 1: create the sso-admin role carrying admin:*.
+// adminRoleClients lists the client scopes that must carry the admin role: the
+// configured admin client (possibly the empty audience) plus the browser admin
+// console, whose tokens are issued for its own client id. Without the console
+// entry an operator who logs in through the console gets a 403 from every admin
+// REST endpoint even though the role exists.
+func adminRoleClients(seed *AdminSeed) []string {
+	clients := []string{seed.AdminClientID}
+	if seed.AdminClientID != adminConsoleClientID {
+		clients = append(clients, adminConsoleClientID)
+	}
+	return clients
+}
+
 func stepSeedAdminRole(seed *AdminSeed) bootstrap.Step {
 	return bootstrap.StepFunc("seed_admin_role", 1, func(ctx context.Context) error {
 		if seed.Permissions == nil {
 			return fmt.Errorf("seed_admin_role: permissions provider required")
 		}
-		err := seed.Permissions.AddRole(ctx, seed.AdminClientID, permissions.Role{
-			Code:        seed.AdminRoleCode,
-			Name:        "SSO Administrator",
-			Description: "Full admin:* scope across the control plane.",
-			Permissions: []string{sso.AdminScope},
-		})
-		// AddRole returns ErrRoleExists if a previous boot already created
-		// it — treat as success so we still mark applied. (The Runner only
-		// calls Run once per version, but defensive).
-		if errors.Is(err, permissions.ErrRoleExists) {
-			return nil
+		for _, clientID := range adminRoleClients(seed) {
+			err := seed.Permissions.AddRole(ctx, clientID, permissions.Role{
+				Code:        seed.AdminRoleCode,
+				Name:        "SSO Administrator",
+				Description: "Full admin:* scope across the control plane.",
+				Permissions: []string{sso.AdminScope},
+			})
+			// AddRole returns ErrRoleExists if a previous boot already created
+			// it — treat as success so we still mark applied.
+			if err != nil && !errors.Is(err, permissions.ErrRoleExists) {
+				return err
+			}
 		}
-		return err
+		return nil
 	})
 }
 
@@ -202,8 +216,10 @@ func stepSeedAdminUser(seed *AdminSeed) bootstrap.Step {
 			return err
 		}
 		if seed.Permissions != nil {
-			if err := seed.Permissions.AssignRoles(ctx, user.ID, seed.AdminClientID, []string{seed.AdminRoleCode}); err != nil {
-				return fmt.Errorf("seed_admin_user: assign role: %w", err)
+			for _, clientID := range adminRoleClients(seed) {
+				if err := seed.Permissions.AssignRoles(ctx, user.ID, clientID, []string{seed.AdminRoleCode}); err != nil {
+					return fmt.Errorf("seed_admin_user: assign role for client %q: %w", clientID, err)
+				}
 			}
 		}
 		if seed.Passwords != nil {

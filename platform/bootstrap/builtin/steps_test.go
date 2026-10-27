@@ -511,3 +511,36 @@ func (failingPasswordStore) VerifyPassword(context.Context, string, string) erro
 }
 
 var errStoreUnavailable = errors.New("synthetic credential store unavailable")
+
+func TestSteps_AdminRoleReachesTheConsoleClient(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	runAllSteps(t, seed)
+	roles, err := seed.Permissions.Roles(context.Background(), "admin", "sso-admin-console")
+	if err != nil {
+		t.Fatalf("Roles(admin, sso-admin-console): %v", err)
+	}
+	if len(roles) != 1 || roles[0].Code != "sso-admin" {
+		t.Fatalf("console client roles = %v, want [sso-admin]: the admin console token would be forbidden", roles)
+	}
+	perms, err := seed.Permissions.Permissions(context.Background(), "admin", "sso-admin-console")
+	if err != nil {
+		t.Fatalf("Permissions(admin, sso-admin-console): %v", err)
+	}
+	if !permissions.Matches(perms, "admin:read") {
+		t.Fatalf("console permissions = %v, must grant admin:read", perms)
+	}
+}
+
+func TestSteps_AdminRoleKeepsTheConfiguredClientAssignment(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	seed.AdminClientID = "sverp-web"
+	runAllSteps(t, seed)
+	for _, clientID := range []string{"sverp-web", "sso-admin-console"} {
+		roles, err := seed.Permissions.Roles(context.Background(), "admin", clientID)
+		if err != nil || len(roles) != 1 || roles[0].Code != "sso-admin" {
+			t.Fatalf("client %q roles = %v err=%v, want [sso-admin]", clientID, roles, err)
+		}
+	}
+}
