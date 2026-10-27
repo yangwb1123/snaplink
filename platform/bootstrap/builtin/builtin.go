@@ -198,7 +198,10 @@ func stepSeedAdminUser(seed *AdminSeed) bootstrap.Step {
 			return err
 		}
 		if present {
-			return nil
+			// A migrated deployment already owns the admin user, so nothing is
+			// created and no password is regenerated — but the role grant is
+			// still required or every admin REST call stays forbidden.
+			return assignAdminRoles(ctx, seed, seed.AdminUserID)
 		}
 		password, err := generatePassword(24)
 		if err != nil {
@@ -215,12 +218,8 @@ func stepSeedAdminUser(seed *AdminSeed) bootstrap.Step {
 		if err := seed.Users.CreateOrUpdate(ctx, user); err != nil {
 			return err
 		}
-		if seed.Permissions != nil {
-			for _, clientID := range adminRoleClients(seed) {
-				if err := seed.Permissions.AssignRoles(ctx, user.ID, clientID, []string{seed.AdminRoleCode}); err != nil {
-					return fmt.Errorf("seed_admin_user: assign role for client %q: %w", clientID, err)
-				}
-			}
+		if err := assignAdminRoles(ctx, seed, user.ID); err != nil {
+			return err
 		}
 		if seed.Passwords != nil {
 			if err := seed.Passwords.SetPassword(ctx, user.ID, password); err != nil {
@@ -296,6 +295,20 @@ func stepClearSeededPassword(seed *AdminSeed) bootstrap.Step {
 
 // stepSeedDefaultNetpolicy is version 3: seed the default intranet policy when
 // the optional netpolicy store is present and empty.
+// assignAdminRoles grants the admin role in every client scope the admin plane
+// reads (configured client incl. the empty audience, plus the browser console).
+func assignAdminRoles(ctx context.Context, seed *AdminSeed, userID string) error {
+	if seed.Permissions == nil {
+		return nil
+	}
+	for _, clientID := range adminRoleClients(seed) {
+		if err := seed.Permissions.AssignRoles(ctx, userID, clientID, []string{seed.AdminRoleCode}); err != nil {
+			return fmt.Errorf("seed_admin_user: assign role for client %q: %w", clientID, err)
+		}
+	}
+	return nil
+}
+
 func stepSeedDefaultNetpolicy(seed *AdminSeed) bootstrap.Step {
 	return bootstrap.StepFunc("seed_default_netpolicy", 3, func(ctx context.Context) error {
 		if seed.Netpolicy == nil {

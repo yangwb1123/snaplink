@@ -544,3 +544,20 @@ func TestSteps_AdminRoleKeepsTheConfiguredClientAssignment(t *testing.T) {
 		}
 	}
 }
+
+func TestSteps_ExistingAdminStillGetsTheConsoleRole(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	// A migrated deployment already contains the admin user, so the seed step
+	// short-circuits; the role assignment must still be ensured.
+	if err := seed.Users.CreateOrUpdate(context.Background(), &sso.User{ID: "admin", ExternalID: "admin", Provider: "password"}); err != nil {
+		t.Fatalf("pre-create admin: %v", err)
+	}
+	runAllSteps(t, seed)
+	for _, clientID := range []string{"", "sso-admin-console"} {
+		roles, err := seed.Permissions.Roles(context.Background(), "admin", clientID)
+		if err != nil || len(roles) != 1 || roles[0].Code != "sso-admin" {
+			t.Fatalf("client %q roles = %v err=%v, want [sso-admin] for a pre-existing admin", clientID, roles, err)
+		}
+	}
+}
