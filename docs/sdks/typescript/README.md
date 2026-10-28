@@ -1,7 +1,8 @@
 # snaplink/sso — TypeScript SDK
 
-> **Scope:** generated client for the full documented API surface of
-> `docs/openapi.yaml`, plus browser hosted-login orchestration. It is
+> **Scope:** generated client for the selected operation allowlist in
+> `ops/build/sdk-surface.json`, sourced from `docs/openapi.yaml`, plus browser
+> hosted-login orchestration. It is
 > publishable to npm as `@snaplink/sso` and does not ship a login page,
 > self-service portal, setup UI, developer portal, or admin console.
 > `sso-server` is a pure API backend; those browser experiences are separate
@@ -40,15 +41,27 @@ claiming complete API coverage.
 
 ## What's covered
 
-The **complete** registered operation set of `docs/openapi.yaml` has a
-generated method, grouped by tag: discovery,
-OAuth 2.0/OIDC auth + token lifecycle, self-service (`/me*`), the full
-admin control plane, SCIM, CAEP/SSF, OpenID Federation, FGA/ReBAC,
-WebAuthn, mesh and operational endpoints. The operationId set is declared
-once in `ops/build/sdk-surface.json` (grouped, capability-linked,
-validated against `docs/openapi.yaml` + `ops/build/capabilities.json` by
-`python cli.py sdk-surface check`) — the generator carries no allowlist of
-its own, so the two language clients cannot drift apart in scope.
+The current audited selection is **321 of 366 documented operations**, in
+13 groups: discovery, OAuth/OIDC auth + token lifecycle, selected self-service
+and admin operations, SCIM, CAEP/SSF, Federation, FGA/ReBAC, WebAuthn, mesh and
+operational endpoints. It is **not the full OpenAPI surface**. Both emitters
+read only `ops/build/sdk-surface.json`; the generator has no second allowlist.
+
+`ops/build/sdk-surface-coverage.json` explicitly accounts for the 45 unselected
+operations and the reasons/boundaries of every selected group. CIBA,
+notification REST, config-governance writes, expiring clients and permission
+catalog/SoD are recorded SDK debt; notification SSE and Prometheus text need
+separate transport contracts. Billing management, payment/metering machines and
+quota projection retain their separate composition, scope and source-binding
+boundaries. Unselected does not mean the server lacks those APIs.
+
+`python cli.py sdk-surface check` validates decision completeness as well as the
+existing capability/version/package contracts. `python cli.py sdk-surface coverage`
+prints a stable read-only per-operation report including method/path, media types,
+OpenAPI security declaration/source and manually maintained exposure/default/
+licensing rationale. Declarations and SDK selection do not prove default route
+exposure, runtime authorization, licensed grants or package/platform acceptance;
+no bearer declaration does not mean public (for example CIBA/client auth).
 
 Every generated method name is the operation's `operationId` **verbatim**
 (e.g. `client.postToken(...)`, `client.getUserInfo()`) — no derived/shortened
@@ -63,6 +76,10 @@ Usage below.
 
 (`cmd/gensdk/schema.go` + `gen_ts.go` — see their doc comments for detail.)
 
+- **Selection is not full media-type support.** Already selected HTML API-docs/
+  check-session and admin SSE methods remain for compatibility; the JSON-oriented
+  client does not thereby implement browser rendering, subscription, cancellation
+  or reconnection. Consult the coverage report before choosing a method.
 - **Field order is alphabetical**, not the YAML's authored order — the
   YAML decoder used here (`goccy/go-yaml` decoding into `any`) loses
   Go-map ordering, so alphabetical is the deterministic substitute:

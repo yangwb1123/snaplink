@@ -175,8 +175,8 @@ type appBuilder struct {
 	cibaPruneCancel context.CancelFunc
 	cibaPruneDone   <-chan struct{}
 
-	// Refresh grace prune lifecycle (SQLite backend only; cleanup goroutine
-	// for expired refresh_grace_cache rows).
+	// Refresh grace prune lifecycle (SQLite/PostgreSQL; completion also
+	// waits for wrapper close, which preserves caller-owned database pools).
 	refreshGracePruneCancel context.CancelFunc
 	refreshGracePruneDone   <-chan struct{}
 

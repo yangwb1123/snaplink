@@ -13,6 +13,30 @@ allowlist of its own. Everything the generator never sees — the hand-written
 transport, session, entitlement, preferences, and runtime behaviour of each SDK
 — is governed here instead.
 
+The generation allowlist remains solely `ops/build/sdk-surface.json`.
+[`sdk-surface-coverage.json`](../ops/build/sdk-surface-coverage.json) records the
+reasons and exposure/authentication/default/licensing boundaries for each selected
+group and each explicitly unselected operation (operationId + method + path).
+`python cli.py sdk-surface check` rejects unclassified operations, stale or
+overlapping exclusions, duplicate operationIds/raw YAML keys and invalid local
+references. `python cli.py sdk-surface coverage` emits a deterministic read-only
+JSON report of every HTTP operation, its decision, media types and OpenAPI
+security declaration/source (operation, inherited root, or unspecified).
+An explicit empty security array stays distinct from inheritance. These are
+**declarations, not verified runtime authentication or route exposure**.
+Absence of bearer security does not establish anonymous access. Confidential CIBA
+clients authenticate with a non-empty secret (Basic takes precedence over body
+credentials) or a verified `private_key_jwt` assertion. Registered public CIBA
+clients with `token_endpoint_auth_method="none"` may supply `client_id` without a
+secret or assertion; this identifies the client, not proof of possession. Both
+paths still enforce registered/active client, tenant, resource and scope checks in
+[`protocols/oauth/handle_ciba.go`](../protocols/oauth/handle_ciba.go).
+The current inventory is 366 documented / 321 selected / 45 unselected, not a
+permanent quota or a claim of full-API SDK coverage. Exclusions distinguish
+unmodeled SSE/text transport from existing JSON API coverage debt and separate
+Billing/machine compositions. Already selected HTML/SSE methods are preserved;
+selection alone does not prove their wire/runtime support.
+
 | Layer | Scope | Registry | Languages | Gate |
 |---|---|---|---|---|
 | **L1 ApiClient** | 321 operations in 13 groups | `ops/build/sdk-surface.json` | TypeScript, Python | `cli.py sdk-surface check` |
@@ -34,8 +58,8 @@ before publication. See [`sdks/README.md`](../sdks/README.md).
 Each capability is a `layer.id` pair with a `parity` and one declaration per
 language.
 
-- `parity: "parity"` — every language must be `present`. A `missing` entry is a
-  gate failure. This is the ratchet: the eight parity capabilities are the floor
+- `parity: "parity"` — every **onboarded** language must be `present`. A `missing`
+  entry in that subset is a gate failure. This is the ratchet: the eight parity capabilities are the floor
   that must not erode.
 - `parity: "divergent"` — gaps are permitted, but every `missing` entry must name
   the wave that closes it, so drift has an owner.
@@ -44,7 +68,10 @@ A `present` entry names the exact file and the exact symbol text that provides
 it; the gate reads the file and fails if the symbol is not there. Renaming a
 symbol without updating the registry fails the build, which is the intended
 behaviour: it forces a deliberate edit. A `missing` entry must not name a file
-or symbol, so a gap can never be half-declared.
+or symbol, so a gap can never be half-declared. For a language still onboarding,
+`missing` can record an implementation gap **or explicitly identified validation/
+review debt for existing source**. Source/test-file presence does not prove public
+consumer availability, fixture passage, native execution or package publication.
 
 Adding a capability id is append-only. Changing the file or symbol behind a
 `present` entry is reviewable. Dropping an id, or downgrading `parity` to
@@ -244,9 +271,12 @@ workflows and that package's matching version tag. SDK package versions are
 independent: this gate validates each manifest's SemVer and local lockfile
 consistency without requiring a synchronized release train. They are separate
 from the Snaplink server/module version and the OAuth/OIDC protocol version.
-`cli.py sdk-surface versions` reads the six committed SDK package manifests;
-the Go SDK is versioned by the root module. It runs inside `sdk-surface check`
-and `make ci`.
+`cli.py sdk-surface versions` audits seven fixed SDK identities: TypeScript,
+Python, Rust, PHP, Kotlin, Swift and Go. SwiftPM and Go derive release versions
+from tags rather than manifest version fields. The Go SDK is the independent
+`sdks/go` module, released through its own `sdks/go/v<version>` tag boundary;
+central identity/directive validation does not transfer publication ownership to
+the root module. The gate runs inside `sdk-surface check` and `make ci`.
 
 ## 10. Implementation waves
 
@@ -278,6 +308,38 @@ Rust, and PHP). Kotlin and Swift are registered native SDKs still onboarding;
 their refresh-on-access behavior is intentionally distinct for now.
 
 `python cli.py sdk-paradigm list` is the live version of this table.
+
+### Swift source/declaration audit (cycle-02, not native acceptance)
+
+Swift stays `onboarded:false`; the eight parity capabilities and all shared
+fixture assertions are unchanged. The two internal-only injection seams are now
+`missing`, correcting declaration coverage from 102/112 to 100/112 across all
+languages. This is a claim correction, not removed Swift functionality.
+All 16 Swift dispositions below are source audit only; **native/Apple, Keychain,
+browser, external-consumer and package acceptance were not executed this cycle**.
+Paths below are under `sdks/swift/`; registry notes name exact full paths.
+
+| Capability | Declaration | Actual source and remaining boundary |
+|---|---|---|
+| `transport.injection` | missing | `Sources/Errors.swift` has internal `OAuthTransport`; injecting initializers in `Sources/SnaplinkAuthClient.swift` are not public. A reviewed public seam/consumer validation is future work. |
+| `session.start` | present, unchanged | Public begin/callback source in `SnaplinkAuthClient.swift`; `Tests/SnaplinkAuthClientTests.swift` exists, not execution proof. |
+| `session.state_store` | missing | `Errors.swift` protocol and injecting initializers are internal; only the configuration initializer is public. `@testable` is not caller injection. |
+| `session.memory_state_store` | missing | Keychain ships; private `MemorySecureStore` is test-only, not a public store. |
+| `session.access_token` | present, unchanged | Public async `accessToken()` can refresh near expiry; not an unconditional local query. |
+| `session.is_logged_in` | missing | No dedicated local/no-network query; `accessToken()`/`currentSession()` may refresh. |
+| `session.clear` | missing, validation debt | Public `clear()` source exists; `SnaplinkAuthClientTests.testClearDropsLocalSessionAndPendingTransactionWithoutRevocation` exists. Native lifecycle/security review remains. |
+| `session.logout` | present, unchanged | Source clears locally first, then attempts server revocation; adjacent failure tests exist. |
+| `session.refresh` | present, unchanged | Implicit refresh through `accessToken()` and a per-instance single-flight task; not explicit hosted-login refresh. |
+| `entitlement.setup` | missing, validation debt | Public setup/pending-ticket claim exists; `SnaplinkAuthClientTests` and `CommerceTransportTests` contain cases. |
+| `entitlement.account_context` | missing, validation debt | Public bearer-bound account read exists with adjacent client/wire test source. |
+| `entitlement.typed_keys` | missing, validation debt | `Sources/Entitlement.swift` has public typed models; `Tests/EntitlementConformanceTests.swift` references fixtures, not a native PASS. |
+| `entitlement.license_file` | missing, validation debt | `Sources/LicenseFile.swift` has local CryptoKit verification and caller trust; `Tests/LicenseFileConformanceTests.swift` exists. No vendor network requirement is inferred. |
+| `preferences.handoff` | missing | `PresentationPreferences.swift` has `buildLoginHandoff` and adjacent tests; it is **not wired** into actual authorization URL construction. |
+| `runtime.native_async` | present, unchanged | Public actor/async source exists; no native runtime acceptance this cycle. |
+| `session.authorization` | missing | No assembled typed identity/permissions/roles/menu API; commerce/preferences helpers are not authorization aggregation. |
+
+Python declaration/source regression tests check these specific boundaries only;
+they are not a Swift parser or execution of Swift conformance fixtures.
 
 The whole L3 entitlement layer is complete across all five hosted-login SDKs and verified
 against one shared fixture per contract, so the expiry boundary, the

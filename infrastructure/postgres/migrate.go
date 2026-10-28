@@ -80,6 +80,14 @@ func Run(ctx context.Context, db *sql.DB, namespace string, migrations []migrate
 	if len(migrations) == 0 {
 		return nil
 	}
+	// MaxVersion and application order both require the declared monotonic inventory.
+	previous := 0
+	for i, migration := range migrations {
+		if migration.Version <= previous {
+			return fmt.Errorf("postgres migrate: migration[%d] version %d must be positive and strictly increasing", i, migration.Version)
+		}
+		previous = migration.Version
+	}
 	return withRetry(func() error {
 		return runOnce(ctx, db, namespace, table, migrations, dialect)
 	})
@@ -144,6 +152,9 @@ func ensureVersionTable(ctx context.Context, conn *sql.Conn, namespace, table st
 }
 
 func applyPending(ctx context.Context, conn *sql.Conn, namespace, table string, current int, migrations []migrate.Migration) error {
+	if max := migrate.MaxVersion(migrations); current > max {
+		return fmt.Errorf("%w: namespace %q is at v%d but binary only knows up to v%d", migrate.ErrSchemaTooNew, namespace, current, max)
+	}
 	for _, m := range migrations {
 		if m.Version <= current {
 			continue

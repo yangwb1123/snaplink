@@ -52,9 +52,11 @@ func (b *appBuilder) wireIdentitySigning() error {
 	}
 	b.userProvider = userProvider
 	b.sessionMgr = sessionMgr
-	// Gate SQLite identity stores and SQLite/PostgreSQL sessions before traffic.
-	// Sessions can override identity.backend, so their gate must use the
-	// effective session backend and its own migration sequence.
+	// Schema-version boot gate: refuse to start when a SQLite store's live
+	// schema is ahead of what this binary knows (a memory backend no-ops). It
+	// runs before traffic so a canary rollback fails loudly, not silently. The
+	// probe is SQLite-specific, so postgres stores are skipped (their
+	// constructors enforce maxima). Sessions can override identity.backend.
 	b.schemaCtx = context.Background()
 	identityIsPG := strings.EqualFold(strings.TrimSpace(cfg.Identity.Backend), "postgres")
 	if !identityIsPG {
@@ -96,7 +98,7 @@ func (b *appBuilder) wireSigningIssuer() error {
 		sso.TokenStrategySession: sessionIssuer,
 	}
 
-	b.opts = append(cfg.ServerOptions(),
+	b.opts = append(append(b.opts, cfg.ServerOptions()...),
 		sso.WithRouter(sso.NewStdRouter()),
 		sso.WithLogger(logger),
 		sso.WithTracing("sso-server"), // single correlation switch: span tree + X-Trace-Id/X-Request-Id + audit trace_id; no-op until tracing.Init activates
@@ -476,6 +478,7 @@ func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.passwordResetRevoker = b.passwordResetRevoker
 	a.pushPruneCancel, a.pushPruneDone = b.pushPruneCancel, b.pushPruneDone
 	a.cibaPruneCancel, a.cibaPruneDone = b.cibaPruneCancel, b.cibaPruneDone
+	a.refreshGracePruneCancel, a.refreshGracePruneDone = b.refreshGracePruneCancel, b.refreshGracePruneDone
 	a.netStop, a.netCancel = b.netStop, b.netCancel
 	a.drReadiness, a.drReplicationCancel, a.drReplicationDone = drFields(rt.dr)
 	a.configAuditStore = b.configAuditStore

@@ -33,7 +33,14 @@ only built-in `client_credentials` responses, scoped to the authenticated
 client/request/sender fingerprint, for at most one minute or the access-token
 lifetime. Replays recheck scopes and token validity. Stateful/custom grants
 always reach their own validation; refresh retries use rotation grace only.
-Redis Get/Set shares completed responses, not cross-replica first-miss ownership.
+Coordination is local to each `Server`: 256 fixed mutex stripes are selected
+from SHA-256 of the complete existing cache fingerprint. Same-fingerprint
+requests serialize through cache commit; different stripes can progress
+independently. Different fingerprints may collide and wait, but never share
+cache identity. The fixed capacity bounds only coordination state, not cached
+responses or waiting requests; lock waiting is not context-cancellable.
+Redis Get/Set shares completed responses, not cross-replica first-miss ownership
+or exactly-once issuance. Cache failures retain the existing degradation behavior.
 
 ## Clients
 
@@ -101,6 +108,14 @@ waits for the replay worker to stop before Redis closes.
 | `security.max_token_bytes` | Caps the byte length of an inbound bearer token `validateAnyToken` will attempt to parse/verify; over-cap tokens are rejected with the standard `invalid_token`/`{"active":false}` response BEFORE any base64/JSON decode or issuer `Validate` call. `<= 0` (default) = unbounded. Maps to `sso.WithMaxTokenBytes` |
 | `security.client_registration_rate_limit.{disabled,per_sec,burst}` | Narrow, IP-keyed rate limit on `POST /register` (RFC 7591 DCR) — UNLIKE every other `security.*` block above, the section being absent/zero is NOT "disabled": `sso.NewServer` always seeds a conservative built-in limiter (5 req/min/IP, burst 5) so an unauthenticated registration endpoint is never left completely unthrottled just because an operator didn't configure it. Set `disabled: true` to turn it off entirely (e.g. already throttled at an edge/WAF); set `per_sec`+`burst` (both `> 0`) to override the built-in rate without disabling it. Independent of `security.rate_limit` (which already supports a `/register` prefix rule via `security.rate_limit.prefixes`, but only takes effect when `security.rate_limit.enabled` is also true) — this guard needs no such opt-in. Rejects with the standard `rate_limited` 429 + `Retry-After` (see Rate limiting + payload in [error-codes.md](error-codes.md)). Maps to `sso.WithClientRegistrationRateLimit`; not part of the `security.rate_limit.*` SIGHUP hot-reload rebuild (see Hot Reload below) — a change here needs a restart |
 | `security.cors.{enabled,allowed_origins,allowed_methods,allowed_headers,exposed_headers,allow_credentials,max_age,path_overrides}` | CORS is installed only when `enabled: true` and either the default `allowed_origins` list or `path_overrides` is non-empty; an empty default list with no overrides is identity/no CORS. Origins are exact matches unless the list contains `*`; with `allow_credentials: true`, `*` echoes the request origin as required by the CORS specification. `path_overrides` maps URL path prefixes to one-level policies; the longest matching prefix wins, each key must start with `/`, and an override's `enabled` field is ignored (an empty `allowed_origins` entry emits no CORS headers for that prefix). Changes require a restart; this block is not in the SIGHUP hot-reload set |
+
+For a verified login whose authenticator omitted `AuthResult.AuthTime`, the
+login terminal stage now records one authentication time before consent and
+session/code/token side effects. An existing authenticator or browser-resume
+time is never replaced. Canonical session metadata, the OP cookie, code-bound
+access/ID tokens and direct-mint access/ID/refresh lineage carry that same event;
+slow session creation or delayed code exchange cannot make it newer. This also
+applies with browser SSO disabled and adds no configuration switch.
 
 ## Signing Keys
 

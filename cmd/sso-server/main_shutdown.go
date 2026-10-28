@@ -74,6 +74,10 @@ func applyReload(logger spi.Logger, reloader *configreload.Reloader) {
 }
 
 func (b *appBuilder) closeBuildFailure() {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	stopScheduler(ctx, b.logger, b.refreshGracePruneCancel, b.refreshGracePruneDone,
+		"refresh grace pruner did not exit cleanly")
 	closeIfCloser(b.tenantUserStore)
 	if b.netCancel != nil {
 		b.netCancel()
@@ -82,9 +86,8 @@ func (b *appBuilder) closeBuildFailure() {
 	if b.externalAuditClose != nil {
 		_ = b.externalAuditClose(context.Background())
 	}
-	// The shared Redis client + Postgres pool back every store above, so they
-	// are released last. Nil-ing makes the second call on paths that already
-	// invoked this helper (e.g. wireAudit's retention failure) a no-op.
+	// Shared pools back every store above: release last, and nil so a second
+	// call (e.g. wireAudit's retention failure) is a no-op.
 	if b.redis != nil {
 		_ = b.redis.Close()
 		b.redis = nil
@@ -95,10 +98,8 @@ func (b *appBuilder) closeBuildFailure() {
 	}
 }
 
-// closeAppStores releases the long-lived backing stores at process exit. Order
-// mirrors the original LIFO defer chain (connections → tenant → netpolicy →
-// registry): connections + tenant + netpolicy stores depend on nothing the
-// registry close needs, and closing innermost-first matches the prior behavior.
+// closeAppStores releases long-lived backing stores at process exit, mirroring
+// the original LIFO defer chain (connections → tenant → netpolicy → registry).
 func closeAppStores(a *app) {
 	// connections.Store has no Close on the interface; the sqlite backend does.
 	if c, ok := a.connectionStore.(io.Closer); ok {

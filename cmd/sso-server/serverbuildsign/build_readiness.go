@@ -35,9 +35,9 @@ func AppendReadyCheck(opts []sso.Option, name string, v any) []sso.Option {
 }
 
 // CheckSQLiteSchema calls migrate.CheckSchema on the store's underlying
-// database when v exposes a DB() *sql.DB method (every SQLite store does).
-// Memory backends don't implement DB() so the check silently no-ops for
-// them — the same additive pattern as AppendReadyCheck. Returns a fatal
+// database when v exposes a DB() *sql.DB backed by a SQLite driver.
+// Memory stores have no DB; Postgres constructors enforce their own native
+// migration maxima. Neither may receive this dialect-specific query. Returns a fatal
 // error when the live schema is ahead of binaryMax; this is a BOOT GATE,
 // not a /readyz check, because a schema mismatch corrupts data before any
 // request is served.
@@ -47,7 +47,7 @@ func CheckSQLiteSchema(ctx context.Context, v any, namespace string, binaryMax i
 		return nil
 	}
 	db := d.DB()
-	if db == nil {
+	if db == nil || !isSQLiteDB(db) {
 		return nil
 	}
 	return migrate.CheckSchema(ctx, db, namespace, binaryMax)

@@ -1,7 +1,8 @@
 # snaplink/sso — Python client (generated)
 
-> **Scope:** generated client for the full documented API surface of
-> `docs/openapi.yaml`, plus a framework-neutral hosted-login facade. The
+> **Scope:** generated client for the selected operation allowlist in
+> `ops/build/sdk-surface.json`, sourced from `docs/openapi.yaml`, plus a
+> framework-neutral hosted-login facade. The
 > installable package under `sdks/python` is published to PyPI as
 > `snaplink-sso`; this generated directory remains vendorable and does not
 > ship a login page, self-service, setup, developer-portal, or admin-console UI.
@@ -38,11 +39,26 @@ claiming complete API coverage.
 
 ## What's covered
 
-The **complete** operation set of `docs/openapi.yaml` — the same surface as
-`../typescript/README.md` (every documented operation today, including the
-full admin control plane, SCIM, SSF and Federation). The operationId set is
-declared once in `ops/build/sdk-surface.json`, and both language emitters
-read from it, so the two clients can never drift apart in scope.
+The same selected surface as `../typescript/README.md`: currently **321 of
+366 documented operations**, in 13 groups, not the full OpenAPI API. The sole
+allowlist is `ops/build/sdk-surface.json`; synchronous and asynchronous Python
+clients and TypeScript read that same selection.
+
+`ops/build/sdk-surface-coverage.json` records all 45 unselected operations and
+selected-group reasons. Existing CIBA, notification REST, config writes,
+expiring-client and permission catalog/SoD APIs are explicit SDK debt, not absent
+server features. SSE/text need separately accepted transports; Billing management,
+payment/metering machines and quota projection have distinct composition,
+credential, scope and server binding boundaries.
+
+`python cli.py sdk-surface check` rejects incomplete/stale coverage decisions while
+retaining capability/version/package checks. `python cli.py sdk-surface coverage`
+is a deterministic read-only per-operation report: decision, method/path, media
+types, OpenAPI security declaration/source and exposure/authentication/default/
+licensing rationale. This does not verify runtime exposure/authentication, grant
+a commercial license or establish package/platform acceptance. Missing bearer
+security is not proof of public access; CIBA/token client authentication is a
+separate contract.
 
 Method names are the operation's `operationId` converted to
 **snake_case** (`post_token`, `get_user_info`, ...) for a PEP 8-idiomatic
@@ -64,6 +80,10 @@ been in the stdlib `typing` module since Python 3.8, so this is still
 
 (`cmd/gensdk/schema.go` + `gen_py.go` — see their doc comments for detail.)
 
+- **Selection is not full media-type support.** Existing selected HTML and admin
+  SSE methods are retained for compatibility, but the JSON client does not thereby
+  provide browser rendering, subscription/cancellation or reconnection. Use the
+  coverage report to inspect declared media types.
 - **The OAuth credential family sends `application/x-www-form-urlencoded`
   bodies**: the seven credential-endpoint operations (`post_token`,
   `post_introspect`, `post_revoke`, `post_par`, `post_device_code`,

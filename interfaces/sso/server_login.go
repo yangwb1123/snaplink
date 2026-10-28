@@ -118,7 +118,7 @@ func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *lo
 		ClientID:             client.ID,
 		TenantID:             client.TenantID,
 		Roles:                roles,
-		AuthTime:             time.Now(),
+		AuthTime:             result.AuthTime,
 		AMR:                  handler.AmrForResult(result),
 		ACR:                  result.AchievedACR,
 		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),

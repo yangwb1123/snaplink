@@ -4,8 +4,8 @@
 The registry (ops/build/sdk-surface.json) is the single source of truth for
 the operationId set the TS/Python generators emit. The generators themselves
 (cmd/gensdk) carry no allowlist; this checker guarantees the registry stays
-reconciled with docs/openapi.yaml (every operation must exist) and
-ops/build/capabilities.json (every referenced capability must exist).
+reconciled with docs/openapi.yaml and the explicit coverage-decision sidecar
+(every HTTP operation is classified), plus ops/build/capabilities.json.
 
 The ``diff`` action compares registry group/operation data and, when the
 baseline OpenAPI document is available, a bounded structural diff of
@@ -31,6 +31,7 @@ from sdk_schema import (
     load_openapi_file,
     load_openapi_text,
 )
+from sdk_surface_coverage import SDKCoverageError, coverage_report, load_operations
 from sdk_versions import load_version_report, run_versions
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -221,22 +222,8 @@ def _load_openapi_text(text: str, source: str) -> dict:
 
 
 def load_openapi_operation_ids() -> set[str]:
-    doc = _load_openapi_file(OPENAPI_PATH)
-    ids: set[str] = set()
-    paths = doc.get("paths", {})
-    if not isinstance(paths, dict):
-        raise SDKSurfaceError(f"{OPENAPI_PATH}: paths must be an object")
-    for path_item in paths.values():
-        if not isinstance(path_item, dict):
-            continue
-        for operation in path_item.values():
-            if not isinstance(operation, dict) or "operationId" not in operation:
-                continue
-            operation_id = operation["operationId"]
-            if not isinstance(operation_id, str):
-                raise SDKSurfaceError(f"{OPENAPI_PATH}: operationId must be a string")
-            ids.add(operation_id)
-    return ids
+    _load_openapi_file(OPENAPI_PATH)  # Retain the existing component-schema guard.
+    return set(load_operations(OPENAPI_PATH))
 
 
 def validate_schema() -> None:
@@ -293,6 +280,7 @@ def validate_registry() -> dict:
             raise SDKSurfaceError(
                 f"{SURFACE_PATH}: group {group['id']!r} references unknown capability {capability!r}"
             )
+    coverage_report(registry, OPENAPI_PATH)
     return registry
 
 
@@ -425,10 +413,10 @@ def run(args: list[str]) -> int:
     )
     parser.add_argument(
         "action",
-        choices=["check", "generate", "list", "diff", "versions"],
+        choices=["check", "coverage", "generate", "list", "diff", "versions"],
         help="check: validate registry vs OpenAPI/capabilities and SDK versions; "
         "generate: run cmd/gensdk for every language; "
-        "list: print group coverage; "
+        "list: print group selection; coverage: read-only decision/declaration JSON report; "
         "diff: compare operation/group data and available components.schemas "
         "with an explicit baseline",
     )
@@ -463,6 +451,9 @@ def run(args: list[str]) -> int:
             raise SDKSurfaceError("baseline options are only valid with the diff action")
         if parsed.action == "versions":
             return run_versions()
+        if parsed.action == "coverage":
+            print(json.dumps(coverage_report(validate_registry(), OPENAPI_PATH), indent=2, sort_keys=True))
+            return 0
         if parsed.action == "check":
             registry = validate_registry()
             total = sum(len(g["operations"]) for g in registry["groups"])
@@ -485,7 +476,7 @@ def run(args: list[str]) -> int:
             check=False,
         )
         return result.returncode
-    except SDKSurfaceError as exc:
+    except (SDKSurfaceError, SDKCoverageError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
