@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/interfaces/snapshot"
@@ -124,6 +125,7 @@ func Steps(seed *AdminSeed) []bootstrap.Step {
 		stepSeedAdminConsoleClient(seed),
 		stepClearSeededPassword(seed),
 		stepEnforceAdminConsolePKCE(seed),
+		stepGrantAdminConsoleOfflineAccess(seed),
 	}
 }
 
@@ -386,7 +388,7 @@ func stepSeedAdminConsoleClient(seed *AdminSeed) bootstrap.Step {
 			Name:                  "SSO Admin Console",
 			AllowedAuthenticators: []string{"password"},
 			TokenStrategy:         sso.TokenStrategyJWT,
-			AllowedScopes:         []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite},
+			AllowedScopes:         []string{"openid", "profile", "offline_access", sso.AdminScopeRead, sso.AdminScopeWrite},
 			RequirePKCE:           true,
 			Active:                true,
 			// No Secret — this is a public PKCE client. RedirectURIs left
@@ -397,6 +399,54 @@ func stepSeedAdminConsoleClient(seed *AdminSeed) bootstrap.Step {
 		}
 		return err
 	})
+}
+
+// stepGrantAdminConsoleOfflineAccess is version 8: the admin console keeps a
+// refresh token for its SPA session, and every refresh-issuance path now
+// requires the effective offline_access grant. Deployments seeded before that
+// rule hold the public console client without the scope, which would silently
+// downgrade the console to access-token-only. This adds the scope to the
+// bootstrap-managed public client and leaves an operator-declared client (one
+// with a secret) exactly as the operator configured it.
+func stepGrantAdminConsoleOfflineAccess(seed *AdminSeed) bootstrap.Step {
+	return bootstrap.StepFunc("grant_admin_console_offline_access", 8, func(ctx context.Context) error {
+		if seed.Clients == nil {
+			return nil
+		}
+		client, err := seed.Clients.Get(ctx, adminConsoleClientID)
+		if errors.Is(err, sso.ErrNoSuchClient) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("grant_admin_console_offline_access: get client: %w", err)
+		}
+		if client.Secret != "" || slices.Contains(client.AllowedScopes, "offline_access") ||
+			!legacyConsoleScopes(client.AllowedScopes) {
+			return nil
+		}
+		updated := *client
+		updated.AllowedScopes = append(append([]string{}, client.AllowedScopes...), "offline_access")
+		if err := seed.Clients.Update(ctx, &updated); err != nil {
+			return fmt.Errorf("grant_admin_console_offline_access: update client: %w", err)
+		}
+		return nil
+	})
+}
+
+// legacyConsoleScopes reports whether the scope list is still exactly the
+// bootstrap default seeded before offline_access was required. Anything an
+// operator curated (added, removed or reordered-and-changed) fails the check
+// and is left alone, so this migration cannot widen a hand-managed client.
+func legacyConsoleScopes(scopes []string) bool {
+	legacy := []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite}
+	if len(scopes) != len(legacy) {
+		return false
+	}
+	got := append([]string{}, scopes...)
+	want := append([]string{}, legacy...)
+	slices.Sort(got)
+	slices.Sort(want)
+	return slices.Equal(got, want)
 }
 
 // stepEnforceAdminConsolePKCE is version 7: legacy versions seeded the public

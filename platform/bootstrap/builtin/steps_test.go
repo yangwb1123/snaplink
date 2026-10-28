@@ -52,8 +52,8 @@ func (c *capturePrinter) Print(p string) { c.calls = append(c.calls, p) }
 func runAllSteps(t *testing.T, seed *builtin.AdminSeed) {
 	t.Helper()
 	steps := builtin.Steps(seed)
-	if len(steps) != 7 {
-		t.Fatalf("Steps returned %d, want 7", len(steps))
+	if len(steps) != 8 {
+		t.Fatalf("Steps returned %d, want 8", len(steps))
 	}
 	runner := bootstrap.NewRunner("sso-server", memory.New())
 	runner.Register(steps...)
@@ -376,6 +376,71 @@ func TestSteps_SeedsAdminConsoleClient(t *testing.T) {
 	if !contains(c.AllowedScopes, sso.AdminScopeWrite) {
 		t.Errorf("AllowedScopes = %v, missing %s", c.AllowedScopes, sso.AdminScopeWrite)
 	}
+	if !contains(c.AllowedScopes, "offline_access") {
+		t.Errorf("AllowedScopes = %v, missing offline_access: the console keeps a refresh token", c.AllowedScopes)
+	}
+}
+
+func TestSteps_LegacyConsoleClientGainsOfflineAccessOnce(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	legacy := &sso.Client{ID: "sso-admin-console", Name: "SSO Admin Console",
+		AllowedScopes: []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite}}
+	if err := seed.Clients.Add(context.Background(), legacy); err != nil {
+		t.Fatalf("Add legacy: %v", err)
+	}
+	runAllSteps(t, seed)
+	first := countScope(seed, t, "offline_access")
+	if first != 1 {
+		t.Fatalf("offline_access occurrences = %d, want 1", first)
+	}
+	runAllSteps(t, seed)
+	if again := countScope(seed, t, "offline_access"); again != 1 {
+		t.Fatalf("second run duplicated the scope: %d", again)
+	}
+}
+
+func TestSteps_OperatorCuratedConsoleScopesAreLeftAlone(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	curated := &sso.Client{ID: "sso-admin-console", Name: "Operator Console",
+		AllowedScopes: []string{"openid", sso.AdminScopeRead}}
+	if err := seed.Clients.Add(context.Background(), curated); err != nil {
+		t.Fatalf("Add curated: %v", err)
+	}
+	runAllSteps(t, seed)
+	if got := countScope(seed, t, "offline_access"); got != 0 {
+		t.Fatalf("hand-curated console scopes were widened: offline_access x%d", got)
+	}
+}
+
+func TestSteps_ConfidentialConsoleClientKeepsItsScopes(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	confidential := &sso.Client{ID: "sso-admin-console", Name: "SSO Admin Console", Secret: "operator-set",
+		AllowedScopes: []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite}}
+	if err := seed.Clients.Add(context.Background(), confidential); err != nil {
+		t.Fatalf("Add confidential: %v", err)
+	}
+	runAllSteps(t, seed)
+	if got := countScope(seed, t, "offline_access"); got != 0 {
+		t.Fatalf("confidential client was modified: offline_access x%d", got)
+	}
+}
+
+func countScope(seed *builtin.AdminSeed, t *testing.T, scope string) int {
+	t.Helper()
+	c, err := seed.Clients.Get(context.Background(), "sso-admin-console")
+	if err != nil {
+		t.Fatalf("Get(sso-admin-console): %v", err)
+	}
+	n := 0
+	for _, s := range c.AllowedScopes {
+		if s == scope {
+			n++
+		}
+	}
+	return n
 }
 
 func TestSteps_AdminConsoleClientSkippedWhenOperatorPredeclared(t *testing.T) {

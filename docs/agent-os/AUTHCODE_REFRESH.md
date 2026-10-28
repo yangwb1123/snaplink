@@ -67,3 +67,13 @@ cutover. No full three-engine product certification, global writer fencing,
 crash/failover/uncertain-commit acceptance, or repair of inherited Python debt.
 A synthetic enabled-browser-session witness is not acceptance of the old
 historical default-off runtime or an authorization to enable it in production.
+
+## Bootstrap: the console keeps a refresh token
+
+The admin console SPA holds a refresh token, so its public client needs
+`offline_access` in `allowed_scopes`. Fresh deployments get it from the client
+seed; deployments created before the rule get it from bootstrap step 8
+(`grant_admin_console_offline_access`), which appends the scope once, only when
+the client still carries the untouched default scope list and has no secret. An
+operator-curated or confidential client with that ID is left exactly as
+configured — the step never widens a hand-managed client.
