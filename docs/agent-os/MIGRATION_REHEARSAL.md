@@ -57,9 +57,15 @@ One invocation performs, in order:
 | `REHEARSAL_ROOT` | yes | private `0700` working directory |
 | `REHEARSAL_CONTAINER` / `REHEARSAL_LABEL` / `REHEARSAL_DATABASE` | yes | owned container identity and dedicated `snaplink_mig_*` database |
 | `REPLAY_GUARD`, `CONCURRENCY_GUARD`, `DETERMINISM`, `AUTH_SMOKE`, `DRIFT_CHECK`, `WRITE_CHECK`, `DURABLE_STORAGE` | no | enable the corresponding steps |
-| `REHEARSAL_READPATH`, `REHEARSAL_READPATH_EXPECT` | no | prebuilt `cmd/migration-readpath` and its expectation JSON |
+| `REHEARSAL_READPATH`, `REHEARSAL_READPATH_EXPECT` | no | prebuilt `cmd/migration-readpath` and the expectation **file** it compares against (a JSON snapshot, not a case count) |
 | `REHEARSAL_SSO_CTL` | no | prebuilt `sso-ctl`, used to hash the auth-smoke admin password |
 | `REHEARSAL_SSO_SERVER` | no | prebuilt `sso-server` for the smoke and auth-smoke steps. `SSO_*` names are avoided: the server maps them into its own config tree |
+
+Two inputs are rejected rather than guessed, and both failures are easy to
+hit: `REHEARSAL_DATABASE` must match `snaplink_mig_[a-z0-9_]{1,32}` (anything
+else fails `rehearsal_dedicated_candidate_database_required` before a container
+is created), and `REHEARSAL_READPATH_EXPECT` is a file path (passing `40` makes
+the read-path tool report `expectation unreadable`).
 
 ## Evidence
 
@@ -76,29 +82,31 @@ of the owned container even when a step fails. A foreign container is never
 provisioned over or removed.
 
 Not claimed: a full row-by-row sweep (the read path samples rows and compares
-per-table counts), TLS, multi-replica or Redis behaviour, authenticated HTTP
-flows, cutover approval, or any production or 30-day observation. Credentials in
-this dataset are bcrypt hashes, so an authenticated migration smoke requires a
-known secret or a rotation rather than reading one out of the source.
+per-table counts), TLS, multi-replica or Redis behaviour, cutover approval, or
+any production or 30-day observation. Credentials in this dataset are stored as
+bcrypt hashes, so the authenticated HTTP smoke (`AUTH_SMOKE=1`) needs a known
+secret from `REHEARSAL_SSO_CTL` rather than one read out of the source.
 
-## Known gap: bootstrap admin password is not a usable credential
+## Bootstrap admin credential (gap closed)
 
 A rehearsal with `bootstrap.disabled: false`, `permissions.backend: postgres`
 and `authenticators.password.enabled: true` boots on the migrated candidate and
 seeds the admin user, the confidential `sso-admin` client, the public
-`sso-admin-console` PKCE client and the `sso-admin` role. It also writes the
-one-shot password file at mode 0600.
+`sso-admin-console` PKCE client and the `sso-admin` role.
 
-That password cannot be used to log in. `stepSeedAdminUser`
-(`platform/bootstrap/builtin/builtin.go`) generates it, prints it through
-`PasswordPrinter` and stores only the user record; `stepClearSeededPassword`
-then removes any seeded password from attributes. Observed on a fresh
-candidate: `password_credentials` had zero rows for the admin, the user carried
-no attributes, and `POST /auth/login` with `provider=password` returned
-`401 invalid_credentials`.
+`stepSeedAdminUser` now hands the generated password to the credential store
+(`SetPassword`) before printing it, prints nothing when no store is wired, and
+fails closed when the store rejects it. The role grant is applied to every configured admin
+client scope (including the console) and is re-applied for a pre-existing admin
+user, which a migrated deployment always has. Nothing is written into user
+attributes, so there is no plaintext oracle to rotate away later.
 
-Consequences for this rehearsal: the authenticated HTTP surface is **not**
-verified, and a migration cutover cannot rely on the bootstrap banner for a
-first login. Two follow-ups are needed and are deliberately not done here:
-either seed a durable credential (and document rotation), or provide an
-explicit credential-write step before authenticated acceptance.
+Consequence: the authenticated HTTP surface **is** rehearsed. `AUTH_SMOKE=1`
+requires the exact verdict `login 200 → token 200 → admin without token 401 →
+admin with token 200` (the string `login 200` is the literal verdict key), and
+refuses a missing credential or fact rather than reporting a partial pass. On a migrated candidate the seeded banner stays
+silent by design, so the rehearsal accepts a known credential produced by
+`REHEARSAL_SSO_CTL` (`sso-ctl hash --quiet`, password on stdin) instead of
+reading one out of the source.
+
+Still not claimed: password rotation policy, MFA, or any UI-driven login.

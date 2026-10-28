@@ -207,9 +207,11 @@ func stepSeedAdminUser(seed *AdminSeed) bootstrap.Step {
 		if err != nil {
 			return fmt.Errorf("seed_admin_user: rand: %w", err)
 		}
-		// The password is printed to stdout once and never stored — keeping a
-		// plaintext copy in Attributes creates a persistent credential oracle
-		// that survives rotation and is readable via the admin user API.
+		// The plaintext never reaches Attributes: a copy there would survive
+		// rotation and be readable through the admin user API. When a credential
+		// store is wired the password is hashed into it and only then printed;
+		// with no store nothing is printed, because a password that cannot
+		// authenticate must not be handed to an operator.
 		user := &sso.User{
 			ID:         seed.AdminUserID,
 			ExternalID: seed.AdminUserID,
