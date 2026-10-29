@@ -50,6 +50,7 @@ def parse(argv=None):
     p.add_argument("--deadline", default="")
     p.add_argument("--plan", action="store_true", help="print the resolved plan and exit")
     p.add_argument("--cycles", type=int, default=0, help="debug: stop after N cycles")
+    p.add_argument("--durable", action="store_true", help="store the candidate on a labelled named volume instead of tmpfs")
     return p.parse_args(argv)
 
 
@@ -76,8 +77,12 @@ def plan(a):
         deadline = deadline.replace(tzinfo=timezone.utc)
     if deadline <= datetime.now(timezone.utc):
         raise Refused("soak_deadline_in_the_past")
+    # A deadline shorter than the day budget is a trial window: record what will
+    # actually be observed, so the summary cannot claim a 30-day budget later.
+    observed_days = round((deadline - datetime.now(timezone.utc)).total_seconds() / 86400, 3)
     return dict(cycles=a.days * max(1, 86400 // a.interval), interval=a.interval, deadline=deadline,
-                budget=dict(days=a.days, disk_mib=a.max_disk_mib, log_mib=a.max_log_mib, conns=LIMITS["max_conns"]))
+                budget=dict(days=a.days, observed_days=observed_days, storage="volume" if a.durable else "tmpfs",
+                            disk_mib=a.max_disk_mib, log_mib=a.max_log_mib, conns=LIMITS["max_conns"]))
 
 
 def psql(root):
@@ -174,7 +179,7 @@ def run(a, resolved):
     root = Path(a.root)
     root.mkdir(mode=0o700, exist_ok=True)
     args = argparse.Namespace(root=str(root), container=a.container, label=a.label, database=a.database,
-                              user="migration_test", durable_storage=False, schema_init=a.schema_init,
+                              user="migration_test", durable_storage=a.durable, schema_init=a.schema_init,
                               evidence=str(root / "plan.json"), source_snapshot=a.snapshot,
                               source_sha256=a.snapshot_sha256, policy_template=a.policy_template,
                               base_commit=a.base_commit, readpath=None, readpath_expect=None,
