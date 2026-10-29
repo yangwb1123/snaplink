@@ -321,7 +321,14 @@ def run(a, resolved):
                 summary["stops"].append(dict(reason="log_budget_exceeded")); break
             if record["disk_mib"] > a.max_disk_mib:
                 summary["stops"].append(dict(reason="disk_budget_exceeded")); break
-        summary["result"] = "passed" if all(s["reason"] in ("deadline_reached", "debug_cycle_cap") for s in summary["stops"]) else "failed"
+        reasons = [s["reason"] for s in summary["stops"]]
+        if all(r in ("deadline_reached", "debug_cycle_cap") for r in reasons):
+            summary["result"] = "passed"
+        elif reasons == ["runner_signalled"]:
+            # A supervisor stop is not a failure: the window is expected to resume.
+            summary["result"] = "interrupted"
+        else:
+            summary["result"] = "failed"
     except (Refused, R.GuardFailure) as exc:
         summary["result"] = "failed"
         summary["stops"].append(dict(reason=str(exc)))
