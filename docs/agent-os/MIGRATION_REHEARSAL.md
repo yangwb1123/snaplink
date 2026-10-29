@@ -110,3 +110,27 @@ silent by design, so the rehearsal accepts a known credential produced by
 reading one out of the source.
 
 Still not claimed: password rotation policy, MFA, or any UI-driven login.
+
+## Long-running observation (soak)
+
+`ops/scripts/soak.py` reuses the rehearsal's provision/import/verify path and
+then keeps a real `sso-server` up, appending one probe record per interval to
+`<root>/observations.jsonl`. It is an observer, not a capacity test: one health
+call, one login/token/admin sequence and row-count comparisons per cycle, with
+nothing sent off the machine.
+
+Decisions baked in (override on the command line, not by editing the script):
+
+| Question | Default | Why |
+| --- | --- | --- |
+| What is observed | a dedicated rehearsal candidate (`snaplink_mig_*`) with a real `sso-server`, never the local systemd stack | the stack is someone's working environment; a soak that perturbs it is not reproducible |
+| Candidate source | the pinned snapshot re-imported by the rehearsal path | the same import the migration ships, not a hand-built database |
+| Outbound reporting | none | an unrequested external send is a side effect nobody approved |
+| Window | explicit `--days` plus `--deadline`, no renewal on restart | a restart must not silently reset the budget |
+
+Refusals: it will not start without `--authorize I-ACCEPT-THE-SOAK-BUDGET`, a
+1–90 day budget, an interval of at least 60s, log ≤64 MiB and disk ≤2 GiB.
+Stop conditions: server exit, health ≠ 200, authentication regression, a fixed
+table changing, an append-only table shrinking, a schema-version change, or a
+budget breach. Cleanup removes only the container it provisioned.
+
