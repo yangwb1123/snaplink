@@ -400,6 +400,23 @@ func TestSteps_LegacyConsoleClientGainsOfflineAccessOnce(t *testing.T) {
 	}
 }
 
+func TestSteps_LegacyConsoleClientWithAdminRoleScopeGainsOfflineAccess(t *testing.T) {
+	t.Parallel()
+	// A booted deployment carries the admin scope the role grant appends, so the
+	// legacy set is no longer exactly the four seeded scopes. That must still be
+	// recognised as server-managed, or migrated databases never get the scope.
+	seed, _ := fullSeed(t)
+	migrated := &sso.Client{ID: "sso-admin-console", Name: "SSO Admin Console",
+		AllowedScopes: []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite, "admin", "admin"}}
+	if err := seed.Clients.Add(context.Background(), migrated); err != nil {
+		t.Fatalf("Add migrated: %v", err)
+	}
+	runAllSteps(t, seed)
+	if got := countScope(seed, t, "offline_access"); got != 1 {
+		t.Fatalf("offline_access occurrences = %d, want 1", got)
+	}
+}
+
 func TestSteps_OperatorCuratedConsoleScopesAreLeftAlone(t *testing.T) {
 	t.Parallel()
 	seed, _ := fullSeed(t)

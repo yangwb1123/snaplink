@@ -433,20 +433,27 @@ func stepGrantAdminConsoleOfflineAccess(seed *AdminSeed) bootstrap.Step {
 	})
 }
 
-// legacyConsoleScopes reports whether the scope list is still exactly the
-// bootstrap default seeded before offline_access was required. Anything an
-// operator curated (added, removed or reordered-and-changed) fails the check
-// and is left alone, so this migration cannot widen a hand-managed client.
+// legacyConsoleScopes reports whether the scope list is still one this server
+// produced by itself: the scope set seeded before offline_access was required,
+// optionally plus the admin scope the role grant appends on every boot (it is
+// not deduplicated, so the same value can repeat). Anything else means an
+// operator curated the client, which must be left exactly as configured.
 func legacyConsoleScopes(scopes []string) bool {
-	legacy := []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite}
-	if len(scopes) != len(legacy) {
-		return false
+	known := map[string]bool{"openid": true, "profile": true, sso.AdminScopeRead: true,
+		sso.AdminScopeWrite: true, "admin": true}
+	present := map[string]bool{}
+	for _, scope := range scopes {
+		if !known[scope] {
+			return false
+		}
+		present[scope] = true
 	}
-	got := append([]string{}, scopes...)
-	want := append([]string{}, legacy...)
-	slices.Sort(got)
-	slices.Sort(want)
-	return slices.Equal(got, want)
+	for _, seeded := range []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite} {
+		if !present[seeded] {
+			return false
+		}
+	}
+	return true
 }
 
 // stepEnforceAdminConsolePKCE is version 7: legacy versions seeded the public
