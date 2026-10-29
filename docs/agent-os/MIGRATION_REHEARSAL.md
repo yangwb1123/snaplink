@@ -134,3 +134,6 @@ Stop conditions: server exit, health ≠ 200, authentication regression, a fixed
 table changing, an append-only table shrinking, a schema-version change, or a
 budget breach. Cleanup removes only the container it provisioned.
 
+Moving the live service — not just its data — is in
+[POSTGRES_CUTOVER.md](POSTGRES_CUTOVER.md): config switches, the spare-port smoke,
+and the three failures that are easy to repeat.
