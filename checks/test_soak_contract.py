@@ -75,3 +75,22 @@ def test_plan_records_what_will_actually_be_observed():
     assert 0 < plan["budget"]["observed_days"] <= 30
     assert plan["budget"]["storage"] == "tmpfs"
     assert plan["budget"]["log_mib"] == 64
+
+
+def test_remote_upgrade_refuses_without_its_inputs():
+    """The remote upgrader must not run on a half-specified plan."""
+    script = ROOT / "ops" / "scripts" / "remote_upgrade.sh"
+    assert script.is_file()
+    for args, reason in (([], "service_required"),
+                         (["--service", "x"], "binary_required"),
+                         (["--service", "x", "--binary", "y"], "target_required")):
+        result = subprocess.run(["bash", str(script), *args], capture_output=True, text=True, timeout=60, cwd=ROOT)
+        assert result.returncode == 2 and reason in result.stderr, (args, result.stderr)
+
+
+def test_remote_upgrade_dry_run_requires_a_real_binary_and_sql():
+    script = ROOT / "ops" / "scripts" / "remote_upgrade.sh"
+    result = subprocess.run(["bash", str(script), "--dry-run", "--service", "s", "--binary", "/nonexistent/sso-server",
+                             "--target", "/tmp/t", "--pg-host", "h", "--verify-sql", "/nonexistent.sql",
+                             "--workdir", "/tmp/w"], capture_output=True, text=True, timeout=60, cwd=ROOT)
+    assert result.returncode == 2 and "binary_missing" in result.stderr
