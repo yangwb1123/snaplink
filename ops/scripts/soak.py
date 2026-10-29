@@ -17,6 +17,7 @@ import os
 import secrets
 import shutil
 import signal
+import threading
 import subprocess
 import sys
 import time
@@ -209,9 +210,11 @@ def rss_mib(pid):
 def run(a, resolved):
     root = Path(a.root)
     interrupted = {"signal": ""}
+    stop_wait = threading.Event()
 
     def on_signal(signum, _frame):
         interrupted["signal"] = signal.Signals(signum).name
+        stop_wait.set()
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, on_signal)
@@ -272,7 +275,8 @@ def run(a, resolved):
             ready, _ = call(port, "/health")
             if ready == 200:
                 break
-            time.sleep(0.5)
+            if stop_wait.wait(0.5):
+                break
         if ready != 200:
             raise Refused("soak_server_never_ready")
         summary["server_pid"] = child.pid
@@ -290,7 +294,9 @@ def run(a, resolved):
                 summary["stops"].append(dict(reason="deadline_reached")); break
             if a.cycles and summary["cycles"] >= a.cycles:
                 summary["stops"].append(dict(reason="debug_cycle_cap")); break
-            time.sleep(a.interval)
+            if stop_wait.wait(a.interval):
+                summary["stops"].append(dict(reason="runner_signalled", signal=interrupted["signal"] or "SIGTERM"))
+                break
             record = dict(utc=datetime.now(timezone.utc).isoformat(), cycle=summary["cycles"] + 1)
             started = time.monotonic()
             health, _ = call(port, "/health")
