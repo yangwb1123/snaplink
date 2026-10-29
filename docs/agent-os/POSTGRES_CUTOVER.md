@@ -69,3 +69,23 @@ Two rules follow: control the service through one helper that falls back to
 `sudo -n`, and install an `ERR` trap that restores the previous binary and
 config whenever any later step fails. Verify with `readlink current` **and** the
 process start time, not just `/health` — the old process answers `/health` too.
+
+## Moving the live database to the production name
+
+Running on `snaplink_mig_<date>` is fine for a first cutover, but the production
+name should not stay a rehearsal candidate. It is a **second cutover**, not a
+rename of the running service:
+
+1. Stop the unit (no connections are allowed while a database is renamed).
+2. Dump the live database and keep the checksum.
+3. Rename the pre-cutover database out of the way (`snaplink` -> `snaplink_stale_<date>`).
+4. Create the production-named database and restore the dump into it.
+5. Compare row counts between the old and new database **before** switching.
+6. Point `postgres.dsn` at the new name and give it its own tracker file, or the
+   bootstrap steps will be skipped as already applied.
+7. Validate, start, then prove a write: a denied login must still move
+   `audit_events` in the new database.
+
+Rollback is: restore the previous config, rename the databases back, start.
+Keep the old database and the dump until the new one has served real traffic.
+
