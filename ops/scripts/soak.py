@@ -16,6 +16,7 @@ import json
 import os
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -51,6 +52,8 @@ def parse(argv=None):
     p.add_argument("--plan", action="store_true", help="print the resolved plan and exit")
     p.add_argument("--cycles", type=int, default=0, help="debug: stop after N cycles")
     p.add_argument("--durable", action="store_true", help="store the candidate on a labelled named volume instead of tmpfs")
+    p.add_argument("--resume", action="store_true", help="reuse an owned candidate this run already provisioned (restart safety)")
+    p.add_argument("--close-on-failure", action="store_true", help="tear down even when a stop condition fired")
     return p.parse_args(argv)
 
 
@@ -83,6 +86,34 @@ def plan(a):
     return dict(cycles=a.days * max(1, 86400 // a.interval), interval=a.interval, deadline=deadline,
                 budget=dict(days=a.days, observed_days=observed_days, storage="volume" if a.durable else "tmpfs",
                             disk_mib=a.max_disk_mib, log_mib=a.max_log_mib, conns=LIMITS["max_conns"]))
+
+
+def reusable(root, a):
+    """A restart may only adopt the candidate this run created itself.
+
+    The fixture receipt carries the container identity and label; adopting
+    anything else would observe someone else's database.
+    """
+    receipt = Path(root) / "fixture-receipt.json"
+    connection = Path(root) / "candidate-connection.json"
+    if not (receipt.is_file() and connection.is_file()):
+        return None
+    body = json.loads(receipt.read_text())
+    if body.get("name") != a.container or body.get("label") != a.label:
+        return None
+    running = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", body.get("container_id", "")],
+                             capture_output=True, text=True, timeout=30)
+    if running.stdout.strip() != "true":
+        return None
+    return dict(container_id=body.get("container_id"), name=body.get("name"), label=body.get("label"),
+                storage=body.get("storage"), database=body.get("database"))
+
+
+def shape_check(q):
+    tables = int(q("select count(*) from pg_tables where schemaname='public'"))
+    if tables != 28:
+        raise Refused("soak_resume_shape_mismatch:tables=%d" % tables)
+    return dict(tables=tables, versions=versions(q))
 
 
 def psql(root):
@@ -177,6 +208,13 @@ def rss_mib(pid):
 
 def run(a, resolved):
     root = Path(a.root)
+    interrupted = {"signal": ""}
+
+    def on_signal(signum, _frame):
+        interrupted["signal"] = signal.Signals(signum).name
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, on_signal)
     root.mkdir(mode=0o700, exist_ok=True)
     args = argparse.Namespace(root=str(root), container=a.container, label=a.label, database=a.database,
                               user="migration_test", durable_storage=a.durable, schema_init=a.schema_init,
@@ -190,11 +228,21 @@ def run(a, resolved):
     summary = dict(started=datetime.now(timezone.utc).isoformat(), deadline=resolved["deadline"].isoformat(),
                    interval=a.interval, budget=resolved["budget"], cycles=0, stops=[])
     try:
-        R.provision_step(root, args)
-        _, candidate = R.initialise_candidate(root, args.database, args.schema_init)
-        R.bind_and_import_inputs(root, args, candidate)
-        R.verify_candidate(root, args)
-        q = psql(root)
+        q = None
+        reused = a.resume and reusable(root, a)
+        if reused:
+            # The import was verified by the run that created the candidate. After
+            # bootstrap has written audit/role rows the content digest no longer
+            # equals the source projection, so a restart checks shape, not content.
+            summary["reused"] = reusable(root, a)
+            q = psql(root)
+            summary["shape"] = shape_check(q)
+        else:
+            R.provision_step(root, args)
+            _, candidate = R.initialise_candidate(root, args.database, args.schema_init)
+            R.bind_and_import_inputs(root, args, candidate)
+            R.verify_candidate(root, args)
+            q = psql(root)
         password = "Soak-" + secrets.token_urlsafe(18)
         hashed = R.run_bounded([a.sso_ctl, "hash", "--quiet"], 30, stdin=password.encode())
         if hashed.returncode or not hashed.stdout.strip():
@@ -234,6 +282,8 @@ def run(a, resolved):
         baseline = dict(counts=counts(q), versions=versions(q))
         summary["baseline"] = baseline
         while True:
+            if interrupted["signal"]:
+                summary["stops"].append(dict(reason="runner_signalled", signal=interrupted["signal"])); break
             if child.poll() is not None:
                 summary["stops"].append(dict(reason="server_exited", code=child.returncode)); break
             if datetime.now(timezone.utc) >= resolved["deadline"]:
@@ -277,14 +327,23 @@ def run(a, resolved):
             except subprocess.TimeoutExpired:
                 child.kill()
         summary["ended"] = datetime.now(timezone.utc).isoformat()
-        try:
-            summary["cleanup"] = R.close_owned(root)
-        except Exception as exc:  # cleanup failure is reported, never hidden
-            summary["cleanup_error"] = type(exc).__name__
+        reasons = [s.get("reason") for s in summary["stops"]]
+        keep = any(r not in ("deadline_reached", "debug_cycle_cap") for r in reasons) or not reasons
+        if keep and not a.close_on_failure:
+            # A failure keeps the scene: the candidate, its volume and the server
+            # log are the evidence, and a restart with --resume adopts them.
+            summary["cleanup_deferred"] = True
+        else:
+            try:
+                summary["cleanup"] = R.close_owned(root)
+            except Exception as exc:  # cleanup failure is reported, never hidden
+                summary["cleanup_error"] = type(exc).__name__
         observations.close()
     R.write_private(root / "final-summary.json", summary)
     print(json.dumps({"result": summary.get("result"), "cycles": summary.get("cycles"), "stops": summary.get("stops")}))
-    return 0 if summary.get("result") == "passed" else 1
+    if summary.get("result") == "passed" or interrupted["signal"]:
+        return 0
+    return 1
 
 
 def main(argv=None):
