@@ -60,6 +60,12 @@ done
 [ -f "$BINARY" ] || die "binary_missing"
 [ -x "$BINARY" ] || die "binary_not_executable"
 [ -f "$VERIFY_SQL" ] || die "verify_sql_missing"
+mkdir -p "$WORKDIR"; chmod 700 "$WORKDIR"
+
+psql() { command psql "host=$PGHOST port=$PGPORT user=$PSQL_USER dbname=$DB" "$@"; }
+
+EXPECTED="UPGRADE-$(date -u +%Y%m%d)"
+
 if [ -n "$CONFIG" ]; then
   [ -f "$CONFIG" ] || die "config_missing"
   state="$(awk '/^[[:space:]]*state_path:/ { gsub(/["'"'"']/, "", $2); print $2; exit }' "$CONFIG")"
@@ -68,10 +74,20 @@ if [ -n "$CONFIG" ]; then
     /*) [ -w "$(dirname "$state")" ] || die "bootstrap_state_path_not_writable:$state" ;;
     *) die "bootstrap_state_path_relative:$state" ;;
   esac
+  # A tracker belongs to one database. Reusing one across a database switch
+  # silently skips every step the previous deployment already applied, which is
+  # how a migrated database ended up with a console client missing a scope the
+  # server believed it had granted.
+  if [ -n "$state" ] && [ -f "$state" ]; then
+    # Fail closed: an upgrade that cannot read the database must not proceed.
+    tables="$(PGPASSWORD="${PGPASSWORD:-}" psql -tAc \
+      "select count(*) from pg_tables where schemaname='public'" 2>/dev/null)" \
+      || die "preflight_sql_unreachable"
+    if [ "$tables" -lt 28 ]; then
+      die "bootstrap_tracker_ahead_of_database:tracker=$state tables=$tables"
+    fi
+  fi
 fi
-mkdir -p "$WORKDIR"; chmod 700 "$WORKDIR"
-
-EXPECTED="UPGRADE-$(date -u +%Y%m%d)"
 NEW_VERSION="$("$BINARY" -version 2>&1 | head -n 3 || true)"
 
 if [ "$DRY" = 1 ]; then
@@ -97,7 +113,6 @@ PLAN
 fi
 
 [ "$CONFIRM" = "$EXPECTED" ] || die "confirm_plan_required:$EXPECTED"
-psql() { command psql "host=$PGHOST port=$PGPORT user=$PSQL_USER dbname=$DB" "$@"; }
 
 log="$WORKDIR/upgrade.log"
 exec > >(tee -a "$log") 2>&1

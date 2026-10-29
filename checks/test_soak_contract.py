@@ -111,3 +111,23 @@ def test_remote_upgrade_refuses_a_relative_bootstrap_state_path(tmp_path):
                              "--verify-sql", str(sql), "--workdir", str(tmp_path / "w")],
                             capture_output=True, text=True, timeout=60, cwd=ROOT)
     assert result.returncode == 2 and "bootstrap_state_path_relative" in result.stderr
+
+
+def test_remote_upgrade_fails_closed_when_the_database_is_unreadable(tmp_path):
+    """An upgrade that cannot read the database must refuse, not continue."""
+    script = ROOT / "ops" / "scripts" / "remote_upgrade.sh"
+    config = tmp_path / "c.yaml"
+    state = tmp_path / "tracker.json"
+    state.write_text('{"namespaces": {"sso-server": {"version": 8}}}')
+    config.write_text(f'bootstrap:\n  disabled: false\n  state_path: "{state}"\n')
+    binary = tmp_path / "sso-server"
+    binary.write_text("#!/bin/sh\necho fake\n")
+    binary.chmod(0o755)
+    sql = tmp_path / "verify.sql"
+    sql.write_text("select 1;\n")
+    result = subprocess.run(["bash", str(script), "--dry-run", "--service", "s", "--binary", str(binary),
+                             "--target", str(tmp_path / "t"), "--pg-host", "127.0.0.1", "--pg-port", "1",
+                             "--psql-user", "nobody", "--db", "snaplink",
+                             "--config", str(config), "--verify-sql", str(sql), "--workdir", str(tmp_path / "w")],
+                            capture_output=True, text=True, timeout=120, cwd=ROOT)
+    assert result.returncode == 2 and "preflight_sql_unreachable" in result.stderr
