@@ -94,3 +94,20 @@ def test_remote_upgrade_dry_run_requires_a_real_binary_and_sql():
                              "--target", "/tmp/t", "--pg-host", "h", "--verify-sql", "/nonexistent.sql",
                              "--workdir", "/tmp/w"], capture_output=True, text=True, timeout=60, cwd=ROOT)
     assert result.returncode == 2 and "binary_missing" in result.stderr
+
+
+def test_remote_upgrade_refuses_a_relative_bootstrap_state_path(tmp_path):
+    """A hardened unit cannot write a relative tracker; the deploy must refuse it."""
+    script = ROOT / "ops" / "scripts" / "remote_upgrade.sh"
+    bad = tmp_path / "bad.yaml"
+    bad.write_text('bootstrap:\n  disabled: false\n  state_path: "bootstrap.json"\n')
+    binary = tmp_path / "sso-server"
+    binary.write_text("#!/bin/sh\necho fake\n")
+    binary.chmod(0o755)
+    sql = tmp_path / "verify.sql"
+    sql.write_text("select 1;\n")
+    result = subprocess.run(["bash", str(script), "--dry-run", "--service", "s", "--binary", str(binary),
+                             "--target", str(tmp_path / "t"), "--pg-host", "h", "--config", str(bad),
+                             "--verify-sql", str(sql), "--workdir", str(tmp_path / "w")],
+                            capture_output=True, text=True, timeout=60, cwd=ROOT)
+    assert result.returncode == 2 and "bootstrap_state_path_relative" in result.stderr

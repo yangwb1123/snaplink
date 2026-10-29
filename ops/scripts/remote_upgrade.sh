@@ -10,19 +10,20 @@
 set -euo pipefail
 umask 077
 
-SERVICE=""; BINARY=""; TARGET=""; PGHOST=""; PGPORT="5432"; DB="snaplink"; PSQL_USER="postgres"
+SERVICE=""; BINARY=""; TARGET=""; PGHOST=""; PGPORT="5432"; DB="snaplink"; PSQL_USER="postgres"; CONFIG=""
 VERIFY_SQL=""; WORKDIR=""; CONFIRM=""; DRY=0
 
 usage() {
   cat <<'USAGE'
 usage: remote_upgrade.sh --service NAME --binary PATH --target PATH
                          --pg-host HOST [--pg-port PORT] [--db NAME] [--psql-user USER]
-                         --verify-sql FILE --workdir DIR [--dry-run]
+                         --config FILE --verify-sql FILE --workdir DIR [--dry-run]
                          [--confirm-plan UPGRADE-<YYYYMMDD>]
 
   --service     systemd unit that runs the SSO server
   --binary      new sso-server binary staged on this host
   --target      path the service actually executes (replaced atomically)
+  --config      server config; its bootstrap state_path must be absolute and writable
   --verify-sql  read-only verification SQL (four rows, all PASS)
   --workdir     private directory for the dump, the checksum and the log
   --dry-run     print the resolved plan and exit
@@ -37,6 +38,7 @@ while [ $# -gt 0 ]; do
     --binary) BINARY="${2:-}"; shift 2 ;;
     --target) TARGET="${2:-}"; shift 2 ;;
     --pg-host) PGHOST="${2:-}"; shift 2 ;;
+    --config) CONFIG="${2:-}"; shift 2 ;;
     --pg-port) PGPORT="${2:-}"; shift 2 ;;
     --db) DB="${2:-}"; shift 2 ;;
     --psql-user) PSQL_USER="${2:-}"; shift 2 ;;
@@ -58,6 +60,15 @@ done
 [ -f "$BINARY" ] || die "binary_missing"
 [ -x "$BINARY" ] || die "binary_not_executable"
 [ -f "$VERIFY_SQL" ] || die "verify_sql_missing"
+if [ -n "$CONFIG" ]; then
+  [ -f "$CONFIG" ] || die "config_missing"
+  state="$(awk '/^[[:space:]]*state_path:/ { gsub(/["'"'"']/, "", $2); print $2; exit }' "$CONFIG")"
+  case "$state" in
+    "") : ;;                                   # bootstrap tracker not configured: nothing to check
+    /*) [ -w "$(dirname "$state")" ] || die "bootstrap_state_path_not_writable:$state" ;;
+    *) die "bootstrap_state_path_relative:$state" ;;
+  esac
+fi
 mkdir -p "$WORKDIR"; chmod 700 "$WORKDIR"
 
 EXPECTED="UPGRADE-$(date -u +%Y%m%d)"
@@ -76,7 +87,7 @@ plan:
   backup        $WORKDIR/pre-upgrade.dump (+ .sha256)
   confirm       $CONFIRM (expected $EXPECTED)
 steps:
-  1 preflight (read-only): service state, target perms, disk, current schema versions
+  1 preflight (read-only): service state, target perms, disk, current schema versions, bootstrap state_path writability
   2 backup: pg_dump -Fc + sha256 + pg_restore -l smoke read
   3 stop $SERVICE, install $BINARY -> $TARGET atomically, start $SERVICE
   4 wait for /health 200, then run the verification SQL and require four PASS rows
