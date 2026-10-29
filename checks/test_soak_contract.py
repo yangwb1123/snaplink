@@ -131,3 +131,11 @@ def test_remote_upgrade_fails_closed_when_the_database_is_unreadable(tmp_path):
                              "--config", str(config), "--verify-sql", str(sql), "--workdir", str(tmp_path / "w")],
                             capture_output=True, text=True, timeout=120, cwd=ROOT)
     assert result.returncode == 2 and "preflight_sql_unreachable" in result.stderr
+
+
+def test_remote_upgrade_controls_the_service_through_one_helper():
+    """A restart that silently fails would leave the new binary unstarted."""
+    script = ROOT / "ops" / "scripts" / "remote_upgrade.sh"
+    text = script.read_text()
+    assert "ctl stop" in text and "ctl start" in text and "trap rollback ERR" in text
+    assert "systemctl restart" not in text.split("ctl()", 1)[1].split("}", 1)[1][:4000]

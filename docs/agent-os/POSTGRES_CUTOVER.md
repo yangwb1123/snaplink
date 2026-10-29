@@ -55,3 +55,17 @@ line, and assert the table count after the restore.
 Multi-replica, TLS, Redis, connection pooling, backup/restore drills at scale,
 or the 30-day behaviour. `remote_upgrade.sh` automates the mechanics but has only
 been rehearsed against disposable candidates.
+
+## Fourth failure: the restart itself can be denied
+
+The cutover script swapped the release and the config, then `systemctl restart`
+returned `Access denied` — the unit is system-scoped, so it needs elevation. The
+script exited before its rollback branch, which left a new binary and a new
+config installed while the old process kept running with the previous config in
+memory. Nothing broke only because the service was restarted by hand moments
+later.
+
+Two rules follow: control the service through one helper that falls back to
+`sudo -n`, and install an `ERR` trap that restores the previous binary and
+config whenever any later step fails. Verify with `readlink current` **and** the
+process start time, not just `/health` — the old process answers `/health` too.

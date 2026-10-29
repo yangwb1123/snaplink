@@ -64,6 +64,13 @@ mkdir -p "$WORKDIR"; chmod 700 "$WORKDIR"
 
 psql() { command psql "host=$PGHOST port=$PGPORT user=$PSQL_USER dbname=$DB" "$@"; }
 
+# systemd may need elevation even for a unit this user owns; fail early instead of
+# half-applying a swap that then cannot restart the service.
+ctl() {
+  if systemctl "$@" 2>/dev/null; then return 0; fi
+  command sudo -n systemctl "$@"
+}
+
 EXPECTED="UPGRADE-$(date -u +%Y%m%d)"
 
 if [ -n "$CONFIG" ]; then
@@ -117,7 +124,7 @@ fi
 log="$WORKDIR/upgrade.log"
 exec > >(tee -a "$log") 2>&1
 echo "== $(date -u +%FT%TZ) preflight"
-systemctl is-active --quiet "$SERVICE" || die "service_not_active:$SERVICE"
+ctl is-active --quiet "$SERVICE" || die "service_not_active:$SERVICE"
 [ -w "$(dirname "$TARGET")" ] || die "target_dir_not_writable"
 df -Pk "$WORKDIR" | awk 'NR==2 { if ($4 < 500000) exit 1 }' || die "less_than_500MiB_free"
 PREVIOUS="$(readlink -f "$TARGET")"
@@ -136,10 +143,18 @@ pg_restore -l "$dump" | head -n 1 >/dev/null || die "dump_unreadable"
 echo "== $(date -u +%FT%TZ) deploy"
 backup_binary="$WORKDIR/previous-$(date -u +%Y%m%dT%H%M%SZ)"
 cp -p "$PREVIOUS" "$backup_binary"
-systemctl stop "$SERVICE"
+rollback() {
+  echo "== $(date -u +%FT%TZ) rolling back to $PREVIOUS"
+  ctl stop "$SERVICE" || true
+  cp -p "$backup_binary" "$TARGET" || true
+  ctl start "$SERVICE" || true
+  echo "rollback attempted; dump kept at $dump"
+}
+trap rollback ERR
+ctl stop "$SERVICE"
 install -m 0755 "$BINARY" "$TARGET.new"
 mv -f "$TARGET.new" "$TARGET"
-systemctl start "$SERVICE"
+ctl start "$SERVICE"
 
 echo "== $(date -u +%FT%TZ) verify"
 for i in $(seq 1 60); do
@@ -154,5 +169,6 @@ echo "$out" | grep -q FAIL && die "verification_failed"
 passes="$(echo "$out" | grep -c '|PASS|' || true)"
 [ "$passes" -ge 4 ] || die "verification_incomplete:$passes"
 
+trap - ERR
 echo "== $(date -u +%FT%TZ) done"
 echo "rollback: systemctl stop $SERVICE && cp -p $backup_binary $TARGET && pg_restore -d $DB --clean --if-exists $dump && systemctl start $SERVICE"
