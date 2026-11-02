@@ -197,7 +197,7 @@ func rcovSeedForgeClients(s *rcovServer) {
 		grantTypes []string
 	}{
 		{id: "forge-console", scopes: consoleScopes, grantTypes: []string{sso.GrantAuthorizationCode, sso.GrantRefreshToken}},
-		{id: "forge-cli", scopes: forgeScopes, grantTypes: []string{sso.GrantDeviceCode, sso.GrantRefreshToken}},
+		{id: "forge-cli", scopes: append([]string{"offline_access"}, forgeScopes...), grantTypes: []string{sso.GrantDeviceCode, sso.GrantRefreshToken}},
 	} {
 		s.clients.AddSeed(&sso.Client{
 			ID: client.id, Name: client.id, TenantID: "acme", SubjectType: "public",
@@ -240,7 +240,7 @@ func rcovForgeConsoleLogin(t *testing.T, s *rcovServer) string {
 func rcovForgeCLIDeviceLogin(t *testing.T, s *rcovServer, consoleToken string) (string, string) {
 	t.Helper()
 	status, start := rcovPostJSON(t, s.http.URL+"/device/code", "", map[string]any{
-		"client_id": "forge-cli", "scope": "forge:conversations:read forge:conversations:write",
+		"client_id": "forge-cli", "scope": "forge:conversations:read forge:conversations:write offline_access",
 		"resource": []string{"forge-api"},
 	})
 	if status != http.StatusOK {
@@ -308,8 +308,8 @@ func rcovAssertForgeTokenBindings(t *testing.T, consoleToken, cliToken, rotatedT
 	if consoleClaims["client_id"] != "forge-console" || cliClaims["client_id"] != "forge-cli" || rotatedClaims["client_id"] != "forge-cli" {
 		t.Errorf("client IDs = Console:%v CLI:%v rotated CLI:%v", consoleClaims["client_id"], cliClaims["client_id"], rotatedClaims["client_id"])
 	}
-	if cliClaims["scope"] != "forge:conversations:read forge:conversations:write" {
-		t.Errorf("CLI scope = %v, want the two Forge conversation scopes", cliClaims["scope"])
+	if cliClaims["scope"] != "forge:conversations:read forge:conversations:write offline_access" {
+		t.Errorf("CLI scope = %v, want both Forge conversation scopes plus explicit offline access", cliClaims["scope"])
 	}
 	for _, claim := range []string{"iss", "sub", "tenant_id", "client_id", "aud", "scope"} {
 		if !reflect.DeepEqual(cliClaims[claim], rotatedClaims[claim]) {

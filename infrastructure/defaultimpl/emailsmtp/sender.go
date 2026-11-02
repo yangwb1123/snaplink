@@ -73,8 +73,14 @@ type Sender struct {
 	tmpl    *templateSet
 	send    sendFunc
 	dialTLS tlsDialFunc
-	now     func() time.Time
-	log     spi.Logger
+	// strictDial and strictTLS are the require_starttls transport seams. New
+	// installs the context-aware defaultStrictDial and the host-verified
+	// strictTLSConfig; same-package tests may override them to trust a local
+	// CA. There is no exported production trust knob.
+	strictDial strictDialFunc
+	strictTLS  strictTLSConfigFunc
+	now        func() time.Time
+	log        spi.Logger
 }
 
 // Option configures a Sender at construction.
@@ -83,9 +89,10 @@ type Option func(*Sender)
 // WithSendFunc overrides the transport (default net/smtp.SendMail via
 // defaultSendFunc) — the legitimate seam tests use to capture outbound mail
 // without a live SMTP server. Nil is ignored so a zero-value Option is inert.
-// It only affects the non-implicit-TLS path: an implicit-TLS send (port 465
-// or tls_mode=implicit) always uses the TLS transport, which is overridden
-// with WithTLSDial instead.
+// It only affects the legacy (non-implicit, non-strict) path: an implicit-TLS
+// send (port 465 or tls_mode=implicit) uses WithTLSDial instead, and
+// tls_mode=require_starttls always uses its own strict transport so a
+// configured legacy send function can never bypass the STARTTLS requirement.
 func WithSendFunc(fn sendFunc) Option {
 	return func(s *Sender) {
 		if fn != nil {
@@ -117,7 +124,16 @@ func New(cfg Config, log spi.Logger, opts ...Option) (*Sender, error) {
 	if log == nil {
 		log = spi.NopLogger{}
 	}
-	s := &Sender{cfg: cfg, tmpl: ts, send: defaultSendFunc, dialTLS: defaultTLSDial, now: time.Now, log: log}
+	s := &Sender{
+		cfg:        cfg,
+		tmpl:       ts,
+		send:       defaultSendFunc,
+		dialTLS:    defaultTLSDial,
+		strictDial: defaultStrictDial,
+		strictTLS:  strictTLSConfig,
+		now:        time.Now,
+		log:        log,
+	}
 	for _, o := range opts {
 		o(s)
 	}

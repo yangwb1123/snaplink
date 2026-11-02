@@ -130,7 +130,7 @@ func refreshExchange(t *testing.T, srv *httptest.Server, refresh, scope, clientI
 
 func TestRefreshToken_LoginIssuesRefreshTokenWhenStoreWired(t *testing.T) {
 	srv, _, _ := newRefreshFlowServer(t, time.Hour)
-	access, refresh := directLogin(t, srv, []string{"openid", "profile"})
+	access, refresh := directLogin(t, srv, []string{"openid", "profile", "offline_access"})
 	if access == "" {
 		t.Fatal("access_token missing")
 	}
@@ -190,7 +190,7 @@ func TestRefreshToken_LoginOmitsRefreshTokenWhenStoreUnwired(t *testing.T) {
 
 func TestRefreshToken_FullRoundTripRotates(t *testing.T) {
 	srv, _, sink := newRefreshFlowServer(t, time.Hour)
-	_, refresh := directLogin(t, srv, []string{"openid", "profile"})
+	_, refresh := directLogin(t, srv, []string{"openid", "profile", "offline_access"})
 
 	status, body := refreshExchange(t, srv, refresh, "", rtClient, rtSecret)
 	if status != http.StatusOK {
@@ -224,7 +224,7 @@ func TestRefreshToken_SingleUseRotationEnforced(t *testing.T) {
 	// Rotation: presenting the OLD refresh after a successful refresh
 	// MUST fail as invalid_grant — the canonical replay/reuse signal.
 	srv, _, _ := newRefreshFlowServer(t, time.Hour)
-	_, refresh := directLogin(t, srv, nil)
+	_, refresh := directLogin(t, srv, []string{"offline_access"})
 
 	if status, _ := refreshExchange(t, srv, refresh, "", rtClient, rtSecret); status != http.StatusOK {
 		t.Fatalf("first refresh status = %d", status)
@@ -267,7 +267,7 @@ func TestRefreshToken_ExchangeMismatchedClient(t *testing.T) {
 	// (with a known secret) try to redeem it. The mismatch must fail
 	// with invalid_grant — RFC 6749 §6 binding.
 	srv, _, _ := newRefreshFlowServer(t, time.Hour)
-	_, refresh := directLogin(t, srv, nil)
+	_, refresh := directLogin(t, srv, []string{"offline_access"})
 
 	// We don't have a second client registered in the harness, but we
 	// can simulate the failure mode by directly checking that another
@@ -318,6 +318,7 @@ func TestRefreshToken_ExchangeBindingClientIDMismatch(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"provider":   "password",
 		"client_id":  "client-a",
+		"scope":      []string{"offline_access"},
 		"credential": map[string]string{"username": "x", "password": "y"},
 	})
 	resp, err := http.Post(httpSrv.URL+"/auth/login", "application/json", bytes.NewReader(body))
@@ -390,10 +391,10 @@ func TestRefreshToken_ExchangeWithoutStore_NotImplemented(t *testing.T) {
 // ---------- scope narrowing ----------
 
 func TestRefreshToken_ScopeNarrowingAccepted(t *testing.T) {
-	// Original grant was ["openid", "profile", "email"]; refresh
+	// Original grant was ["openid", "profile", "email", "offline_access"]; refresh
 	// requests just ["openid"] — narrowing is allowed.
 	srv, _, _ := newRefreshFlowServer(t, time.Hour)
-	_, refresh := directLogin(t, srv, []string{"openid", "profile", "email"})
+	_, refresh := directLogin(t, srv, []string{"openid", "profile", "email", "offline_access"})
 
 	status, body := refreshExchange(t, srv, refresh, "openid", rtClient, rtSecret)
 	if status != http.StatusOK {
@@ -402,10 +403,10 @@ func TestRefreshToken_ScopeNarrowingAccepted(t *testing.T) {
 }
 
 func TestRefreshToken_ScopeExpansionRejected(t *testing.T) {
-	// Original grant was ["openid"]; refresh asks for ["openid", "admin"]
+	// Original grant was ["openid", "offline_access"]; refresh asks for ["openid", "admin"]
 	// — MUST be rejected as invalid_scope per RFC 6749 §6.
 	srv, _, _ := newRefreshFlowServer(t, time.Hour)
-	_, refresh := directLogin(t, srv, []string{"openid"})
+	_, refresh := directLogin(t, srv, []string{"openid", "offline_access"})
 
 	status, body := refreshExchange(t, srv, refresh, "openid admin", rtClient, rtSecret)
 	if status != http.StatusBadRequest {
@@ -421,7 +422,7 @@ func TestRefreshToken_ScopeExpansionRejected(t *testing.T) {
 func TestRefreshToken_ExpiredTokenRejected(t *testing.T) {
 	// 1ns TTL → token stale by the time we exchange.
 	srv, _, _ := newRefreshFlowServer(t, time.Nanosecond)
-	_, refresh := directLogin(t, srv, nil)
+	_, refresh := directLogin(t, srv, []string{"offline_access"})
 	time.Sleep(2 * time.Millisecond)
 
 	status, body := refreshExchange(t, srv, refresh, "", rtClient, rtSecret)
@@ -437,8 +438,8 @@ func TestRefreshToken_ExpiredTokenRejected(t *testing.T) {
 
 func TestRefreshToken_AuthCodeExchangeIncludesRefreshTokenWhenStoreWired(t *testing.T) {
 	// The authorization_code branch in handleToken should ALSO return
-	// a refresh_token when oauth.RefreshTokenStore is wired, so SPAs using
-	// the code grant get refresh capability without a separate dance.
+	// a refresh_token when oauth.RefreshTokenStore is wired AND the code
+	// explicitly granted offline_access; wiring alone is not authorization.
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: rtUser})
 	clients := defaultimpl.NewMemoryClientStore()
@@ -472,6 +473,7 @@ func TestRefreshToken_AuthCodeExchangeIncludesRefreshTokenWhenStoreWired(t *test
 		"credential":    map[string]string{"username": "x", "password": "y"},
 		"response_type": "code",
 		"redirect_uri":  "https://app/cb",
+		"scope":         []string{"offline_access"},
 	})
 	lresp, err := http.Post(httpSrv.URL+"/auth/login", "application/json", bytes.NewReader(loginBody))
 	if err != nil {

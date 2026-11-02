@@ -129,7 +129,7 @@ func (h *referenceApps) seedReferenceApps(t *testing.T, users *defaultimpl.Memor
 			h.clients[app+"/"+tenantID] = binding
 			clients.AddSeed(&sso.Client{ID: id, Secret: binding.Secret, Name: id, TenantID: tenantID, Active: true, TokenStrategy: "jwt",
 				TokenEndpointAuthMethod: "client_secret_basic", GrantTypes: []string{"authorization_code", "refresh_token"},
-				AllowedScopes: []string{"openid", binding.Scope}, AllowedResources: []string{binding.Audience},
+				AllowedScopes: []string{"openid", "offline_access", binding.Scope}, AllowedResources: []string{binding.Audience},
 				AllowedAuthenticators: []string{"password"}, RedirectURIs: []string{binding.Redirect}, SkipConsent: true,
 				RequirePKCE: true, AllowedPKCEMethods: []string{"S256"}})
 			if err := h.permissions.AddRole(ctx, id, permissions.Role{Code: refAppRole, Permissions: []string{binding.Scope}}); err != nil {

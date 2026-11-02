@@ -63,6 +63,9 @@ func ValidateTokenWithIntrospect(ctx context.Context, token string, cfg Config) 
 	if err := validateIntrospectedClaims(claims, cfg); err != nil {
 		return nil, err
 	}
+	if err := checkRevocation(ctx, claims, cfg); err != nil {
+		return nil, err
+	}
 	return claims, nil
 }
 

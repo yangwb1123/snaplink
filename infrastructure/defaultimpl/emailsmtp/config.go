@@ -41,9 +41,14 @@ type Config struct {
 	// negotiation (may fall back to plaintext — require TLS at the
 	// relay/edge if that is unacceptable). "implicit": TLS handshake before
 	// the first SMTP verb regardless of port (non-465 implicit-TLS relays).
-	// Any other value is treated as "auto". Verification is always
-	// fail-closed: ServerName is the relay host, the TLS floor is 1.2, and
-	// InsecureSkipVerify is never set.
+	// "require_starttls": the relay must advertise STARTTLS and complete a
+	// verified TLS 1.2+ handshake before AUTH, MAIL, or message bytes;
+	// missing STARTTLS, certificate/hostname/handshake failure, protocol
+	// error or cancellation fails closed with no plaintext or legacy-send
+	// fallback. Explicit require_starttls wins over the port-465 implicit
+	// auto-selection. Any other value is treated as "auto". Verification is
+	// always fail-closed: ServerName is the relay host, the TLS floor is 1.2,
+	// and InsecureSkipVerify is never set.
 	TLSMode string
 	// Timeout bounds each background send goroutine dispatch fires off; 0
 	// (the SDK default) uses defaultTimeout.

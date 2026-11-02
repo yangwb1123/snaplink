@@ -189,15 +189,10 @@ func oauthBackend(cfg config.OAuthConfig) string {
 	return strings.ToLower(strings.TrimSpace(cfg.Backend))
 }
 
-// checkOAuthStoreSchema runs the per-namespace schema boot gate for the OAuth
-// hot stores, branched by backend: SQLite gates via
-// serverbuildsign.CheckSQLiteSchema (type-probed DB() *sql.DB); postgres gates
-// via postgresbackend.CheckSchema on the shared pool. Running the SQLite
-// version-table query against a pgx pool would falsely fail boot (the
-// sqlite_master probe errors on a postgres connection), so the branch is
-// mandatory — follows the checkIdentityLinkSchema precedent. Memory/redis
-// stores expose no DB() and silently no-op, byte-identical to today.
-func (b *appBuilder) checkOAuthStoreSchema(backend, namespace string, store any, sqliteMax, pgMax int) error {
+// checkStoreSchema routes a namespace's boot gate using its effective backend
+// and that backend's migration sequence. DB() alone does not identify a dialect.
+// Memory and Redis have no SQL schema; unknown backends fail closed.
+func (b *appBuilder) checkStoreSchema(backend, namespace string, store any, sqliteMax, pgMax int) error {
 	switch backend {
 	case "sqlite":
 		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, namespace, sqliteMax); err != nil {
@@ -207,6 +202,10 @@ func (b *appBuilder) checkOAuthStoreSchema(backend, namespace string, store any,
 		if err := postgresbackend.CheckSchema(b.schemaCtx, b.pgDB, namespace, pgMax); err != nil {
 			return fmt.Errorf("schema check %s: %w", namespace, err)
 		}
+	case "", "memory", "redis":
+		return nil
+	default:
+		return fmt.Errorf("schema check %s: unsupported backend %q", namespace, backend)
 	}
 	return nil
 }
@@ -232,7 +231,7 @@ func (b *appBuilder) wireOAuthGrantStores() error {
 		if err != nil {
 			return fmt.Errorf("oauth.auth_code: %w", err)
 		}
-		if err := b.checkOAuthStoreSchema(backend, "auth_codes", store,
+		if err := b.checkStoreSchema(backend, "auth_codes", store,
 			sqlitestores.AuthCodesMaxVersion(), postgresbackend.AuthCodesMaxVersion()); err != nil {
 			return err
 		}
@@ -321,7 +320,7 @@ func (b *appBuilder) wireRefreshToken() error {
 	if err != nil {
 		return fmt.Errorf("oauth.refresh_token: %w", err)
 	}
-	if err := b.checkOAuthStoreSchema(backend, "refresh_tokens", store,
+	if err := b.checkStoreSchema(backend, "refresh_tokens", store,
 		sqlitestores.RefreshTokensMaxVersion(), postgresbackend.RefreshTokensMaxVersion()); err != nil {
 		return err
 	}
@@ -399,7 +398,7 @@ func (b *appBuilder) wireDeviceCodePAR() error {
 		if err != nil {
 			return fmt.Errorf("oauth.device_code: %w", err)
 		}
-		if err := b.checkOAuthStoreSchema(backend, "device_codes", store,
+		if err := b.checkStoreSchema(backend, "device_codes", store,
 			sqlitestores.DeviceCodesMaxVersion(), postgresbackend.DeviceCodesMaxVersion()); err != nil {
 			return err
 		}
@@ -418,7 +417,7 @@ func (b *appBuilder) wireDeviceCodePAR() error {
 		if err != nil {
 			return fmt.Errorf("par store: %w", err)
 		}
-		if err := b.checkOAuthStoreSchema(backend, "par", store,
+		if err := b.checkStoreSchema(backend, "par", store,
 			sqlitestores.PARMaxVersion(), postgresbackend.PARMaxVersion()); err != nil {
 			return err
 		}

@@ -50,7 +50,7 @@ func stockAuthTimeApp(t *testing.T) (*app, http.Handler) {
 		Username: "alice", SubjectID: "alice", BcryptHashFile: writeBcryptHashFile(t, "fixture-password"),
 	}}}
 	cfg.Clients = []config.ClientConfig{{ID: "rp", Active: true, SkipConsent: true, TokenStrategy: "jwt",
-		TokenEndpointAuthMethod: "none", RequirePKCE: true, AllowedScopes: []string{"openid"},
+		TokenEndpointAuthMethod: "none", RequirePKCE: true, AllowedScopes: []string{"openid", "offline_access"},
 		AllowedAuthenticators: []string{"password"}, RedirectURIs: []string{"https://rp.example/callback"}}}
 	a, err := buildApp(cfg, quietLogger())
 	if err != nil {
@@ -95,7 +95,7 @@ func TestBuildApp_BrowserSSOAuthenticationTimeSurvivesDelayedExchangeAndRefresh(
 	digest := sha256.Sum256([]byte(stockAuthTimeVerifier))
 	login := stockBrowserSSORequest(t, handler, map[string]any{
 		"client_id": "rp", "response_type": "code", "redirect_uri": "https://rp.example/callback",
-		"scope": []string{"openid"}, "provider": "password",
+		"scope": []string{"openid", "offline_access"}, "provider": "password",
 		"credential":     map[string]string{"username": "alice", "password": "fixture-password"},
 		"code_challenge": base64.RawURLEncoding.EncodeToString(digest[:]), "code_challenge_method": "S256",
 	}, nil)
@@ -158,7 +158,7 @@ func TestBuildApp_BrowserSSOKeepsAuthenticatorAuthenticationTime(t *testing.T) {
 	})
 	sso.WithAuthenticator(authenticators.NewPasswordAuthenticator(verifier))(a.server)
 	login := stockBrowserSSORequest(t, handler, map[string]any{
-		"client_id": "rp", "response_type": "token", "scope": []string{"openid"}, "provider": "password",
+		"client_id": "rp", "response_type": "token", "scope": []string{"openid", "offline_access"}, "provider": "password",
 		"credential": map[string]string{"username": "alice", "password": "fixture-password"},
 	}, nil)
 	cookies := login.Result().Cookies()
@@ -180,7 +180,7 @@ func TestBuildApp_BrowserSSOKeepsAuthenticatorAuthenticationTime(t *testing.T) {
 func TestBuildApp_BrowserSSODirectLoginUsesOneAuthenticationTime(t *testing.T) {
 	a, handler := stockAuthTimeApp(t)
 	login := stockBrowserSSORequest(t, handler, map[string]any{
-		"client_id": "rp", "response_type": "token", "scope": []string{"openid"}, "provider": "password",
+		"client_id": "rp", "response_type": "token", "scope": []string{"openid", "offline_access"}, "provider": "password",
 		"credential": map[string]string{"username": "alice", "password": "fixture-password"},
 	}, nil)
 	cookies := login.Result().Cookies()

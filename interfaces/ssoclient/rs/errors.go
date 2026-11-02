@@ -51,9 +51,10 @@ var (
 	// skew tolerance.
 	ErrTokenNotYetValid = errors.New("rs: token not yet valid")
 
-	// ErrTokenInactive: the introspection endpoint answered
-	// {"active": false} — revoked, expired, or never issued (RFC 7662
-	// deliberately does not say which).
+	// ErrTokenInactive: introspection answered {"active": false}, or a
+	// configured RevocationCheck could not admit the token (missing jti,
+	// revoked, backend error, or cancellation). These causes deliberately
+	// share one class; backend details are never included.
 	ErrTokenInactive = errors.New("rs: token inactive")
 
 	// ErrIntrospection: the introspection round-trip itself failed

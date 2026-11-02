@@ -104,15 +104,12 @@ func main() {
 	applyRuntimeTuning(cfg.Server.HTTP2)
 
 	tracingShutdown := initTracing(cfg, logger)
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = tracingShutdown(ctx)
-	}()
+	defer flushTracing(tracingShutdown)
 
 	reloader := newConfigReloader(cfg, sources, logger)
 	if err := run(cfg, logger, flags.tlsCert, flags.tlsKey, flags.grpcTLSCert, flags.grpcTLSKey, flags.grpcInsecure, flags.grpcListen, reloader); err != nil {
 		logger.Error("server exited with error", "error", err)
+		runErrorCleanup(tracingShutdown, cleanupSources)
 		os.Exit(1)
 	}
 }
@@ -180,6 +177,7 @@ type app struct {
 	// reads from.
 	clientStore           sso.ClientStore
 	userProvider          sso.UserProvider
+	passwordStore         sso.PasswordCredentialStore // seeded admin credential + self-service changes
 	sessionMgr            sso.SessionManager
 	consentStore          sso.ConsentStore              // for the GDPR eraser
 	mfaEnrollStore        sso.MFAEnrollmentStore        // for the GDPR eraser
@@ -410,12 +408,15 @@ type app struct {
 	pgDB *sql.DB
 }
 
-func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcTLSCert, grpcTLSKey string, grpcInsecure bool, grpcListen string, reloader *configreload.Reloader) error {
+func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcTLSCert, grpcTLSKey string, grpcInsecure bool, grpcListen string, reloader *configreload.Reloader) (retErr error) {
 	a, err := buildApp(cfg, logger)
 	if err != nil {
 		return err
 	}
 	defer closeAppStores(a)
+	servers := runtimeServers{}
+	cleanStop := false
+	defer func() { shutdownRuntime(a, servers, logger, cleanStop && retErr == nil) }()
 	wireRateLimitReload(reloader, a.server, a.redisClient)
 	wireFeatureGateReload(reloader, a.server)
 	wireWebhookReload(reloader, a.server)
@@ -429,17 +430,17 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcTLSCert, gr
 		}
 	}
 
-	httpSrv, err := buildHTTPServer(cfg, a, logger)
+	servers.http, err = buildHTTPServer(cfg, a, logger)
 	if err != nil {
 		return err
 	}
 	wireTenantQuotaProjectionReload(reloader, a.tenantQuotaProjectionSources)
 
 	errCh := make(chan error, 2)
-	startHTTPServer(httpSrv, cfg, logger, tlsCert, tlsKey, errCh)
-	pprofSrv := startPprofServer(cfg, logger)
+	startHTTPServer(servers.http, cfg, logger, tlsCert, tlsKey, errCh)
+	servers.pprof = startPprofServer(cfg, logger)
 
-	grpcSrv, err := startGRPCServer(a, grpcListen, logger, tlsCert, tlsKey, grpcTLSCert, grpcTLSKey, grpcInsecure, errCh)
+	servers.grpc, err = startGRPCServer(a, grpcListen, logger, tlsCert, tlsKey, grpcTLSCert, grpcTLSKey, grpcInsecure, errCh)
 	if err != nil {
 		return err
 	}
@@ -449,13 +450,7 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcTLSCert, gr
 	if err := waitForShutdown(logger, errCh, reloader); err != nil {
 		return err
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-	closeSSEBroker(a)
-	shutdownServers(ctx, logger, httpSrv, pprofSrv, grpcSrv, a.grpcHealthStop)
-	shutdownSubsystems(ctx, a, logger)
-	logger.Info("server stopped cleanly")
+	cleanStop = true
 	return nil
 }
 

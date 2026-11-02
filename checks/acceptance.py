@@ -35,7 +35,7 @@ def run_py(module: str, *args: str) -> tuple[int, str]:
         [sys.executable, "-m", module] + list(args),
         capture_output=True, text=True, check=False, cwd=str(ROOT)
     )
-    return result.returncode, result.stdout
+    return result.returncode, result.stdout + result.stderr
 
 
 def run_go(args: list[str]) -> tuple[int, str]:
@@ -92,7 +92,7 @@ def run() -> int:
 
     print("[Section 4] Coverage regression")
     rc, out = run_py("checks.coverage")
-    ok("coverage") if rc == 0 else nok("coverage")
+    ok("coverage") if rc == 0 else (nok("coverage"), print(out))
 
     print("[U8] Root file count (<=15 non-exempt)")
     rc, out = run_py("checks.root_files")

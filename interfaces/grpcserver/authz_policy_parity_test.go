@@ -1,19 +1,26 @@
 package grpcserver_test
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	authzv1 "github.com/yangwb1123/snaplink/gen/proto/authz/v1"
 	"github.com/yangwb1123/snaplink/interfaces/grpcserver"
+	"github.com/yangwb1123/snaplink/test/testkit/sourcepath"
 )
+
+//go:embed authz_policy_parity_test.go
+var policySourceText []byte
+
+var policyBoundRoot, policyBindingError = sourcepath.Bind("interfaces/grpcserver/authz_policy_parity_test.go", policySourceText)
 
 func TestAuthzCheckMatchesExportedPolicyBundle(t *testing.T) {
 	ctx := context.Background()
@@ -189,6 +196,20 @@ func evalBundlePolicy(ctx context.Context, bundle *permissions.PolicyBundle, rol
 }
 
 func policySourceDir() string {
-	_, source, _, _ := runtime.Caller(0)
-	return filepath.Clean(filepath.Join(filepath.Dir(source), "..", ".."))
+	if policyBindingError != nil {
+		panic(policyBindingError)
+	}
+	return policyBoundRoot
+}
+
+func TestSourceRootBindingSurvivesCWDChange(t *testing.T) {
+	want := policySourceDir()
+	t.Chdir(t.TempDir())
+	if got := policySourceDir(); got != want {
+		t.Fatalf("source root changed with cwd: %q, want %q", got, want)
+	}
+	data, err := os.ReadFile(filepath.Join(want, "interfaces", "grpcserver", "authz_policy_parity_test.go"))
+	if err != nil || !bytes.Equal(data, policySourceText) {
+		t.Fatalf("bound policy test source mismatch: %v", err)
+	}
 }

@@ -3,6 +3,7 @@ package emailsmtp
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/smtp"
@@ -25,8 +26,23 @@ type tlsDialFunc func(network, addr string, cfg *tls.Config) (net.Conn, error)
 // port 465 selects implicit TLS, every other port goes through
 // net/smtp.SendMail's opportunistic STARTTLS negotiation.
 const (
-	tlsModeAuto     = "auto"
-	tlsModeImplicit = "implicit"
+	tlsModeAuto            = "auto"
+	tlsModeImplicit        = "implicit"
+	tlsModeRequireSTARTTLS = "require_starttls"
+)
+
+// strictDialFunc and strictTLSConfigFunc are private seams for the
+// require_starttls transport. Production always uses defaultStrictDial
+// (context-aware net.Dialer) and strictTLSConfig (ServerName pinned to the
+// relay host, TLS 1.2 floor, certificate verification on); tests may inject a
+// trusted-CA config without changing the production default or any global TLS
+// state.
+type strictDialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+type strictTLSConfigFunc func(host string) *tls.Config
+
+var (
+	errStrictSTARTTLSUnavailable = errors.New("emailsmtp: tls_mode=require_starttls but relay does not advertise STARTTLS")
+	errStrictSTARTTLSUnverified  = errors.New("emailsmtp: tls_mode=require_starttls handshake did not verify TLS 1.2+")
 )
 
 // defaultTimeout bounds a background send when cfg.Timeout is unset (<= 0).
@@ -62,6 +78,123 @@ func defaultSendFunc(addr string, a smtp.Auth, from string, to []string, msg []b
 // dialTLS instead of tls.Dial directly.
 func defaultTLSDial(network, addr string, cfg *tls.Config) (net.Conn, error) {
 	return tls.Dial(network, addr, cfg)
+}
+
+// defaultStrictDial is the require_starttls plaintext dial: DialContext makes
+// the initial connect cancellable, and the SMTP session installed over it is
+// additionally bounded by strictSTARTTLSSend's context watcher.
+func defaultStrictDial(ctx context.Context, network, addr string) (net.Conn, error) {
+	var d net.Dialer
+	return d.DialContext(ctx, network, addr)
+}
+
+// strictTLSConfig builds the TLS client config for a require_starttls
+// upgrade: ServerName pinned to the relay host (SNI + certificate hostname
+// verification) and a TLS 1.2 floor. InsecureSkipVerify is NEVER set — an
+// untrusted or mismatched relay certificate fails closed rather than being
+// trusted in software.
+func strictTLSConfig(host string) *tls.Config {
+	return &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
+}
+
+// strictSTARTTLSSend is the tls_mode=require_starttls transport. It refuses to
+// send AUTH, MAIL, or message bytes until the relay advertises STARTTLS and a
+// verified TLS 1.2+ handshake to host completes. Every failure is fail-closed:
+// there is no plaintext or legacy-sender fallback. ctx bounds the admitted
+// connection; cancellation closes it so a blocked SMTP read/write cannot
+// outlive the send timeout. An already-admitted cancellation callback is
+// joined before return: stop(true) means it never ran, while stop(false) waits
+// for callback completion. Closing a net.Conn unblocks ordinary SMTP I/O, but
+// this is not a wall-clock guarantee for an arbitrarily wedged non-network
+// syscall.
+func strictSTARTTLSSend(ctx context.Context, dial strictDialFunc, tlsCfg *tls.Config, addr string, a smtp.Auth, from string, to []string, msg []byte) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("emailsmtp: strict-starttls address %q: %w", addr, err)
+	}
+	conn, err := dial(ctx, "tcp", addr)
+	if err != nil {
+		return fmt.Errorf("emailsmtp: strict-starttls dial: %w", err)
+	}
+	callbackDone := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(callbackDone)
+		_ = conn.Close()
+	})
+	defer func() {
+		if !stop() {
+			<-callbackDone
+		}
+		_ = conn.Close()
+	}()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return fmt.Errorf("emailsmtp: strict-starttls greet: %w", err)
+	}
+	defer client.Close()
+	if ok, _ := client.Extension("STARTTLS"); !ok {
+		return errStrictSTARTTLSUnavailable
+	}
+	secureCfg := &tls.Config{}
+	if tlsCfg != nil {
+		secureCfg = tlsCfg.Clone()
+	}
+	secureCfg.ServerName = host
+	secureCfg.InsecureSkipVerify = false
+	if secureCfg.MinVersion < tls.VersionTLS12 {
+		secureCfg.MinVersion = tls.VersionTLS12
+	}
+	if err := client.StartTLS(secureCfg); err != nil {
+		return fmt.Errorf("emailsmtp: strict-starttls handshake: %w", err)
+	}
+	if state, ok := client.TLSConnectionState(); !ok || !state.HandshakeComplete || state.Version < tls.VersionTLS12 {
+		return errStrictSTARTTLSUnverified
+	}
+	return strictSMTPSession(ctx, client, a, from, to, msg)
+}
+
+func strictSMTPSession(ctx context.Context, client *smtp.Client, a smtp.Auth, from string, to []string, msg []byte) error {
+	if a != nil {
+		if err := client.Auth(a); err != nil {
+			return strictSessionError(ctx, "auth")
+		}
+	}
+	if err := client.Mail(from); err != nil {
+		return strictSessionError(ctx, "mail")
+	}
+	for _, rcpt := range to {
+		if err := client.Rcpt(rcpt); err != nil {
+			return strictSessionError(ctx, "rcpt")
+		}
+	}
+	w, err := client.Data()
+	if err != nil {
+		return strictSessionError(ctx, "data")
+	}
+	if _, err := w.Write(msg); err != nil {
+		return strictSessionError(ctx, "write")
+	}
+	if err := w.Close(); err != nil {
+		return strictSessionError(ctx, "data close")
+	}
+	if err := client.Quit(); err != nil {
+		return strictSessionError(ctx, "quit")
+	}
+	return nil
+}
+
+// strictSessionError deliberately drops the underlying SMTP reply: a hostile
+// or broken relay can echo the AUTH payload or message bytes in its response,
+// and that text must never reach the log through dispatch. Cancellation is
+// surfaced as the context error instead.
+func strictSessionError(ctx context.Context, command string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fmt.Errorf("emailsmtp: strict-starttls %s rejected by relay", command)
 }
 
 // implicitTLSConfig builds the TLS client config for an implicit-TLS session:
@@ -153,6 +286,13 @@ func (s *Sender) sendMessage(parent context.Context, to string, msg []byte) erro
 	if s.cfg.Username != "" {
 		auth = smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
 	}
+	// Strict STARTTLS owns and joins its own cancellation callback, so it runs
+	// on this deadline-bound path instead of the legacy async select below.
+	// Handler latency is unchanged because dispatch itself is still the
+	// fire-and-forget outer goroutine.
+	if s.useStrictSTARTTLS() {
+		return s.strictSend(ctx, addr, auth, to, msg)
+	}
 	done := make(chan error, 1)
 	go func() {
 		if s.useImplicitTLS() {
@@ -169,13 +309,44 @@ func (s *Sender) sendMessage(parent context.Context, to string, msg []byte) erro
 	}
 }
 
+// strictSend is the synchronous, deadline-bound require_starttls operation.
+// strictSTARTTLSSend closes the admitted connection when ctx ends and joins an
+// already-running cancellation callback, so returning here means the client
+// send and callback have terminated (subject to the close caveat above).
+func (s *Sender) strictSend(ctx context.Context, addr string, auth smtp.Auth, to string, msg []byte) error {
+	dial, tlsCfg := s.strictDial, strictTLSConfig(s.cfg.Host)
+	if dial == nil {
+		dial = defaultStrictDial
+	}
+	if s.strictTLS != nil {
+		tlsCfg = s.strictTLS(s.cfg.Host)
+	}
+	err := strictSTARTTLSSend(ctx, dial, tlsCfg, addr, auth, s.cfg.From, []string{to}, msg)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return err
+}
+
+// useStrictSTARTTLS reports whether the explicit require_starttls mode is set.
+// It takes precedence over port-based implicit TLS in useImplicitTLS, so port
+// 465 cannot silently bypass the required STARTTLS upgrade.
+func (s *Sender) useStrictSTARTTLS() bool {
+	return s.cfg.TLSMode == tlsModeRequireSTARTTLS
+}
+
 // useImplicitTLS reports whether this send must open the connection with a
 // TLS handshake before the first SMTP verb: the conventional 465 implicit-TLS
 // port, or Config.TLSMode explicitly requesting it (see tlsModeImplicit). Any
 // other port keeps net/smtp.SendMail's opportunistic STARTTLS negotiation
 // (587) or plaintext relay (25) — byte-identical to the pre-implicit-TLS
-// behavior. Unrecognized TLSMode values fall back to auto.
+// behavior. Unrecognized TLSMode values fall back to auto. An explicit
+// require_starttls mode wins over the port-465 auto-selection and is handled
+// by the strict STARTTLS transport instead.
 func (s *Sender) useImplicitTLS() bool {
+	if s.useStrictSTARTTLS() {
+		return false
+	}
 	return s.cfg.Port == 465 || s.cfg.TLSMode == tlsModeImplicit
 }
 

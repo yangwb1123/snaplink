@@ -10,13 +10,21 @@ package ssotest
 
 import (
 	"bufio"
+	"bytes"
+	_ "embed"
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/yangwb1123/snaplink/test/testkit/sourcepath"
 )
+
+//go:embed deploy_form_only_sweep_test.go
+var deploySweepSource []byte
+
+var deploySourceRoot, deployBindingError = sourcepath.Bind("test/deploy_form_only_sweep_test.go", deploySweepSource)
 
 const formOnlyKey = "require_form_content_type"
 
@@ -46,15 +54,25 @@ func TestFormOnlySettingRecognizesConfigurationNotDocumentation(t *testing.T) {
 	}
 }
 
-// repoRoot resolves the repository root from this package's directory
-// (test/), stable under any cwd.
+// repoRoot uses the package-initialized source binding, stable after cwd changes.
 func repoRoot(t *testing.T) string {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
+	if deployBindingError != nil {
+		t.Fatal(deployBindingError)
 	}
-	return filepath.Dir(filepath.Dir(file))
+	return deploySourceRoot
+}
+
+func TestSourceRootBindingSurvivesCWDChange(t *testing.T) {
+	want := repoRoot(t)
+	t.Chdir(t.TempDir())
+	if got := repoRoot(t); got != want {
+		t.Fatalf("deployment source root changed with cwd: %q, want %q", got, want)
+	}
+	data, err := os.ReadFile(filepath.Join(want, "test", "deploy_form_only_sweep_test.go"))
+	if err != nil || !bytes.Equal(data, deploySweepSource) {
+		t.Fatalf("bound deployment test source mismatch: %v", err)
+	}
 }
 
 func TestDeployTreeRequireFormContentTypeSingleFlipPoint(t *testing.T) {

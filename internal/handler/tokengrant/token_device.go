@@ -161,10 +161,10 @@ func devicePollGate(d DeviceGrantDeps, ctx core.HandlerContext, store oauth.Devi
 	return dc, true
 }
 
-// deviceIssueRefresh mints a refresh token (fail-open: a failure is logged and
-// the access token is still returned). Adds the token + records issuance on resp.
+// deviceIssueRefresh requires exact offline access in the approved stored grant.
+// Authorized issuance failures log and omit refresh without failing access tokens.
 func deviceIssueRefresh(d DeviceGrantDeps, ctx core.HandlerContext, client *core.Client, dc *oauth.DeviceCode, resp map[string]any, dpopJKT string) {
-	if d.RefreshTokenStore() == nil || !deviceClientAllowsRefresh(client) {
+	if !slices.Contains(dc.Scopes, core.ScopeOfflineAccess) || d.RefreshTokenStore() == nil || !deviceClientAllowsRefresh(client) {
 		return
 	}
 	// Device grant doesn't accept authorization_details today; pass nil so

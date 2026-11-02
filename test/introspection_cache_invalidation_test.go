@@ -79,6 +79,7 @@ func icaLogin(t *testing.T, srv *httptest.Server) (access, refresh string) {
 	body, _ := json.Marshal(map[string]any{
 		"provider":   "password",
 		"client_id":  icaClient,
+		"scope":      []string{"offline_access"},
 		"credential": map[string]string{"username": "x", "password": "y"},
 	})
 	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))

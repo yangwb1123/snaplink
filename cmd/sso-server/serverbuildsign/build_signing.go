@@ -3,6 +3,7 @@ package serverbuildsign
 import (
 	"context"
 	"crypto"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -21,6 +22,8 @@ import (
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	pg "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	"github.com/yangwb1123/snaplink/infrastructure/postgres/securitystore"
 	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 
 	"github.com/yangwb1123/snaplink/platform/metrics"
@@ -65,12 +68,18 @@ func BrowserSSOOption(enabled bool, issuer SigningIssuer) sso.Option {
 // in-process key path) — the caller hands it to AppendReadyCheck so a
 // wedged KMS/HSM trips /readyz.
 func BuildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, rdb goredis.Cmdable, m *metrics.Metrics, logger spi.Logger) (SigningIssuer, string, crypto.Signer, error) {
+	return BuildSigningIssuerWithPostgres(sc, srv, rdb, m, logger, nil, "")
+}
+
+// BuildSigningIssuerWithPostgres accepts the composition-owned PostgreSQL pool.
+// Durable seeding is not live cross-replica revocation propagation.
+func BuildSigningIssuerWithPostgres(sc config.SigningConfig, srv config.ServerConfig, rdb goredis.Cmdable, m *metrics.Metrics, logger spi.Logger, db *sql.DB, dialect pg.Dialect) (SigningIssuer, string, crypto.Signer, error) {
 	extSigner, extKID, err := resolveExternalSigner(sc, m, logger)
 	if err != nil {
 		return nil, "", nil, err
 	}
 
-	revStore, err := BuildRevocationStore(sc, rdb)
+	revStore, err := BuildRevocationStoreWithPostgres(sc, rdb, db, dialect)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -100,6 +109,10 @@ func BuildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, rdb go
 // restart (defaultimpl.RevocationStore). "" = nil (in-process only). Redis
 // reuses the process-wide client so every replica seeds from the same set.
 func BuildRevocationStore(sc config.SigningConfig, rdb goredis.Cmdable) (defaultimpl.RevocationStore, error) {
+	return BuildRevocationStoreWithPostgres(sc, rdb, nil, "")
+}
+
+func BuildRevocationStoreWithPostgres(sc config.SigningConfig, rdb goredis.Cmdable, db *sql.DB, dialect pg.Dialect) (defaultimpl.RevocationStore, error) {
 	switch strings.ToLower(strings.TrimSpace(sc.RevocationBackend)) {
 	case "":
 		return nil, nil
@@ -115,13 +128,19 @@ func BuildRevocationStore(sc config.SigningConfig, rdb goredis.Cmdable) (default
 			return nil, fmt.Errorf("keys.signing.revocation: %w", err)
 		}
 		return st, nil
+	case "postgres":
+		store, err := securitystore.NewRevocationStoreWithDB(db, dialect)
+		if err != nil {
+			return nil, err
+		}
+		return store, nil
 	case "redis":
 		if rdb == nil {
 			return nil, fmt.Errorf("keys.signing.revocation_backend redis requires the shared redis block (set redis.addrs)")
 		}
 		return redisbackend.NewRevocationStore(rdb), nil
 	default:
-		return nil, fmt.Errorf("keys.signing.revocation_backend %q unsupported (supported: memory, sqlite, redis)", sc.RevocationBackend)
+		return nil, fmt.Errorf("keys.signing.revocation_backend %q unsupported (supported: memory, sqlite, redis, postgres)", sc.RevocationBackend)
 	}
 }
 
@@ -133,7 +152,13 @@ func seedRevocations(iss interface {
 	if store == nil {
 		return nil
 	}
-	return iss.SeedRevocations(context.Background())
+	ctx := context.Background()
+	if _, ok := store.(*securitystore.RevocationStore); ok {
+		bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		ctx = bounded
+	}
+	return iss.SeedRevocations(ctx)
 }
 
 // PushApprovalStoreIface adapts the sqlite-typed handle into the

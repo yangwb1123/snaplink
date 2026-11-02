@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
 	"github.com/yangwb1123/snaplink/config"
@@ -44,6 +46,25 @@ func fail(format string, args ...any) {
 func failUsage(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, progName+": "+format+"\n", args...)
 	os.Exit(2)
+}
+
+// flushTracing drains pending spans on the existing bounded process-exit
+// context. main defers it on normal completion and runErrorCleanup reuses it,
+// so the failed-run path cannot drift from the deferred sequence.
+func flushTracing(tracingShutdown func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = tracingShutdown(ctx)
+}
+
+// runErrorCleanup runs the outer process-exit cleanup that a direct os.Exit
+// after a run error would otherwise skip: flush tracing, then close the config
+// sources (etcd), matching the LIFO order of main's defers. The flush error is
+// discarded exactly as on the normal-return path; the run error and exit
+// status are unchanged.
+func runErrorCleanup(tracingShutdown func(context.Context) error, cleanupSources func()) {
+	flushTracing(tracingShutdown)
+	cleanupSources()
 }
 
 // writeAdminPasswordFile atomically writes the bootstrap admin

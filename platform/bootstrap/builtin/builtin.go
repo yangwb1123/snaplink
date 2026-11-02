@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/interfaces/snapshot"
@@ -29,6 +30,10 @@ type AdminSeed struct {
 	Users       sso.UserProvider     // required
 	Clients     sso.ClientStore      // required for Step 4 (admin client)
 	Netpolicy   netpolicy.Store      // optional; Step 3 skips when nil
+	// Passwords persists the generated admin password so the printed value is
+	// actually usable. When nil the step still seeds the user but never prints
+	// a credential that cannot be used.
+	Passwords sso.PasswordCredentialStore
 
 	// Tunables.
 	AdminUserID    string // default "admin"
@@ -120,6 +125,7 @@ func Steps(seed *AdminSeed) []bootstrap.Step {
 		stepSeedAdminConsoleClient(seed),
 		stepClearSeededPassword(seed),
 		stepEnforceAdminConsolePKCE(seed),
+		stepGrantAdminConsoleOfflineAccess(seed),
 	}
 }
 
@@ -147,24 +153,38 @@ func applySeedDefaults(seed *AdminSeed) {
 }
 
 // stepSeedAdminRole is version 1: create the sso-admin role carrying admin:*.
+// adminRoleClients lists the client scopes that must carry the admin role: the
+// configured admin client (possibly the empty audience) plus the browser admin
+// console, whose tokens are issued for its own client id. Without the console
+// entry an operator who logs in through the console gets a 403 from every admin
+// REST endpoint even though the role exists.
+func adminRoleClients(seed *AdminSeed) []string {
+	clients := []string{seed.AdminClientID}
+	if seed.AdminClientID != adminConsoleClientID {
+		clients = append(clients, adminConsoleClientID)
+	}
+	return clients
+}
+
 func stepSeedAdminRole(seed *AdminSeed) bootstrap.Step {
 	return bootstrap.StepFunc("seed_admin_role", 1, func(ctx context.Context) error {
 		if seed.Permissions == nil {
 			return fmt.Errorf("seed_admin_role: permissions provider required")
 		}
-		err := seed.Permissions.AddRole(ctx, seed.AdminClientID, permissions.Role{
-			Code:        seed.AdminRoleCode,
-			Name:        "SSO Administrator",
-			Description: "Full admin:* scope across the control plane.",
-			Permissions: []string{sso.AdminScope},
-		})
-		// AddRole returns ErrRoleExists if a previous boot already created
-		// it — treat as success so we still mark applied. (The Runner only
-		// calls Run once per version, but defensive).
-		if errors.Is(err, permissions.ErrRoleExists) {
-			return nil
+		for _, clientID := range adminRoleClients(seed) {
+			err := seed.Permissions.AddRole(ctx, clientID, permissions.Role{
+				Code:        seed.AdminRoleCode,
+				Name:        "SSO Administrator",
+				Description: "Full admin:* scope across the control plane.",
+				Permissions: []string{sso.AdminScope},
+			})
+			// AddRole returns ErrRoleExists if a previous boot already created
+			// it — treat as success so we still mark applied.
+			if err != nil && !errors.Is(err, permissions.ErrRoleExists) {
+				return err
+			}
 		}
-		return err
+		return nil
 	})
 }
 
@@ -180,15 +200,20 @@ func stepSeedAdminUser(seed *AdminSeed) bootstrap.Step {
 			return err
 		}
 		if present {
-			return nil
+			// A migrated deployment already owns the admin user, so nothing is
+			// created and no password is regenerated — but the role grant is
+			// still required or every admin REST call stays forbidden.
+			return assignAdminRoles(ctx, seed, seed.AdminUserID)
 		}
 		password, err := generatePassword(24)
 		if err != nil {
 			return fmt.Errorf("seed_admin_user: rand: %w", err)
 		}
-		// The password is printed to stdout once and never stored — keeping a
-		// plaintext copy in Attributes creates a persistent credential oracle
-		// that survives rotation and is readable via the admin user API.
+		// The plaintext never reaches Attributes: a copy there would survive
+		// rotation and be readable through the admin user API. When a credential
+		// store is wired the password is hashed into it and only then printed;
+		// with no store nothing is printed, because a password that cannot
+		// authenticate must not be handed to an operator.
 		user := &sso.User{
 			ID:         seed.AdminUserID,
 			ExternalID: seed.AdminUserID,
@@ -197,12 +222,18 @@ func stepSeedAdminUser(seed *AdminSeed) bootstrap.Step {
 		if err := seed.Users.CreateOrUpdate(ctx, user); err != nil {
 			return err
 		}
-		if seed.Permissions != nil {
-			if err := seed.Permissions.AssignRoles(ctx, user.ID, seed.AdminClientID, []string{seed.AdminRoleCode}); err != nil {
-				return fmt.Errorf("seed_admin_user: assign role: %w", err)
-			}
+		if err := assignAdminRoles(ctx, seed, user.ID); err != nil {
+			return err
 		}
-		seed.PasswordPrinter(password)
+		if seed.Passwords != nil {
+			if err := seed.Passwords.SetPassword(ctx, user.ID, password); err != nil {
+				return fmt.Errorf("seed_admin_user: store credential: %w", err)
+			}
+			seed.PasswordPrinter(password)
+			return nil
+		}
+		// No credential store wired: print nothing. A password that cannot
+		// authenticate must never be handed to an operator.
 		return nil
 	})
 }
@@ -268,6 +299,20 @@ func stepClearSeededPassword(seed *AdminSeed) bootstrap.Step {
 
 // stepSeedDefaultNetpolicy is version 3: seed the default intranet policy when
 // the optional netpolicy store is present and empty.
+// assignAdminRoles grants the admin role in every client scope the admin plane
+// reads (configured client incl. the empty audience, plus the browser console).
+func assignAdminRoles(ctx context.Context, seed *AdminSeed, userID string) error {
+	if seed.Permissions == nil {
+		return nil
+	}
+	for _, clientID := range adminRoleClients(seed) {
+		if err := seed.Permissions.AssignRoles(ctx, userID, clientID, []string{seed.AdminRoleCode}); err != nil {
+			return fmt.Errorf("seed_admin_user: assign role for client %q: %w", clientID, err)
+		}
+	}
+	return nil
+}
+
 func stepSeedDefaultNetpolicy(seed *AdminSeed) bootstrap.Step {
 	return bootstrap.StepFunc("seed_default_netpolicy", 3, func(ctx context.Context) error {
 		if seed.Netpolicy == nil {
@@ -343,7 +388,7 @@ func stepSeedAdminConsoleClient(seed *AdminSeed) bootstrap.Step {
 			Name:                  "SSO Admin Console",
 			AllowedAuthenticators: []string{"password"},
 			TokenStrategy:         sso.TokenStrategyJWT,
-			AllowedScopes:         []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite},
+			AllowedScopes:         []string{"openid", "profile", "offline_access", sso.AdminScopeRead, sso.AdminScopeWrite},
 			RequirePKCE:           true,
 			Active:                true,
 			// No Secret — this is a public PKCE client. RedirectURIs left
@@ -354,6 +399,61 @@ func stepSeedAdminConsoleClient(seed *AdminSeed) bootstrap.Step {
 		}
 		return err
 	})
+}
+
+// stepGrantAdminConsoleOfflineAccess is version 8: the admin console keeps a
+// refresh token for its SPA session, and every refresh-issuance path now
+// requires the effective offline_access grant. Deployments seeded before that
+// rule hold the public console client without the scope, which would silently
+// downgrade the console to access-token-only. This adds the scope to the
+// bootstrap-managed public client and leaves an operator-declared client (one
+// with a secret) exactly as the operator configured it.
+func stepGrantAdminConsoleOfflineAccess(seed *AdminSeed) bootstrap.Step {
+	return bootstrap.StepFunc("grant_admin_console_offline_access", 8, func(ctx context.Context) error {
+		if seed.Clients == nil {
+			return nil
+		}
+		client, err := seed.Clients.Get(ctx, adminConsoleClientID)
+		if errors.Is(err, sso.ErrNoSuchClient) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("grant_admin_console_offline_access: get client: %w", err)
+		}
+		if client.Secret != "" || slices.Contains(client.AllowedScopes, "offline_access") ||
+			!legacyConsoleScopes(client.AllowedScopes) {
+			return nil
+		}
+		updated := *client
+		updated.AllowedScopes = append(append([]string{}, client.AllowedScopes...), "offline_access")
+		if err := seed.Clients.Update(ctx, &updated); err != nil {
+			return fmt.Errorf("grant_admin_console_offline_access: update client: %w", err)
+		}
+		return nil
+	})
+}
+
+// legacyConsoleScopes reports whether the scope list is still one this server
+// produced by itself: the scope set seeded before offline_access was required,
+// optionally plus the admin scope the role grant appends on every boot (it is
+// not deduplicated, so the same value can repeat). Anything else means an
+// operator curated the client, which must be left exactly as configured.
+func legacyConsoleScopes(scopes []string) bool {
+	known := map[string]bool{"openid": true, "profile": true, sso.AdminScopeRead: true,
+		sso.AdminScopeWrite: true, "admin": true}
+	present := map[string]bool{}
+	for _, scope := range scopes {
+		if !known[scope] {
+			return false
+		}
+		present[scope] = true
+	}
+	for _, seeded := range []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite} {
+		if !present[seeded] {
+			return false
+		}
+	}
+	return true
 }
 
 // stepEnforceAdminConsolePKCE is version 7: legacy versions seeded the public

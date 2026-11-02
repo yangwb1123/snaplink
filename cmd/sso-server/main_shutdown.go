@@ -86,12 +86,20 @@ func (b *appBuilder) closeBuildFailure() {
 	if b.externalAuditClose != nil {
 		_ = b.externalAuditClose(context.Background())
 	}
+	// Shared pools back every store above: release last, and nil so a second
+	// call (e.g. wireAudit's retention failure) is a no-op.
+	if b.redis != nil {
+		_ = b.redis.Close()
+		b.redis = nil
+	}
+	if b.pgDB != nil {
+		_ = b.pgDB.Close()
+		b.pgDB = nil
+	}
 }
 
-// closeAppStores releases the long-lived backing stores at process exit. Order
-// mirrors the original LIFO defer chain (connections → tenant → netpolicy →
-// registry): connections + tenant + netpolicy stores depend on nothing the
-// registry close needs, and closing innermost-first matches the prior behavior.
+// closeAppStores releases long-lived backing stores at process exit, mirroring
+// the original LIFO defer chain (connections → tenant → netpolicy → registry).
 func closeAppStores(a *app) {
 	// connections.Store has no Close on the interface; the sqlite backend does.
 	if c, ok := a.connectionStore.(io.Closer); ok {
@@ -143,22 +151,28 @@ func closeSSEBroker(a *app) {
 // shutdownServers gracefully stops the HTTP, pprof, and gRPC listeners under the
 // shared shutdown deadline. HTTP falls back to a hard Close on graceful-shutdown
 // error; gRPC falls back to Stop when GracefulStop outlives ctx. grpcHealthStop
-// (nil when the gRPC listener is disabled) runs BEFORE GracefulStop: it flips
-// every health status to NOT_SERVING and notifies Watch clients, so load
-// balancers drain this replica before the RPC plane closes.
+// (nil when the gRPC listener was never constructed) is invoked even when no
+// *grpc.Server handle was retained: newGRPCServer installs the readiness poller
+// and its stop before net.Listen, so a bind failure would otherwise leave that
+// poller outside teardown with no returned handle to close it. The stop runs
+// BEFORE GracefulStop: it flips every health status to NOT_SERVING and notifies
+// Watch clients, so load balancers drain this replica before the RPC plane
+// closes. It is idempotent; the nil-server path skips GracefulStop.
 func shutdownServers(ctx context.Context, logger spi.Logger, httpSrv, pprofSrv *http.Server, grpcSrv *grpc.Server, grpcHealthStop func()) {
-	if err := httpSrv.Shutdown(ctx); err != nil {
-		logger.Error("http graceful shutdown failed", "error", err)
-		_ = httpSrv.Close()
+	if httpSrv != nil {
+		if err := httpSrv.Shutdown(ctx); err != nil {
+			logger.Error("http graceful shutdown failed", "error", err)
+			_ = httpSrv.Close()
+		}
 	}
 	if pprofSrv != nil {
 		_ = pprofSrv.Shutdown(ctx)
 	}
-	if grpcSrv == nil {
-		return
-	}
 	if grpcHealthStop != nil {
 		grpcHealthStop()
+	}
+	if grpcSrv == nil {
+		return
 	}
 	stopped := make(chan struct{})
 	go func() { grpcSrv.GracefulStop(); close(stopped) }()
@@ -462,5 +476,24 @@ func (b *appBuilder) addAuditCloser(next func(context.Context) error) {
 			return previousErr
 		}
 		return err
+	}
+}
+
+// runtimeServers retains only listeners constructed by this run invocation.
+type runtimeServers struct {
+	http, pprof *http.Server
+	grpc        *grpc.Server
+}
+
+// shutdownRuntime shares one existing shutdown context on every post-build exit.
+// Closing/draining does not undo startup writes or certify rollback.
+func shutdownRuntime(a *app, servers runtimeServers, logger spi.Logger, clean bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	closeSSEBroker(a)
+	shutdownServers(ctx, logger, servers.http, servers.pprof, servers.grpc, a.grpcHealthStop)
+	shutdownSubsystems(ctx, a, logger)
+	if clean {
+		logger.Info("server stopped cleanly")
 	}
 }

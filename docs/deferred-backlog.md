@@ -169,9 +169,14 @@ The built-in sender uses `net/smtp`: STARTTLS is negotiated when advertised but
 may fall back to plaintext. Implicit TLS on port 465 is supported via a
 `crypto/tls.Dial`-first transport, auto-selected on port 465 or with
 `smtp.tls_mode: implicit`; certificate verification is fail-closed (ServerName
-pinned to the relay host, TLS 1.2 floor, no `InsecureSkipVerify`). Require TLS
-at the relay/edge when plaintext fallback on STARTTLS-capable ports is
-unacceptable.
+pinned to the relay host, TLS 1.2 floor, no `InsecureSkipVerify`). The opt-in
+`smtp.tls_mode: require_starttls` closes the STARTTLS-fallback gap: the relay
+must advertise STARTTLS and complete a verified TLS 1.2+ handshake before AUTH,
+MAIL, or message bytes; missing STARTTLS, certificate/hostname/handshake
+failure, protocol error, cancellation or timeout fails closed, never falling
+back to plaintext or a configured legacy send function. Explicit
+`require_starttls` wins over the port-465 implicit auto-selection, and the
+default `auto`/`implicit` behavior is unchanged.
 
 ### CIBA user-code enrollment boundary
 

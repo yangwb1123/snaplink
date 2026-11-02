@@ -17,7 +17,11 @@ import (
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
-func refAppFullScopes(binding refAppClient) []string { return []string{"openid", binding.Scope} }
+// refAppFullScopes requests offline_access explicitly: refresh issuance on this
+// platform requires the effective grant for every issuance path.
+func refAppFullScopes(binding refAppClient) []string {
+	return []string{"openid", "offline_access", binding.Scope}
+}
 
 func (h *referenceApps) login(t *testing.T, app, tenantID string, resume bool) refAppTokens {
 	t.Helper()
@@ -101,7 +105,7 @@ func TestE2E_ReferenceAppsAPIIsolation(t *testing.T) {
 	h := newReferenceApps(t)
 	a, b := h.login(t, "orders", "tenant-a", false), h.login(t, "orders", "tenant-b", false)
 	reports := h.clients["reports/tenant-a"]
-	limited := h.exchange(t, h.begin(t, reports, true, []string{"openid"}))
+	limited := h.exchange(t, h.begin(t, reports, true, []string{"openid", "offline_access"}))
 	for _, mode := range []string{"online", "offline"} {
 		for _, tc := range []struct {
 			name, app, tenantID, bearer, code string

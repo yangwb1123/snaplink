@@ -75,6 +75,7 @@ func loginPCRT(t *testing.T, srv *httptest.Server, clientID string) string {
 	body, _ := json.Marshal(map[string]any{
 		"provider":   "password",
 		"client_id":  clientID,
+		"scope":      []string{"offline_access"},
 		"credential": map[string]string{"username": pcrtUserID, "password": pcrtPassword},
 	})
 	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))

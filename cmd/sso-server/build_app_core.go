@@ -17,6 +17,7 @@ import (
 	permsqlite "github.com/yangwb1123/snaplink/domains/permissions/sqlite"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	auditsqlite "github.com/yangwb1123/snaplink/platform/audit/sqlite"
@@ -51,13 +52,11 @@ func (b *appBuilder) wireIdentitySigning() error {
 	}
 	b.userProvider = userProvider
 	b.sessionMgr = sessionMgr
-	// Schema-version boot gate: refuse to start when any SQLite store's
-	// live schema is ahead of what this binary knows. A memory backend
-	// silently no-ops (no DB() method). This must run before traffic is
-	// accepted so an operator doing a canary rollback sees a clear error
-	// instead of silent data corruption. The check is SQLite-dialect-specific
-	// (it probes sqlite_master), so skip it for postgres-backed stores — their
-	// constructors enforce native migration maxima before this helper.
+	// Schema-version boot gate: refuse to start when a SQLite store's live
+	// schema is ahead of what this binary knows (a memory backend no-ops). It
+	// runs before traffic so a canary rollback fails loudly, not silently. The
+	// probe is SQLite-specific, so postgres stores are skipped (their
+	// constructors enforce maxima). Sessions can override identity.backend.
 	b.schemaCtx = context.Background()
 	identityIsPG := strings.EqualFold(strings.TrimSpace(cfg.Identity.Backend), "postgres")
 	if !identityIsPG {
@@ -68,8 +67,9 @@ func (b *appBuilder) wireIdentitySigning() error {
 			return fmt.Errorf("schema check users: %w", err)
 		}
 	}
-	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, sessionMgr, "sessions", sqlitestores.SessionsMaxVersion()); err != nil {
-		return fmt.Errorf("schema check sessions: %w", err)
+	if err := b.checkStoreSchema(serverbuildstore.SessionBackend(cfg.Identity), "sessions", sessionMgr,
+		sqlitestores.SessionsMaxVersion(), postgresbackend.SessionsMaxVersion()); err != nil {
+		return err
 	}
 	return b.wireSigningIssuer()
 }
@@ -83,7 +83,7 @@ func (b *appBuilder) wireSigningIssuer() error {
 	// backed by an external KMS/HSM signer. Both concrete types satisfy
 	// the same interface set; only the scheduled rotation loop below is
 	// EdDSA-specific (type-asserted there).
-	jwtIssuer, signingAlg, externalSigner, err := serverbuildsign.BuildSigningIssuer(cfg.Keys.Signing, cfg.Server, b.redis, b.metricsRegistry, logger)
+	jwtIssuer, signingAlg, externalSigner, err := serverbuildsign.BuildSigningIssuerWithPostgres(cfg.Keys.Signing, cfg.Server, b.redis, b.metricsRegistry, logger, b.pgDB, b.pgDialect)
 	if err != nil {
 		return err
 	}

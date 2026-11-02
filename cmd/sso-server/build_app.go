@@ -371,10 +371,9 @@ func (b *appBuilder) assemble(rt serverRuntime) *app {
 	cw, srw := rt.cluster, rt.snapshots
 	a := &app{
 		server: rt.server, recorder: b.recorder, provider: b.provider, registry: cw.reg,
-		netStore:          b.netStore,
-		classifier:        b.classifier,
-		clientStore:       b.clientStore,
-		userProvider:      b.userProvider,
+		netStore:    b.netStore,
+		classifier:  b.classifier,
+		clientStore: b.clientStore, userProvider: b.userProvider, passwordStore: b.passwordStore,
 		sessionMgr:        b.sessionMgr,
 		tempStore:         b.tempStore,
 		tokenIssuers:      b.tokenIssuers,

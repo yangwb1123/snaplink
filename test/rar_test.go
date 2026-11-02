@@ -76,12 +76,15 @@ func newRARServer(t *testing.T, allowedTypes []string) *httptest.Server {
 
 // rarLogin drives /auth/login with the given authorization_details
 // (raw JSON) and returns (status, body).
-func rarLogin(t *testing.T, srv *httptest.Server, authzDetails string, codeFlow bool) (int, map[string]any) {
+func rarLogin(t *testing.T, srv *httptest.Server, authzDetails string, codeFlow bool, scopes ...string) (int, map[string]any) {
 	t.Helper()
 	body := map[string]any{
 		"provider":   "password",
 		"client_id":  rarClient,
 		"credential": map[string]string{"username": rarUser, "password": rarPassword},
+	}
+	if len(scopes) > 0 {
+		body["scope"] = scopes
 	}
 	if authzDetails != "" {
 		body["authorization_details"] = json.RawMessage(authzDetails)
@@ -408,9 +411,8 @@ func TestRAR_SurvivesRefreshRotation(t *testing.T) {
 	const details = `[{"type":"payment_initiation","amount":"42.50","currency":"USD","payee":"acme-corp"}]`
 
 	// Login with authorization_details + capture the refresh
-	// token (login wires refresh issuance because we configured
-	// WithRefreshTokenStore).
-	status, body := rarLogin(t, srv, details, false)
+	// token (explicit offline scope plus the configured refresh store).
+	status, body := rarLogin(t, srv, details, false, "offline_access")
 	if status != http.StatusOK {
 		t.Fatalf("login status=%d body=%v", status, body)
 	}
@@ -509,7 +511,7 @@ func TestRAR_RefreshWithoutOriginalGrantStaysClean(t *testing.T) {
 	// resource servers branching on presence).
 	srv, _ := newRARServerWithRefresh(t)
 
-	status, body := rarLogin(t, srv, "", false)
+	status, body := rarLogin(t, srv, "", false, "offline_access")
 	if status != http.StatusOK {
 		t.Fatalf("login status=%d body=%v", status, body)
 	}

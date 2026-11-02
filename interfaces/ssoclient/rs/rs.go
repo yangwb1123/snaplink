@@ -7,7 +7,7 @@
 //
 //   - Local (stateless): ValidateToken verifies the JWT signature against the
 //     cached JWKS — the AS is NOT on the per-request path and may even be
-//     offline.
+//     offline unless Config.RevocationCheck adds an external dependency.
 //   - Remote (introspection): ValidateTokenWithIntrospect asks the AS's RFC
 //     7662 endpoint, so revocation is visible immediately at the cost of a
 //     round-trip per call.
@@ -31,6 +31,7 @@
 package rs
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -81,6 +82,18 @@ type ClientCreds struct {
 	Secret string
 }
 
+// RevocationToken is the validated namespace supplied to Config.RevocationCheck.
+// It is a value copy, with no raw token or mutable claim references. Issuer is
+// Config.Issuer, including when an introspection response omits optional iss;
+// TenantID and ClientID may be empty if the token does not carry them.
+// Consumers must scope revocation decisions by all four fields, not JTI alone.
+type RevocationToken struct {
+	Issuer   string
+	TenantID string
+	ClientID string
+	JTI      string
+}
+
 // Config carries everything the validation functions need. The zero value of
 // every optional field selects a safe default; only Issuer (and a key source:
 // JWKSCache for local mode, IntrospectURL for remote mode) must be set.
@@ -117,6 +130,16 @@ type Config struct {
 	// that SERVED the rotation (mint-time semantics) — a rotated token may
 	// carry a new region.
 	AllowedServingRegions []string
+
+	// RevocationCheck optionally checks a validated token for revocation in
+	// BOTH modes, after their existing identity/time/serving-region gates.
+	// Nil preserves existing behavior, including acceptance of missing jti.
+	// Missing jti, revoked=true, callback errors, or a canceled context at
+	// this check fail closed with ErrTokenInactive, without backend details.
+	// Calls are synchronous with the caller's context. The callback must be
+	// concurrency-safe, honor cancellation, and bound its own I/O. It does
+	// not replace DPoP proof checks, which still follow token validation.
+	RevocationCheck func(context.Context, RevocationToken) (revoked bool, err error)
 
 	// DPoPVerifier tunes RFC 9449 proof checking; nil uses a process-wide
 	// default (one shared jti replay cache — see DPoPVerifier).

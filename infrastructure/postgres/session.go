@@ -56,6 +56,10 @@ ALTER TABLE sessions ADD COLUMN kind              TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_sessions_subject_client ON sessions(user_id, client_id);`},
 }
 
+// SessionsMaxVersion reports the highest PostgreSQL session migration this
+// binary knows, independently of the SQLite session migration sequence.
+func SessionsMaxVersion() int { return migrate.MaxVersion(sessionMigrations) }
+
 const sessionCols = "id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id, trust_score, trust_set_at, step_up_required, client_id, authorized_scopes, auth_time, device_id, kind"
 
 // SessionManager is the Postgres-backed implementation of [sso.SessionManager].

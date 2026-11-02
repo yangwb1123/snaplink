@@ -3,6 +3,7 @@ package builtin_test
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"os"
 	"slices"
 	"strings"
@@ -37,6 +38,7 @@ func fullSeed(t *testing.T) (*builtin.AdminSeed, *capturePrinter) {
 		Users:           defaultimpl.NewMemoryUserProvider(),
 		Clients:         defaultimpl.NewMemoryClientStore(),
 		Netpolicy:       netmemory.New(),
+		Passwords:       defaultimpl.NewMemoryPasswordCredentialStore(),
 		PasswordPrinter: printer.Print,
 	}, printer
 }
@@ -50,8 +52,8 @@ func (c *capturePrinter) Print(p string) { c.calls = append(c.calls, p) }
 func runAllSteps(t *testing.T, seed *builtin.AdminSeed) {
 	t.Helper()
 	steps := builtin.Steps(seed)
-	if len(steps) != 7 {
-		t.Fatalf("Steps returned %d, want 7", len(steps))
+	if len(steps) != 8 {
+		t.Fatalf("Steps returned %d, want 8", len(steps))
 	}
 	runner := bootstrap.NewRunner("sso-server", memory.New())
 	runner.Register(steps...)
@@ -127,9 +129,12 @@ func TestSteps_SeedsAdminUser(t *testing.T) {
 		t.Errorf("seeded_password must not persist in user attributes: %+v", u.Attributes)
 	}
 
-	// The password is still printed exactly once so the operator can capture it.
+	// The printed password must be a usable credential, not a decorative string.
 	if len(printer.calls) != 1 {
-		t.Errorf("PasswordPrinter called %d times, want 1", len(printer.calls))
+		t.Fatalf("PasswordPrinter called %d times, want 1", len(printer.calls))
+	}
+	if err := seed.Passwords.VerifyPassword(context.Background(), "admin", printer.calls[0]); err != nil {
+		t.Errorf("printed admin password does not verify against the stored credential: %v", err)
 	}
 	// 24-byte secret → base64.RawURLEncoding length = ceil(24*4/3) = 32 chars.
 	if len(printer.calls[0]) != 32 {
@@ -371,6 +376,88 @@ func TestSteps_SeedsAdminConsoleClient(t *testing.T) {
 	if !contains(c.AllowedScopes, sso.AdminScopeWrite) {
 		t.Errorf("AllowedScopes = %v, missing %s", c.AllowedScopes, sso.AdminScopeWrite)
 	}
+	if !contains(c.AllowedScopes, "offline_access") {
+		t.Errorf("AllowedScopes = %v, missing offline_access: the console keeps a refresh token", c.AllowedScopes)
+	}
+}
+
+func TestSteps_LegacyConsoleClientGainsOfflineAccessOnce(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	legacy := &sso.Client{ID: "sso-admin-console", Name: "SSO Admin Console",
+		AllowedScopes: []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite}}
+	if err := seed.Clients.Add(context.Background(), legacy); err != nil {
+		t.Fatalf("Add legacy: %v", err)
+	}
+	runAllSteps(t, seed)
+	first := countScope(seed, t, "offline_access")
+	if first != 1 {
+		t.Fatalf("offline_access occurrences = %d, want 1", first)
+	}
+	runAllSteps(t, seed)
+	if again := countScope(seed, t, "offline_access"); again != 1 {
+		t.Fatalf("second run duplicated the scope: %d", again)
+	}
+}
+
+func TestSteps_LegacyConsoleClientWithAdminRoleScopeGainsOfflineAccess(t *testing.T) {
+	t.Parallel()
+	// A booted deployment carries the admin scope the role grant appends, so the
+	// legacy set is no longer exactly the four seeded scopes. That must still be
+	// recognised as server-managed, or migrated databases never get the scope.
+	seed, _ := fullSeed(t)
+	migrated := &sso.Client{ID: "sso-admin-console", Name: "SSO Admin Console",
+		AllowedScopes: []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite, "admin", "admin"}}
+	if err := seed.Clients.Add(context.Background(), migrated); err != nil {
+		t.Fatalf("Add migrated: %v", err)
+	}
+	runAllSteps(t, seed)
+	if got := countScope(seed, t, "offline_access"); got != 1 {
+		t.Fatalf("offline_access occurrences = %d, want 1", got)
+	}
+}
+
+func TestSteps_OperatorCuratedConsoleScopesAreLeftAlone(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	curated := &sso.Client{ID: "sso-admin-console", Name: "Operator Console",
+		AllowedScopes: []string{"openid", sso.AdminScopeRead}}
+	if err := seed.Clients.Add(context.Background(), curated); err != nil {
+		t.Fatalf("Add curated: %v", err)
+	}
+	runAllSteps(t, seed)
+	if got := countScope(seed, t, "offline_access"); got != 0 {
+		t.Fatalf("hand-curated console scopes were widened: offline_access x%d", got)
+	}
+}
+
+func TestSteps_ConfidentialConsoleClientKeepsItsScopes(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	confidential := &sso.Client{ID: "sso-admin-console", Name: "SSO Admin Console", Secret: "operator-set",
+		AllowedScopes: []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite}}
+	if err := seed.Clients.Add(context.Background(), confidential); err != nil {
+		t.Fatalf("Add confidential: %v", err)
+	}
+	runAllSteps(t, seed)
+	if got := countScope(seed, t, "offline_access"); got != 0 {
+		t.Fatalf("confidential client was modified: offline_access x%d", got)
+	}
+}
+
+func countScope(seed *builtin.AdminSeed, t *testing.T, scope string) int {
+	t.Helper()
+	c, err := seed.Clients.Get(context.Background(), "sso-admin-console")
+	if err != nil {
+		t.Fatalf("Get(sso-admin-console): %v", err)
+	}
+	n := 0
+	for _, s := range c.AllowedScopes {
+		if s == scope {
+			n++
+		}
+	}
+	return n
 }
 
 func TestSteps_AdminConsoleClientSkippedWhenOperatorPredeclared(t *testing.T) {
@@ -462,4 +549,97 @@ func runStepsAfterVersion(t *testing.T, seed *builtin.AdminSeed, version int) {
 
 func contains(haystack []string, needle string) bool {
 	return slices.Contains(haystack, needle)
+}
+
+func TestSteps_NoCredentialStorePrintsNoPassword(t *testing.T) {
+	t.Parallel()
+	seed, printer := fullSeed(t)
+	seed.Passwords = nil
+	runAllSteps(t, seed)
+
+	// Without a credential store the generated password cannot authenticate, so an
+	// operator must never be handed one that looks usable.
+	if len(printer.calls) != 0 {
+		t.Fatalf("PasswordPrinter called %d times without a credential store, want 0: %v", len(printer.calls), printer.calls)
+	}
+	if _, err := seed.Users.GetByID(context.Background(), "admin"); err != nil {
+		t.Fatalf("admin user must still be seeded: %v", err)
+	}
+}
+
+func TestSteps_CredentialStoreFailureFailsTheStep(t *testing.T) {
+	t.Parallel()
+	seed, printer := fullSeed(t)
+	seed.Passwords = failingPasswordStore{}
+	steps := builtin.Steps(seed)
+	runner := bootstrap.NewRunner("sso-server", memory.New())
+	runner.Register(steps...)
+	if err := runner.Run(context.Background()); err == nil {
+		t.Fatal("a credential-store failure must fail the bootstrap step")
+	}
+	if len(printer.calls) != 0 {
+		t.Fatal("no password may be printed when persisting it failed")
+	}
+}
+
+type failingPasswordStore struct{}
+
+func (failingPasswordStore) SetPassword(context.Context, string, string) error {
+	return errStoreUnavailable
+}
+
+func (failingPasswordStore) VerifyPassword(context.Context, string, string) error {
+	return errStoreUnavailable
+}
+
+var errStoreUnavailable = errors.New("synthetic credential store unavailable")
+
+func TestSteps_AdminRoleReachesTheConsoleClient(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	runAllSteps(t, seed)
+	roles, err := seed.Permissions.Roles(context.Background(), "admin", "sso-admin-console")
+	if err != nil {
+		t.Fatalf("Roles(admin, sso-admin-console): %v", err)
+	}
+	if len(roles) != 1 || roles[0].Code != "sso-admin" {
+		t.Fatalf("console client roles = %v, want [sso-admin]: the admin console token would be forbidden", roles)
+	}
+	perms, err := seed.Permissions.Permissions(context.Background(), "admin", "sso-admin-console")
+	if err != nil {
+		t.Fatalf("Permissions(admin, sso-admin-console): %v", err)
+	}
+	if !permissions.Matches(perms, "admin:read") {
+		t.Fatalf("console permissions = %v, must grant admin:read", perms)
+	}
+}
+
+func TestSteps_AdminRoleKeepsTheConfiguredClientAssignment(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	seed.AdminClientID = "sverp-web"
+	runAllSteps(t, seed)
+	for _, clientID := range []string{"sverp-web", "sso-admin-console"} {
+		roles, err := seed.Permissions.Roles(context.Background(), "admin", clientID)
+		if err != nil || len(roles) != 1 || roles[0].Code != "sso-admin" {
+			t.Fatalf("client %q roles = %v err=%v, want [sso-admin]", clientID, roles, err)
+		}
+	}
+}
+
+func TestSteps_ExistingAdminStillGetsTheConsoleRole(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	// A migrated deployment already contains the admin user, so the seed step
+	// short-circuits; the role assignment must still be ensured.
+	if err := seed.Users.CreateOrUpdate(context.Background(), &sso.User{ID: "admin", ExternalID: "admin", Provider: "password"}); err != nil {
+		t.Fatalf("pre-create admin: %v", err)
+	}
+	runAllSteps(t, seed)
+	for _, clientID := range []string{"", "sso-admin-console"} {
+		roles, err := seed.Permissions.Roles(context.Background(), "admin", clientID)
+		if err != nil || len(roles) != 1 || roles[0].Code != "sso-admin" {
+			t.Fatalf("client %q roles = %v err=%v, want [sso-admin] for a pre-existing admin", clientID, roles, err)
+		}
+	}
 }

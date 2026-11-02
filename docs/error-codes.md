@@ -387,6 +387,7 @@ other grants above use, for the SAME oracle-leak reasons.
 
 | Code                    | HTTP | Emitted when                                                              | Client should                                            |
 |-------------------------|------|---------------------------------------------------------------------------|----------------------------------------------------------|
+| `unauthorized_client`   | 400  | Authenticated client's nonempty `grant_types` excludes exact CIBA; checked after existing client/resource validation but before hint, user-code, pending-request or challenge side effects | Request an explicitly approved client registration change; do not retry or infer authorization from scopes |
 | `invalid_request`       | 400  | More than one user hint, non-positive `requested_expiry`, or `user_code` supplied while no verifier is wired | Correct the request and retry                            |
 | `unknown_user_id`       | 400  | OIDC CIBA Core §13 — no hint supplied, or the one supplied hint did not resolve to a known user (collapsed for anti-enumeration) | Verify the hint identifies an enrolled user              |
 | `missing_user_code`     | 400  | The wired verifier requires a fresh CIBA user code for this client/user    | Prompt the user for their dedicated CIBA code            |

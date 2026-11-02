@@ -333,6 +333,7 @@ func TestRcov2TR_RolesSurviveRefreshRotation(t *testing.T) {
 		"provider":   "password",
 		"client_id":  rcovClient,
 		"credential": map[string]string{"username": rcovUsername, "password": rcovPassword},
+		"scope":      []string{"offline_access"},
 	})
 	if status != http.StatusOK {
 		t.Fatalf("login = %d body=%v", status, out)

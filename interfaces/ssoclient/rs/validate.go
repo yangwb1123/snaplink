@@ -14,9 +14,9 @@ import (
 
 // ValidateToken verifies an access token LOCALLY: JWS signature against the
 // cached JWKS plus the full claim gates (iss / aud / exp / nbf / iat with
-// skew). The AS is not on the request path — revocation before natural expiry
-// is NOT visible in this mode; use ValidateTokenWithIntrospect when it must
-// be.
+// skew). Without Config.RevocationCheck, the AS is not on the request path
+// and revocation before natural expiry is NOT visible in this mode. Configure
+// that callback or use ValidateTokenWithIntrospect when revocation must be checked.
 //
 // Gate order is load-bearing: typ and alg are checked BEFORE any signature
 // work (RFC 9068 §4 — `alg: none` and symmetric algs can never reach the
@@ -55,6 +55,9 @@ func ValidateToken(ctx context.Context, token string, cfg Config) (*Claims, erro
 		return nil, err
 	}
 	if err := validateClaims(claims, cfg, time.Now()); err != nil {
+		return nil, err
+	}
+	if err := checkRevocation(ctx, claims, cfg); err != nil {
 		return nil, err
 	}
 	return claims, nil

@@ -94,7 +94,7 @@ func (s *refProcessStores) seed(t *testing.T) map[string]refAppClient {
 			bindings[app+"/"+tenantID] = binding
 			refProcessCheck(t, s.clients.Put(t.Context(), &sso.Client{ID: id, Secret: binding.Secret, Name: id, TenantID: tenantID, Active: true, TokenStrategy: "jwt",
 				TokenEndpointAuthMethod: "client_secret_basic", GrantTypes: []string{"authorization_code", "refresh_token"},
-				AllowedScopes: []string{"openid", binding.Scope}, AllowedResources: []string{binding.Audience},
+				AllowedScopes: []string{"openid", "offline_access", binding.Scope}, AllowedResources: []string{binding.Audience},
 				AllowedAuthenticators: []string{"password"}, RedirectURIs: []string{binding.Redirect}, SkipConsent: true,
 				RequirePKCE: true, AllowedPKCEMethods: []string{"S256"}}), "seed reference client")
 		}
